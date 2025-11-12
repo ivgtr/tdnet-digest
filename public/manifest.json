@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "TDnet Digest",
+  "version": "0.1.0",
+  "description": "TDnet適時開示情報をAIで要約するChrome拡張",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.release.tdnet.info/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-16.png",
+      "48": "icons/icon-16.png",
+      "128": "icons/icon-16.png"
+    }
+  },
+  "background": {
+    "service_worker": "background/index.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.release.tdnet.info/*"],
+      "js": ["content/index.js"],
+      "css": ["content/style.css"],
+      "run_at": "document_end"
+    }
+  ],
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-16.png",
+    "48": "icons/icon-16.png",
+    "128": "icons/icon-16.png"
+  }
+}

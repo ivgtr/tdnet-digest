@@ -1,0 +1,127 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## プロジェクト概要
+
+TDnet適時開示情報を閲覧中にLLMで要約を表示するChrome拡張機能。
+TDnetの開示詳細ページにReactベースの要約ボタンを注入し、背景スクリプトがPDFを取得してOpenAI互換APIで要約を生成する。
+
+## 開発コマンド
+
+```bash
+# 開発モード（ファイル監視+自動ビルド）
+npm run dev
+
+# プロダクションビルド
+npm run build
+
+# 型チェック
+npm run type-check
+
+# Lint
+npm run lint
+
+# フォーマット
+npm run format
+```
+
+## アーキテクチャ
+
+### ビルドシステム（@crxjs/vite-plugin）
+
+- **プラグイン**: `@crxjs/vite-plugin`を使用してChrome拡張をビルド
+  - Content ScriptのES Modules問題を自動解決
+  - Dynamic importとweb_accessible_resourcesを自動設定
+  - Loaderパターンでコードを注入
+
+- **Manifest**: `manifest.config.ts`（ルートディレクトリ）
+  - TypeScriptで定義し、package.jsonからバージョンを取得
+  - ビルド時に自動的にmanifest.jsonを生成
+
+- **エントリーポイント**:
+  - `popup.html` / `options.html`: 拡張機能のUI（React + Tailwind CSS）
+  - `src/content/index.tsx`: Content Script（インラインスタイルのみ使用）
+  - `src/background/index.ts`: Background Service Worker（Manifest V3）
+
+- **ビルド出力**: `dist/`ディレクトリ
+  - `assets/index.tsx-loader-*.js`: Content Scriptのローダー
+  - `assets/index.tsx-*.js`: 実際のContent Scriptコード（web_accessible_resources）
+  - `service-worker-loader.js`: Background Service Worker
+  - `manifest.json`: 自動生成
+  - `logo.png`: 全サイズで使用される単一アイコン
+
+### Content Script (`src/content/`)
+
+- **注入先**: `https://www.release.tdnet.info/*`（manifest.config.tsで定義）
+- **スタイリング**: すべてインラインスタイルで実装（Tailwind CSSは使用しない）
+  - TDNETのデザインシステムに合わせた色とスタイル
+  - ボタンは青色グラデーション（`#75a8d0` → `#4a84b9`）
+  - セルクラス: `oddnew-R` / `evennew-R` で背景色を交互に表示
+- **動作**:
+  - 開示情報一覧ページのiframe内（`#main_list`）のテーブルを監視
+  - ヘッダー行に「AI要約」列を追加（既存の最後の列を`-M`に変更し、新しい列を`-R`に）
+  - テーブルの各行（開示情報）の最後に要約ボタンを注入
+  - ボタンクリック時に行データ（時刻、コード、会社名、表題、PDF URL）を抽出
+  - 要約結果は同じ行のすぐ下に新しい行として挿入（colspanで全列を使用）
+- **通信**: `chrome.runtime.sendMessage`でBackground Scriptに要約リクエスト送信
+- **iframe再読み込み対応**:
+  - `iframe.addEventListener('load')`でiframe再読み込みを検知
+  - MutationObserverを再設定して新しいcontentDocumentを監視
+  - 公開日変更やページ移動時も正しく動作
+
+### Background Service Worker (`src/background/index.ts`)
+
+- **役割**: Content Scriptからの`summarize`メッセージを受信し、PDF取得→LLM要約を実行
+- **設定取得**: `chrome.storage.sync`からAPI URL/Key/Modelを取得
+- **未実装**: `extractTextFromPDF()`関数はプレースホルダー。pdf.jsライブラリの統合が必要
+
+### Options/Popup UI (`src/options/`, `src/popup/`)
+
+- **Options**: APIエンドポイント、APIキー、モデル名を設定し`chrome.storage.sync`に保存
+- **Popup**:
+  - 拡張機能の有効/無効を切り替えるトグルスイッチ
+  - API設定の状態表示（設定済み/未設定）
+  - 設定ページへのリンク
+  - `extensionEnabled`を`chrome.storage.sync`に保存し、Content Scriptに通知
+
+## 技術スタック
+
+- **フレームワーク**: React 18 + TypeScript
+- **スタイリング**:
+  - Popup/Options: Tailwind CSS 4.0-beta
+  - Content Script: インラインスタイルのみ（TDNETページの表示崩れを防ぐため）
+- **ビルド**: Vite 6 + @crxjs/vite-plugin + @vitejs/plugin-react
+- **Chrome拡張**: Manifest V3（Service Worker使用）
+- **パスエイリアス**: `@/`は`./src/`を指す（vite.config.ts）
+- **アイコン**: `public/logo.png`（全サイズで使用）
+
+## 開発時の注意点
+
+- **PDF抽出機能は未実装**: `src/background/index.ts`の`extractTextFromPDF()`を実装する必要がある。pdf.jsライブラリの追加が必要。
+
+- **セキュリティ**: この拡張機能は`https://www.release.tdnet.info/*`ドメインでのみ動作するように制限されている。他のドメインでの動作は不要。
+
+- **iframe内DOM操作**:
+  - TDnetの一覧ページはiframe構造のため、`iframe.contentDocument`を経由してDOM操作を行う必要がある
+  - iframe再読み込み時はMutationObserverを再設定する必要がある
+  - `<tr>` 要素にはクラスがないため、`<td>`要素のクラスから行タイプを判定する
+
+- **TDNETのテーブル構造**:
+  - 開示情報は`#main-list-table`内の`tr`要素として存在
+  - 各セルにはCSSクラス（`kjTime`, `kjCode`, `kjName`, `kjTitle`等）が付与
+  - セルクラス: `oddnew-L/M/R`（奇数行）、`evennew-L/M/R`（偶数行）
+  - ヘッダークラス: `header-L/M/R`（左端/中間/右端）
+
+- **スタイリングの注意**:
+  - Content ScriptでTailwind CSSを使用すると、TDNETページ全体に影響を与える
+  - 必ずインラインスタイルのみを使用すること
+  - TDNETの既存デザイン（色、サイズ、ボーダー）に合わせること
+
+- **Chrome拡張のロード**:
+  - `dist/`ディレクトリをChromeの拡張機能管理ページで「パッケージ化されていない拡張機能を読み込む」から読み込む
+  - manifest.config.tsを変更した場合は`npm run build`が必要
+
+- **ホットリロード**:
+  - `npm run dev`でファイル監視されるが、Chrome拡張自体のリロードは手動で行う必要がある
+  - @crxjs/vite-pluginがHMRをサポートしているが、完全ではない
