@@ -28,32 +28,47 @@ npm run format
 
 ## アーキテクチャ
 
-### ビルドシステム（Vite）
+### ビルドシステム（@crxjs/vite-plugin）
 
-- **エントリーポイント**: 複数のエントリーポイントをViteでビルド
+- **プラグイン**: `@crxjs/vite-plugin`を使用してChrome拡張をビルド
+  - Content ScriptのES Modules問題を自動解決
+  - Dynamic importとweb_accessible_resourcesを自動設定
+  - Loaderパターンでコードを注入
+
+- **Manifest**: `manifest.config.ts`（ルートディレクトリ）
+  - TypeScriptで定義し、package.jsonからバージョンを取得
+  - ビルド時に自動的にmanifest.jsonを生成
+
+- **エントリーポイント**:
   - `popup.html` / `options.html`: 拡張機能のUI（React + Tailwind CSS）
-  - `src/content/index.tsx`: Content Script（TDnetページに注入されるReactコンポーネント）
+  - `src/content/index.tsx`: Content Script（インラインスタイルのみ使用）
   - `src/background/index.ts`: Background Service Worker（Manifest V3）
 
 - **ビルド出力**: `dist/`ディレクトリ
-  - `popup/index.js`, `options/index.js`
-  - `content/index.js`, `content/style.css`
-  - `background/index.js`
-  - `manifest.json`（`public/manifest.json`からコピー）
-
-- **カスタムプラグイン**: `vite.config.ts`内の`copyManifestPlugin()`がmanifest.jsonをdistにコピー
+  - `assets/index.tsx-loader-*.js`: Content Scriptのローダー
+  - `assets/index.tsx-*.js`: 実際のContent Scriptコード（web_accessible_resources）
+  - `service-worker-loader.js`: Background Service Worker
+  - `manifest.json`: 自動生成
+  - `logo.png`: 全サイズで使用される単一アイコン
 
 ### Content Script (`src/content/`)
 
-- **注入先**: `https://www.release.tdnet.info/*`（manifest.jsonで定義）
+- **注入先**: `https://www.release.tdnet.info/*`（manifest.config.tsで定義）
+- **スタイリング**: すべてインラインスタイルで実装（Tailwind CSSは使用しない）
+  - TDNETのデザインシステムに合わせた色とスタイル
+  - ボタンは青色グラデーション（`#75a8d0` → `#4a84b9`）
+  - セルクラス: `oddnew-R` / `evennew-R` で背景色を交互に表示
 - **動作**:
   - 開示情報一覧ページのiframe内（`#main_list`）のテーブルを監視
-  - ヘッダー行に「AI要約」列を追加
+  - ヘッダー行に「AI要約」列を追加（既存の最後の列を`-M`に変更し、新しい列を`-R`に）
   - テーブルの各行（開示情報）の最後に要約ボタンを注入
   - ボタンクリック時に行データ（時刻、コード、会社名、表題、PDF URL）を抽出
   - 要約結果は同じ行のすぐ下に新しい行として挿入（colspanで全列を使用）
 - **通信**: `chrome.runtime.sendMessage`でBackground Scriptに要約リクエスト送信
-- **ページネーション対応**: MutationObserverでiframe内のDOM変更を監視し、ページ切り替え時も自動でボタンを再注入
+- **iframe再読み込み対応**:
+  - `iframe.addEventListener('load')`でiframe再読み込みを検知
+  - MutationObserverを再設定して新しいcontentDocumentを監視
+  - 公開日変更やページ移動時も正しく動作
 
 ### Background Service Worker (`src/background/index.ts`)
 
@@ -64,21 +79,49 @@ npm run format
 ### Options/Popup UI (`src/options/`, `src/popup/`)
 
 - **Options**: APIエンドポイント、APIキー、モデル名を設定し`chrome.storage.sync`に保存
-- **Popup**: 現在はスタブ実装（`popup.html`は存在するが機能は最小限）
+- **Popup**:
+  - 拡張機能の有効/無効を切り替えるトグルスイッチ
+  - API設定の状態表示（設定済み/未設定）
+  - 設定ページへのリンク
+  - `extensionEnabled`を`chrome.storage.sync`に保存し、Content Scriptに通知
 
 ## 技術スタック
 
 - **フレームワーク**: React 18 + TypeScript
-- **スタイリング**: Tailwind CSS 4.0-beta
-- **ビルド**: Vite 6 + @vitejs/plugin-react
+- **スタイリング**:
+  - Popup/Options: Tailwind CSS 4.0-beta
+  - Content Script: インラインスタイルのみ（TDNETページの表示崩れを防ぐため）
+- **ビルド**: Vite 6 + @crxjs/vite-plugin + @vitejs/plugin-react
 - **Chrome拡張**: Manifest V3（Service Worker使用）
 - **パスエイリアス**: `@/`は`./src/`を指す（vite.config.ts）
+- **アイコン**: `public/logo.png`（全サイズで使用）
 
 ## 開発時の注意点
 
 - **PDF抽出機能は未実装**: `src/background/index.ts`の`extractTextFromPDF()`を実装する必要がある。pdf.jsライブラリの追加が必要。
+
 - **セキュリティ**: この拡張機能は`https://www.release.tdnet.info/*`ドメインでのみ動作するように制限されている。他のドメインでの動作は不要。
-- **iframe内DOM操作**: TDnetの一覧ページはiframe構造のため、`iframe.contentDocument`を経由してDOM操作を行う必要がある。
-- **テーブル構造**: 開示情報は`#main-list-table`内の`tr`要素として存在。各セルにはCSSクラス（`kjTime`, `kjCode`, `kjName`, `kjTitle`等）が付与されている。
-- **Chrome拡張のロード**: `dist/`ディレクトリをChromeの拡張機能管理ページで「パッケージ化されていない拡張機能を読み込む」から読み込む。
-- **ホットリロード**: `npm run dev`でファイル監視されるが、Chrome拡張自体のリロードは手動で行う必要がある。
+
+- **iframe内DOM操作**:
+  - TDnetの一覧ページはiframe構造のため、`iframe.contentDocument`を経由してDOM操作を行う必要がある
+  - iframe再読み込み時はMutationObserverを再設定する必要がある
+  - `<tr>` 要素にはクラスがないため、`<td>`要素のクラスから行タイプを判定する
+
+- **TDNETのテーブル構造**:
+  - 開示情報は`#main-list-table`内の`tr`要素として存在
+  - 各セルにはCSSクラス（`kjTime`, `kjCode`, `kjName`, `kjTitle`等）が付与
+  - セルクラス: `oddnew-L/M/R`（奇数行）、`evennew-L/M/R`（偶数行）
+  - ヘッダークラス: `header-L/M/R`（左端/中間/右端）
+
+- **スタイリングの注意**:
+  - Content ScriptでTailwind CSSを使用すると、TDNETページ全体に影響を与える
+  - 必ずインラインスタイルのみを使用すること
+  - TDNETの既存デザイン（色、サイズ、ボーダー）に合わせること
+
+- **Chrome拡張のロード**:
+  - `dist/`ディレクトリをChromeの拡張機能管理ページで「パッケージ化されていない拡張機能を読み込む」から読み込む
+  - manifest.config.tsを変更した場合は`npm run build`が必要
+
+- **ホットリロード**:
+  - `npm run dev`でファイル監視されるが、Chrome拡張自体のリロードは手動で行う必要がある
+  - @crxjs/vite-pluginがHMRをサポートしているが、完全ではない
