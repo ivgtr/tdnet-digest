@@ -46,8 +46,14 @@ npm run format
 ### Content Script (`src/content/`)
 
 - **注入先**: `https://www.release.tdnet.info/*`（manifest.jsonで定義）
-- **動作**: ページ読み込み時に`SummaryButton`コンポーネントを`position: fixed`で右上に配置
+- **動作**:
+  - 開示情報一覧ページのiframe内（`#main_list`）のテーブルを監視
+  - ヘッダー行に「AI要約」列を追加
+  - テーブルの各行（開示情報）の最後に要約ボタンを注入
+  - ボタンクリック時に行データ（時刻、コード、会社名、表題、PDF URL）を抽出
+  - 要約結果は同じ行のすぐ下に新しい行として挿入（colspanで全列を使用）
 - **通信**: `chrome.runtime.sendMessage`でBackground Scriptに要約リクエスト送信
+- **ページネーション対応**: MutationObserverでiframe内のDOM変更を監視し、ページ切り替え時も自動でボタンを再注入
 
 ### Background Service Worker (`src/background/index.ts`)
 
@@ -72,5 +78,7 @@ npm run format
 
 - **PDF抽出機能は未実装**: `src/background/index.ts`の`extractTextFromPDF()`を実装する必要がある。pdf.jsライブラリの追加が必要。
 - **セキュリティ**: この拡張機能は`https://www.release.tdnet.info/*`ドメインでのみ動作するように制限されている。他のドメインでの動作は不要。
+- **iframe内DOM操作**: TDnetの一覧ページはiframe構造のため、`iframe.contentDocument`を経由してDOM操作を行う必要がある。
+- **テーブル構造**: 開示情報は`#main-list-table`内の`tr`要素として存在。各セルにはCSSクラス（`kjTime`, `kjCode`, `kjName`, `kjTitle`等）が付与されている。
 - **Chrome拡張のロード**: `dist/`ディレクトリをChromeの拡張機能管理ページで「パッケージ化されていない拡張機能を読み込む」から読み込む。
 - **ホットリロード**: `npm run dev`でファイル監視されるが、Chrome拡張自体のリロードは手動で行う必要がある。
