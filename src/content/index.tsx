@@ -1,7 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import SummaryButton from './SummaryButton';
-import '../index.css';
 
 interface RowData {
   time: string;
@@ -39,6 +38,14 @@ function injectSummaryButtons() {
   if (headerTable) {
     const headerRow = headerTable.querySelector('tr');
     if (headerRow && !headerRow.querySelector('.tdnet-digest-header')) {
+      // 既存の最後の列（更新履歴）の header-R を header-M に変更
+      const lastHeaderCell = headerRow.querySelector('td:last-child') as HTMLElement;
+      if (lastHeaderCell && lastHeaderCell.classList.contains('header-R')) {
+        lastHeaderCell.classList.remove('header-R');
+        lastHeaderCell.classList.add('header-M');
+        lastHeaderCell.style.borderRadius = '0';
+      }
+
       const headerCell = iframeDoc.createElement('td');
       headerCell.className = 'header-R tdnet-digest-header';
       headerCell.setAttribute('nowrap', '');
@@ -82,11 +89,33 @@ function injectSummaryButtons() {
       pdfUrl: linkElement.getAttribute('href') || '',
     };
 
+    // 既存の最後のセル（更新履歴）の -R を -M に変更
+    const lastCell = row.querySelector('td:last-child');
+    if (lastCell) {
+      const lastCellClass = lastCell.className;
+      if (lastCellClass.includes('oddnew-R')) {
+        lastCell.className = lastCellClass.replace('oddnew-R', 'oddnew-M');
+      } else if (lastCellClass.includes('evennew-R')) {
+        lastCell.className = lastCellClass.replace('evennew-R', 'evennew-M');
+      }
+    }
+
     // ボタン用のtdを作成
     const buttonCell = iframeDoc.createElement('td');
-    buttonCell.className = row.className.replace(/new-[LMR]/, 'new-R') + ' tdnet-digest-button-cell';
+    // 最初のセルのクラス名から行のタイプ（oddnew/evennew）を判定
+    const firstCell = row.querySelector('td:first-child');
+    const firstCellClass = firstCell?.className || '';
+    let cellClass = '';
+    if (firstCellClass.includes('oddnew')) {
+      cellClass = 'oddnew-R';
+    } else if (firstCellClass.includes('evennew')) {
+      cellClass = 'evennew-R';
+    }
+    buttonCell.className = `${cellClass} tdnet-digest-button-cell`;
     buttonCell.setAttribute('nowrap', '');
     buttonCell.setAttribute('align', 'center');
+    // セルの幅を設定
+    buttonCell.style.width = '80px';
 
     // Reactコンポーネントをレンダリング
     const container = iframeDoc.createElement('div');
@@ -129,6 +158,32 @@ function removeAllButtons() {
   console.log('TDnet Digest: All buttons removed');
 }
 
+// MutationObserverの参照を保持
+let currentObserver: MutationObserver | null = null;
+
+// iframe内のコンテンツ監視を設定
+function setupIframeObserver(iframe: HTMLIFrameElement) {
+  // 既存のObserverがあれば解除
+  if (currentObserver) {
+    currentObserver.disconnect();
+    currentObserver = null;
+  }
+
+  // 新しいObserverを設定
+  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+  if (iframeDoc && iframeDoc.body) {
+    currentObserver = new MutationObserver(() => {
+      injectSummaryButtons();
+    });
+
+    currentObserver.observe(iframeDoc.body, {
+      childList: true,
+      subtree: true,
+    });
+    console.log('TDnet Digest: Observer set up for iframe content');
+  }
+}
+
 // iframe読み込みを待機
 function waitForIframe() {
   const iframe = document.querySelector('#main_list') as HTMLIFrameElement;
@@ -137,25 +192,18 @@ function waitForIframe() {
     return;
   }
 
-  // iframeの読み込み完了を待つ
-  if (iframe.contentDocument?.readyState === 'complete') {
+  // iframeのloadイベントを監視（再読み込みごとに発火）
+  iframe.addEventListener('load', () => {
+    console.log('TDnet Digest: iframe loaded');
     injectSummaryButtons();
-  } else {
-    iframe.addEventListener('load', () => {
-      injectSummaryButtons();
-    });
-  }
-
-  // iframe内のコンテンツが変更された場合（ページネーション等）を監視
-  const observer = new MutationObserver(() => {
-    injectSummaryButtons();
+    setupIframeObserver(iframe);
   });
 
-  if (iframe.contentDocument) {
-    observer.observe(iframe.contentDocument.body, {
-      childList: true,
-      subtree: true,
-    });
+  // 初回の読み込みが完了している場合
+  if (iframe.contentDocument?.readyState === 'complete') {
+    console.log('TDnet Digest: iframe already loaded');
+    injectSummaryButtons();
+    setupIframeObserver(iframe);
   }
 }
 

@@ -16,12 +16,9 @@ interface SummaryButtonProps {
 
 const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }) => {
   const [loading, setLoading] = useState(false);
-  const [summary, setSummary] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const handleSummarize = async () => {
     setLoading(true);
-    setError(null);
 
     // 既存の要約行を削除
     const existingSummaryRow = row.nextElementSibling;
@@ -38,15 +35,12 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       });
 
       if (response.error) {
-        setError(response.error);
         insertSummaryRow(null, response.error);
       } else {
-        setSummary(response.summary);
         insertSummaryRow(response.summary, null);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '要約に失敗しました';
-      setError(errorMessage);
       insertSummaryRow(null, errorMessage);
     } finally {
       setLoading(false);
@@ -90,7 +84,6 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       const closeBtn = summaryCell.querySelector('#close-summary-btn');
       closeBtn?.addEventListener('click', () => {
         summaryRow.remove();
-        setSummary(null);
       });
     }
 
@@ -105,34 +98,51 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   };
 
   return (
-    <button
-      onClick={handleSummarize}
-      disabled={loading}
+    <div
       style={{
-        padding: '4px 12px',
-        fontSize: '12px',
-        fontWeight: '500',
-        color: loading ? '#9ca3af' : '#ffffff',
-        backgroundColor: loading ? '#e5e7eb' : '#2563eb',
-        border: 'none',
-        borderRadius: '4px',
-        cursor: loading ? 'not-allowed' : 'pointer',
-        transition: 'all 0.2s',
-        whiteSpace: 'nowrap',
-      }}
-      onMouseEnter={(e) => {
-        if (!loading) {
-          e.currentTarget.style.backgroundColor = '#1d4ed8';
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (!loading) {
-          e.currentTarget.style.backgroundColor = '#2563eb';
-        }
+        border: loading ? '1px solid #9ca3af' : '1px solid #4a84b9',
+        borderRadius: '3px',
+        height: '25px',
+        width: '60px',
+        margin: '0 auto',
+        overflow: 'hidden',
+        padding: '0',
+        fontSize: '13px',
+        fontWeight: 'bold',
       }}
     >
-      {loading ? '要約中...' : '要約'}
-    </button>
+      <button
+        onClick={handleSummarize}
+        disabled={loading}
+        style={{
+          width: '100%',
+          height: '100%',
+          padding: '3px 0 0 0',
+          border: 'none',
+          cursor: loading ? 'not-allowed' : 'pointer',
+          background: loading
+            ? 'linear-gradient(to bottom, #d1d5db, #9ca3af)'
+            : 'linear-gradient(to bottom, #75a8d0, #4a84b9)',
+          fontWeight: 'bold',
+          color: '#ffffff',
+          textDecoration: 'none',
+          outline: 'none',
+          display: 'block',
+        }}
+        onMouseEnter={(e) => {
+          if (!loading) {
+            e.currentTarget.style.background = 'linear-gradient(to bottom, #577b98, #2c506f)';
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (!loading) {
+            e.currentTarget.style.background = 'linear-gradient(to bottom, #75a8d0, #4a84b9)';
+          }
+        }}
+      >
+        {loading ? '...' : '要約'}
+      </button>
+    </div>
   );
 };
 
