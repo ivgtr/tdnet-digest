@@ -35,11 +35,13 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       });
 
       if (response.error) {
+        console.error('[Content] 要約エラー:', response.error);
         insertSummaryRow(null, response.error);
       } else {
         insertSummaryRow(response.summary, null);
       }
     } catch (err) {
+      console.error('[Content] 例外が発生:', err);
       const errorMessage = err instanceof Error ? err.message : '要約に失敗しました';
       insertSummaryRow(null, errorMessage);
     } finally {

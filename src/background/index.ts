@@ -9,31 +9,75 @@ interface Settings {
   model: string;
 }
 
+// 拡張機能のインストール・更新時
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log('[Background] 拡張機能がインストールされました:', details.reason);
+});
+
+// Service Workerの起動時
+console.log('[Background] Service Workerが起動しました');
+
+/**
+ * Offscreen Documentをセットアップ（既に存在する場合は何もしない）
+ */
+async function setupOffscreenDocument(): Promise<void> {
+  try {
+    // 既存のOffscreen Documentをチェック
+    const existingContexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType],
+    });
+
+    if (existingContexts.length > 0) {
+      return;
+    }
+
+    // Offscreen Documentを作成
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['DOM_PARSER' as chrome.offscreen.Reason],
+      justification: 'PDF.jsを使用してPDFからテキストを抽出するためにDOM APIが必要です',
+    });
+  } catch (error) {
+    console.error('[Background] Offscreen Document作成エラー:', error);
+    throw error;
+  }
+}
+
 // メッセージリスナー
 chrome.runtime.onMessage.addListener((request: SummarizeRequest, _sender, sendResponse) => {
   if (request.action === 'summarize') {
     handleSummarize(request.pdfUrl)
-      .then((summary) => sendResponse({ summary }))
-      .catch((error) => sendResponse({ error: error.message }));
+      .then((summary) => {
+        sendResponse({ summary });
+      })
+      .catch((error) => {
+        console.error('[Background] エラー:', error);
+        sendResponse({ error: error.message });
+      });
     return true; // 非同期レスポンスを示す
   }
 });
 
 async function handleSummarize(pdfUrl: string): Promise<string> {
-  // 設定を取得
-  const settings = await getSettings();
+  try {
+    // 設定を取得
+    const settings = await getSettings();
 
-  if (!settings.apiUrl || !settings.apiKey) {
-    throw new Error('API設定が未完了です。拡張機能の設定ページで設定してください。');
+    if (!settings.apiUrl || !settings.apiKey) {
+      throw new Error('API設定が未完了です。拡張機能の設定ページで設定してください。');
+    }
+
+    // PDFを取得
+    const pdfData = await fetchPDF(pdfUrl);
+
+    // LLMで要約
+    const summary = await summarizeWithLLM(pdfData, settings);
+
+    return summary;
+  } catch (error) {
+    console.error('[Background] 要約処理エラー:', error);
+    throw error;
   }
-
-  // PDFを取得
-  const pdfData = await fetchPDF(pdfUrl);
-
-  // LLMで要約
-  const summary = await summarizeWithLLM(pdfData, settings);
-
-  return summary;
 }
 
 async function getSettings(): Promise<Settings> {
@@ -49,144 +93,92 @@ async function getSettings(): Promise<Settings> {
 }
 
 async function fetchPDF(url: string): Promise<ArrayBuffer> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`PDF取得に失敗しました: ${response.status}`);
+  try {
+    const response = await fetch('https://www.release.tdnet.info/inbs/' + url);
+
+    if (!response.ok) {
+      throw new Error(`PDF取得に失敗しました: ${response.status} ${response.statusText}`);
+    }
+
+    return await response.arrayBuffer();
+  } catch (error) {
+    console.error('[Background] PDF取得エラー:', error);
+    throw error;
   }
-  return response.arrayBuffer();
 }
 
 async function summarizeWithLLM(pdfData: ArrayBuffer, settings: Settings): Promise<string> {
-  // PDFのテキスト抽出は実装が必要 (pdf.js等を使用)
-  // ここでは簡易的な実装
-  const pdfText = await extractTextFromPDF(pdfData);
+  try {
+    // Offscreen Documentをセットアップ
+    await setupOffscreenDocument();
 
-  const response = await fetch(settings.apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${settings.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: settings.model,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'あなたは日本の適時開示情報を要約する専門家です。開示内容を簡潔に要約し、重要なポイントを箇条書きで示してください。',
-        },
-        {
-          role: 'user',
-          content: `以下のTDnet開示内容を要約してください:\n\n${pdfText}`,
-        },
-      ],
-    }),
-  });
+    // PDFのテキスト抽出（Offscreen Documentで処理）
+    const pdfText = await extractTextFromPDF(pdfData);
 
-  if (!response.ok) {
-    throw new Error(`API呼び出しに失敗しました: ${response.status}`);
+    // LLM API呼び出し
+    const response = await fetch(settings.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'あなたは日本の適時開示情報を要約する専門家です。開示内容を簡潔に要約し、重要なポイントを箇条書きで示してください。',
+          },
+          {
+            role: 'user',
+            content: `以下のTDnet開示内容を要約してください:\n\n${pdfText}`,
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[Background] LLM APIエラー:', response.status, errorText);
+      throw new Error(`API呼び出しに失敗しました: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.choices?.[0]?.message?.content) {
+      console.error('[Background] 不正なレスポンス形式:', data);
+      throw new Error('APIレスポンスの形式が不正です');
+    }
+
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('[Background] LLM要約エラー:', error);
+    throw error;
   }
-
-  const data = await response.json();
-  return data.choices[0].message.content;
 }
 
 /**
- * 抽出したテキストをクリーニング
+ * Offscreen DocumentでPDFからテキストを抽出
  */
-function cleanExtractedText(text: string): string {
-  let cleaned = text;
-
-  // 1. 連続する空白を1つに
-  cleaned = cleaned.replace(/[ \t]+/g, ' ');
-
-  // 2. 連続する改行を最大2つに（段落区切りを維持）
-  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-
-  // 3. 行末の空白を削除
-  cleaned = cleaned.replace(/[ \t]+\n/g, '\n');
-
-  // 4. 全角スペースを半角スペースに統一
-  cleaned = cleaned.replace(/　/g, ' ');
-
-  // 5. 制御文字を除去（改行・タブは維持）
-  cleaned = cleaned.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
-
-  // 6. ページ番号っぽいパターンを除去 (例: "- 1 -", "1/10", "ページ 1")
-  cleaned = cleaned.replace(/^[-\s]*\d+[-\s]*$/gm, '');
-  cleaned = cleaned.replace(/\d+\s*\/\s*\d+/g, '');
-  cleaned = cleaned.replace(/ページ\s*\d+/g, '');
-
-  // 7. 先頭と末尾の空白を除去
-  cleaned = cleaned.trim();
-
-  return cleaned;
-}
-
 async function extractTextFromPDF(pdfData: ArrayBuffer): Promise<string> {
   try {
-    // pdf.jsを動的インポート
-    const pdfjsLib = await import('pdfjs-dist');
+    // ArrayBufferをUint8Arrayに変換（chrome.runtime.sendMessageでのシリアライゼーション対応）
+    const uint8Array = new Uint8Array(pdfData);
 
-    // Worker設定: Service Worker環境ではWorkerを無効化
-    const loadingTask = pdfjsLib.getDocument({
-      data: pdfData,
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
+    // Offscreen Documentにメッセージを送信
+    const response = await chrome.runtime.sendMessage({
+      action: 'extractPdfText',
+      pdfData: Array.from(uint8Array), // Arrayに変換して送信
     });
 
-    const pdf = await loadingTask.promise;
-    const numPages = pdf.numPages;
-    console.log(`[PDF Extract] ページ数: ${numPages}`);
-
-    const textPages: string[] = [];
-
-    // 全ページからテキストを抽出
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      try {
-        const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-
-        // テキストアイテムを結合
-        const pageText = textContent.items
-          .map((item) => {
-            if ('str' in item) {
-              return item.str;
-            }
-            return '';
-          })
-          .join(' ');
-
-        textPages.push(pageText);
-        console.log(`[PDF Extract] ページ ${pageNum}/${numPages} 完了`);
-
-        // メモリ解放
-        page.cleanup();
-      } catch (pageError) {
-        console.error(`[PDF Extract] ページ ${pageNum} の抽出エラー:`, pageError);
-        textPages.push(`[ページ ${pageNum} の抽出に失敗しました]`);
-      }
+    if (!response.success) {
+      throw new Error(response.error || 'PDF抽出に失敗しました');
     }
 
-    // 全ページのテキストを結合
-    const fullText = textPages.join('\n\n');
-    console.log(`[PDF Extract] 抽出完了（生データ）: ${fullText.length} 文字`);
-
-    if (!fullText.trim()) {
-      throw new Error('PDFからテキストを抽出できませんでした。画像PDFの可能性があります。');
-    }
-
-    // テキストクリーニング
-    const cleanedText = cleanExtractedText(fullText);
-    console.log(`[PDF Extract] クリーニング完了: ${cleanedText.length} 文字`);
-
-    // デバッグ用: 最初の500文字をログ出力
-    console.log('[PDF Extract] テキストプレビュー:', cleanedText.substring(0, 500));
-
-    return cleanedText;
+    return response.text;
   } catch (error) {
-    console.error('[PDF Extract] エラー:', error);
+    console.error('[Background] PDF抽出エラー:', error);
     if (error instanceof Error) {
       throw new Error(`PDF抽出エラー: ${error.message}`);
     }
