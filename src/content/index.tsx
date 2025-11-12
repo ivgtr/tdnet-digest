@@ -11,8 +11,16 @@ interface RowData {
   pdfUrl: string;
 }
 
+// 拡張機能が有効かどうかのフラグ
+let extensionEnabled = true;
+
 // iframe内のテーブルにボタンを追加
 function injectSummaryButtons() {
+  // 拡張機能が無効の場合はボタンを注入しない
+  if (!extensionEnabled) {
+    console.log('TDnet Digest: Extension is disabled');
+    return;
+  }
   // iframeを取得
   const iframe = document.querySelector('#main_list') as HTMLIFrameElement;
   if (!iframe) {
@@ -49,7 +57,7 @@ function injectSummaryButtons() {
   }
 
   const rows = mainTable.querySelectorAll('tbody > tr');
-  rows.forEach((row, index) => {
+  rows.forEach((row) => {
     // 既にボタンが追加されている、または要約結果の行はスキップ
     if (row.querySelector('.tdnet-digest-button-cell') || row.classList.contains('tdnet-digest-summary-row')) {
       return;
@@ -96,6 +104,31 @@ function injectSummaryButtons() {
   console.log('TDnet Digest: Buttons injected successfully');
 }
 
+// 既存のボタンとヘッダーを削除
+function removeAllButtons() {
+  const iframe = document.querySelector('#main_list') as HTMLIFrameElement;
+  if (!iframe) return;
+
+  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+  if (!iframeDoc) return;
+
+  // ヘッダーの「AI要約」列を削除
+  const headerCell = iframeDoc.querySelector('.tdnet-digest-header');
+  if (headerCell) {
+    headerCell.remove();
+  }
+
+  // 全てのボタンセルを削除
+  const buttonCells = iframeDoc.querySelectorAll('.tdnet-digest-button-cell');
+  buttonCells.forEach((cell) => cell.remove());
+
+  // 全ての要約行を削除
+  const summaryRows = iframeDoc.querySelectorAll('.tdnet-digest-summary-row');
+  summaryRows.forEach((row) => row.remove());
+
+  console.log('TDnet Digest: All buttons removed');
+}
+
 // iframe読み込みを待機
 function waitForIframe() {
   const iframe = document.querySelector('#main_list') as HTMLIFrameElement;
@@ -126,9 +159,29 @@ function waitForIframe() {
   }
 }
 
-// ページ読み込み完了時に実行
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', waitForIframe);
-} else {
-  waitForIframe();
-}
+// 初期設定を読み込み
+chrome.storage.sync.get(['extensionEnabled'], (result) => {
+  extensionEnabled = result.extensionEnabled !== false; // デフォルトはtrue
+
+  // ページ読み込み完了時に実行
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', waitForIframe);
+  } else {
+    waitForIframe();
+  }
+});
+
+// Popupからのメッセージを受信
+chrome.runtime.onMessage.addListener((request, _sender, _sendResponse) => {
+  if (request.action === 'toggleExtension') {
+    extensionEnabled = request.enabled;
+
+    if (extensionEnabled) {
+      // 有効化された場合はボタンを追加
+      injectSummaryButtons();
+    } else {
+      // 無効化された場合はボタンを削除
+      removeAllButtons();
+    }
+  }
+});

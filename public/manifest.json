@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "description": "TDnet適時開示情報をAIで要約するChrome拡張",
   "permissions": [
-    "storage"
+    "storage",
+    "activeTab"
   ],
   "host_permissions": [
     "https://www.release.tdnet.info/*"

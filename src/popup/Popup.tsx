@@ -9,9 +9,10 @@ interface Settings {
 const Popup: React.FC = () => {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [status, setStatus] = useState<string>('Loading...');
+  const [enabled, setEnabled] = useState<boolean>(true);
 
   useEffect(() => {
-    chrome.storage.sync.get(['apiUrl', 'apiKey', 'model'], (result) => {
+    chrome.storage.sync.get(['apiUrl', 'apiKey', 'model', 'extensionEnabled'], (result) => {
       if (result.apiUrl && result.apiKey) {
         setSettings({
           apiUrl: result.apiUrl,
@@ -22,11 +23,30 @@ const Popup: React.FC = () => {
       } else {
         setStatus('未設定');
       }
+
+      // デフォルトはtrue
+      setEnabled(result.extensionEnabled !== false);
     });
   }, []);
 
   const openOptions = () => {
     chrome.runtime.openOptionsPage();
+  };
+
+  const toggleEnabled = () => {
+    const newEnabled = !enabled;
+    setEnabled(newEnabled);
+    chrome.storage.sync.set({ extensionEnabled: newEnabled }, () => {
+      // Content scriptにメッセージを送信してボタンの表示/非表示を切り替え
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            action: 'toggleExtension',
+            enabled: newEnabled,
+          });
+        }
+      });
+    });
   };
 
   return (
@@ -46,6 +66,31 @@ const Popup: React.FC = () => {
           >
             {status}
           </span>
+        </div>
+      </div>
+
+      {/* オンオフトグルスイッチ */}
+      <div className="mb-4 p-3 bg-gray-50 rounded">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-800">要約ボタンを表示</p>
+            <p className="text-xs text-gray-600 mt-1">
+              開示情報一覧に要約ボタンを{enabled ? '表示' : '非表示'}
+            </p>
+          </div>
+          <button
+            onClick={toggleEnabled}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              enabled ? 'bg-blue-600' : 'bg-gray-300'
+            }`}
+            aria-label="要約ボタン表示切替"
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                enabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
         </div>
       </div>
 
