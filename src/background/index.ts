@@ -91,10 +91,107 @@ async function summarizeWithLLM(pdfData: ArrayBuffer, settings: Settings): Promi
   return data.choices[0].message.content;
 }
 
-async function extractTextFromPDF(_pdfData: ArrayBuffer): Promise<string> {
-  // TODO: pdf.jsを使用してPDFからテキストを抽出
-  // 現時点ではプレースホルダー
-  return '[PDF内容の抽出は未実装です。pdf.jsライブラリの追加が必要です。]';
+/**
+ * 抽出したテキストをクリーニング
+ */
+function cleanExtractedText(text: string): string {
+  let cleaned = text;
+
+  // 1. 連続する空白を1つに
+  cleaned = cleaned.replace(/[ \t]+/g, ' ');
+
+  // 2. 連続する改行を最大2つに（段落区切りを維持）
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+
+  // 3. 行末の空白を削除
+  cleaned = cleaned.replace(/[ \t]+\n/g, '\n');
+
+  // 4. 全角スペースを半角スペースに統一
+  cleaned = cleaned.replace(/　/g, ' ');
+
+  // 5. 制御文字を除去（改行・タブは維持）
+  cleaned = cleaned.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+
+  // 6. ページ番号っぽいパターンを除去 (例: "- 1 -", "1/10", "ページ 1")
+  cleaned = cleaned.replace(/^[-\s]*\d+[-\s]*$/gm, '');
+  cleaned = cleaned.replace(/\d+\s*\/\s*\d+/g, '');
+  cleaned = cleaned.replace(/ページ\s*\d+/g, '');
+
+  // 7. 先頭と末尾の空白を除去
+  cleaned = cleaned.trim();
+
+  return cleaned;
+}
+
+async function extractTextFromPDF(pdfData: ArrayBuffer): Promise<string> {
+  try {
+    // pdf.jsを動的インポート
+    const pdfjsLib = await import('pdfjs-dist');
+
+    // Worker設定: Service Worker環境ではWorkerを無効化
+    const loadingTask = pdfjsLib.getDocument({
+      data: pdfData,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+
+    const pdf = await loadingTask.promise;
+    const numPages = pdf.numPages;
+    console.log(`[PDF Extract] ページ数: ${numPages}`);
+
+    const textPages: string[] = [];
+
+    // 全ページからテキストを抽出
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+      try {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+
+        // テキストアイテムを結合
+        const pageText = textContent.items
+          .map((item) => {
+            if ('str' in item) {
+              return item.str;
+            }
+            return '';
+          })
+          .join(' ');
+
+        textPages.push(pageText);
+        console.log(`[PDF Extract] ページ ${pageNum}/${numPages} 完了`);
+
+        // メモリ解放
+        page.cleanup();
+      } catch (pageError) {
+        console.error(`[PDF Extract] ページ ${pageNum} の抽出エラー:`, pageError);
+        textPages.push(`[ページ ${pageNum} の抽出に失敗しました]`);
+      }
+    }
+
+    // 全ページのテキストを結合
+    const fullText = textPages.join('\n\n');
+    console.log(`[PDF Extract] 抽出完了（生データ）: ${fullText.length} 文字`);
+
+    if (!fullText.trim()) {
+      throw new Error('PDFからテキストを抽出できませんでした。画像PDFの可能性があります。');
+    }
+
+    // テキストクリーニング
+    const cleanedText = cleanExtractedText(fullText);
+    console.log(`[PDF Extract] クリーニング完了: ${cleanedText.length} 文字`);
+
+    // デバッグ用: 最初の500文字をログ出力
+    console.log('[PDF Extract] テキストプレビュー:', cleanedText.substring(0, 500));
+
+    return cleanedText;
+  } catch (error) {
+    console.error('[PDF Extract] エラー:', error);
+    if (error instanceof Error) {
+      throw new Error(`PDF抽出エラー: ${error.message}`);
+    }
+    throw new Error('PDFからテキストを抽出できませんでした。');
+  }
 }
 
 export {};
