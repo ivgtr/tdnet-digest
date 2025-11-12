@@ -4,11 +4,10 @@
   "version": "0.1.0",
   "description": "TDnet適時開示情報をAIで要約するChrome拡張",
   "permissions": [
-    "storage",
-    "activeTab"
+    "storage"
   ],
   "host_permissions": [
-    "https://disclosure2.tdnet.info/*"
+    "https://www.release.tdnet.info/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -25,7 +24,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://disclosure2.tdnet.info/*/ips/*/pdf/*"],
+      "matches": ["https://www.release.tdnet.info/*"],
       "js": ["content/index.js"],
       "css": ["content/style.css"],
       "run_at": "document_end"

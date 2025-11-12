@@ -45,7 +45,7 @@ npm run format
 
 ### Content Script (`src/content/`)
 
-- **注入先**: `https://disclosure2.tdnet.info/*/ips/*/pdf/*`（manifest.jsonで定義）
+- **注入先**: `https://www.release.tdnet.info/*`（manifest.jsonで定義）
 - **動作**: ページ読み込み時に`SummaryButton`コンポーネントを`position: fixed`で右上に配置
 - **通信**: `chrome.runtime.sendMessage`でBackground Scriptに要約リクエスト送信
 
@@ -71,6 +71,6 @@ npm run format
 ## 開発時の注意点
 
 - **PDF抽出機能は未実装**: `src/background/index.ts`の`extractTextFromPDF()`を実装する必要がある。pdf.jsライブラリの追加が必要。
-- **Content Scriptのマッチパターン**: TDnetのPDF詳細ページのURL構造に依存。URLが変更された場合はmanifest.jsonの`matches`を更新。
+- **セキュリティ**: この拡張機能は`https://www.release.tdnet.info/*`ドメインでのみ動作するように制限されている。他のドメインでの動作は不要。
 - **Chrome拡張のロード**: `dist/`ディレクトリをChromeの拡張機能管理ページで「パッケージ化されていない拡張機能を読み込む」から読み込む。
 - **ホットリロード**: `npm run dev`でファイル監視されるが、Chrome拡張自体のリロードは手動で行う必要がある。
