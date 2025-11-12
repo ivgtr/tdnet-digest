@@ -1,1 +1,1 @@
-export { default } from '@tdnet-digest/config/prettier';
+export { default } from './prettier.config.js';
