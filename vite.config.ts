@@ -14,5 +14,10 @@ export default defineConfig({
   },
   build: {
     sourcemap: process.env.NODE_ENV === 'development',
+    rollupOptions: {
+      input: {
+        offscreen: resolve(__dirname, 'offscreen.html'),
+      },
+    },
   },
 });

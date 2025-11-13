@@ -7,9 +7,10 @@
 - **Tailwind CSS v4.1.17** - スタイリング（Popup/Optionsのみ）
 - **Vite 6.4.1** - 高速ビルドツール
 - **@crxjs/vite-plugin** - Chrome拡張専用Viteプラグイン
+- **pdfjs-dist 4.10.38** - PDF処理（Offscreen Documentで実行）
 - **ESLint 9.17.0** - コード品質チェック
 - **Prettier 3.4.2** - コードフォーマット
-- **Chrome Extensions Manifest V3** - 拡張機能仕様
+- **Chrome Extensions Manifest V3** - 拡張機能仕様（Service Worker + Offscreen Document）
 
 ## プロジェクト構造
 
@@ -17,6 +18,7 @@
 tdnet-digest/
 ├── src/
 │   ├── background/     # Service Worker
+│   ├── offscreen/      # Offscreen Document（PDF処理）
 │   ├── content/        # コンテンツスクリプト（インラインスタイル）
 │   ├── popup/          # ポップアップUI
 │   ├── options/        # 設定ページ
@@ -25,6 +27,7 @@ tdnet-digest/
 │   └── logo.png        # アイコン（全サイズで使用）
 ├── popup.html          # ポップアップHTML
 ├── options.html        # 設定ページHTML
+├── offscreen.html      # Offscreen DocumentHTML
 ├── manifest.config.ts  # マニフェスト定義（TypeScript）
 ├── dist/               # ビルド出力 (git無視)
 ├── vite.config.ts      # Vite設定
@@ -103,12 +106,18 @@ npm run format
 
 ### PDFテキスト抽出
 
-`src/background/index.ts` の `extractTextFromPDF` 関数は現在未実装です。
-pdf.js などのライブラリを使用してPDFからテキストを抽出する実装が必要です。
+**Offscreen Documents APIを使用して実装済み**
 
-```bash
-npm install pdfjs-dist
-```
+Service WorkerではDOM APIが使えないため、PDF.jsの実行にOffscreen Documentを使用しています：
+
+- **実装場所**: `src/offscreen/index.ts`
+- **Worker設定**: Viteの`?url`インポートで`pdfjs-dist/build/pdf.worker.min.mjs`を自動バンドル
+- **処理フロー**:
+  1. Background ScriptがPDFをフェッチ（ArrayBuffer）
+  2. `chrome.runtime.sendMessage()`でOffscreen Documentに送信
+  3. Offscreen DocumentでPDF.jsを使ってテキスト抽出
+  4. 抽出したテキストをBackground Scriptに返送
+- **テキストクリーニング**: 連続空白除去、改行正規化、ページ番号除去などを実行
 
 ### API設定
 
@@ -159,11 +168,11 @@ npm install
 
 ## 次のステップ
 
-1. PDF抽出機能の実装（pdf.js の統合）
-2. エラーハンドリングの改善
-3. 要約結果のキャッシュ機能
-4. テストの追加
-5. CI/CDの設定
+1. エラーハンドリングの改善
+2. 要約結果のキャッシュ機能
+3. テストの追加
+4. CI/CDの設定
+5. OCR対応（画像PDFの処理）
 
 ## バージョン情報
 
@@ -173,6 +182,7 @@ npm install
 - TypeScript: 5.7.2
 - Vite: 6.4.1
 - @crxjs/vite-plugin: 2.0.7
+- pdfjs-dist: 4.10.38
 - Tailwind CSS: 4.1.17
 - ESLint: 9.17.0
 - Prettier: 3.4.2
