@@ -15,6 +15,20 @@ export interface ChatMessage {
   content: string;
 }
 
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+  isServerError: boolean;
+
+  constructor(message: string, status: number, statusText: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.statusText = statusText;
+    this.isServerError = status >= 500;
+  }
+}
+
 /**
  * LLM APIを呼び出して応答を取得
  */
@@ -58,8 +72,11 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('[LLM Client] API呼び出しエラー:', response.status, errorText);
-    throw new Error(`API呼び出しに失敗しました: ${response.status} ${response.statusText}`);
+    const apiError = buildApiError(response.status, response.statusText, errorText);
+    if (apiError.isServerError) {
+      console.error('[LLM Client] API呼び出しエラー:', response.status, errorText);
+    }
+    throw apiError;
   }
 
   const data = await response.json();
@@ -103,8 +120,11 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('[LLM Client] Anthropic API呼び出しエラー:', response.status, errorText);
-    throw new Error(`API呼び出しに失敗しました: ${response.status} ${response.statusText}`);
+    const apiError = buildApiError(response.status, response.statusText, errorText);
+    if (apiError.isServerError) {
+      console.error('[LLM Client] Anthropic API呼び出しエラー:', response.status, errorText);
+    }
+    throw apiError;
   }
 
   const data = await response.json();
@@ -133,4 +153,95 @@ function getDefaultBaseUrl(provider: string): string {
     default:
       throw new Error(`プロバイダー ${provider} のデフォルトURLが見つかりません`);
   }
+}
+
+function buildApiError(status: number, statusText: string, errorText: string): ApiError {
+  const detail = extractApiErrorMessage(errorText);
+  const text = detail || statusText;
+  const message = `API呼び出しに失敗しました: ${status} ${text}`.trim();
+  return new ApiError(message, status, statusText);
+}
+
+function extractApiErrorMessage(errorText: string): string | null {
+  const trimmed = errorText.trim();
+  if (!trimmed) return null;
+
+  const parsed = safeJsonParse(trimmed);
+  if (!parsed) {
+    return trimmed;
+  }
+
+  const outerMessage = findErrorMessage(parsed);
+  const rawDetail = extractRawDetail(parsed);
+  const innerMessage = rawDetail ? extractRawMessage(rawDetail) : null;
+
+  return combineErrorMessages(outerMessage, innerMessage) || trimmed;
+}
+
+function findErrorMessage(data: unknown): string | null {
+  if (typeof data === 'string') return data;
+  if (!data) return null;
+
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const message = findErrorMessage(item);
+      if (message) return message;
+    }
+    return null;
+  }
+
+  if (typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    if (typeof obj.message === 'string') return obj.message;
+    if (typeof obj.error === 'string') return obj.error;
+    if (typeof obj.detail === 'string') return obj.detail;
+
+    if (obj.error) {
+      const message = findErrorMessage(obj.error);
+      if (message) return message;
+    }
+
+    if (obj.errors) {
+      const message = findErrorMessage(obj.errors);
+      if (message) return message;
+    }
+  }
+
+  return null;
+}
+
+function safeJsonParse(text: string): unknown | null {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function extractRawDetail(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const obj = data as Record<string, unknown>;
+  const error = obj.error;
+  if (!error || typeof error !== 'object') return null;
+  const err = error as Record<string, unknown>;
+  const metadata = err.metadata;
+  if (!metadata || typeof metadata !== 'object') return null;
+  const raw = (metadata as Record<string, unknown>).raw;
+  return typeof raw === 'string' ? raw : null;
+}
+
+function extractRawMessage(raw: string): string | null {
+  const parsedRaw = safeJsonParse(raw);
+  if (parsedRaw) {
+    return findErrorMessage(parsedRaw) || raw;
+  }
+  return raw;
+}
+
+function combineErrorMessages(primary: string | null, secondary: string | null): string | null {
+  if (primary && secondary) {
+    if (primary === secondary) return primary;
+    return `${primary}（詳細: ${secondary}）`;
+  }
+  return primary || secondary;
 }
