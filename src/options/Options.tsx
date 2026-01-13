@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import type { ExtractionMode } from '@/types/summaryMetadata';
 import { LLM_PROVIDERS, getProvider } from '@/lib/llm-providers';
 
 const Options: React.FC = () => {
@@ -7,16 +8,21 @@ const Options: React.FC = () => {
   const [model, setModel] = useState('gpt-4o');
   const [customUrl, setCustomUrl] = useState('');
   const [useCustomModel, setUseCustomModel] = useState(false);
+  const [extractionMode, setExtractionMode] = useState<ExtractionMode>('smart');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    chrome.storage.sync.get(['provider', 'apiKey', 'model', 'customUrl', 'useCustomModel'], (result) => {
-      if (result.provider) setProvider(result.provider);
-      if (result.apiKey) setApiKey(result.apiKey);
-      if (result.model) setModel(result.model);
-      if (result.customUrl) setCustomUrl(result.customUrl);
-      if (result.useCustomModel !== undefined) setUseCustomModel(result.useCustomModel);
-    });
+    chrome.storage.sync.get(
+      ['provider', 'apiKey', 'model', 'customUrl', 'useCustomModel', 'extractionMode'],
+      (result) => {
+        if (result.provider) setProvider(result.provider);
+        if (result.apiKey) setApiKey(result.apiKey);
+        if (result.model) setModel(result.model);
+        if (result.customUrl) setCustomUrl(result.customUrl);
+        if (result.useCustomModel !== undefined) setUseCustomModel(result.useCustomModel);
+        if (result.extractionMode) setExtractionMode(result.extractionMode);
+      }
+    );
   }, []);
 
   // プロバイダー変更時の処理
@@ -37,6 +43,7 @@ const Options: React.FC = () => {
         model,
         customUrl: provider === 'custom' ? customUrl : '',
         useCustomModel,
+        extractionMode,
       },
       () => {
         setSaved(true);
@@ -168,6 +175,40 @@ const Options: React.FC = () => {
                 ? 'モデル名を入力してください'
                 : 'プリセットから選択するか、カスタムモデル名を入力できます'}
             </p>
+          </div>
+
+          <div>
+            <label htmlFor="extractionMode" className="block text-sm font-medium text-gray-700 mb-2">
+              抽出モード
+            </label>
+            <select
+              id="extractionMode"
+              value={extractionMode}
+              onChange={(e) => setExtractionMode(e.target.value as ExtractionMode)}
+              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="smart">要点抽出</option>
+              <option value="full">全文抽出</option>
+            </select>
+            <div className="mt-2 p-3 bg-gray-50 rounded text-xs text-gray-700">
+              {extractionMode === 'smart' ? (
+                <div>
+                  <strong>スマート抽出:</strong>
+                  <ul className="mt-1 ml-4 list-disc space-y-1">
+                    <li>トークン使用量: 少ない</li>
+                    <li>重要なセクションやページのみを抽出</li>
+                  </ul>
+                </div>
+              ) : (
+                <div>
+                  <strong>全文抽出:</strong>
+                  <ul className="mt-1 ml-4 list-disc space-y-1">
+                    <li>トークン使用量: 多い</li>
+                    <li>PDF全体を抽出して要約</li>
+                  </ul>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-4">
