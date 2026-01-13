@@ -1,12 +1,15 @@
+import { generateText, type LLMConfig, type ChatMessage } from '@/lib/llm-client';
+
 interface SummarizeRequest {
   action: 'summarize';
   pdfUrl: string;
 }
 
 interface Settings {
-  apiUrl: string;
+  provider: string;
   apiKey: string;
   model: string;
+  customUrl?: string;
 }
 
 // 拡張機能のインストール・更新時
@@ -63,8 +66,14 @@ async function handleSummarize(pdfUrl: string): Promise<string> {
     // 設定を取得
     const settings = await getSettings();
 
-    if (!settings.apiUrl || !settings.apiKey) {
-      throw new Error('API設定が未完了です。拡張機能の設定ページで設定してください。');
+    if (!settings.apiKey) {
+      throw new Error('APIキーが設定されていません。拡張機能の設定ページで設定してください。');
+    }
+
+    if (settings.provider === 'custom' && !settings.customUrl) {
+      throw new Error(
+        'カスタムプロバイダーを使用する場合はAPI URLを設定してください。'
+      );
     }
 
     // PDFを取得
@@ -82,11 +91,12 @@ async function handleSummarize(pdfUrl: string): Promise<string> {
 
 async function getSettings(): Promise<Settings> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['apiUrl', 'apiKey', 'model'], (result) => {
+    chrome.storage.sync.get(['provider', 'apiKey', 'model', 'customUrl'], (result) => {
       resolve({
-        apiUrl: result.apiUrl || '',
+        provider: result.provider || 'openai',
         apiKey: result.apiKey || '',
         model: result.model || 'gpt-4o',
+        customUrl: result.customUrl || '',
       });
     });
   });
@@ -109,49 +119,47 @@ async function fetchPDF(url: string): Promise<ArrayBuffer> {
 
 async function summarizeWithLLM(pdfData: ArrayBuffer, settings: Settings): Promise<string> {
   try {
+    // 設定の検証
+    if (!settings.apiKey) {
+      throw new Error('APIキーが設定されていません');
+    }
+
+    // カスタムプロバイダーの場合はURLも必須
+    if (settings.provider === 'custom' && !settings.customUrl) {
+      throw new Error('カスタムプロバイダーを使用する場合はAPI URLを設定してください');
+    }
+
     // Offscreen Documentをセットアップ
     await setupOffscreenDocument();
 
     // PDFのテキスト抽出（Offscreen Documentで処理）
     const pdfText = await extractTextFromPDF(pdfData);
 
-    // LLM API呼び出し
-    const response = await fetch(settings.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${settings.apiKey}`,
+    // LLM設定を構築
+    const llmConfig: LLMConfig = {
+      provider: settings.provider,
+      apiKey: settings.apiKey,
+      model: settings.model,
+      baseUrl: settings.customUrl || undefined,
+    };
+
+    // メッセージを構築
+    const messages: ChatMessage[] = [
+      {
+        role: 'system',
+        content:
+          'あなたは日本の適時開示情報を要約する専門家です。開示内容を簡潔に要約し、重要なポイントを箇条書きで示してください。',
       },
-      body: JSON.stringify({
-        model: settings.model,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'あなたは日本の適時開示情報を要約する専門家です。開示内容を簡潔に要約し、重要なポイントを箇条書きで示してください。',
-          },
-          {
-            role: 'user',
-            content: `以下のTDnet開示内容を要約してください:\n\n${pdfText}`,
-          },
-        ],
-      }),
-    });
+      {
+        role: 'user',
+        content: `以下のTDnet開示内容を要約してください:\n\n${pdfText}`,
+      },
+    ];
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[Background] LLM APIエラー:', response.status, errorText);
-      throw new Error(`API呼び出しに失敗しました: ${response.status} ${response.statusText}`);
-    }
+    // 統一LLMクライアントを使用して要約を生成
+    const summary = await generateText(llmConfig, messages);
 
-    const data = await response.json();
-
-    if (!data.choices?.[0]?.message?.content) {
-      console.error('[Background] 不正なレスポンス形式:', data);
-      throw new Error('APIレスポンスの形式が不正です');
-    }
-
-    return data.choices[0].message.content;
+    return summary;
   } catch (error) {
     console.error('[Background] LLM要約エラー:', error);
     throw error;
