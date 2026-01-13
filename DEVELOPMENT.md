@@ -4,10 +4,10 @@
 
 - **React 18.3.1** - UI フレームワーク
 - **TypeScript 5.7.2** - 型安全な開発
-- **Tailwind CSS v4.1.17** - スタイリング（Popup/Optionsのみ）
-- **Vite 6.4.1** - 高速ビルドツール
-- **@crxjs/vite-plugin** - Chrome拡張専用Viteプラグイン
-- **pdfjs-dist 4.10.38** - PDF処理（Offscreen Documentで実行）
+- **Tailwind CSS v4.0.0-beta.7** - スタイリング（Popup/Optionsのみ）
+- **Vite 6.0.3** - 高速ビルドツール
+- **@crxjs/vite-plugin 2.2.1** - Chrome拡張専用Viteプラグイン
+- **pdfjs-dist 5.4.394** - PDF処理（Offscreen Documentで実行）
 - **ESLint 9.17.0** - コード品質チェック
 - **Prettier 3.4.2** - コードフォーマット
 - **Chrome Extensions Manifest V3** - 拡張機能仕様（Service Worker + Offscreen Document）
@@ -180,10 +180,10 @@ npm install
 
 - React: 18.3.1
 - TypeScript: 5.7.2
-- Vite: 6.4.1
-- @crxjs/vite-plugin: 2.0.7
-- pdfjs-dist: 4.10.38
-- Tailwind CSS: 4.1.17
+- Vite: 6.0.3
+- @crxjs/vite-plugin: 2.2.1
+- pdfjs-dist: 5.4.394
+- Tailwind CSS: 4.0.0-beta.7
 - ESLint: 9.17.0
 - Prettier: 3.4.2
 
