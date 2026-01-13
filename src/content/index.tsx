@@ -1,14 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import SummaryButton from './SummaryButton';
-
-interface RowData {
-  time: string;
-  code: string;
-  companyName: string;
-  title: string;
-  pdfUrl: string;
-}
+import { extractRowData } from './utils/rowDataExtractor';
+import { addHeaderColumn, getRowCellClass, updateLastCellClass } from './utils/tdnetDomHelper';
 
 // 拡張機能が有効かどうかのフラグ
 let extensionEnabled = true;
@@ -20,6 +14,7 @@ function injectSummaryButtons() {
     console.log('TDnet Digest: Extension is disabled');
     return;
   }
+
   // iframeを取得
   const iframe = document.querySelector('#main_list') as HTMLIFrameElement;
   if (!iframe) {
@@ -33,28 +28,8 @@ function injectSummaryButtons() {
     return;
   }
 
-  // ヘッダーに「要約」列を追加
-  const headerTable = iframeDoc.querySelector('#list-head');
-  if (headerTable) {
-    const headerRow = headerTable.querySelector('tr');
-    if (headerRow && !headerRow.querySelector('.tdnet-digest-header')) {
-      // 既存の最後の列（更新履歴）の header-R を header-M に変更
-      const lastHeaderCell = headerRow.querySelector('td:last-child') as HTMLElement;
-      if (lastHeaderCell && lastHeaderCell.classList.contains('header-R')) {
-        lastHeaderCell.classList.remove('header-R');
-        lastHeaderCell.classList.add('header-M');
-        lastHeaderCell.style.borderRadius = '0';
-      }
-
-      const headerCell = iframeDoc.createElement('td');
-      headerCell.className = 'header-R tdnet-digest-header';
-      headerCell.setAttribute('nowrap', '');
-      headerCell.setAttribute('align', 'center');
-      headerCell.style.width = '80px';
-      headerCell.textContent = 'AI要約';
-      headerRow.appendChild(headerCell);
-    }
-  }
+  // ヘッダーに「AI要約」列を追加
+  addHeaderColumn(iframeDoc);
 
   // テーブル内の各行にボタンを追加
   const mainTable = iframeDoc.querySelector('#main-list-table');
@@ -66,55 +41,26 @@ function injectSummaryButtons() {
   const rows = mainTable.querySelectorAll('tbody > tr');
   rows.forEach((row) => {
     // 既にボタンが追加されている、または要約結果の行はスキップ
-    if (row.querySelector('.tdnet-digest-button-cell') || row.classList.contains('tdnet-digest-summary-row')) {
+    if (
+      row.querySelector('.tdnet-digest-button-cell') ||
+      row.classList.contains('tdnet-digest-summary-row')
+    ) {
       return;
     }
 
     // 行データを抽出
-    const timeCell = row.querySelector('.kjTime');
-    const codeCell = row.querySelector('.kjCode');
-    const nameCell = row.querySelector('.kjName');
-    const titleCell = row.querySelector('.kjTitle');
-    const linkElement = titleCell?.querySelector('a');
-
-    if (!timeCell || !codeCell || !nameCell || !titleCell || !linkElement) {
-      return;
-    }
-
-    const rowData: RowData = {
-      time: timeCell.textContent?.trim() || '',
-      code: codeCell.textContent?.trim() || '',
-      companyName: nameCell.textContent?.trim() || '',
-      title: linkElement.textContent?.trim() || '',
-      pdfUrl: linkElement.getAttribute('href') || '',
-    };
+    const rowData = extractRowData(row);
+    if (!rowData) return;
 
     // 既存の最後のセル（更新履歴）の -R を -M に変更
-    const lastCell = row.querySelector('td:last-child');
-    if (lastCell) {
-      const lastCellClass = lastCell.className;
-      if (lastCellClass.includes('oddnew-R')) {
-        lastCell.className = lastCellClass.replace('oddnew-R', 'oddnew-M');
-      } else if (lastCellClass.includes('evennew-R')) {
-        lastCell.className = lastCellClass.replace('evennew-R', 'evennew-M');
-      }
-    }
+    updateLastCellClass(row);
 
     // ボタン用のtdを作成
     const buttonCell = iframeDoc.createElement('td');
-    // 最初のセルのクラス名から行のタイプ（oddnew/evennew）を判定
-    const firstCell = row.querySelector('td:first-child');
-    const firstCellClass = firstCell?.className || '';
-    let cellClass = '';
-    if (firstCellClass.includes('oddnew')) {
-      cellClass = 'oddnew-R';
-    } else if (firstCellClass.includes('evennew')) {
-      cellClass = 'evennew-R';
-    }
+    const cellClass = getRowCellClass(row);
     buttonCell.className = `${cellClass} tdnet-digest-button-cell`;
     buttonCell.setAttribute('nowrap', '');
     buttonCell.setAttribute('align', 'center');
-    // セルの幅を設定
     buttonCell.style.width = '80px';
 
     // Reactコンポーネントをレンダリング
