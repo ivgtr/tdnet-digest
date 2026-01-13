@@ -6,7 +6,7 @@ export default defineManifest({
   name: 'TDnet Digest',
   version: packageJson.version,
   description: 'TDnet適時開示情報をAIで要約するChrome拡張',
-  permissions: ['storage', 'activeTab'],
+  permissions: ['storage', 'activeTab', 'offscreen'],
   host_permissions: ['https://www.release.tdnet.info/*'],
   action: {
     default_popup: 'popup.html',

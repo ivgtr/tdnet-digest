@@ -41,13 +41,16 @@ npm run format
 
 - **エントリーポイント**:
   - `popup.html` / `options.html`: 拡張機能のUI（React + Tailwind CSS）
+  - `offscreen.html`: Offscreen Document（PDF処理用）
   - `src/content/index.tsx`: Content Script（インラインスタイルのみ使用）
   - `src/background/index.ts`: Background Service Worker（Manifest V3）
 
 - **ビルド出力**: `dist/`ディレクトリ
   - `assets/index.tsx-loader-*.js`: Content Scriptのローダー
   - `assets/index.tsx-*.js`: 実際のContent Scriptコード（web_accessible_resources）
+  - `assets/pdf.worker.min-*.mjs`: PDF.js Worker（Viteが自動バンドル）
   - `service-worker-loader.js`: Background Service Worker
+  - `offscreen.html`: Offscreen Document
   - `manifest.json`: 自動生成
   - `logo.png`: 全サイズで使用される単一アイコン
 
@@ -72,9 +75,30 @@ npm run format
 
 ### Background Service Worker (`src/background/index.ts`)
 
-- **役割**: Content Scriptからの`summarize`メッセージを受信し、PDF取得→LLM要約を実行
+- **役割**: Content Scriptからの`summarize`メッセージを受信し、PDF取得→Offscreen Documentで抽出→LLM要約を実行
 - **設定取得**: `chrome.storage.sync`からAPI URL/Key/Modelを取得
-- **未実装**: `extractTextFromPDF()`関数はプレースホルダー。pdf.jsライブラリの統合が必要
+- **PDF取得**: TDnetからPDFファイルを`fetch()`でArrayBufferとして取得
+- **Offscreen Document管理**:
+  - `setupOffscreenDocument()`: Offscreen Documentの作成・管理
+  - 既存のOffscreen Documentがあれば再利用、なければ新規作成
+- **PDF処理の委譲**:
+  - ArrayBufferをArrayに変換して`chrome.runtime.sendMessage()`でOffscreen Documentに送信
+  - Offscreen DocumentでPDF.jsを使ってテキスト抽出
+  - 抽出されたテキストをLLM APIに送信して要約生成
+
+### Offscreen Document (`src/offscreen/index.ts`)
+
+- **目的**: Service WorkerではDOM APIが使えないため、PDF.jsでPDF処理を行う専用環境
+- **PDF.js Worker設定**:
+  - Viteの`?url`インポートで`pdfjs-dist/build/pdf.worker.min.mjs`を参照
+  - `GlobalWorkerOptions.workerSrc`に`chrome.runtime.getURL()`で取得したURLを設定
+  - Viteが自動的にWorkerファイルをバンドル（ハッシュ化されたファイル名で最適化）
+- **テキスト抽出処理**:
+  - Background Scriptから受信したArrayをUint8Arrayに変換
+  - pdf.jsの`getDocument()`でPDFを読み込み
+  - 全ページからテキストを抽出し、クリーニング処理を実行
+  - 抽出結果をBackground Scriptに返送
+- **エラーハンドリング**: PDF読み込み失敗やページ抽出エラーを適切にハンドリング
 
 ### Options/Popup UI (`src/options/`, `src/popup/`)
 
@@ -92,13 +116,24 @@ npm run format
   - Popup/Options: Tailwind CSS 4.0-beta
   - Content Script: インラインスタイルのみ（TDNETページの表示崩れを防ぐため）
 - **ビルド**: Vite 6 + @crxjs/vite-plugin + @vitejs/plugin-react
-- **Chrome拡張**: Manifest V3（Service Worker使用）
+- **Chrome拡張**: Manifest V3（Service Worker + Offscreen Document使用）
+- **PDF処理**: pdfjs-dist（Offscreen Documentで実行）
 - **パスエイリアス**: `@/`は`./src/`を指す（vite.config.ts）
 - **アイコン**: `public/logo.png`（全サイズで使用）
 
 ## 開発時の注意点
 
-- **PDF抽出機能は未実装**: `src/background/index.ts`の`extractTextFromPDF()`を実装する必要がある。pdf.jsライブラリの追加が必要。
+- **Offscreen Documents API**:
+  - Manifest V3のService WorkerではDOM APIが使えないため、PDF.jsの実行にOffscreen Documentを使用
+  - `offscreen`パーミッションが`manifest.config.ts`で設定されている
+  - Offscreen Documentは1拡張機能につき1つのみ作成可能
+  - `chrome.runtime.getContexts()`で既存のOffscreen Documentをチェックしてから作成
+
+- **PDF.js Worker設定**:
+  - Viteの`?url`サフィックスを使って`pdfjs-dist/build/pdf.worker.min.mjs`をインポート
+  - Viteが自動的にWorkerファイルをバンドルし、ハッシュ化されたファイル名で出力
+  - `GlobalWorkerOptions.workerSrc`の設定は必須（設定しないとエラーになる）
+  - Chrome拡張機能では`chrome.runtime.getURL()`で相対パスを絶対URLに変換
 
 - **セキュリティ**: この拡張機能は`https://www.release.tdnet.info/*`ドメインでのみ動作するように制限されている。他のドメインでの動作は不要。
 

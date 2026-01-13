@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { getProvider } from '@/lib/llm-providers';
 
 interface Settings {
-  apiUrl: string;
+  provider: string;
   apiKey: string;
   model: string;
 }
@@ -12,10 +13,10 @@ const Popup: React.FC = () => {
   const [enabled, setEnabled] = useState<boolean>(true);
 
   useEffect(() => {
-    chrome.storage.sync.get(['apiUrl', 'apiKey', 'model', 'extensionEnabled'], (result) => {
-      if (result.apiUrl && result.apiKey) {
+    chrome.storage.sync.get(['provider', 'apiKey', 'model', 'extensionEnabled'], (result) => {
+      if (result.apiKey) {
         setSettings({
-          apiUrl: result.apiUrl,
+          provider: result.provider || 'openai',
           apiKey: result.apiKey,
           model: result.model || 'gpt-4o',
         });
@@ -96,8 +97,10 @@ const Popup: React.FC = () => {
 
       {settings && (
         <div className="mb-4 p-3 bg-gray-50 rounded">
-          <p className="text-xs text-gray-600 mb-1">API URL</p>
-          <p className="text-sm font-mono text-gray-800 truncate">{settings.apiUrl}</p>
+          <p className="text-xs text-gray-600 mb-1">プロバイダー</p>
+          <p className="text-sm font-mono text-gray-800">
+            {getProvider(settings.provider)?.name || settings.provider}
+          </p>
           <p className="text-xs text-gray-600 mb-1 mt-2">モデル</p>
           <p className="text-sm font-mono text-gray-800">{settings.model}</p>
         </div>
