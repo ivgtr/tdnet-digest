@@ -1,8 +1,13 @@
 import { generateText, type LLMConfig, type ChatMessage } from '@/lib/llm-client';
+import { detectDocumentType, type DocumentType } from '@/lib/document-type';
+import { getPromptForDocumentType } from '@/lib/prompts';
+import type { SummaryMetadata, ExtractionMode } from '@/types/summaryMetadata';
 
 interface SummarizeRequest {
   action: 'summarize';
   pdfUrl: string;
+  title: string; // 文書タイプ判別用
+  forceExtractionMode?: ExtractionMode; // 全文再要約ボタン用
 }
 
 interface Settings {
@@ -10,6 +15,7 @@ interface Settings {
   apiKey: string;
   model: string;
   customUrl?: string;
+  extractionMode?: ExtractionMode;
 }
 
 // 拡張機能のインストール・更新時
@@ -48,20 +54,33 @@ async function setupOffscreenDocument(): Promise<void> {
 
 // メッセージリスナー
 chrome.runtime.onMessage.addListener((request: SummarizeRequest, _sender, sendResponse) => {
+  console.log('[Background DEBUG] Message received:', request.action);
+
   if (request.action === 'summarize') {
-    handleSummarize(request.pdfUrl)
-      .then((summary) => {
-        sendResponse({ summary });
+    console.log('[Background DEBUG] Summarize params:', {
+      pdfUrl: request.pdfUrl,
+      title: request.title,
+      forceExtractionMode: request.forceExtractionMode,
+    });
+
+    handleSummarize(request.pdfUrl, request.title, request.forceExtractionMode)
+      .then((result) => {
+        console.log('[Background DEBUG] Summarize completed');
+        sendResponse({ summary: result.summary, metadata: result.metadata });
       })
       .catch((error) => {
         console.error('[Background] エラー:', error);
-        sendResponse({ error: error.message });
+        sendResponse({ error: error instanceof Error ? error.message : '不明なエラー' });
       });
     return true; // 非同期レスポンスを示す
   }
 });
 
-async function handleSummarize(pdfUrl: string): Promise<string> {
+async function handleSummarize(
+  pdfUrl: string,
+  title: string,
+  forceExtractionMode?: ExtractionMode
+): Promise<{ summary: string; metadata: SummaryMetadata }> {
   try {
     // 設定を取得
     const settings = await getSettings();
@@ -76,13 +95,23 @@ async function handleSummarize(pdfUrl: string): Promise<string> {
       );
     }
 
+    // 文書タイプを判別
+    const documentType = detectDocumentType(title);
+    console.log(`[Background] 文書タイプ: ${documentType} (タイトル: ${title})`);
+
+    // 強制抽出モードがあれば設定より優先
+    const extractionMode = forceExtractionMode || settings.extractionMode || 'smart';
+    console.log(
+      `[Background] 抽出モード: ${extractionMode}${forceExtractionMode ? ' (強制)' : ''}`
+    );
+
     // PDFを取得
     const pdfData = await fetchPDF(pdfUrl);
 
     // LLMで要約
-    const summary = await summarizeWithLLM(pdfData, settings);
+    const result = await summarizeWithLLM(pdfData, settings, documentType, extractionMode);
 
-    return summary;
+    return result;
   } catch (error) {
     console.error('[Background] 要約処理エラー:', error);
     throw error;
@@ -91,14 +120,18 @@ async function handleSummarize(pdfUrl: string): Promise<string> {
 
 async function getSettings(): Promise<Settings> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['provider', 'apiKey', 'model', 'customUrl'], (result) => {
-      resolve({
-        provider: result.provider || 'openai',
-        apiKey: result.apiKey || '',
-        model: result.model || 'gpt-4o',
-        customUrl: result.customUrl || '',
-      });
-    });
+    chrome.storage.sync.get(
+      ['provider', 'apiKey', 'model', 'customUrl', 'extractionMode'],
+      (result) => {
+        resolve({
+          provider: result.provider || 'openai',
+          apiKey: result.apiKey || '',
+          model: result.model || 'gpt-4o',
+          customUrl: result.customUrl || '',
+          extractionMode: result.extractionMode || 'smart',
+        });
+      }
+    );
   });
 }
 
@@ -117,7 +150,12 @@ async function fetchPDF(url: string): Promise<ArrayBuffer> {
   }
 }
 
-async function summarizeWithLLM(pdfData: ArrayBuffer, settings: Settings): Promise<string> {
+async function summarizeWithLLM(
+  pdfData: ArrayBuffer,
+  settings: Settings,
+  documentType: DocumentType,
+  extractionMode: ExtractionMode
+): Promise<{ summary: string; metadata: SummaryMetadata }> {
   try {
     // 設定の検証
     if (!settings.apiKey) {
@@ -133,7 +171,19 @@ async function summarizeWithLLM(pdfData: ArrayBuffer, settings: Settings): Promi
     await setupOffscreenDocument();
 
     // PDFのテキスト抽出（Offscreen Documentで処理）
-    const pdfText = await extractTextFromPDF(pdfData);
+    const extractionResult = await extractTextFromPDF(pdfData, documentType, extractionMode);
+    const pdfText = extractionResult.text;
+    const metadata = extractionResult.metadata;
+
+    // 抽出メタデータをログ出力
+    console.log('[Background] 抽出メタデータ:', {
+      documentType: metadata.documentType,
+      extractionMode: metadata.extractionMode,
+      totalPages: metadata.totalPages,
+      extractedPages: `${metadata.extractedPages.length}ページ`,
+      sectionsUsed: metadata.sectionsUsed,
+      qualityWarning: metadata.qualityWarning?.message || 'なし',
+    });
 
     // LLM設定を構築
     const llmConfig: LLMConfig = {
@@ -143,23 +193,21 @@ async function summarizeWithLLM(pdfData: ArrayBuffer, settings: Settings): Promi
       baseUrl: settings.customUrl || undefined,
     };
 
+    // 文書タイプ別プロンプトを使用
+    const promptText = getPromptForDocumentType(documentType, pdfText);
+
     // メッセージを構築
     const messages: ChatMessage[] = [
       {
-        role: 'system',
-        content:
-          'あなたは日本の適時開示情報を要約する専門家です。開示内容を簡潔に要約し、重要なポイントを箇条書きで示してください。',
-      },
-      {
         role: 'user',
-        content: `以下のTDnet開示内容を要約してください:\n\n${pdfText}`,
+        content: promptText,
       },
     ];
 
     // 統一LLMクライアントを使用して要約を生成
     const summary = await generateText(llmConfig, messages);
 
-    return summary;
+    return { summary, metadata };
   } catch (error) {
     console.error('[Background] LLM要約エラー:', error);
     throw error;
@@ -169,22 +217,31 @@ async function summarizeWithLLM(pdfData: ArrayBuffer, settings: Settings): Promi
 /**
  * Offscreen DocumentでPDFからテキストを抽出
  */
-async function extractTextFromPDF(pdfData: ArrayBuffer): Promise<string> {
+async function extractTextFromPDF(
+  pdfData: ArrayBuffer,
+  documentType: DocumentType,
+  extractionMode: ExtractionMode
+): Promise<{ text: string; metadata: SummaryMetadata }> {
   try {
-    // ArrayBufferをUint8Arrayに変換（chrome.runtime.sendMessageでのシリアライゼーション対応）
+    // ArrayBufferを配列に変換して送信
     const uint8Array = new Uint8Array(pdfData);
 
     // Offscreen Documentにメッセージを送信
     const response = await chrome.runtime.sendMessage({
       action: 'extractPdfText',
       pdfData: Array.from(uint8Array), // Arrayに変換して送信
+      documentType, // 文書タイプを渡す
+      extractionMode, // 抽出モードを渡す
     });
 
     if (!response.success) {
       throw new Error(response.error || 'PDF抽出に失敗しました');
     }
 
-    return response.text;
+    return {
+      text: response.text,
+      metadata: response.metadata,
+    };
   } catch (error) {
     console.error('[Background] PDF抽出エラー:', error);
     if (error instanceof Error) {
