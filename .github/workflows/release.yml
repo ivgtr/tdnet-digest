@@ -49,14 +49,46 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Bump version
+      - name: Get latest version from tags
+        if: steps.check-label.outputs.release-type != 'none'
+        id: get-version
+        run: |
+          # 最新のタグを取得（存在しない場合は0.0.0）
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          current_version=${latest_tag#v}
+          echo "current-version=$current_version" >> $GITHUB_OUTPUT
+          echo "Current version from tags: $current_version"
+
+      - name: Calculate new version
         if: steps.check-label.outputs.release-type != 'none'
         id: bump
         run: |
-          # バージョン管理スクリプトを実行
-          new_version=$(node scripts/bump-version.js ${{ steps.check-label.outputs.release-type }} | tail -n 1)
+          # 現在のバージョンから新しいバージョンを計算
+          current_version="${{ steps.get-version.outputs.current-version }}"
+          release_type="${{ steps.check-label.outputs.release-type }}"
+
+          IFS='.' read -r major minor patch <<< "$current_version"
+
+          case "$release_type" in
+            major)
+              new_version="$((major + 1)).0.0"
+              ;;
+            minor)
+              new_version="$major.$((minor + 1)).0"
+              ;;
+            patch)
+              new_version="$major.$minor.$((patch + 1))"
+              ;;
+          esac
+
           echo "version=$new_version" >> $GITHUB_OUTPUT
-          echo "New version: $new_version"
+          echo "New version: $current_version → $new_version"
+
+      - name: Update package.json
+        if: steps.check-label.outputs.release-type != 'none'
+        run: |
+          # package.jsonのバージョンを更新
+          npm version ${{ steps.bump.outputs.version }} --no-git-tag-version
 
       - name: Commit version bump
         if: steps.check-label.outputs.release-type != 'none'
