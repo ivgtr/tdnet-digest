@@ -10,6 +10,8 @@ const Options: React.FC = () => {
   const [useCustomModel, setUseCustomModel] = useState(false);
   const [extractionMode, setExtractionMode] = useState<ExtractionMode>('smart');
   const [saved, setSaved] = useState(false);
+  const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
+  const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
 
   useEffect(() => {
     chrome.storage.sync.get(
@@ -25,6 +27,46 @@ const Options: React.FC = () => {
     );
   }, []);
 
+  // 保存済みモデルがリストにない場合、自動的にカスタムモデルに切り替え（初回のみ）
+  useEffect(() => {
+    // 既に自動切り替えを行った場合はスキップ
+    if (hasAutoSwitched) return;
+
+    const providerInfo = getProvider(provider);
+    if (!providerInfo || providerInfo.requiresCustomUrl) return;
+
+    const modelExists = providerInfo.models.some((m) => m.id === model);
+
+    // リストにないモデル & カスタムモードでない場合
+    if (!modelExists && model && !useCustomModel) {
+      console.log(
+        `[TDnet Digest] モデル "${model}" はリストにないため、カスタムモデルモードに自動切り替えしました`
+      );
+      setUseCustomModel(true);
+      setAutoSwitchedToCustom(true);
+      setHasAutoSwitched(true);
+    }
+  }, [provider, model, useCustomModel, hasAutoSwitched]);
+
+  // モデルが変更されたら通知を消す
+  useEffect(() => {
+    if (autoSwitchedToCustom) {
+      // モデル変更を検知するための遅延
+      const timer = setTimeout(() => {
+        const providerInfo = getProvider(provider);
+        if (!providerInfo || providerInfo.requiresCustomUrl) return;
+
+        const modelExists = providerInfo.models.some((m) => m.id === model);
+        // モデルがリストに存在する場合、または空の場合は通知を消す
+        if (modelExists || !model) {
+          setAutoSwitchedToCustom(false);
+        }
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }
+  }, [model, provider, autoSwitchedToCustom]);
+
   // プロバイダー変更時の処理
   const handleProviderChange = (newProvider: string) => {
     setProvider(newProvider);
@@ -33,6 +75,8 @@ const Options: React.FC = () => {
       setModel(providerInfo.defaultModel);
       setUseCustomModel(false); // プリセットプロバイダーに変更時はカスタムモデルをOFFに
     }
+    setHasAutoSwitched(false); // プロバイダー変更時にフラグをリセット
+    setAutoSwitchedToCustom(false); // 通知もリセット
   };
 
   const handleSave = () => {
@@ -175,6 +219,14 @@ const Options: React.FC = () => {
                 ? 'モデル名を入力してください'
                 : 'プリセットから選択するか、カスタムモデル名を入力できます'}
             </p>
+            {autoSwitchedToCustom && useCustomModel && (
+              <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                ℹ️ 保存済みのモデル「{model}
+                」がリストにないため、カスタムモデルモードに自動切り替えしました。
+                <br />
+                新しいモデルに変更するか、このままご利用ください。
+              </div>
+            )}
           </div>
 
           <div>
