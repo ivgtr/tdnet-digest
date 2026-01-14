@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  release:
+    # マージされたPRのみ実行
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # リリース作成とコミット権限
+      pull-requests: read  # PRラベル読み取り
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # 全履歴を取得（タグ確認用）
+
+      - name: Check for release label
+        id: check-label
+        run: |
+          labels='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          echo "Labels: $labels"
+
+          if echo "$labels" | grep -q "release:major"; then
+            echo "release-type=major" >> $GITHUB_OUTPUT
+            echo "Release type: major"
+          elif echo "$labels" | grep -q "release:minor"; then
+            echo "release-type=minor" >> $GITHUB_OUTPUT
+            echo "Release type: minor"
+          elif echo "$labels" | grep -q "release:patch"; then
+            echo "release-type=patch" >> $GITHUB_OUTPUT
+            echo "Release type: patch"
+          else
+            echo "release-type=none" >> $GITHUB_OUTPUT
+            echo "No release label found. Skipping release."
+          fi
+
+      - name: Setup Node.js
+        if: steps.check-label.outputs.release-type != 'none'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Bump version
+        if: steps.check-label.outputs.release-type != 'none'
+        id: bump
+        run: |
+          # バージョン管理スクリプトを実行
+          new_version=$(node scripts/bump-version.js ${{ steps.check-label.outputs.release-type }} | tail -n 1)
+          echo "version=$new_version" >> $GITHUB_OUTPUT
+          echo "New version: $new_version"
+
+      - name: Commit version bump
+        if: steps.check-label.outputs.release-type != 'none'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add package.json
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
+          git push
+
+      - name: Install dependencies
+        if: steps.check-label.outputs.release-type != 'none'
+        run: npm ci
+
+      - name: Build extension
+        if: steps.check-label.outputs.release-type != 'none'
+        run: npm run build
+
+      - name: Create distribution zip
+        if: steps.check-label.outputs.release-type != 'none'
+        run: |
+          cd dist
+          zip -r ../tdnet-digest-v${{ steps.bump.outputs.version }}.zip .
+          cd ..
+          echo "Created: tdnet-digest-v${{ steps.bump.outputs.version }}.zip"
+
+      - name: Create GitHub Release
+        if: steps.check-label.outputs.release-type != 'none'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.bump.outputs.version }}
+          name: Release v${{ steps.bump.outputs.version }}
+          body: |
+            ## 📦 インストール方法
+
+            1. 下部の **Assets** から `tdnet-digest-v${{ steps.bump.outputs.version }}.zip` をダウンロード
+            2. 任意の場所に解凍
+            3. Chrome で `chrome://extensions/` を開く
+            4. 右上の「**デベロッパーモード**」を **ON** にする
+            5. 「**パッケージ化されていない拡張機能を読み込む**」をクリック
+            6. 解凍したフォルダを選択
+
+            ⚠️ **注意**: 開発者モードでインストールするため、Chrome起動時に警告が表示されますが、正常な動作です。
+
+            ---
+
+            ## ✨ 変更内容
+
+            ${{ github.event.pull_request.title }}
+
+            ${{ github.event.pull_request.body }}
+
+            ---
+
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ steps.bump.outputs.version }}...HEAD
+          files: tdnet-digest-v${{ steps.bump.outputs.version }}.zip
+          draft: false
+          prerelease: false

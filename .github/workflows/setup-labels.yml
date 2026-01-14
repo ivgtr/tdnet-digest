@@ -1,0 +1,52 @@
+name: Setup Release Labels
+
+on:
+  workflow_dispatch:  # 手動実行のみ
+
+jobs:
+  setup-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Create release labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = [
+              {
+                name: 'release:major',
+                description: '破壊的変更（例: 1.0.0 → 2.0.0）',
+                color: 'b60205'
+              },
+              {
+                name: 'release:minor',
+                description: '新機能追加（例: 0.1.0 → 0.2.0）',
+                color: '0e8a16'
+              },
+              {
+                name: 'release:patch',
+                description: 'バグ修正（例: 0.1.0 → 0.1.1）',
+                color: 'fbca04'
+              }
+            ];
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                  description: label.description,
+                  color: label.color
+                });
+                console.log(`Created label: ${label.name}`);
+              } catch (error) {
+                if (error.status === 422) {
+                  console.log(`Label already exists: ${label.name}`);
+                } else {
+                  throw error;
+                }
+              }
+            }
