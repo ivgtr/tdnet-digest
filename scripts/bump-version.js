@@ -10,8 +10,12 @@
  *   node scripts/bump-version.js patch  # 0.1.0 → 0.1.1
  */
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const releaseType = process.argv[2];
 
