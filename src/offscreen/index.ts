@@ -44,102 +44,50 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 });
 
 /**
- * smartモードでのテキスト抽出
- * セクション検出 → 重要セクションフィルタ → 失敗時はページスコアリング
- * 品質ゲートを常に実行し、リトライ判定を正しく処理
+ * セクションベースでのテキスト抽出を試みる
+ * 重要セクションが見つかればそれを使用、なければページスコアリングにフォールバック
  */
-async function extractSmartMode(
+function extractWithSections(
   fullText: string,
   totalPages: number,
-  documentType: DocumentType
-): Promise<ExtractionResult> {
-  const MAX_RETRIES = 2; // 最大リトライ回数
-  let retryCount = 0;
+  documentType: DocumentType,
+  params: { summaryPages: number; topK: number; neighbor: number }
+): { text: string; extractedPages: number[]; sectionsUsed: string[] } {
+  const allSections = detectSections(fullText);
 
-  // リトライで上書きするため let を使用
-  let qualityCheck: QualityCheckResult = {
-    passed: false,
-    matchedKeywords: [],
-    missingKeywords: [],
-    matchRate: 0,
-  };
-  let extractedText = '';
-  let extractedPages: number[] = [];
-  let sectionsUsed: string[] = [];
-
-  // リトライループ
-  while (retryCount <= MAX_RETRIES) {
-    // 抽出パラメータを取得（リトライ回数に応じて増分）
-    const params = getExtractionParams(documentType, retryCount);
-
-    // セクション検出を試みる
-    const allSections = detectSections(fullText);
-    console.log(`[Offscreen] セクション検出: ${allSections.length}個 (試行 ${retryCount + 1})`);
-
-    if (allSections.length > 0) {
-      // セクション検出成功
-      const importantSections = filterImportantSections(allSections, documentType);
-      console.log(`[Offscreen] 重要セクション: ${importantSections.length}個`);
-
-      // 重要セクションが空の場合はページスコアリングに切り替え
-      if (importantSections.length === 0) {
-        console.log('[Offscreen] 重要セクション空 → ページスコアリングに切替');
-        const result = extractByPageScoring(fullText, totalPages, documentType, params);
-        extractedText = result.text;
-        extractedPages = result.metadata.extractedPages;
-        sectionsUsed = result.metadata.sectionsUsed ?? [];
-      } else {
-        // 重要セクションからテキストを抽出
-        extractedText = importantSections.map((s) => s.text).join('\n\n');
-        extractedPages = Array.from(
-          new Set(importantSections.map((s) => s.pageNumber))
-        ).sort((a, b) => a - b);
-        sectionsUsed = importantSections.map((s) => s.heading || '（見出しなし）');
-      }
-    } else {
-      // セクション検出失敗 → ページスコアリング
-      console.log('[Offscreen] セクション検出失敗 → ページスコアリング');
-      const result = extractByPageScoring(fullText, totalPages, documentType, params);
-      extractedText = result.text;
-      extractedPages = result.metadata.extractedPages;
-      sectionsUsed = result.metadata.sectionsUsed ?? [];
-    }
-
-    // 品質ゲートを常に実行（セクション検出の成否に関わらず）
-    qualityCheck = checkExtractionQuality(extractedText, documentType);
-    console.log(
-      `[Offscreen] 品質チェック: ${qualityCheck.passed ? '合格' : '不合格'} (マッチ率: ${(qualityCheck.matchRate * 100).toFixed(0)}%)`
-    );
-
-    // リトライループ内で qualityCheck を更新
-    if (qualityCheck.passed) {
-      // 品質基準を満たしている場合は終了
-      break;
-    }
-
-    // リトライ
-    retryCount++;
-    if (retryCount <= MAX_RETRIES) {
-      console.log(`[Offscreen] 品質未達 → リトライ ${retryCount}/${MAX_RETRIES} (topK増加)`);
-    }
+  if (allSections.length === 0) {
+    // セクション検出失敗 → ページスコアリング
+    console.log('[Offscreen] セクション検出失敗 → ページスコアリング');
+    return extractByPageScoring(fullText, totalPages, documentType, params);
   }
 
-  // テキストクリーニング
-  const cleanedText = cleanExtractedText(extractedText);
-  console.log(
-    `[Offscreen] PDF抽出完了 (smartモード, ${extractedPages.length}/${totalPages}ページ, ${cleanedText.length}文字)`
-  );
+  console.log(`[Offscreen] セクション検出: ${allSections.length}個`);
+  const importantSections = filterImportantSections(allSections, documentType);
+  console.log(`[Offscreen] 重要セクション: ${importantSections.length}個`);
 
-  // メタデータ作成
-  const metadata: ExtractionMetadata = {
-    totalPages,
-    extractedPages,
-    sectionsUsed,
-    extractionMode: 'smart',
-    documentType,
-  };
+  if (importantSections.length === 0) {
+    // 重要セクションが空 → ページスコアリング
+    console.log('[Offscreen] 重要セクション空 → ページスコアリングに切替');
+    return extractByPageScoring(fullText, totalPages, documentType, params);
+  }
 
-  // 品質警告を追加（最終状態の qualityCheck を使用）
+  // 重要セクションからテキストを抽出
+  const text = importantSections.map((s) => s.text).join('\n\n');
+  const extractedPages = Array.from(
+    new Set(importantSections.map((s) => s.pageNumber))
+  ).sort((a, b) => a - b);
+  const sectionsUsed = importantSections.map((s) => s.heading || '（見出しなし）');
+
+  return { text, extractedPages, sectionsUsed };
+}
+
+/**
+ * 抽出結果に品質警告を追加する
+ */
+function addQualityWarning(
+  metadata: ExtractionMetadata,
+  qualityCheck: QualityCheckResult
+): void {
   if (!qualityCheck.passed) {
     metadata.qualityWarning = {
       message: '一部の重要情報が抽出できなかった可能性があります。全文抽出を推奨します。',
@@ -147,6 +95,73 @@ async function extractSmartMode(
       matchRate: qualityCheck.matchRate,
     };
   }
+}
+
+/**
+ * smartモードでのテキスト抽出
+ * セクション検出 → 重要セクションフィルタ → 失敗時はページスコアリング
+ * 品質ゲートで確認し、必要に応じてリトライ
+ */
+async function extractSmartMode(
+  fullText: string,
+  totalPages: number,
+  documentType: DocumentType
+): Promise<ExtractionResult> {
+  const MAX_RETRIES = 2;
+  let finalQualityCheck: QualityCheckResult | null = null;
+  let extractionData: { text: string; extractedPages: number[]; sectionsUsed: string[] } | null =
+    null;
+
+  // リトライループ: 品質基準を満たすまで試行
+  for (let retryCount = 0; retryCount <= MAX_RETRIES; retryCount++) {
+    console.log(`[Offscreen] 抽出試行 ${retryCount + 1}/${MAX_RETRIES + 1}`);
+
+    // リトライ回数に応じて抽出パラメータを調整
+    const params = getExtractionParams(documentType, retryCount);
+
+    // セクションベースで抽出を試みる
+    extractionData = extractWithSections(fullText, totalPages, documentType, params);
+
+    // 品質チェック
+    finalQualityCheck = checkExtractionQuality(extractionData.text, documentType);
+    console.log(
+      `[Offscreen] 品質チェック: ${finalQualityCheck.passed ? '合格' : '不合格'} ` +
+        `(マッチ率: ${(finalQualityCheck.matchRate * 100).toFixed(0)}%)`
+    );
+
+    // 品質基準を満たしていればループを抜ける
+    if (finalQualityCheck.passed) {
+      break;
+    }
+
+    // リトライ継続をログ出力
+    if (retryCount < MAX_RETRIES) {
+      console.log(`[Offscreen] 品質未達 → リトライ ${retryCount + 1}/${MAX_RETRIES} (topK増加)`);
+    }
+  }
+
+  // 最終的な抽出データが必ず存在する（ループは最低1回実行される）
+  if (!extractionData || !finalQualityCheck) {
+    throw new Error('[Offscreen] 抽出処理が完了しませんでした');
+  }
+
+  // テキストクリーニング
+  const cleanedText = cleanExtractedText(extractionData.text);
+  console.log(
+    `[Offscreen] PDF抽出完了 (smartモード, ${extractionData.extractedPages.length}/${totalPages}ページ, ${cleanedText.length}文字)`
+  );
+
+  // メタデータ作成
+  const metadata: ExtractionMetadata = {
+    totalPages,
+    extractedPages: extractionData.extractedPages,
+    sectionsUsed: extractionData.sectionsUsed,
+    extractionMode: 'smart',
+    documentType,
+  };
+
+  // 品質警告を追加
+  addQualityWarning(metadata, finalQualityCheck);
 
   return {
     text: cleanedText,
@@ -162,7 +177,7 @@ function extractByPageScoring(
   totalPages: number,
   documentType: DocumentType,
   params: { summaryPages: number; topK: number; neighbor: number }
-): ExtractionResult {
+): { text: string; extractedPages: number[]; sectionsUsed: string[] } {
   // ページスコアリングを実行
   const pageScores = scorePages(fullText, documentType);
   console.log(`[Offscreen] ページスコアリング: トップ${params.topK}ページを選択`);
@@ -176,6 +191,23 @@ function extractByPageScoring(
   );
 
   // 選択されたページのテキストを抽出
+  const text = extractTextFromSelectedPages(fullText, selectedPages);
+
+  console.log(
+    `[Offscreen] ページスコアリング完了 (${selectedPages.length}/${totalPages}ページ, ${text.length}文字)`
+  );
+
+  return {
+    text,
+    extractedPages: selectedPages,
+    sectionsUsed: [`topK=${params.topK} (スコアリング)`],
+  };
+}
+
+/**
+ * 選択されたページからテキストを抽出
+ */
+function extractTextFromSelectedPages(fullText: string, selectedPages: number[]): string {
   const lines = fullText.split('\n');
   const extractedLines: string[] = [];
   let currentPage = 0;
@@ -195,23 +227,7 @@ function extractByPageScoring(
     }
   }
 
-  const extractedText = extractedLines.join('\n');
-  const cleanedText = cleanExtractedText(extractedText);
-
-  console.log(
-    `[Offscreen] ページスコアリング完了 (${selectedPages.length}/${totalPages}ページ, ${cleanedText.length}文字)`
-  );
-
-  return {
-    text: cleanedText,
-    metadata: {
-      totalPages,
-      extractedPages: selectedPages,
-      sectionsUsed: [`topK=${params.topK} (スコアリング)`],
-      extractionMode: 'smart',
-      documentType,
-    },
-  };
+  return extractedLines.join('\n');
 }
 
 /**
