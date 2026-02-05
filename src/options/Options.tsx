@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import type { ExtractionMode } from '@/types/summaryMetadata';
+import type { ExtractionMode, CachedSummary, SummaryCacheStore } from '@/types/summaryMetadata';
 import { LLM_PROVIDERS, getProvider } from '@/lib/llm-providers';
+
+const CACHE_KEY = 'summaryCache';
 
 const Options: React.FC = () => {
   const [provider, setProvider] = useState('openai');
@@ -12,6 +14,27 @@ const Options: React.FC = () => {
   const [saved, setSaved] = useState(false);
   const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
   const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
+  const [cacheEntries, setCacheEntries] = useState<[string, CachedSummary][]>([]);
+
+  const loadCacheEntries = () => {
+    chrome.storage.local.get(CACHE_KEY, (data) => {
+      const store: SummaryCacheStore = data[CACHE_KEY] || {};
+      const entries = Object.entries(store).sort(([, a], [, b]) => b.cachedAt - a.cachedAt);
+      setCacheEntries(entries);
+    });
+  };
+
+  const deleteCacheEntry = (key: string) => {
+    chrome.storage.local.get(CACHE_KEY, (data) => {
+      const store: SummaryCacheStore = data[CACHE_KEY] || {};
+      delete store[key];
+      chrome.storage.local.set({ [CACHE_KEY]: store }, loadCacheEntries);
+    });
+  };
+
+  const clearAllCache = () => {
+    chrome.storage.local.set({ [CACHE_KEY]: {} }, loadCacheEntries);
+  };
 
   useEffect(() => {
     chrome.storage.sync.get(
@@ -25,6 +48,7 @@ const Options: React.FC = () => {
         if (result.extractionMode) setExtractionMode(result.extractionMode);
       }
     );
+    loadCacheEntries();
   }, []);
 
   // 保存済みモデルがリストにない場合、自動的にカスタムモデルに切り替え（初回のみ）
@@ -272,6 +296,59 @@ const Options: React.FC = () => {
             </button>
             {saved && <span className="text-sm text-green-600 font-medium">✓ 保存しました</span>}
           </div>
+        </div>
+
+        {/* キャッシュ管理セクション */}
+        <div className="mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-800">
+              要約キャッシュ管理
+              <span className="ml-2 text-xs font-normal text-gray-500">
+                {cacheEntries.length}件
+              </span>
+            </h2>
+            {cacheEntries.length > 0 && (
+              <button
+                onClick={clearAllCache}
+                className="px-3 py-1 text-xs bg-red-50 text-red-700 border border-red-300 rounded hover:bg-red-100 transition-colors"
+              >
+                すべて削除
+              </button>
+            )}
+          </div>
+          {cacheEntries.length === 0 ? (
+            <p className="text-sm text-gray-500">キャッシュはありません</p>
+          ) : (
+            <div className="max-h-64 overflow-y-auto space-y-2">
+              {cacheEntries.map(([key, entry]) => (
+                <div
+                  key={key}
+                  className="flex items-start justify-between p-3 bg-white rounded border border-gray-200"
+                >
+                  <div className="min-w-0 flex-1 mr-3">
+                    <div className="text-sm font-medium text-gray-800 truncate">
+                      {entry.code} {entry.companyName}
+                    </div>
+                    <div className="text-xs text-gray-600 truncate">{entry.title}</div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {new Date(entry.cachedAt).toLocaleString('ja-JP', {
+                        month: 'numeric',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => deleteCacheEntry(key)}
+                    className="px-2 py-1 text-xs bg-gray-100 text-gray-600 border border-gray-300 rounded hover:bg-gray-200 transition-colors flex-shrink-0"
+                  >
+                    削除
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="mt-8 p-4 bg-blue-50 rounded">
