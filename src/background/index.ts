@@ -1,5 +1,5 @@
 import { generateText, type LLMConfig, type ChatMessage } from '@/lib/llm-client';
-import { detectDocumentType, type DocumentType } from '@/lib/document-type';
+import { detectDocumentType, detectEarningsContext, type DocumentType } from '@/lib/document-type';
 import { getPromptForDocumentType } from '@/lib/prompts';
 import type { SummaryMetadata, ExtractionMode } from '@/types/summaryMetadata';
 
@@ -109,7 +109,7 @@ async function handleSummarize(
     const pdfData = await fetchPDF(pdfUrl);
 
     // LLMで要約
-    const result = await summarizeWithLLM(pdfData, settings, documentType, extractionMode);
+    const result = await summarizeWithLLM(pdfData, settings, documentType, extractionMode, title);
 
     return result;
   } catch (error) {
@@ -154,7 +154,8 @@ async function summarizeWithLLM(
   pdfData: ArrayBuffer,
   settings: Settings,
   documentType: DocumentType,
-  extractionMode: ExtractionMode
+  extractionMode: ExtractionMode,
+  title: string
 ): Promise<{ summary: string; metadata: SummaryMetadata }> {
   try {
     // 設定の検証
@@ -194,7 +195,8 @@ async function summarizeWithLLM(
     };
 
     // 文書タイプ別プロンプトを使用
-    const promptText = getPromptForDocumentType(documentType, pdfText);
+    const earningsContext = documentType === 'earnings' ? detectEarningsContext(title) : undefined;
+    const promptText = getPromptForDocumentType(documentType, pdfText, earningsContext);
 
     // メッセージを構築
     const messages: ChatMessage[] = [
