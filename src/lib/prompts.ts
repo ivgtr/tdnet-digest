@@ -11,7 +11,7 @@
  * - 各文書タイプ別の OUTPUT_FORMAT と SPECIFIC_RULES
  */
 
-import type { DocumentType } from './document-type';
+import type { DocumentType, EarningsContext, EarningsPeriod } from './document-type';
 
 /**
  * プロンプト設定値
@@ -56,8 +56,14 @@ const COMMON_RULES = `
 4. ただし、売上高・経常利益・当期純利益などの重要指標が本文に見つからない場合のみ「取得不能」と明記してください
 5. 前年同期比や前期比は本文に明記されている場合のみ記載してください
 6. 前年同期比/前期比の増減率が本文にある場合は必ず記載し、省略しないでください
-7. 利益項目は「営業利益/経常利益/当期純利益」で統一し、赤字の場合は金額を「△」で始め、括弧内に「赤字」または「損失」を付記してください
-8. 日付は「YYYY年M月D日」形式で統一してください（例: 2026年1月14日、元号表記がある場合も西暦に変換）`;
+7. 勘定科目名は本文の表記をそのまま使用してください（例: 売上収益、事業利益、経常収益など）。赤字の場合は金額を「△」で始め、括弧内に「赤字」または「損失」を付記してください
+8. 日付は「YYYY年M月D日」形式で統一してください（例: 2026年1月14日、元号表記がある場合も西暦に変換）
+
+【数値表記ルール】
+- 金額単位は本文の表記をそのまま使用してください（同一セクション内で統一）
+- 増減率は小数点第1位まで記載してください（例: +12.3%、△5.0%）
+- 通期予想が「未定」の場合はそのまま「未定」と記載してください
+- レンジ予想は「下限〜上限」形式で記載してください`;
 
 /**
  * トピックス共通ルール（全文書タイプ共通）
@@ -80,7 +86,7 @@ const EARNINGS_OUTPUT_FORMAT = `
 - 当期純利益: [金額]（前年同期比[増減率]）
 
 ## 進捗率（通期予想に対して）
-- 経常利益: [進捗率%]（前年比[増減率]pt 上振れ/下振れ/横ばい）
+- 経常利益: XX.X%（前年同期YY.Y%、標準進捗率ZZ%）
 
 ## 通期予想
 - 売上高: [金額]（前期比[増減率]）
@@ -108,12 +114,9 @@ const EARNINGS_OUTPUT_FORMAT = `
  */
 const EARNINGS_SPECIFIC_RULES = `
 追加の注意事項:
-- 進捗率は以下の計算式で算出してください：
-  * 進捗率 = (当期実績の経常利益 ÷ 通期予想の経常利益) × 100
-  * 前年進捗率 = (前年同期の経常利益 ÷ 前年通期予想の経常利益) × 100
-  * 増減率 = 進捗率 - 前年進捗率（小数点第1位まで）
-  * 上振れ/下振れ/横ばい = 増減率が+3pt以上なら「上振れ」、-3pt以下なら「下振れ」、それ以外は「横ばい」
-  * 必要な数値が本文にない場合のみ「取得不能」と記載してください
+- 進捗率は経常利益について「当期実績 ÷ 通期予想 × 100」で算出してください
+- 前年同期の進捗率が本文から得られない場合は省略可
+- 通期予想が未定・ゼロ・赤字予想の場合は「算出不可（理由）」と記載してください
 - 黒字転換/赤字転落/赤字拡大/赤字縮小は本文に明記がある場合のみ記載し、増減率の後ろに補足として付記してください
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.earnings}点までにしてください
 ${COMMON_TOPICS_RULES}`;
@@ -122,6 +125,222 @@ ${COMMON_TOPICS_RULES}`;
  * 決算短信用プロンプト（完成版）
  */
 const EARNINGS_PROMPT = `${ROLE_DEFINITION}${COMMON_RULES}${EARNINGS_OUTPUT_FORMAT}${EARNINGS_SPECIFIC_RULES}`;
+
+/**
+ * 決算評価の判定ルールを生成（出力形式の前に配置する内部ルール）
+ *
+ * 重要: これは出力フォーマットではなく、LLMへの判定指示。
+ * 基準表自体は出力に含めないよう明示する。
+ */
+function buildRatingRules(ctx: EarningsContext): string {
+  const isQuarterly = ctx.period !== 'fullYear';
+
+  const progressOrLanding = isQuarterly
+    ? `■ 進捗（経常利益の進捗率 − 標準進捗率の差）
+★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超
+通期予想が未定/ゼロ/赤字の場合は「★—」`
+    : `■ 着地（主要利益の前期比）
+★5: +30%以上or黒字転換 / ★4: +10〜+30% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満or赤字転落`;
+
+  return `
+【決算評価の判定ルール — 出力しないでください】
+以下の基準で★を判定し、「## 決算評価」セクションに判定結果のみ出力してください。
+この基準表・計算ルール自体は絶対に出力に含めないでください。
+
+■ 成長性（売上高の増減率）
+★5: +20%以上 / ★4: +10〜+20% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満
+
+■ 収益性（主要利益の増減率）
+★5: +30%以上or黒字転換 / ★4: +10〜+30% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満or赤字転落
+
+${progressOrLanding}
+
+■ 予想修正
+↑上方修正あり / →修正なし / ↓下方修正あり / —予想未定
+
+※数値が本文にない場合は「—（取得不能）」、赤字で増減率が無意味な場合は「★—（赤字のため評価対象外）」
+※必ず本文の数値に基づいて判断し、印象で評価しないこと`;
+}
+
+/**
+ * 決算評価の出力テンプレート（出力形式の中に配置）
+ */
+function buildEvaluationTemplate(ctx: EarningsContext): string {
+  const isQuarterly = ctx.period !== 'fullYear';
+  const comparisonLabel = isQuarterly ? '前年同期比' : '前期比';
+
+  const standardRate = getStandardProgressRate(ctx.period);
+  const progressOrLanding = isQuarterly
+    ? `- 進捗:   ★★★★☆（経常利益 進捗率XX.X% / 標準${standardRate}%）`
+    : `- 着地:   ★★★★☆（主要利益 前期比+XX.X%）`;
+
+  return `
+## 決算評価
+- 成長性:  ★★★★☆（売上高 ${comparisonLabel}+XX.X%）
+- 収益性:  ★★★★★（主要利益 ${comparisonLabel}+XX.X%）
+${progressOrLanding}
+- 予想修正: → 修正なし
+※★評価は★（黒星）と☆（白星）を並べて5段階で表記してください（例: ★★★★☆=4点、★★☆☆☆=2点）。数字やMarkdown記法（**太字**等）は使わないでください。括弧は全角（）を使用してください。`;
+}
+
+/**
+ * 決算短信プロンプトを動的に生成
+ *
+ * EarningsContext に応じて四半期/通期、会計基準ごとに
+ * 最適なプロンプトテキストを組み立てる。
+ */
+function buildEarningsPrompt(ctx: EarningsContext): string {
+  const isQuarterly = ctx.period !== 'fullYear';
+  const comparisonLabel = isQuarterly ? '前年同期比' : '前期比';
+  const periodLabel = buildPeriodLabel(ctx);
+  const accountingNote = buildAccountingNote(ctx);
+
+  const performanceSection = buildPerformanceSection(comparisonLabel, periodLabel);
+  const progressSection = isQuarterly ? buildProgressSection(ctx) : '';
+  const forecastSection = buildForecastSection(ctx);
+  const revisionSection = buildRevisionSection();
+  const dividendSection = buildDividendSection();
+  const summarySection = buildSummarySection();
+  const topicsSection = buildTopicsSection();
+
+  return [
+    ROLE_DEFINITION,
+    COMMON_RULES,
+    accountingNote,
+    buildRatingRules(ctx),
+    `\n以下の決算短信から、投資家向けの要約を作成してください。\n\n出力形式:`,
+    buildEvaluationTemplate(ctx),
+    performanceSection,
+    progressSection,
+    forecastSection,
+    revisionSection,
+    dividendSection,
+    summarySection,
+    topicsSection,
+    buildEarningsSpecificRules(),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildPeriodLabel(ctx: EarningsContext): string {
+  const consolidatedLabel = ctx.isConsolidated ? '連結' : '個別';
+  switch (ctx.period) {
+    case 'q1':
+      return `第1四半期${consolidatedLabel}実績`;
+    case 'q2':
+      return `第2四半期${consolidatedLabel}実績`;
+    case 'q3':
+      return `第3四半期${consolidatedLabel}実績`;
+    case 'fullYear':
+      return `通期${consolidatedLabel}実績`;
+  }
+}
+
+function buildAccountingNote(ctx: EarningsContext): string {
+  switch (ctx.accountingStandard) {
+    case 'ifrs':
+      return `\n【会計基準に関する注記】
+この文書はIFRS（国際会計基準）に基づいています。
+- 「経常利益」に相当する勘定科目がない場合があります（「税引前利益」や「事業利益」で代替）
+- 本文の勘定科目名（売上収益、事業利益、税引前利益、当期利益等）をそのまま使用してください`;
+    case 'usGaap':
+      return `\n【会計基準に関する注記】
+この文書は米国基準に基づいています。
+- 本文の勘定科目名をそのまま使用してください`;
+    case 'jpGaap':
+      return '';
+  }
+}
+
+function buildPerformanceSection(
+  comparisonLabel: string,
+  periodLabel: string
+): string {
+  return `
+## 業績サマリー（${periodLabel}）
+- [本文の勘定科目]: [金額]（${comparisonLabel}[増減率]）
+- [本文の勘定科目]: [金額]（${comparisonLabel}[増減率]）
+- ...（本文に記載されている主要な勘定科目をすべて記載）`;
+}
+
+/**
+ * 決算期区分から標準進捗率を算出
+ *
+ * Q1→25%, Q2→50%, Q3→75%
+ * fullYear では呼ばれない想定だが安全のため 100 を返す。
+ */
+function getStandardProgressRate(period: EarningsPeriod): number {
+  switch (period) {
+    case 'q1':
+      return 25;
+    case 'q2':
+      return 50;
+    case 'q3':
+      return 75;
+    case 'fullYear':
+      return 100;
+  }
+}
+
+function buildProgressSection(ctx: EarningsContext): string {
+  const standardRate = getStandardProgressRate(ctx.period);
+
+  return `
+## 進捗率（通期予想に対して）
+- 経常利益: XX.X%（前年同期YY.Y%、標準進捗率${standardRate}%）
+※1行形式で記載し、計算式・計算過程・説明文は書かないでください
+※前年同期の進捗率が本文から得られない場合は省略可
+※通期予想が未定・ゼロ・赤字予想の場合は「算出不可（理由）」と記載してください`;
+}
+
+function buildForecastSection(ctx: EarningsContext): string {
+  if (ctx.period !== 'fullYear') {
+    return `
+## 通期予想
+- [本文の勘定科目]: [金額]（前期比[増減率]）
+- ...`;
+  }
+  return `
+## 来期予想（本文に記載がある場合のみ）
+- [本文の勘定科目]: [金額]（前期比[増減率]）
+- ...`;
+}
+
+function buildRevisionSection(): string {
+  return `
+## 業績予想の修正
+- 業績予想の修正: 有/無（有の場合: 修正対象と変更内容を簡潔に）`;
+}
+
+function buildDividendSection(): string {
+  return `
+## 配当
+- 中間配当: [金額]
+- 期末配当: [金額]
+- 年間配当: [金額]
+- 配当予想の修正: 有/無（有の場合: 旧予想→新予想を中間/期末/年間ごとに記載）`;
+}
+
+function buildSummarySection(): string {
+  return `
+## 全体要約
+[${PROMPT_CONFIG.SUMMARY_STYLE.earnings}で、以下の内容を含めてください：業績の傾向、通期見通し、修正/配当の有無]`;
+}
+
+function buildTopicsSection(): string {
+  return `
+## トピックス
+- [全体要約だけでは分からない具体情報を簡潔に記載]`;
+}
+
+function buildEarningsSpecificRules(): string {
+  return `
+追加の注意事項:
+- 黒字転換/赤字転落/赤字拡大/赤字縮小は本文に明記がある場合のみ記載し、増減率の後ろに補足として付記してください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.earnings}点までにしてください
+${COMMON_TOPICS_RULES}`;
+}
 
 /**
  * 業績修正用プロンプト - 出力形式
@@ -349,13 +568,18 @@ const PROMPTS: Record<DocumentType, string> = {
  *
  * @param documentType 文書タイプ
  * @param extractedText 抽出されたテキスト
+ * @param earningsContext 決算コンテキスト（決算短信の場合のみ）
  * @returns LLMに送信するプロンプト（システムプロンプト + 抽出テキスト）
  */
 export function getPromptForDocumentType(
   documentType: DocumentType,
-  extractedText: string
+  extractedText: string,
+  earningsContext?: EarningsContext
 ): string {
-  const systemPrompt = PROMPTS[documentType];
+  const systemPrompt =
+    documentType === 'earnings' && earningsContext
+      ? buildEarningsPrompt(earningsContext)
+      : PROMPTS[documentType];
   return `${systemPrompt}\n\n---\n\n${extractedText}`;
 }
 
