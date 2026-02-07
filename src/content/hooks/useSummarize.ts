@@ -89,43 +89,46 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
    * 要約を実行
    * @param forceExtractionMode 強制抽出モード（全文再要約ボタン用）
    */
-  const summarize = async (forceExtractionMode?: ExtractionMode) => {
-    setLoading(true);
-    setResult(null);
+  const summarize = useCallback(
+    async (forceExtractionMode?: ExtractionMode) => {
+      setLoading(true);
+      setResult(null);
 
-    try {
-      const cleanPdfUrl = String(pdfUrl);
-      const cleanTitle = String(title);
+      try {
+        const cleanPdfUrl = String(pdfUrl);
+        const cleanTitle = String(title);
 
-      const response = await chrome.runtime.sendMessage({
-        action: 'summarize' as const,
-        pdfUrl: cleanPdfUrl,
-        title: cleanTitle,
-        ...(forceExtractionMode && { forceExtractionMode }),
-      });
+        const response = await chrome.runtime.sendMessage({
+          action: 'summarize' as const,
+          pdfUrl: cleanPdfUrl,
+          title: cleanTitle,
+          ...(forceExtractionMode && { forceExtractionMode }),
+        });
 
-      if (response.error) {
-        console.error('[Content] 要約エラー:', response.error);
-        setResult({ summary: null, error: response.error, metadata: null });
-      } else {
-        setResult({ summary: response.summary, error: null, metadata: response.metadata });
-        saveToCache(response.summary, response.metadata);
+        if (response.error) {
+          console.error('[Content] 要約エラー:', response.error);
+          setResult({ summary: null, error: response.error, metadata: null });
+        } else {
+          setResult({ summary: response.summary, error: null, metadata: response.metadata });
+          saveToCache(response.summary, response.metadata);
+        }
+      } catch (err) {
+        console.error('[Content] 例外が発生:', err);
+        const errorMessage = err instanceof Error ? err.message : '要約に失敗しました';
+        setResult({ summary: null, error: errorMessage, metadata: null });
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error('[Content] 例外が発生:', err);
-      const errorMessage = err instanceof Error ? err.message : '要約に失敗しました';
-      setResult({ summary: null, error: errorMessage, metadata: null });
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [pdfUrl, title, saveToCache]
+  );
 
   /**
    * 結果をリセット
    */
-  const reset = () => {
+  const reset = useCallback(() => {
     setResult(null);
-  };
+  }, []);
 
   return { loading, result, hasCached, summarize, showCached, reset };
 }
