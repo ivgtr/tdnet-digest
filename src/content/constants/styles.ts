@@ -22,8 +22,6 @@ export const SUMMARY_STYLES = {
     'padding: 4px 8px; font-size: 12px; background-color: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; color: #1e40af;',
   resummarizeButton:
     'padding: 4px 8px; font-size: 12px; background-color: #fef9c3; border: 1px solid #eab308; border-radius: 4px; cursor: pointer; color: #854d0e;',
-  closeButton:
-    'padding: 4px 8px; font-size: 12px; background-color: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; color: #4b5563;',
 
   // メタデータ
   metadataInfo:

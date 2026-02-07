@@ -67,7 +67,6 @@ export function buildSummaryHtml(
         <div style="${SUMMARY_STYLES.buttonGroup}">
           ${fullRetryButton}
           <button type="button" id="resummarize-btn" style="${SUMMARY_STYLES.resummarizeButton}">再要約</button>
-          <button type="button" id="close-summary-btn" style="${SUMMARY_STYLES.closeButton}">閉じる</button>
         </div>
       </div>
       ${metadataHtml}

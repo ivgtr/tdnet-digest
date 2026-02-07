@@ -41,7 +41,6 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
    * @param metadata メタデータ
    * @param onRetry 全文再要約ボタンのコールバック
    * @param onResummarize 再要約ボタンのコールバック
-   * @param onClose 閉じるボタンのコールバック
    */
   const insertSummaryRow = useCallback(
     (
@@ -49,8 +48,7 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       errorText: string | null,
       metadata: SummaryMetadata | null,
       onRetry?: () => void,
-      onResummarize?: () => void,
-      onClose?: () => void
+      onResummarize?: () => void
     ) => {
       // 要約行を作成
       const summaryRow = iframeDoc.createElement('tr');
@@ -68,15 +66,6 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
         summaryCell.innerHTML = buildErrorHtml(errorText);
       } else if (summaryText) {
         summaryCell.innerHTML = buildSummaryHtml(summaryText, metadata, rowData);
-
-        // 閉じるボタンのイベントリスナー
-        const closeBtn = summaryCell.querySelector('#close-summary-btn');
-        closeBtn?.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          summaryRow.remove();
-          onClose?.();
-        });
 
         // 全文再要約ボタンのイベントリスナー（存在する場合のみ）
         if (metadata?.extractionMode === 'smart' && onRetry) {

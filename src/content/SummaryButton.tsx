@@ -36,7 +36,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     rowData: summaryRowData,
   });
 
-  // 閉じるボタンからの再レンダリング用
+  // 行挿入・削除後にisVisibleを再評価するための再レンダリングトリガー
   const [, setForceUpdate] = useState(0);
   const triggerUpdate = useCallback(() => setForceUpdate((v) => v + 1), []);
 
@@ -57,12 +57,9 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
         () => {
           reset();
           summarize();
-        },
-        () => {
-          reset();
-          triggerUpdate();
         }
       );
+      triggerUpdate();
     }
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
 
