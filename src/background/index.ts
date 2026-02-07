@@ -196,14 +196,12 @@ async function summarizeWithLLM(
 
     // 文書タイプ別プロンプトを使用
     const earningsContext = documentType === 'earnings' ? detectEarningsContext(title) : undefined;
-    const promptText = getPromptForDocumentType(documentType, pdfText, earningsContext);
+    const { system, user } = getPromptForDocumentType(documentType, pdfText, earningsContext);
 
     // メッセージを構築
     const messages: ChatMessage[] = [
-      {
-        role: 'user',
-        content: promptText,
-      },
+      { role: 'system', content: system },
+      { role: 'user', content: user },
     ];
 
     // 統一LLMクライアントを使用して要約を生成
