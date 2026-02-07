@@ -6,6 +6,25 @@
  */
 
 /**
+ * 決算期区分
+ */
+export type EarningsPeriod = 'q1' | 'q2' | 'q3' | 'fullYear';
+
+/**
+ * 会計基準
+ */
+export type AccountingStandard = 'jpGaap' | 'ifrs' | 'usGaap';
+
+/**
+ * 決算短信のコンテキスト情報
+ */
+export interface EarningsContext {
+  period: EarningsPeriod;
+  accountingStandard: AccountingStandard;
+  isConsolidated: boolean;
+}
+
+/**
  * 文書タイプ
  */
 export type DocumentType =
@@ -67,6 +86,41 @@ export function detectDocumentType(title: string): DocumentType {
 
   // 6. その他（デフォルト）
   return 'other';
+}
+
+/**
+ * 決算短信タイトルからコンテキスト情報を検出
+ *
+ * @param title 開示情報のタイトル
+ * @returns 決算コンテキスト（期区分・会計基準・連結/個別）
+ */
+export function detectEarningsContext(title: string): EarningsContext {
+  // 期区分の判定
+  let period: EarningsPeriod;
+  if (/第1四半期|1Q/.test(title)) {
+    period = 'q1';
+  } else if (/第2四半期|2Q|中間/.test(title)) {
+    period = 'q2';
+  } else if (/第3四半期|3Q/.test(title)) {
+    period = 'q3';
+  } else {
+    period = 'fullYear';
+  }
+
+  // 会計基準の判定
+  let accountingStandard: AccountingStandard;
+  if (/IFRS|国際会計基準/.test(title)) {
+    accountingStandard = 'ifrs';
+  } else if (/米国基準/.test(title)) {
+    accountingStandard = 'usGaap';
+  } else {
+    accountingStandard = 'jpGaap';
+  }
+
+  // 連結/個別の判定
+  const isConsolidated = !/個別|単体/.test(title);
+
+  return { period, accountingStandard, isConsolidated };
 }
 
 /**
