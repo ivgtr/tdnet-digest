@@ -16,3 +16,14 @@ export interface SummaryMetadata {
   documentType?: DocumentType;
   qualityWarning?: QualityWarning;
 }
+
+export interface CachedSummary {
+  summary: string;
+  metadata: SummaryMetadata;
+  companyName: string;
+  title: string;
+  code: string;
+  cachedAt: number;
+}
+
+export type SummaryCacheStore = Record<string, CachedSummary>;

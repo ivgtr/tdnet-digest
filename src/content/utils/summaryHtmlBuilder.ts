@@ -55,7 +55,7 @@ export function buildSummaryHtml(
   const metadataHtml = buildMetadataHtml(metadata);
   const fullRetryButton =
     metadata?.extractionMode === 'smart'
-      ? `<button id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button>`
+      ? `<button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button>`
       : '';
 
   return `
@@ -66,7 +66,7 @@ export function buildSummaryHtml(
         </h4>
         <div style="${SUMMARY_STYLES.buttonGroup}">
           ${fullRetryButton}
-          <button id="close-summary-btn" style="${SUMMARY_STYLES.closeButton}">閉じる</button>
+          <button type="button" id="resummarize-btn" style="${SUMMARY_STYLES.resummarizeButton}">再要約</button>
         </div>
       </div>
       ${metadataHtml}

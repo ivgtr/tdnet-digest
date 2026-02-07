@@ -1,1 +1,1 @@
-export type { ExtractionMode, QualityWarning, SummaryMetadata } from '../../types/summaryMetadata';
+export type { ExtractionMode, QualityWarning, SummaryMetadata, CachedSummary, SummaryCacheStore } from '../../types/summaryMetadata';

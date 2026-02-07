@@ -20,8 +20,8 @@ export const SUMMARY_STYLES = {
   // ボタン
   retryButton:
     'padding: 4px 8px; font-size: 12px; background-color: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; cursor: pointer; color: #1e40af;',
-  closeButton:
-    'padding: 4px 8px; font-size: 12px; background-color: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; color: #4b5563;',
+  resummarizeButton:
+    'padding: 4px 8px; font-size: 12px; background-color: #fef9c3; border: 1px solid #eab308; border-radius: 4px; cursor: pointer; color: #854d0e;',
 
   // メタデータ
   metadataInfo:
@@ -67,4 +67,35 @@ export const BUTTON_STYLES = {
 
   buttonHover: 'linear-gradient(to bottom, #577b98, #2c506f)',
   buttonNormal: 'linear-gradient(to bottom, #75a8d0, #4a84b9)',
+
+  containerCached: (visible: boolean) => ({
+    border: visible ? '1px solid #9ca3af' : '1px solid #16a34a',
+    borderRadius: '3px',
+    height: '25px',
+    width: '60px',
+    margin: '0 auto',
+    overflow: 'hidden',
+    padding: '0',
+    fontSize: '13px',
+    fontWeight: 'bold' as const,
+  }),
+
+  buttonCached: (visible: boolean) => ({
+    width: '100%',
+    height: '100%',
+    padding: '3px 0 0 0',
+    border: 'none',
+    cursor: 'pointer' as const,
+    background: visible
+      ? 'linear-gradient(to bottom, #d1d5db, #9ca3af)'
+      : 'linear-gradient(to bottom, #4ade80, #16a34a)',
+    fontWeight: 'bold' as const,
+    color: '#ffffff',
+    textDecoration: 'none',
+    outline: 'none',
+    display: 'block' as const,
+  }),
+
+  buttonCachedHover: 'linear-gradient(to bottom, #9ca3af, #6b7280)',
+  buttonCachedShowHover: 'linear-gradient(to bottom, #22c55e, #15803d)',
 } as const;

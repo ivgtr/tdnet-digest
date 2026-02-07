@@ -27,18 +27,28 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
   }, [row]);
 
   /**
+   * 要約行が表示中かどうかを判定
+   */
+  const isSummaryRowVisible = useCallback((): boolean => {
+    const next = row.nextElementSibling;
+    return next?.classList.contains('tdnet-digest-summary-row') ?? false;
+  }, [row]);
+
+  /**
    * 要約行を挿入
    * @param summaryText 要約テキスト
    * @param errorText エラーテキスト
    * @param metadata メタデータ
    * @param onRetry 全文再要約ボタンのコールバック
+   * @param onResummarize 再要約ボタンのコールバック
    */
   const insertSummaryRow = useCallback(
     (
       summaryText: string | null,
       errorText: string | null,
       metadata: SummaryMetadata | null,
-      onRetry?: () => void
+      onRetry?: () => void,
+      onResummarize?: () => void
     ) => {
       // 要約行を作成
       const summaryRow = iframeDoc.createElement('tr');
@@ -57,18 +67,25 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       } else if (summaryText) {
         summaryCell.innerHTML = buildSummaryHtml(summaryText, metadata, rowData);
 
-        // 閉じるボタンのイベントリスナー
-        const closeBtn = summaryCell.querySelector('#close-summary-btn');
-        closeBtn?.addEventListener('click', () => {
-          summaryRow.remove();
-        });
-
         // 全文再要約ボタンのイベントリスナー（存在する場合のみ）
         if (metadata?.extractionMode === 'smart' && onRetry) {
           const fullRetryBtn = summaryCell.querySelector('#full-retry-btn');
-          fullRetryBtn?.addEventListener('click', () => {
+          fullRetryBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             summaryRow.remove();
             onRetry();
+          });
+        }
+
+        // 再要約ボタンのイベントリスナー
+        if (onResummarize) {
+          const resummarizeBtn = summaryCell.querySelector('#resummarize-btn');
+          resummarizeBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            summaryRow.remove();
+            onResummarize();
           });
         }
       }
@@ -85,5 +102,5 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
     [row, iframeDoc, rowData]
   );
 
-  return { removeSummaryRow, insertSummaryRow };
+  return { removeSummaryRow, insertSummaryRow, isSummaryRowVisible };
 }
