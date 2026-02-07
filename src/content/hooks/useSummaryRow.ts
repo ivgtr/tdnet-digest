@@ -71,7 +71,9 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
 
         // 閉じるボタンのイベントリスナー
         const closeBtn = summaryCell.querySelector('#close-summary-btn');
-        closeBtn?.addEventListener('click', () => {
+        closeBtn?.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
           summaryRow.remove();
           onClose?.();
         });
@@ -79,7 +81,9 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
         // 全文再要約ボタンのイベントリスナー（存在する場合のみ）
         if (metadata?.extractionMode === 'smart' && onRetry) {
           const fullRetryBtn = summaryCell.querySelector('#full-retry-btn');
-          fullRetryBtn?.addEventListener('click', () => {
+          fullRetryBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             summaryRow.remove();
             onRetry();
           });
@@ -88,7 +92,9 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
         // 再要約ボタンのイベントリスナー
         if (onResummarize) {
           const resummarizeBtn = summaryCell.querySelector('#resummarize-btn');
-          resummarizeBtn?.addEventListener('click', () => {
+          resummarizeBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             summaryRow.remove();
             onResummarize();
           });

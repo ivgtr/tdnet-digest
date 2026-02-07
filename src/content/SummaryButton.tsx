@@ -100,6 +100,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   return (
     <div style={containerStyle}>
       <button
+        type="button"
         onClick={handleClick}
         disabled={loading}
         style={buttonStyle}
