@@ -28,7 +28,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     // ArrayをUint8Arrayに変換
     const uint8Array = new Uint8Array(request.pdfData);
 
-    const extractionMode = request.extractionMode || 'smart';
+    const extractionMode = request.extractionMode || 'full';
     const documentType: DocumentType = request.documentType || 'other';
 
     extractTextFromPDF(uint8Array, extractionMode, documentType)

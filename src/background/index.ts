@@ -100,7 +100,7 @@ async function handleSummarize(
     console.log(`[Background] 文書タイプ: ${documentType} (タイトル: ${title})`);
 
     // 強制抽出モードがあれば設定より優先
-    const extractionMode = forceExtractionMode || settings.extractionMode || 'smart';
+    const extractionMode = forceExtractionMode || settings.extractionMode || 'full';
     console.log(
       `[Background] 抽出モード: ${extractionMode}${forceExtractionMode ? ' (強制)' : ''}`
     );
@@ -128,7 +128,7 @@ async function getSettings(): Promise<Settings> {
           apiKey: result.apiKey || '',
           model: result.model || 'gpt-4o',
           customUrl: result.customUrl || '',
-          extractionMode: result.extractionMode || 'smart',
+          extractionMode: result.extractionMode || 'full',
         });
       }
     );

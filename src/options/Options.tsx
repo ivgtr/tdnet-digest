@@ -8,7 +8,7 @@ const Options: React.FC = () => {
   const [model, setModel] = useState('gpt-4o');
   const [customUrl, setCustomUrl] = useState('');
   const [useCustomModel, setUseCustomModel] = useState(false);
-  const [extractionMode, setExtractionMode] = useState<ExtractionMode>('smart');
+  const [extractionMode, setExtractionMode] = useState<ExtractionMode>('full');
   const [saved, setSaved] = useState(false);
   const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
   const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
@@ -239,24 +239,24 @@ const Options: React.FC = () => {
               onChange={(e) => setExtractionMode(e.target.value as ExtractionMode)}
               className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
+              <option value="full">全文抽出（推奨）</option>
               <option value="smart">要点抽出</option>
-              <option value="full">全文抽出</option>
             </select>
             <div className="mt-2 p-3 bg-gray-50 rounded text-xs text-gray-700">
               {extractionMode === 'smart' ? (
                 <div>
                   <strong>スマート抽出:</strong>
                   <ul className="mt-1 ml-4 list-disc space-y-1">
-                    <li>トークン使用量: 少ない</li>
                     <li>重要なセクションやページのみを抽出</li>
+                    <li>トークン使用量が少ない（全文抽出の約1/4）</li>
                   </ul>
                 </div>
               ) : (
                 <div>
-                  <strong>全文抽出:</strong>
+                  <strong>全文抽出（推奨）:</strong>
                   <ul className="mt-1 ml-4 list-disc space-y-1">
-                    <li>トークン使用量: 多い</li>
-                    <li>PDF全体を抽出して要約</li>
+                    <li>PDF全体を抽出して要約（より正確な結果）</li>
+                    <li>Gemini 2.5 Flash Lite なら1回あたり約¥1以下（100回で約¥90）</li>
                   </ul>
                 </div>
               )}
