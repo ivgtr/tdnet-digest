@@ -82,7 +82,12 @@ const COMMON_RULES = `
  */
 const COMMON_TOPICS_RULES = `
 - トピックスは「タイトル:」を付けずに、内容を直接記載してください
-- トピックスは全体要約で触れていない具体的な情報のみを記載してください`;
+- トピックスは全体要約で触れていない具体的な情報のみを記載してください
+- 以下の観点を優先的に拾ってください:
+  - セグメント別で全体と異なる傾向（好調/不調セグメント）
+  - 一時的な要因（特別損益、為替影響、のれん償却、訴訟関連等）
+  - 先行指標（受注残、パイプライン、月次動向、新規出店等）
+  - 前回開示からの変化点やサプライズ要素`;
 
 /**
  * 決算評価の判定ルールを生成（出力形式の前に配置する内部ルール）
@@ -166,12 +171,11 @@ function buildEarningsPrompt(ctx: EarningsContext): string {
   const periodLabel = buildPeriodLabel(ctx);
   const accountingNote = buildAccountingNote(ctx);
 
+  const summarySection = buildSummarySection();
   const performanceSection = buildPerformanceSection(comparisonLabel, periodLabel);
   const progressSection = isQuarterly ? buildProgressSection(ctx) : '';
   const forecastSection = buildForecastSection(ctx);
-  const revisionSection = buildRevisionSection();
-  const dividendSection = buildDividendSection();
-  const summarySection = buildSummarySection();
+  const revisionAndDividendSection = buildRevisionAndDividendSection();
   const topicsSection = buildTopicsSection();
 
   return [
@@ -182,12 +186,11 @@ function buildEarningsPrompt(ctx: EarningsContext): string {
     buildEarningsSpecificRules(ctx),
     `\n--- 出力形式 ---`,
     buildEvaluationTemplate(ctx),
+    summarySection,
     performanceSection,
     progressSection,
     forecastSection,
-    revisionSection,
-    dividendSection,
-    summarySection,
+    revisionAndDividendSection,
     topicsSection,
     `\n--- 出力形式ここまで ---`,
   ]
@@ -276,19 +279,14 @@ function buildForecastSection(ctx: EarningsContext): string {
 - ...`;
 }
 
-function buildRevisionSection(): string {
+function buildRevisionAndDividendSection(): string {
   return `
-## 業績予想の修正
-- 業績予想の修正: 有/無（有の場合: 修正対象と変更内容を簡潔に）`;
-}
-
-function buildDividendSection(): string {
-  return `
-## 配当
+## 修正・配当
+- 業績予想の修正: {修正がある場合: 修正対象と変更内容を簡潔に。ない場合は「修正なし」と記載}
 - 中間配当: {金額}
 - 期末配当: {金額}
 - 年間配当: {金額}
-- 配当予想の修正: 有/無（有の場合: 旧予想→新予想を中間/期末/年間ごとに記載）`;
+- 配当予想の修正: {修正がある場合: 旧予想→新予想を中間/期末/年間ごとに記載}`;
 }
 
 function buildSummarySection(): string {
@@ -300,7 +298,7 @@ function buildSummarySection(): string {
 function buildTopicsSection(): string {
   return `
 ## トピックス
-- {全体要約だけでは分からない具体情報を簡潔に記載}`;
+- {全体要約で触れていない具体的な数値・事実を簡潔に記載}`;
 }
 
 function buildEarningsSpecificRules(ctx: EarningsContext): string {
@@ -332,8 +330,8 @@ function buildEarningsRevisionPrompt(): string {
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
-## 業績予想の修正
-- 業績予想の修正: 有/無
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.earningsRevision}で、修正の方向性と主要因、配当への影響を含めて記載}
 
 ## 修正内容
 - {勘定科目}: 前回予想{金額} → 修正後{金額}（{増減率}）
@@ -344,15 +342,11 @@ ${COMMON_TOPICS_RULES}
 {修正理由を2-3行で簡潔に}
 
 ## 配当予想の修正
-- 配当予想の修正: 有/無
-- 修正内容: {有の場合: 中間/期末/年間の 旧予想→新予想を記載}
+- 修正内容: {中間/期末/年間の 旧予想→新予想を記載}
 - 修正理由: {配当修正の理由を1-2行で簡潔に}
 
-## 全体要約
-{${PROMPT_CONFIG.SUMMARY_STYLE.earningsRevision}で、修正の方向性と主要因、配当への影響を含めて記載}
-
 ## トピックス
-- {全体要約だけでは分からない具体情報を簡潔に}
+- {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
 }
 
@@ -368,24 +362,22 @@ function buildDividendPrompt(): string {
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
-## 配当内容（今期）
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.dividend}で、配当水準の変化と理由、修正有無を含めて記載}
+
+## 配当内容
 - 中間配当: {金額}
 - 期末配当: {金額}
 - 年間配当: {金額}
 - 配当性向: {パーセント}
-
-## 配当の変更
-- 予想修正: 有/無（有の場合: 旧予想→新予想を中間/期末/年間ごとに記載）
+- 予想修正: {修正がある場合: 旧予想→新予想を中間/期末/年間ごとに記載}
 - 前期比較: 年間配当{前期金額} → {今期金額}（{増減額}、増配/減配/据置）
 
 ## 配当方針
 {配当方針や株主還元方針を1-2行で簡潔に}
 
-## 全体要約
-{${PROMPT_CONFIG.SUMMARY_STYLE.dividend}で、配当水準の変化と理由、修正有無を含めて記載}
-
 ## トピックス
-- {全体要約だけでは分からない具体情報を簡潔に}
+- {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
 }
 
@@ -400,33 +392,28 @@ function buildMAPrompt(): string {
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.ma}で、取引の狙い、規模、業績影響の有無を含めて記載}
+
 ## 取引概要
 - 対象会社: {会社名}
 - 取引内容: {株式取得/譲渡/その他}
 - スキーム: {子会社化/持分法適用/合併/事業譲渡/その他}
 - 取得比率: {パーセント}
 - 取得価額: {金額}
+- 契約締結日: {日付}
+- 取得予定日: {日付}
 
 ## 目的
 {取引の目的を2-3行で簡潔に}
 
-## 業績への影響
-- 業績への影響: 有/無
+## 業績・連結への影響
 - 売上への影響: {金額または説明}
 - 利益への影響: {金額または説明}
-
-## 連結範囲
-- 連結範囲の変更: 有/無（有の場合: 変更内容）
-
-## スケジュール
-- 契約締結日: {日付}
-- 株式取得予定日: {日付}
-
-## 全体要約
-{${PROMPT_CONFIG.SUMMARY_STYLE.ma}で、取引の狙い、規模、業績影響の有無を含めて記載}
+- 連結範囲の変更: {変更内容}
 
 ## トピックス
-- {全体要約だけでは分からない具体情報を簡潔に}
+- {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
 }
 
@@ -441,23 +428,21 @@ function buildShareRepurchasePrompt(): string {
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.shareRepurchase}で、取得枠の規模、目的、消却有無を含めて記載}
+
 ## 取得内容
 - 取得株数: {株数}（発行済株式総数に対する割合: {パーセント}）
 - 取得価額: {金額}
 - 取得期間: {期間}
 - 取得方法: {市場買付/その他}
+- 消却予定: {消却予定の有無と時期}
 
 ## 目的
 {取得の目的を1-2行で簡潔に}
 
-## 消却予定
-{消却予定の有無と時期}
-
-## 全体要約
-{${PROMPT_CONFIG.SUMMARY_STYLE.shareRepurchase}で、取得枠の規模、目的、消却有無を含めて記載}
-
 ## トピックス
-- {全体要約だけでは分からない具体情報を簡潔に}
+- {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
 }
 
@@ -472,25 +457,19 @@ function buildOtherPrompt(): string {
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
-## 開示内容
-{開示の主要内容を箇条書きで}
-
-## 業績・株価への影響
-- 業績・株価への影響: 有/無
-- 影響内容: {業績や株価への影響を記載（本文に記載がある場合のみ）}
-
-## 対象範囲・スケジュール
-- 対象範囲: {会社/子会社/事業/その他}
-- 期限・予定: {日付/期間}
-
-## その他重要事項
-{その他投資判断に重要な情報}
-
 ## 全体要約
 {${PROMPT_CONFIG.SUMMARY_STYLE.other}で、影響の有無と重要点を含めて記載}
 
+## 開示内容
+{開示の主要内容を箇条書きで}
+- 対象範囲: {会社/子会社/事業/その他}
+- 期限・予定: {日付/期間}
+
+## 業績・株価への影響
+- 影響内容: {業績や株価への影響を記載}
+
 ## トピックス
-- {全体要約だけでは分からない具体情報を簡潔に}
+- {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
 }
 
