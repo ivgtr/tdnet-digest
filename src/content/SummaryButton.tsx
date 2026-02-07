@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
 import { BUTTON_STYLES } from './constants/styles';
@@ -25,10 +25,15 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     companyName: rowData.companyName,
   });
 
+  const summaryRowData = useMemo(
+    () => ({ companyName: rowData.companyName, title: rowData.title }),
+    [rowData.companyName, rowData.title]
+  );
+
   const { removeSummaryRow, insertSummaryRow, isSummaryRowVisible } = useSummaryRow({
     row,
     iframeDoc,
-    rowData: { companyName: rowData.companyName, title: rowData.title },
+    rowData: summaryRowData,
   });
 
   // 閉じるボタンからの再レンダリング用
@@ -53,7 +58,10 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           reset();
           summarize();
         },
-        triggerUpdate
+        () => {
+          reset();
+          triggerUpdate();
+        }
       );
     }
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
@@ -63,6 +71,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
 
     if (isVisible) {
       removeSummaryRow();
+      reset();
       triggerUpdate();
       return;
     }
