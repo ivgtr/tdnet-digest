@@ -11,6 +11,7 @@ const Options: React.FC = () => {
   const [customUrl, setCustomUrl] = useState('');
   const [useCustomModel, setUseCustomModel] = useState(false);
   const [extractionMode, setExtractionMode] = useState<ExtractionMode>('full');
+  const [twoPassMode, setTwoPassMode] = useState(true);
   const [saved, setSaved] = useState(false);
   const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
   const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
@@ -38,7 +39,7 @@ const Options: React.FC = () => {
 
   useEffect(() => {
     chrome.storage.sync.get(
-      ['provider', 'apiKey', 'model', 'customUrl', 'useCustomModel', 'extractionMode'],
+      ['provider', 'apiKey', 'model', 'customUrl', 'useCustomModel', 'extractionMode', 'twoPassMode'],
       (result) => {
         if (result.provider) setProvider(result.provider);
         if (result.apiKey) setApiKey(result.apiKey);
@@ -46,6 +47,7 @@ const Options: React.FC = () => {
         if (result.customUrl) setCustomUrl(result.customUrl);
         if (result.useCustomModel !== undefined) setUseCustomModel(result.useCustomModel);
         if (result.extractionMode) setExtractionMode(result.extractionMode);
+        if (result.twoPassMode !== undefined) setTwoPassMode(result.twoPassMode);
       }
     );
     loadCacheEntries();
@@ -112,6 +114,7 @@ const Options: React.FC = () => {
         customUrl: provider === 'custom' ? customUrl : '',
         useCustomModel,
         extractionMode,
+        twoPassMode,
       },
       () => {
         setSaved(true);
@@ -281,6 +284,42 @@ const Options: React.FC = () => {
                   <ul className="mt-1 ml-4 list-disc space-y-1">
                     <li>PDF全体を抽出して要約（より正確な結果）</li>
                     <li>Gemini 2.5 Flash Lite なら1回あたり約¥1以下（100回で約¥90）</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 要約モード */}
+          <div>
+            <label htmlFor="twoPassMode" className="block text-sm font-medium text-gray-700 mb-2">
+              要約モード
+            </label>
+            <select
+              id="twoPassMode"
+              value={twoPassMode ? 'twoPass' : 'onePass'}
+              onChange={(e) => setTwoPassMode(e.target.value === 'twoPass')}
+              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="twoPass">2パス要約（推奨）</option>
+              <option value="onePass">1パス要約</option>
+            </select>
+            <div className="mt-2 p-3 bg-gray-50 rounded text-xs text-gray-700">
+              {twoPassMode ? (
+                <div>
+                  <strong>2パス要約（推奨）:</strong>
+                  <ul className="mt-1 ml-4 list-disc space-y-1">
+                    <li>情報抽出→整形の2段階で安定した出力を実現</li>
+                    <li>性能の低いモデルでもフォーマットが安定</li>
+                    <li>APIリクエストが2回になるためコスト・時間は約2倍</li>
+                  </ul>
+                </div>
+              ) : (
+                <div>
+                  <strong>1パス要約:</strong>
+                  <ul className="mt-1 ml-4 list-disc space-y-1">
+                    <li>1回のリクエストで要約を生成（高速・低コスト）</li>
+                    <li>モデルによっては出力フォーマットが不安定になる場合あり</li>
                   </ul>
                 </div>
               )}
