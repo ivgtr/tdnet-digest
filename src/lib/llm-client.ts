@@ -8,6 +8,7 @@ export interface LLMConfig {
   apiKey: string;
   model: string;
   baseUrl?: string; // カスタムプロバイダー用
+  temperature?: number; // 生成温度（0-2、低いほど安定した出力）
 }
 
 export interface ChatMessage {
@@ -67,6 +68,7 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
         role: msg.role,
         content: msg.content,
       })),
+      ...(config.temperature !== undefined && { temperature: config.temperature }),
     }),
   });
 
@@ -115,6 +117,7 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
         role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: msg.content,
       })),
+      ...(config.temperature !== undefined && { temperature: config.temperature }),
     }),
   });
 

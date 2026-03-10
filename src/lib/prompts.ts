@@ -17,6 +17,7 @@
  */
 
 import type { DocumentType, EarningsContext, EarningsPeriod } from './document-type';
+import { getJsonSchema, getEarningsRatingRulesText } from './summary-schema';
 
 /**
  * プロンプト設定値
@@ -520,4 +521,104 @@ export function getPromptForDocumentType(
  */
 export function getSystemPrompt(documentType: DocumentType): string {
   return PROMPTS[documentType];
+}
+
+// ── 2パス要約: パス1（情報抽出）用プロンプト ──
+
+/**
+ * パス1の共通抽出ルール
+ */
+const EXTRACTION_ROLE = `あなたはTDnet適時開示情報の情報抽出アシスタントです。
+以下の開示文書から情報を抽出し、指定されたJSON形式で出力してください。`;
+
+const EXTRACTION_RULES = `
+【最優先ルール - 絶対遵守】
+1. 本文に記載されている情報のみを使用してください（捏造厳禁）
+2. 数値は本文から正確に抽出してください（計算が必要な場合は本文に計算根拠がある場合のみ）
+3. JSON以外は一切出力しないでください（説明文・コードブロック記法も不要）
+
+【重要ルール】
+4. 前年同期比/前期比の増減率が本文にある場合は必ず記載し、省略しないでください
+5. 勘定科目名は本文の表記をそのまま使用してください（例: 売上収益、事業利益、経常収益など）
+6. 赤字の場合は金額を「△」で始め、括弧内に「赤字」または「損失」を付記してください
+7. 日付は「YYYY年M月D日」形式で統一してください
+8. 金額単位は本文の表記をそのまま使用してください
+9. 増減率は小数点第1位まで記載してください（例: +12.3%、△5.0%）
+10. 該当情報がない項目はnullまたは空配列を設定してください`;
+
+const EXTRACTION_TOPICS_RULES = `
+【トピックス抽出の重点事項】
+topicsには以下の観点を最優先で拾ってください（具体的な数値を含めること）:
+- セグメント別・事業別の業績で全体と異なる傾向があるもの（好調/不調セグメントの売上・利益と前年比）
+- 受注残高・受注増減・パイプライン・月次動向・新規出店等の先行指標
+- 一時的な要因（特別損益、為替影響、のれん償却、訴訟関連等）
+- 前回開示からの変化点やサプライズ要素
+- 事業別の前年比で特異な動きがあるもの
+※抽象的な記述は禁止。必ず本文中の具体的な数値・事実を含めること
+※全体要約（summary）で触れていない情報のみを記載すること`;
+
+/**
+ * 決算短信用の追加抽出ルール
+ */
+function buildEarningsExtractionNote(ctx: EarningsContext): string {
+  const isQuarterly = ctx.period !== 'fullYear';
+  const accountingNote = buildAccountingNote(ctx);
+  const ratingRules = getEarningsRatingRulesText(ctx);
+
+  const progressNote = isQuarterly
+    ? `
+【進捗率について】
+- 進捗率は経常利益について「当期実績 ÷ 通期予想 × 100」で算出してください
+- 通期予想が未定・ゼロ・赤字予想の場合は「算出不可（理由）」と記載してください`
+    : '';
+
+  return `${accountingNote}
+
+【決算評価の判定ルール】
+以下の基準に従って★評価を判定してください。
+★は★（黒星）と☆（白星）を並べて5段階で表記してください（例: ★★★★☆=4点、★★☆☆☆=2点）。
+括弧は全角（）を使用してください。
+${ratingRules}${progressNote}`;
+}
+
+/**
+ * パス1（情報抽出）用プロンプトを取得
+ *
+ * @param documentType 文書タイプ
+ * @param extractedText 抽出されたテキスト
+ * @param earningsContext 決算コンテキスト（決算短信の場合のみ）
+ * @returns { system, user } — systemプロンプトとuserメッセージ
+ */
+export function getExtractionPrompt(
+  documentType: DocumentType,
+  extractedText: string,
+  earningsContext?: EarningsContext
+): { system: string; user: string } {
+  const schema = getJsonSchema(documentType, earningsContext);
+
+  const extraRules =
+    documentType === 'earnings' && earningsContext
+      ? buildEarningsExtractionNote(earningsContext)
+      : '';
+
+  const maxTopics =
+    documentType === 'earnings'
+      ? PROMPT_CONFIG.MAX_TOPICS.earnings
+      : PROMPT_CONFIG.MAX_TOPICS[documentType];
+
+  const systemPrompt = [
+    EXTRACTION_ROLE,
+    EXTRACTION_RULES,
+    extraRules,
+    EXTRACTION_TOPICS_RULES,
+    `\n- topicsは最大${maxTopics}点までにしてください`,
+    `\n【出力JSON形式】\n${schema}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    system: systemPrompt,
+    user: `以下の開示文書から情報を抽出してください。\n\n${extractedText}`,
+  };
 }
