@@ -17,6 +17,71 @@ const Options: React.FC = () => {
   const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
   const [cacheEntries, setCacheEntries] = useState<[string, CachedSummary][]>([]);
 
+  const SETTINGS_KEYS = [
+    'provider',
+    'apiKey',
+    'model',
+    'customUrl',
+    'useCustomModel',
+    'extractionMode',
+    'twoPassMode',
+  ] as const;
+
+  const handleExportSettings = () => {
+    chrome.storage.sync.get([...SETTINGS_KEYS], (result) => {
+      const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tdnet-digest-settings-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  };
+
+  const handleImportSettings = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target?.result as string);
+          // 有効なキーのみ取り込む
+          const validData: Record<string, unknown> = {};
+          for (const key of SETTINGS_KEYS) {
+            if (key in data) validData[key] = data[key];
+          }
+          if (Object.keys(validData).length === 0) {
+            alert('有効な設定が見つかりませんでした');
+            return;
+          }
+          chrome.storage.sync.set(validData, () => {
+            // UIに反映
+            if (validData.provider) setProvider(validData.provider as string);
+            if (validData.apiKey) setApiKey(validData.apiKey as string);
+            if (validData.model) setModel(validData.model as string);
+            if (validData.customUrl) setCustomUrl(validData.customUrl as string);
+            if (validData.useCustomModel !== undefined)
+              setUseCustomModel(validData.useCustomModel as boolean);
+            if (validData.extractionMode)
+              setExtractionMode(validData.extractionMode as ExtractionMode);
+            if (validData.twoPassMode !== undefined) setTwoPassMode(validData.twoPassMode as boolean);
+            setSaved(true);
+            setTimeout(() => setSaved(false), 3000);
+          });
+        } catch {
+          alert('ファイルの読み込みに失敗しました');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
   const loadCacheEntries = () => {
     chrome.storage.local.get(CACHE_KEY, (data) => {
       const store: SummaryCacheStore = data[CACHE_KEY] || {};
@@ -334,6 +399,28 @@ const Options: React.FC = () => {
               保存
             </button>
             {saved && <span className="text-sm text-green-600 font-medium">✓ 保存しました</span>}
+          </div>
+        </div>
+
+        {/* 設定のエクスポート/インポート */}
+        <div className="mt-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-800 mb-3">設定のバックアップ</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            設定をJSONファイルにエクスポート/インポートできます。拡張機能の再インストール時などに利用してください。
+          </p>
+          <div className="flex gap-3">
+            <button
+              onClick={handleExportSettings}
+              className="px-4 py-2 text-sm bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+            >
+              設定をエクスポート
+            </button>
+            <button
+              onClick={handleImportSettings}
+              className="px-4 py-2 text-sm bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 transition-colors"
+            >
+              設定をインポート
+            </button>
           </div>
         </div>
 
