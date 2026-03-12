@@ -5,6 +5,7 @@
 
 import { SUMMARY_STYLES } from '../constants/styles';
 import type { SummaryMetadata } from '../types/summaryMetadata';
+import { parseMarkdown } from './markdownParser';
 
 /**
  * エラー表示のHTMLを生成
@@ -70,7 +71,7 @@ export function buildSummaryHtml(
         </div>
       </div>
       ${metadataHtml}
-      <div style="${SUMMARY_STYLES.summaryText}">${summaryText}</div>
+      <div style="${SUMMARY_STYLES.summaryText}">${parseMarkdown(summaryText)}</div>
     </div>
   `;
 }
