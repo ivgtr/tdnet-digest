@@ -158,9 +158,9 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   const forecastLabel = isQuarterly ? '通期予想' : '来期予想（本文にある場合のみ）';
   const progressField = isQuarterly
     ? `
-  "progress": {                          // 進捗率（通期予想に対して）
-    "ordinaryIncome": "経常利益の進捗率（例: 58.3%）",
-    "lastYearProgress": "前年同期の進捗率（あれば）"
+  "progress": {                          // 進捗率（通期予想に対して）※算出不可ならprogress全体をnull
+    "ordinaryIncome": "経常利益の進捗率（例: 58.3%）※通期予想が未定ならprogress全体をnullに",
+    "lastYearProgress": "前年同期の進捗率 ※不明ならnull"
   },`
     : `
   "progress": null,                      // 通期決算では不要`;
@@ -170,7 +170,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "performance": {
     "periodLabel": "期間ラベル（例: 第2四半期連結実績）",
     "items": [
-      { "name": "勘定科目名", "amount": "金額（単位付き）", "change": "前年同期比/前期比（例: +12.3%）" }
+      { "name": "勘定科目名", "amount": "金額（単位付き）", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull" }
     ]
   },
   "evaluation": {
@@ -186,15 +186,15 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "forecast": {
     "label": "${forecastLabel}",
     "items": [
-      { "name": "勘定科目名", "amount": "金額", "change": "前期比（例: +8.5%）" }
+      { "name": "勘定科目名", "amount": "金額", "change": "前期比（例: +8.5%） ※本文に増減率がない場合はnull" }
     ]
   },
   "revision": "業績予想の修正内容（修正なしの場合は'修正なし'）",
   "dividend": {
-    "interim": "中間配当額",
-    "yearEnd": "期末配当額",
-    "annual": "年間配当額",
-    "dividendRevision": "配当予想の修正（旧→新、中間/期末/年間ごと）"
+    "interim": "中間配当額 ※本文に記載がなければnull",
+    "yearEnd": "期末配当額 ※本文に記載がなければnull",
+    "annual": "年間配当額 ※本文に記載がなければnull",
+    "dividendRevision": "配当予想の修正（旧→新） ※修正がなければnull"
   },
   "topics": ["具体的な数値を含むトピック（最大8点）"]
 }`;
