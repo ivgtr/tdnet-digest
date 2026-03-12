@@ -1,6 +1,6 @@
 {
   "name": "tdnet-digest",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "private": true,
   "description": "Chrome extension for summarizing TDnet disclosure documents with LLM",
