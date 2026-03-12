@@ -6,6 +6,30 @@
 
 import { type Tokens, Marked } from 'marked';
 
+/**
+ * HTML特殊文字をエスケープする
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * URLが安全なスキームかどうかを検証する
+ */
+function isSafeUrl(href: string): boolean {
+  try {
+    const url = new URL(href, 'https://example.com');
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /** 要素ごとのインラインスタイル定義 */
 const MARKDOWN_STYLES: Record<string, string> = {
   h1: 'font-size: 16px; font-weight: bold; color: #111827; margin: 12px 0 6px 0; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb;',
@@ -76,11 +100,11 @@ function createStyledRenderer(): Partial<import('marked').RendererObject> {
       return `<blockquote style="${MARKDOWN_STYLES.blockquote}">${body}</blockquote>`;
     },
     code(token: Tokens.Code) {
-      const langAttr = token.lang ? ` data-lang="${token.lang}"` : '';
-      return `<pre style="${MARKDOWN_STYLES.pre}"${langAttr}><code style="${MARKDOWN_STYLES['pre code']}">${token.text}</code></pre>`;
+      const langAttr = token.lang ? ` data-lang="${escapeHtml(token.lang)}"` : '';
+      return `<pre style="${MARKDOWN_STYLES.pre}"${langAttr}><code style="${MARKDOWN_STYLES['pre code']}">${escapeHtml(token.text)}</code></pre>`;
     },
     codespan(token: Tokens.Codespan) {
-      return `<code style="${MARKDOWN_STYLES.code}">${token.text}</code>`;
+      return `<code style="${MARKDOWN_STYLES.code}">${escapeHtml(token.text)}</code>`;
     },
     table(token: Tokens.Table) {
       let header = '<tr>';
@@ -121,7 +145,10 @@ function createStyledRenderer(): Partial<import('marked').RendererObject> {
     },
     link(token: Tokens.Link) {
       const text = this.parser.parseInline(token.tokens);
-      return `<a href="${token.href}" target="_blank" rel="noopener noreferrer" style="${MARKDOWN_STYLES.a}">${text}</a>`;
+      if (!isSafeUrl(token.href)) {
+        return text;
+      }
+      return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer" style="${MARKDOWN_STYLES.a}">${text}</a>`;
     },
   };
 }
