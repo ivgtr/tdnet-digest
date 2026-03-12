@@ -30,7 +30,7 @@ export const SUMMARY_STYLES = {
     'font-size: 12px; color: #92400e; margin-bottom: 8px; padding: 8px; background-color: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px;',
 
   // 要約テキスト
-  summaryText: 'font-size: 13px; color: #374151; line-height: 1.6; white-space: pre-wrap;',
+  summaryText: 'font-size: 13px; color: #374151; line-height: 1.6;',
 } as const;
 
 /**
