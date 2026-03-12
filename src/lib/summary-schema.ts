@@ -158,9 +158,9 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   const forecastLabel = isQuarterly ? '通期予想' : '来期予想（本文にある場合のみ）';
   const progressField = isQuarterly
     ? `
-  "progress": {                          // 進捗率（通期予想に対して）
-    "ordinaryIncome": "経常利益の進捗率（例: 58.3%）",
-    "lastYearProgress": "前年同期の進捗率（あれば）"
+  "progress": {                          // 進捗率（通期予想に対して）※通期予想が「未定」と明記の場合のみprogress全体をnull
+    "ordinaryIncome": "経常利益の進捗率（例: 58.3%）※レンジ予想なら「XX.X%〜YY.Y%」形式。通期予想が「未定」と明記の場合のみprogress全体をnullに",
+    "lastYearProgress": "前年同期の進捗率 ※不明ならnull"
   },`
     : `
   "progress": null,                      // 通期決算では不要`;
@@ -170,7 +170,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "performance": {
     "periodLabel": "期間ラベル（例: 第2四半期連結実績）",
     "items": [
-      { "name": "勘定科目名", "amount": "金額（単位付き）", "change": "前年同期比/前期比（例: +12.3%）" }
+      { "name": "勘定科目名", "amount": "金額（単位付き）", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull" }
     ]
   },
   "evaluation": {
@@ -186,15 +186,15 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "forecast": {
     "label": "${forecastLabel}",
     "items": [
-      { "name": "勘定科目名", "amount": "金額", "change": "前期比（例: +8.5%）" }
+      { "name": "勘定科目名", "amount": "金額", "change": "前期比（例: +8.5%） ※本文に増減率がない場合はnull" }
     ]
   },
   "revision": "業績予想の修正内容（修正なしの場合は'修正なし'）",
   "dividend": {
-    "interim": "中間配当額",
-    "yearEnd": "期末配当額",
-    "annual": "年間配当額",
-    "dividendRevision": "配当予想の修正（旧→新、中間/期末/年間ごと）"
+    "interim": "中間配当額 ※本文に記載がなければnull",
+    "yearEnd": "期末配当額 ※本文に記載がなければnull",
+    "annual": "年間配当額 ※本文に記載がなければnull",
+    "dividendRevision": "配当予想の修正（旧→新） ※修正がなければnull"
   },
   "topics": ["具体的な数値を含むトピック（最大8点）"]
 }`;
@@ -213,7 +213,8 @@ function getEarningsRatingRules(ctx: EarningsContext): string {
 
   const progressOrLanding = isQuarterly
     ? `■ 進捗: 経常利益の進捗率 − 標準進捗率(${standardRate}%)の差で判定
-★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超 / 通期予想が未定・ゼロ・赤字→「★—」`
+★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超 / 通期予想が「未定」と明記→「★—」
+※レンジ予想の場合は中央値で進捗率を算出して判定すること（レンジ予想は「未定」ではない）`
     : `■ 着地: 経常利益の実績 vs 会社予想の乖離率で判定
 ★5: +15%以上or黒字転換 / ★4: +5〜+15% / ★3: ±5% / ★2: △5〜△15% / ★1: △15%未満or赤字転落 / 会社予想なし→「—（取得不能）」`;
 
@@ -226,6 +227,7 @@ function getEarningsRatingRules(ctx: EarningsContext): string {
   return `
 ■ 対前年: 経常利益の増減率で判定
 ★5: +30%以上or黒字転換 / ★4: +10〜+30% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満or赤字転落
+※前年同期比/前期比の増減率が本文に記載されていない場合（初連結化、新規上場等）は「★—（前年同期比なし）」
 
 ${progressOrLanding}
 

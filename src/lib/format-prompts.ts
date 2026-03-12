@@ -13,10 +13,15 @@ const FORMAT_ROLE = `あなたはデータ整形アシスタントです。
 const FORMAT_RULES = `
 【ルール】
 - JSONデータに含まれる情報のみを使用してください（情報の追加・捏造厳禁）
-- データがnull・空文字・空配列の項目はセクションごと省略してください
 - 見出しは「## 」（半角シャープ2つ + 半角スペース）で統一してください
 - 指定されたセクション以外は追加しないでください
-- テンプレートの順序を厳守してください`;
+- テンプレートの順序を厳守してください
+
+【null・欠損値の処理ルール（最重要）】
+- セクション全体のデータがnull・空配列の場合: セクション（見出し含む）を丸ごと省略
+- 箇条書き項目の値がnullの場合: その行を丸ごと省略（「null」という文字列を出力しない）
+- items配列内のchangeがnullの場合: 括弧部分を省略し「- {name}: {amount}」のみ出力
+- 「null」という文字列は絶対に出力しないでください`;
 
 // ── 決算短信テンプレート ──
 
@@ -40,15 +45,16 @@ ${forecastGroupLabel}
 {{summary}}
 
 ## 業績サマリー（{{performance.periodLabel}}）
-{{performance.items を1行ずつ: - {name}: {amount}（{change}）}}
+{{performance.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
 
 ${isQuarterly ? `## 進捗率（通期予想に対して）
 - 経常利益: {{progress.ordinaryIncome}}（前年同期{{progress.lastYearProgress}}）
 ` : ''}## {{forecast.label}}
-{{forecast.items を1行ずつ: - {name}: {amount}（{change}）}}
+{{forecast.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
 
 ## 修正・配当
 - 業績予想の修正: {{revision}}
+※以下のdividendフィールドがnullの項目は行ごと省略すること:
 - 中間配当: {{dividend.interim}}
 - 期末配当: {{dividend.yearEnd}}
 - 年間配当: {{dividend.annual}}
