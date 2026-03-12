@@ -158,8 +158,8 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   const forecastLabel = isQuarterly ? '通期予想' : '来期予想（本文にある場合のみ）';
   const progressField = isQuarterly
     ? `
-  "progress": {                          // 進捗率（通期予想に対して）※算出不可ならprogress全体をnull
-    "ordinaryIncome": "経常利益の進捗率（例: 58.3%）※通期予想が未定ならprogress全体をnullに",
+  "progress": {                          // 進捗率（通期予想に対して）※通期予想が「未定」と明記の場合のみprogress全体をnull
+    "ordinaryIncome": "経常利益の進捗率（例: 58.3%）※レンジ予想なら「XX.X%〜YY.Y%」形式。通期予想が「未定」と明記の場合のみprogress全体をnullに",
     "lastYearProgress": "前年同期の進捗率 ※不明ならnull"
   },`
     : `
@@ -213,7 +213,8 @@ function getEarningsRatingRules(ctx: EarningsContext): string {
 
   const progressOrLanding = isQuarterly
     ? `■ 進捗: 経常利益の進捗率 − 標準進捗率(${standardRate}%)の差で判定
-★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超 / 通期予想が未定・ゼロ・赤字→「★—」`
+★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超 / 通期予想が「未定」と明記→「★—」
+※レンジ予想の場合は中央値で進捗率を算出して判定すること（レンジ予想は「未定」ではない）`
     : `■ 着地: 経常利益の実績 vs 会社予想の乖離率で判定
 ★5: +15%以上or黒字転換 / ★4: +5〜+15% / ★3: ±5% / ★2: △5〜△15% / ★1: △15%未満or赤字転落 / 会社予想なし→「—（取得不能）」`;
 
@@ -226,6 +227,7 @@ function getEarningsRatingRules(ctx: EarningsContext): string {
   return `
 ■ 対前年: 経常利益の増減率で判定
 ★5: +30%以上or黒字転換 / ★4: +10〜+30% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満or赤字転落
+※前年同期比/前期比の増減率が本文に記載されていない場合（初連結化、新規上場等）は「★—（前年同期比なし）」
 
 ${progressOrLanding}
 
