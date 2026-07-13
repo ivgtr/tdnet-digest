@@ -1,4 +1,7 @@
-# tdnet-digest
+# tdnet-diges
+
+<img width="542" height="307" alt="image" src="https://github.com/user-attachments/assets/86ada69f-3329-400e-bae9-a00fae210ccb" />
+
 
 **tdnet-digest** は、TDnet（適時開示情報閲覧サービス）の開示詳細ページに「要約」ボタンを追加し、
 開示本文（PDFファイル）を LLM に投げて要約を返す Chrome 拡張です。
