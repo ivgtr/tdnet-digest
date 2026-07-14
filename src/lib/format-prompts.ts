@@ -47,9 +47,13 @@ ${forecastGroupLabel}
 ## 業績サマリー（{{performance.periodLabel}}）
 {{performance.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
 
-${isQuarterly ? `## 進捗率（通期予想に対して）
+${
+  isQuarterly
+    ? `## 進捗率（通期予想に対して）
 - 経常利益: {{progress.ordinaryIncome}}（前年同期{{progress.lastYearProgress}}）
-` : ''}## {{forecast.label}}
+`
+    : ''
+}## {{forecast.label}}
 {{forecast.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
 
 ## 修正・配当
@@ -210,6 +214,13 @@ export function getFormatPrompt(
       break;
     case 'earningsRevision':
       template = EARNINGS_REVISION_TEMPLATE;
+      break;
+    case 'shareholderBenefit':
+    case 'stockSplit':
+    case 'capitalPolicy':
+    case 'businessUpdate':
+    case 'governance':
+      template = OTHER_TEMPLATE;
       break;
     case 'dividend':
       template = DIVIDEND_TEMPLATE;

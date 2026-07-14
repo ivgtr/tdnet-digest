@@ -323,6 +323,12 @@ export function getJsonSchema(
       );
     case 'earningsRevision':
       return EARNINGS_REVISION_SCHEMA;
+    case 'shareholderBenefit':
+    case 'stockSplit':
+    case 'capitalPolicy':
+    case 'businessUpdate':
+    case 'governance':
+      return OTHER_SCHEMA;
     case 'dividend':
       return DIVIDEND_SCHEMA;
     case 'ma':

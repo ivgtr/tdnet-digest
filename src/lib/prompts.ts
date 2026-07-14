@@ -27,18 +27,28 @@ const PROMPT_CONFIG = {
   MAX_TOPICS: {
     earnings: 8,
     earningsRevision: 4,
+    shareholderBenefit: 4,
     dividend: 4,
-    ma: 4,
     shareRepurchase: 4,
+    stockSplit: 4,
+    capitalPolicy: 4,
+    ma: 4,
+    businessUpdate: 4,
+    governance: 4,
     other: 4,
   },
   /** 全体要約の推奨スタイル */
   SUMMARY_STYLE: {
     earnings: '簡潔な文章体（2-5段落程度）',
     earningsRevision: '簡潔な文章体（1-3段落程度）',
+    shareholderBenefit: '簡潔な文章体（1-3段落程度）',
     dividend: '簡潔な文章体（1-3段落程度）',
-    ma: '簡潔な文章体（1-3段落程度）',
     shareRepurchase: '簡潔な文章体（1-3段落程度）',
+    stockSplit: '簡潔な文章体（1-3段落程度）',
+    capitalPolicy: '簡潔な文章体（1-3段落程度）',
+    ma: '簡潔な文章体（1-3段落程度）',
+    businessUpdate: '簡潔な文章体（1-3段落程度）',
+    governance: '簡潔な文章体（1-3段落程度）',
     other: '簡潔な文章体（1-3段落程度）',
   },
 } as const;
@@ -233,10 +243,7 @@ function buildAccountingNote(ctx: EarningsContext): string {
   }
 }
 
-function buildPerformanceSection(
-  comparisonLabel: string,
-  periodLabel: string
-): string {
+function buildPerformanceSection(comparisonLabel: string, periodLabel: string): string {
   return `
 ## 業績サマリー（${periodLabel}）
 - {勘定科目}: {金額}（${comparisonLabel}{増減率}）  ※増減率が本文にない場合は括弧ごと省略し「- {勘定科目}: {金額}」のみ
@@ -493,9 +500,14 @@ const PROMPTS: Record<DocumentType, string> = {
     isConsolidated: true,
   }),
   earningsRevision: buildEarningsRevisionPrompt(),
+  shareholderBenefit: buildOtherPrompt(),
   dividend: buildDividendPrompt(),
-  ma: buildMAPrompt(),
   shareRepurchase: buildShareRepurchasePrompt(),
+  stockSplit: buildOtherPrompt(),
+  capitalPolicy: buildOtherPrompt(),
+  ma: buildMAPrompt(),
+  businessUpdate: buildOtherPrompt(),
+  governance: buildOtherPrompt(),
   other: buildOtherPrompt(),
 };
 

@@ -12,9 +12,9 @@ interface ClassificationFixture {
 
 const cases = fixtures as ClassificationFixture[];
 
-describe('文書分類ベースライン', () => {
-  it.each(cases)('$id: $title', ({ title, baselineType }) => {
-    expect(detectDocumentType(title)).toBe(baselineType);
+describe('文書分類', () => {
+  it.each(cases)('$id: $title', ({ title, targetType }) => {
+    expect(detectDocumentType(title)).toBe(targetType);
   });
 
   it.each(cases.filter(({ expectedContext }) => expectedContext))(
@@ -24,7 +24,7 @@ describe('文書分類ベースライン', () => {
     }
   );
 
-  it('Phase 2で再分類する対象を記録している', () => {
+  it('Phase 0から再分類した対象を記録している', () => {
     const pending = cases.filter(({ baselineType, targetType }) => baselineType !== targetType);
     expect(pending.length).toBeGreaterThan(0);
   });

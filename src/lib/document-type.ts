@@ -28,12 +28,17 @@ export interface EarningsContext {
  * 文書タイプ
  */
 export type DocumentType =
-  | 'earnings'           // 決算短信
-  | 'earningsRevision'   // 業績修正
-  | 'dividend'           // 配当
-  | 'ma'                 // M&A（株式取得・譲渡等）
-  | 'shareRepurchase'    // 自己株式取得
-  | 'other';             // その他
+  | 'earnings' // 決算短信
+  | 'earningsRevision' // 業績修正
+  | 'shareholderBenefit' // 株主優待
+  | 'dividend' // 配当
+  | 'shareRepurchase' // 自己株式取得
+  | 'stockSplit' // 株式分割・併合
+  | 'capitalPolicy' // 資本政策・資本業務提携
+  | 'ma' // M&A（株式取得・譲渡等）
+  | 'businessUpdate' // 月次・受注・事業進捗
+  | 'governance' // 役員・ガバナンス
+  | 'other'; // その他
 
 /**
  * タイトルから文書タイプを判別
@@ -61,30 +66,65 @@ export function detectDocumentType(title: string): DocumentType {
     return 'earnings';
   }
 
-  // 3. 配当
+  // 3. 株主優待
+  if (/株主優待|優待制度/.test(title)) {
+    return 'shareholderBenefit';
+  }
+
+  // 4. 配当
   if (title.includes('配当')) {
     return 'dividend';
   }
 
-  // 4. 自己株式取得（M&Aより優先）
-  // 注意: `自己株式`は`株式`を含むため、M&Aの前に判定する必要がある
-  if (title.includes('自己株式')) {
+  // 5. 自己株式取得（資本政策・M&Aより優先）
+  if (/自己株式.{0,20}(取得|消却)|自己株買い/.test(title)) {
     return 'shareRepurchase';
   }
 
-  // 5. M&A（`自己株式`を含む場合は除外）
-  // 注意: 自己株式取得は既に判定済みなので、ここでは`株式取得`や`株式譲渡`などが対象
+  // 6. 株式分割・併合
+  if (/株式分割|株式併合|単元株式数|単元株/.test(title)) {
+    return 'stockSplit';
+  }
+
+  // 7. 資本政策・資本業務提携
+  if (
+    /資本業務提携|業務資本提携|第三者割当|新株予約権|公募増資|株式の発行|資本政策|自己株式の処分/.test(
+      title
+    )
+  ) {
+    return 'capitalPolicy';
+  }
+
+  // 8. M&A
   if (
     title.includes('株式取得') ||
     title.includes('株式譲渡') ||
     title.includes('子会社') ||
     title.includes('合併') ||
-    title.includes('買収')
+    title.includes('買収') ||
+    title.includes('会社分割') ||
+    title.includes('事業譲渡') ||
+    title.includes('公開買付') ||
+    /M&A/i.test(title)
   ) {
     return 'ma';
   }
 
-  // 6. その他（デフォルト）
+  // 9. 月次・受注・事業進捗
+  if (/月次|受注状況|受注残|事業進捗|売上速報|販売状況|稼働率|主要KPI/i.test(title)) {
+    return 'businessUpdate';
+  }
+
+  // 10. 役員・ガバナンス
+  if (
+    /取締役|執行役員|代表取締役|役員|ガバナンス|内部統制|不祥事|再発防止|監査法人|会計監査人/.test(
+      title
+    )
+  ) {
+    return 'governance';
+  }
+
+  // 11. その他（デフォルト）
   return 'other';
 }
 
@@ -118,7 +158,7 @@ export function detectEarningsContext(title: string): EarningsContext {
   }
 
   // 連結/個別の判定
-  const isConsolidated = !/個別|単体/.test(title);
+  const isConsolidated = !/個別|単体|非連結/.test(title);
 
   return { period, accountingStandard, isConsolidated };
 }
@@ -135,12 +175,22 @@ export function getDocumentTypeName(type: DocumentType): string {
       return '決算短信';
     case 'earningsRevision':
       return '業績修正';
+    case 'shareholderBenefit':
+      return '株主優待';
     case 'dividend':
       return '配当';
-    case 'ma':
-      return 'M&A';
     case 'shareRepurchase':
       return '自己株式取得';
+    case 'stockSplit':
+      return '株式分割・併合';
+    case 'capitalPolicy':
+      return '資本政策';
+    case 'ma':
+      return 'M&A';
+    case 'businessUpdate':
+      return '事業進捗・月次';
+    case 'governance':
+      return 'ガバナンス';
     case 'other':
       return 'その他';
   }

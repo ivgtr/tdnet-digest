@@ -11,7 +11,7 @@
     "title": "2026年3月期 第1四半期決算短信〔日本基準〕（非連結）",
     "baselineType": "earnings",
     "targetType": "earnings",
-    "expectedContext": { "period": "q1", "accountingStandard": "jpGaap", "isConsolidated": true }
+    "expectedContext": { "period": "q1", "accountingStandard": "jpGaap", "isConsolidated": false }
   },
   {
     "id": "earnings-q1-ifrs-03",
