@@ -50,6 +50,36 @@
     "requiredTerms": ["営業利益", "経常利益"]
   },
   {
+    "id": "140120260713592426",
+    "publishedDate": "2026-07-14",
+    "code": "24710",
+    "company": "エスプール",
+    "title": "2026年11月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）",
+    "expectedType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120260713592426.pdf",
+    "requiredTerms": ["売上収益", "税引前利益"]
+  },
+  {
+    "id": "140120260713591990",
+    "publishedDate": "2026-07-14",
+    "code": "464A0",
+    "company": "QPSホールディングス",
+    "title": "2026年５月期 決算短信〔日本基準〕（連結）",
+    "expectedType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120260713591990.pdf",
+    "requiredTerms": ["営業利益", "経常利益"]
+  },
+  {
+    "id": "140120260713592047",
+    "publishedDate": "2026-07-14",
+    "code": "138A0",
+    "company": "光フードサービス",
+    "title": "2026年11月期 第２四半期（中間期）決算短信〔日本基準〕（非連結）",
+    "expectedType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120260713592047.pdf",
+    "requiredTerms": ["売上高", "経常利益"]
+  },
+  {
     "id": "140120260714593203",
     "publishedDate": "2026-07-14",
     "code": "62250",

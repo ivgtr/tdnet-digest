@@ -41,4 +41,21 @@ describe('TDnet実PDFコーパスのタイトル分類', () => {
       isConsolidated,
     });
   });
+
+  it.each([
+    ['140120260713592426', 'q2', 'ifrs', true],
+    ['140120260713591990', 'fullYear', 'jpGaap', true],
+    ['140120260713592047', 'q2', 'jpGaap', false],
+  ] as const)(
+    '$0 の追加決算コンテキストを判定する',
+    (id, period, accountingStandard, isConsolidated) => {
+      const earnings = cases.find((item) => item.id === id);
+      expect(earnings).toBeDefined();
+      expect(detectEarningsContext(earnings!.title)).toEqual({
+        period,
+        accountingStandard,
+        isConsolidated,
+      });
+    }
+  );
 });
