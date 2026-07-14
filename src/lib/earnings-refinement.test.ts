@@ -59,7 +59,7 @@ function extraction(): EarningsExtraction {
       ],
       operatingCashFlow: null,
       financialHealth: [],
-      shareholderReturns: [],
+      capitalActions: [],
     },
     investmentView: {
       shortTerm: { stance: 'neutral', rationale: [] },

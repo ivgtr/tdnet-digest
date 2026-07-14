@@ -29,6 +29,9 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('増減率が「－」でも、比較金額は省略しない');
     expect(system).toContain('最も精密な金額');
     expect(system).toContain('businessPl.items');
+    expect(system).toContain('会社固有の言い回しを意味として解釈');
+    expect(system).toContain('当期の配当修正と来期配当予想を混同しない');
+    expect(system).toContain('根拠原文と確信度');
   });
 
   it('会計基準別の評価指標と一時損益の境界を明示する', () => {
@@ -45,6 +48,9 @@ describe('決算分析プロンプト', () => {
     expect(schema).toContain('"earningsQuality"');
     expect(schema).toContain('"investmentView"');
     expect(schema).toContain('"watchPoints"');
+    expect(schema).toContain('"capitalActions"');
+    expect(schema).toContain('"currentRevision"');
+    expect(schema).toContain('"confidence"');
   });
 
   it('パス2で方向性と根拠ページを表示する', () => {

@@ -26,6 +26,57 @@ export type InvestmentStance =
   | 'negative'
   | 'unknown';
 
+export type SemanticConfidence = 'high' | 'medium' | 'low';
+
+export interface OperatingCashFlowAnalysis {
+  status: 'reported' | 'notReported' | 'notPrepared' | 'unknown';
+  amount: string | null;
+  direction: 'inflow' | 'outflow' | 'unknown';
+  interpretation: string;
+  evidenceText: string;
+  page: number | null;
+  confidence: SemanticConfidence;
+}
+
+export interface CapitalActionAnalysis {
+  type:
+    | 'dividend'
+    | 'shareRepurchase'
+    | 'shareCancellation'
+    | 'shareholderBenefit'
+    | 'stockSplit'
+    | 'stockConsolidation'
+    | 'lotSizeChange'
+    | 'other';
+  purpose: string | null;
+  returnAssessment: 'shareholderReturn' | 'capitalAction' | 'unknown';
+  reason: string;
+  evidenceText: string;
+  page: number | null;
+  confidence: SemanticConfidence;
+}
+
+export interface DividendPeriodAnalysis {
+  fiscalYear: string;
+  status: 'actual' | 'forecast';
+  interim: string | null;
+  yearEnd: string | null;
+  annual: string | null;
+  comparisonAnnual: string | null;
+  assessment: 'increase' | 'unchanged' | 'decrease' | 'unknown';
+  evidenceText: string;
+  page: number | null;
+  confidence: SemanticConfidence;
+}
+
+export interface DividendRevisionAnalysis {
+  fiscalYear: string;
+  before: string;
+  after: string;
+  reason: string | null;
+  page: number | null;
+}
+
 export interface EarningsQuality {
   operatingMargin: {
     current: string | null;
@@ -35,9 +86,11 @@ export interface EarningsQuality {
   } | null;
   coreEarnings: EvidenceFact | null;
   oneOffItems: EvidenceFact[];
-  operatingCashFlow: EvidenceFact | null;
+  operatingCashFlow: OperatingCashFlowAnalysis | null;
   financialHealth: EvidenceFact[];
-  shareholderReturns: EvidenceFact[];
+  capitalActions: CapitalActionAnalysis[];
+  /** analysis schema v7以前のキャッシュとの後方互換用 */
+  shareholderReturns?: EvidenceFact[];
 }
 
 export interface HorizonAssessment {
@@ -88,10 +141,8 @@ export interface EarningsExtraction {
   } | null;
   revision: string | null;
   dividend: {
-    interim: string | null;
-    yearEnd: string | null;
-    annual: string | null;
-    dividendRevision: string | null;
+    periods: DividendPeriodAnalysis[];
+    currentRevision: DividendRevisionAnalysis | null;
   } | null;
   earningsQuality: EarningsQuality;
   investmentView: InvestmentView;
@@ -337,10 +388,10 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   },
   "revision": "業績予想の修正内容（修正なしの場合は'修正なし'）",
   "dividend": {
-    "interim": "中間配当額 ※本文に記載がなければnull",
-    "yearEnd": "期末配当額 ※本文に記載がなければnull",
-    "annual": "年間配当額 ※本文に記載がなければnull",
-    "dividendRevision": "配当予想の修正（旧→新） ※修正がなければnull"
+    "periods": [
+      { "fiscalYear": "年度ラベル", "status": "actualまたはforecast", "interim": "中間配当額 ※なければnull", "yearEnd": "期末配当額 ※なければnull", "annual": "年間配当額 ※なければnull", "comparisonAnnual": "この年度と比較する直前年度の年間配当額 ※なければnull", "assessment": "increase/unchanged/decrease/unknown", "evidenceText": "判断根拠となる表または本文の記述", "page": 1, "confidence": "high/medium/low" }
+    ],
+    "currentRevision": { "fiscalYear": "修正対象年度", "before": "修正前年間配当", "after": "修正後年間配当", "reason": "修正理由 ※なければnull", "page": 1 }
   },
   "earningsQuality": {
     "operatingMargin": {
@@ -351,9 +402,9 @@ function buildEarningsSchema(ctx: EarningsContext): string {
     },
     "coreEarnings": { "text": "本業利益の方向と根拠", "page": 1 },
     "oneOffItems": [{ "text": "特別損益など一時要因（最大3点）", "page": 1 }],
-    "operatingCashFlow": { "text": "営業CFの状況", "page": 4 },
+    "operatingCashFlow": { "status": "reported/notReported/notPrepared/unknown", "amount": "営業CF金額 ※数値がなければnull", "direction": "inflow/outflow/unknown", "interpretation": "会社固有の表現を正規化した意味", "evidenceText": "判断根拠となる原文", "page": 4, "confidence": "high/medium/low" },
     "financialHealth": [{ "text": "自己資本・有利子負債・資金余力等（最大3点）", "page": 4 }],
-    "shareholderReturns": [{ "text": "配当・自己株式取得等（最大2点）", "page": 1 }]
+    "capitalActions": [{ "type": "dividend/shareRepurchase/shareCancellation/shareholderBenefit/stockSplit/stockConsolidation/lotSizeChange/other", "purpose": "資料に記載された目的 ※なければnull", "returnAssessment": "shareholderReturn/capitalAction/unknown", "reason": "分類理由", "evidenceText": "判断根拠となる原文", "page": 1, "confidence": "high/medium/low" }]
   },
   "investmentView": {
     "shortTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "開示直後〜数週間の根拠（最大2点）", "page": 1 }] },
