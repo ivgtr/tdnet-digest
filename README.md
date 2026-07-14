@@ -90,6 +90,8 @@ npm test
 npm run format
 ```
 
+公開TDnet PDFを使ったローカルLLM評価は、製品機能と分離して`evaluation/`配下に用意しています。APIキーを`.env`に設定する手順は [evaluation/README.md](evaluation/README.md#ローカルllm評価) を参照してください。
+
 ## 📄 ライセンス
 
 MIT

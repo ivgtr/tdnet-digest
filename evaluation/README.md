@@ -23,3 +23,26 @@
 ## 実PDFコーパス
 
 合成フィクスチャは分類・計算・スキーマの回帰確認に使用します。LLMの読み取り精度を評価する実PDFコーパスは、計画書の条件に従い、公開TDnet資料36件以上を別途登録します。PDFを直接コミットできない場合は、出典URL、取得日、タイトル、ページ単位抽出テキスト、期待値JSONを保存します。
+
+## ローカルLLM評価
+
+この機能は評価用CLIだけで使用し、Chrome拡張の実行環境には影響しません。
+
+```bash
+cp .env.example .env
+# .envへAPIキー、プロバイダー、モデル、対象ケースIDを設定
+
+# 取得済みPDFからページ境界付きテキストを生成
+npm run test:real-pdf -- /tmp/tdnet-real-eval
+
+# 既存のパス1抽出→検証→必要時1回修復→パス2整形を実行
+npm run test:real-llm
+```
+
+APIキーは`TDNET_DIGEST_API_KEY`を優先する。未設定の場合は、選択したプロバイダーに応じて`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENROUTER_API_KEY`、`GOOGLE_API_KEY`も利用できる。
+
+- `.env`はGit管理外
+- `VITE_`接頭辞は使用せず、拡張機能のバンドルへ公開しない
+- 評価対象は誤課金を避けるため1回につき1件
+- 結果はGit管理外の`evaluation/results/local/`へ保存
+- APIキーの値はログ・結果ファイルへ出力しない

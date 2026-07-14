@@ -17,7 +17,12 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.*.local
+.env.local-evaluation
 .tmp/
+
+# Local LLM evaluation outputs
+evaluation/results/local/
 
 # Logs
 npm-debug.log*
