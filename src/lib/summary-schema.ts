@@ -13,6 +13,7 @@ import type { EvidenceFact } from '@/types/summaryMetadata';
 interface FinancialItem {
   name: string;
   amount: string;
+  previousAmount?: string | null;
   change?: string | null;
   page: number | null;
 }
@@ -305,7 +306,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "performance": {
     "periodLabel": "期間ラベル（例: 第2四半期連結実績）",
     "items": [
-      { "name": "勘定科目名", "amount": "金額（単位付き）", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull", "page": 1 }
+      { "name": "勘定科目名", "amount": "当期金額（単位付き）", "previousAmount": "同じ表または本文にある前年同期/前期の比較金額（単位付き） ※なければnull", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull", "page": 1 }
     ]
   },
   "evaluation": {
@@ -321,7 +322,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "forecast": {
     "label": "${forecastLabel}",
     "items": [
-      { "name": "勘定科目名", "amount": "金額", "change": "前期比（例: +8.5%） ※本文に増減率がない場合はnull", "page": 1 }
+      { "name": "勘定科目名", "amount": "予想金額", "previousAmount": "比較対象となる前期実績金額 ※本文になければnull", "change": "前期比（例: +8.5%） ※本文に増減率がない場合はnull", "page": 1 }
     ]
   },
   "revision": "業績予想の修正内容（修正なしの場合は'修正なし'）",

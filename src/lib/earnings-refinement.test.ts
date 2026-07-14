@@ -84,4 +84,59 @@ describe('決算抽出の決定論的補正', () => {
     expect(result.evaluation?.actual.vsLastYear).toBe('★★★★★（黒字転換）');
     expect(result.evaluation?.forecast?.vsLastYear).toBe('★☆☆☆☆（赤字転落）');
   });
+
+  it('比較金額から増減率を補完する', () => {
+    const data = extraction();
+    data.performance.items[1].change = null;
+    data.performance.items[1].previousAmount = '2,990百万円';
+    const result = refineEarningsExtraction(data, context);
+    expect(result.evaluation?.actual.vsLastYear).toBe('★★★☆☆（前年同期比+7.7%）');
+  });
+
+  it('CaSyの前年黒字から当期赤字への文脈を赤字転落として表示する', () => {
+    const data = extraction();
+    data.performance.items = [
+      {
+        name: '経常利益',
+        amount: '△5百万円（損失）',
+        previousAmount: '16百万円',
+        change: null,
+        page: 1,
+      },
+    ];
+    data.forecast = {
+      label: '通期予想',
+      items: [
+        {
+          name: '経常利益',
+          amount: '△139百万円',
+          previousAmount: null,
+          change: null,
+          page: 1,
+        },
+      ],
+    };
+    const result = refineEarningsExtraction(data, {
+      period: 'q2',
+      accountingStandard: 'jpGaap',
+      isConsolidated: true,
+    });
+    expect(result.evaluation?.actual.vsLastYear).toBe('★☆☆☆☆（赤字転落: 16百万円 → △5百万円）');
+    expect(result.evaluation?.actual.progressOrLanding).toBe('★—（赤字予想のため進捗率対象外）');
+    expect(result.evaluation?.forecast?.vsLastYear).toBe('★—（赤字・前期比を算出不能）');
+    expect(result.progress).toBeNull();
+  });
+
+  it('赤字継続は金額の文脈から縮小・拡大を区別する', () => {
+    const data = extraction();
+    data.performance.items[1] = {
+      name: '税引前利益',
+      amount: '△5百万円',
+      previousAmount: '△16百万円',
+      change: null,
+      page: 1,
+    };
+    const result = refineEarningsExtraction(data, context);
+    expect(result.evaluation?.actual.vsLastYear).toBe('★—（赤字縮小: △16百万円 → △5百万円）');
+  });
 });

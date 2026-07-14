@@ -24,6 +24,8 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('好材料・リスクに根拠がない場合は空配列');
     expect(system).toContain('earningsQuality');
     expect(system).toContain('investmentView');
+    expect(system).toContain('"previousAmount"');
+    expect(system).toContain('増減率が「－」でも、比較金額は省略しない');
   });
 
   it('会計基準別の評価指標と一時損益の境界を明示する', () => {

@@ -12,11 +12,11 @@ export function refineEarningsExtraction(
     ? findEvaluationMetric(extraction.forecast.items, context)
     : undefined;
   const actualComparison = buildYearComparisonRating(
-    actualMetric?.change,
+    actualMetric,
     context.period === 'fullYear' ? '前期比' : '前年同期比'
   );
   const forecastComparison = extraction.forecast
-    ? buildYearComparisonRating(forecastMetric?.change, '前期比')
+    ? buildYearComparisonRating(forecastMetric, '前期比')
     : null;
   const progress =
     context.period === 'fullYear'
@@ -32,7 +32,7 @@ export function refineEarningsExtraction(
           ? (previousEvaluation?.actual.progressOrLanding ?? null)
           : progress
             ? buildProgressRating(progress.ordinaryIncome, context)
-            : '—（進捗率を算出不能）',
+            : buildUnavailableProgressRating(actualMetric, forecastMetric),
     },
     forecast: extraction.forecast
       ? {
@@ -61,15 +61,35 @@ function findEvaluationMetric(
   return items.find((item) => preferred.test(item.name));
 }
 
-function buildYearComparisonRating(change: string | null | undefined, label: string): string {
-  const normalized = change?.normalize('NFKC') ?? '';
+function buildYearComparisonRating(item: FinancialItem | undefined, label: string): string {
+  const current = parseFinancialAmount(item?.amount);
+  const previous = parseFinancialAmount(item?.previousAmount);
+  if (current !== null && previous !== null) {
+    const comparison = `${formatComparisonAmount(item?.previousAmount)} → ${formatComparisonAmount(item?.amount)}`;
+    if (previous > 0 && current < 0) return `★☆☆☆☆（赤字転落: ${comparison}）`;
+    if (previous < 0 && current > 0) return `★★★★★（黒字転換: ${comparison}）`;
+    if (previous < 0 && current < 0) {
+      const state = Math.abs(current) < Math.abs(previous) ? '赤字縮小' : '赤字拡大';
+      return `★—（${state}: ${comparison}）`;
+    }
+  }
+
+  const normalized = item?.change?.normalize('NFKC') ?? '';
   if (normalized.includes('黒字転換')) return '★★★★★（黒字転換）';
   if (normalized.includes('赤字転落')) return '★☆☆☆☆（赤字転落）';
   if (/赤字(?:幅)?(?:拡大|縮小)/.test(normalized)) return '★—（赤字のため評価対象外）';
 
-  const percentage = parsePercentage(change);
+  const percentage = parsePercentage(item?.change) ?? calculatePercentageChange(current, previous);
+  if (percentage === null && current !== null && current < 0) {
+    return `★—（赤字・${label}を算出不能）`;
+  }
   if (percentage === null) return '—（評価対象指標を取得不能）';
   return `${ratingStars(yearComparisonScore(percentage))}（${label}${formatPercentage(percentage)}）`;
+}
+
+function calculatePercentageChange(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null || previous <= 0) return null;
+  return ((current - previous) / previous) * 100;
 }
 
 function yearComparisonScore(percentage: number): number {
@@ -118,6 +138,21 @@ function buildProgressRating(progress: string, context: EarningsContext): string
   return `${ratingStars(score)}（進捗率${progress} / 標準${standard}%）`;
 }
 
+function buildUnavailableProgressRating(
+  actual: FinancialItem | undefined,
+  forecast: FinancialItem | undefined
+): string {
+  const forecastAmount = parseFinancialAmount(forecast?.amount);
+  if (forecastAmount !== null && forecastAmount <= 0) {
+    return '★—（赤字予想のため進捗率対象外）';
+  }
+  const actualAmount = parseFinancialAmount(actual?.amount);
+  if (actualAmount !== null && actualAmount <= 0) {
+    return '★—（赤字実績のため進捗率対象外）';
+  }
+  return '—（進捗率を算出不能）';
+}
+
 function parsePercentage(value: string | null | undefined): number | null {
   if (!value) return null;
   const normalized = value.normalize('NFKC').replace(/,/g, '').replace(/▲/g, '△');
@@ -136,9 +171,30 @@ function parseAmounts(value: string | null | undefined): number[] {
   });
 }
 
+function parseFinancialAmount(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const normalized = value.normalize('NFKC').replace(/,/g, '').replace(/▲/g, '△');
+  const match = normalized.match(/([△-]?)(\d+(?:\.\d+)?)(兆円|億円|百万円|千円|円)?/);
+  if (!match) return null;
+  const multipliers: Record<string, number> = {
+    兆円: 1e12,
+    億円: 1e8,
+    百万円: 1e6,
+    千円: 1e3,
+    円: 1,
+  };
+  const multiplier = multipliers[match[3] ?? '円'] ?? 1;
+  const amount = Number(match[2]) * multiplier;
+  return match[1] === '△' || match[1] === '-' ? -amount : amount;
+}
+
 function formatPercentage(value: number): string {
   if (value < 0) return `△${Math.abs(value).toFixed(1)}%`;
   return `+${value.toFixed(1)}%`;
+}
+
+function formatComparisonAmount(value: string | null | undefined): string {
+  return (value ?? '').replace(/\s*[（(](?:利益|損失)[）)]\s*$/, '').trim();
 }
 
 function ratingStars(score: number): string {
