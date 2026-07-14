@@ -25,8 +25,10 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('earningsQuality');
     expect(system).toContain('investmentView');
     expect(system).toContain('"previousAmount"');
+    expect(system).toContain('"businessPl"');
     expect(system).toContain('増減率が「－」でも、比較金額は省略しない');
     expect(system).toContain('最も精密な金額');
+    expect(system).toContain('businessPl.items');
   });
 
   it('会計基準別の評価指標と一時損益の境界を明示する', () => {
@@ -50,6 +52,7 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('positive=強気');
     expect(system).toContain('[p.{page}]');
     expect(system).toContain('## 評価理由');
+    expect(system).toContain('## 事業P/L');
   });
 
   it('IFRSのパス2では税引前利益の表示名を使う', () => {

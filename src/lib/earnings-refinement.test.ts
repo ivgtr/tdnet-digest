@@ -8,8 +8,32 @@ function extraction(): EarningsExtraction {
     performance: {
       periodLabel: '第1四半期連結実績',
       items: [
-        { name: '営業利益', amount: '3,378百万円', change: '+10.8%', page: 1 },
+        {
+          name: '売上収益',
+          amount: '43,277百万円',
+          previousAmount: '41,824百万円',
+          change: '+3.5%',
+          page: 1,
+        },
+        {
+          name: '営業利益',
+          amount: '3,378百万円',
+          previousAmount: '3,049百万円',
+          change: '+10.8%',
+          page: 1,
+        },
         { name: '税引前利益', amount: '3,221百万円', change: '+7.7%', page: 1 },
+      ],
+    },
+    businessPl: {
+      items: [
+        {
+          name: '売上総利益',
+          amount: '12,000百万円',
+          previousAmount: '10,000百万円',
+          change: '+20.0%',
+          page: 5,
+        },
       ],
     },
     evaluation: {
@@ -76,9 +100,40 @@ describe('決算抽出の決定論的補正', () => {
     ]);
   });
 
+  it('売上と本業利益を事業P/Lとして別評価する', () => {
+    const result = refineEarningsExtraction(extraction(), context);
+    expect(result.businessPl?.items).toEqual([
+      expect.objectContaining({
+        name: '売上収益',
+        assessment: '前年同期比+3.5%（増収）',
+      }),
+      expect.objectContaining({
+        name: '売上総利益',
+        assessment: '前年同期比+20.0%（粗利増加）',
+      }),
+      expect.objectContaining({
+        name: '営業利益',
+        assessment: '前年同期比+10.8%（増益）',
+      }),
+    ]);
+  });
+
+  it('事業P/Lの本業赤字縮小を改善として表示する', () => {
+    const data = extraction();
+    data.performance.items[1] = {
+      name: '営業利益',
+      amount: '△5百万円',
+      previousAmount: '△16百万円',
+      change: null,
+      page: 1,
+    };
+    const result = refineEarningsExtraction(data, context);
+    expect(result.businessPl?.items[2]?.assessment).toBe('赤字縮小68.8%: △16百万円 → △5百万円');
+  });
+
   it('黒字転換・赤字転落は増減率がなくても明示判定する', () => {
     const data = extraction();
-    data.performance.items[1].change = '黒字転換';
+    data.performance.items[2].change = '黒字転換';
     data.forecast!.items[0].change = '赤字転落';
     const result = refineEarningsExtraction(data, context);
     expect(result.evaluation?.actual.vsLastYear).toBe('★★★★★（黒字転換）');
@@ -87,8 +142,8 @@ describe('決算抽出の決定論的補正', () => {
 
   it('比較金額から増減率を補完する', () => {
     const data = extraction();
-    data.performance.items[1].change = null;
-    data.performance.items[1].previousAmount = '2,990百万円';
+    data.performance.items[2].change = null;
+    data.performance.items[2].previousAmount = '2,990百万円';
     const result = refineEarningsExtraction(data, context);
     expect(result.evaluation?.actual.vsLastYear).toBe('★★★☆☆（前年同期比+7.7%）');
   });
@@ -132,7 +187,7 @@ describe('決算抽出の決定論的補正', () => {
 
   it('赤字継続は金額の文脈から縮小・拡大を区別する', () => {
     const data = extraction();
-    data.performance.items[1] = {
+    data.performance.items[2] = {
       name: '税引前利益',
       amount: '△5百万円',
       previousAmount: '△16百万円',

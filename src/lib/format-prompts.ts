@@ -74,6 +74,9 @@ ${forecastGroupLabel}
 ## 業績サマリー（{{performance.periodLabel}}）
 {{performance.items を1行ずつ: - {name}: {amount}（{change}） [p.{page}]  ※changeがnullなら括弧ごと省略}}
 
+## 事業P/L
+{{businessPl.items を1行ずつ: - {name}: {amount} — {assessment} [p.{page}]}}
+
 ${
   isQuarterly
     ? `## 進捗率（通期予想に対して）

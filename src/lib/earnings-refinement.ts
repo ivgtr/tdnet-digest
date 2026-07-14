@@ -44,6 +44,10 @@ export function refineEarningsExtraction(
 
   return {
     ...extraction,
+    businessPl: buildBusinessPl(
+      [...(extraction.businessPl?.items ?? []), ...extraction.performance.items],
+      context
+    ),
     evaluation,
     progress,
     earningsQuality: {
@@ -51,6 +55,63 @@ export function refineEarningsExtraction(
       oneOffItems: extraction.earningsQuality.oneOffItems.filter(isProfitAndLossItem),
     },
   };
+}
+
+function buildBusinessPl(
+  items: FinancialItem[],
+  context: EarningsContext
+): NonNullable<EarningsExtraction['businessPl']> | null {
+  const candidates = [
+    findFirstItem(items, [/^売上高$/, /^売上収益$/, /^営業収益$/]),
+    findFirstItem(items, [/売上総利益/, /粗利益/, /粗利/]),
+    findFirstItem(items, [/^事業利益$/, /コア営業利益/, /調整後営業利益/, /^営業利益$/]),
+  ].filter((item): item is FinancialItem => item !== undefined);
+
+  if (candidates.length === 0) return null;
+  const comparisonLabel = context.period === 'fullYear' ? '前期比' : '前年同期比';
+  return {
+    items: candidates.map((item) => ({
+      ...item,
+      assessment: buildBusinessPlAssessment(item, comparisonLabel),
+    })),
+  };
+}
+
+function findFirstItem(items: FinancialItem[], patterns: RegExp[]): FinancialItem | undefined {
+  for (const pattern of patterns) {
+    const item = items.find((candidate) => pattern.test(candidate.name));
+    if (item) return item;
+  }
+  return undefined;
+}
+
+function buildBusinessPlAssessment(item: FinancialItem, comparisonLabel: string): string {
+  const current = parseFinancialAmount(item.amount);
+  const previous = parseFinancialAmount(item.previousAmount);
+  const comparison = `${formatComparisonAmount(item.previousAmount)} → ${formatComparisonAmount(item.amount)}`;
+  if (current !== null && previous !== null) {
+    if (previous > 0 && current < 0) return `赤字転落: ${comparison}`;
+    if (previous < 0 && current > 0) return `黒字転換: ${comparison}`;
+    if (previous < 0 && current === 0) return `赤字解消: ${comparison}`;
+    if (previous < 0 && current < 0) {
+      const improvement = ((Math.abs(previous) - Math.abs(current)) / Math.abs(previous)) * 100;
+      const state = improvement > 0 ? '赤字縮小' : improvement < 0 ? '赤字拡大' : '赤字横ばい';
+      return `${state}${Math.abs(improvement).toFixed(1)}%: ${comparison}`;
+    }
+  }
+
+  const percentage = parsePercentage(item.change) ?? calculatePercentageChange(current, previous);
+  if (percentage === null) return '比較不能';
+  const direction = buildBusinessPlDirection(item.name, percentage);
+  return `${comparisonLabel}${formatPercentage(percentage)}（${direction}）`;
+}
+
+function buildBusinessPlDirection(name: string, percentage: number): string {
+  if (percentage === 0) return '横ばい';
+  const positive = percentage > 0;
+  if (/売上高|売上収益|営業収益/.test(name)) return positive ? '増収' : '減収';
+  if (/売上総利益|粗利益|粗利/.test(name)) return positive ? '粗利増加' : '粗利減少';
+  return positive ? '増益' : '減益';
 }
 
 function findEvaluationMetric(

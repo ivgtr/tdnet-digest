@@ -63,6 +63,9 @@ export interface EarningsExtraction {
     periodLabel: string;
     items: FinancialItem[];
   };
+  businessPl?: {
+    items: Array<FinancialItem & { assessment?: string }>;
+  } | null;
   evaluation: {
     actual: {
       vsLastYear: string | null;
@@ -309,6 +312,11 @@ function buildEarningsSchema(ctx: EarningsContext): string {
     "periodLabel": "期間ラベル（例: 第2四半期連結実績）",
     "items": [
       { "name": "勘定科目名", "amount": "当期金額（単位付き。同じ数値が複数ある場合は最も精密な桁を優先）", "previousAmount": "同じ表または本文にある前年同期/前期の比較金額（当期金額と同じ単位） ※なければnull", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull", "page": 1 }
+    ]
+  },
+  "businessPl": {
+    "items": [
+      { "name": "売上高/売上収益、売上総利益/粗利、営業利益/事業利益のいずれか", "amount": "当期金額（最も精密な単位）", "previousAmount": "前年同期/前期金額（当期と同じ単位） ※なければnull", "change": "前年同期比/前期比 ※なければnull", "page": 1 }
     ]
   },
   "evaluation": {
