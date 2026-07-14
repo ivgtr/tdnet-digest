@@ -173,7 +173,7 @@ describe('決算抽出の決定論的補正', () => {
           comparisonAnnual: '10.00円',
           comparisonBasis: 'reported',
           assessment: 'unchanged',
-          interpretation: null as unknown as string,
+          interpretation: null,
           evidenceText: '配当の状況',
           page: 1,
           confidence: 'high',
@@ -210,6 +210,22 @@ describe('決算抽出の決定論的補正', () => {
     const result = refineEarningsExtraction(data, context);
     expect(result.dividend?.periods[0].displayText).toBe('期末0.00円 / 年間0.00円');
     expect(result.dividend?.periods[0].displayText).not.toContain('中間');
+  });
+
+  it('修正前後の金額がない配当修正オブジェクトを非表示にする', () => {
+    const data = extraction();
+    data.dividend = {
+      forecastAvailability: 'notReported',
+      periods: [],
+      currentRevision: {
+        fiscalYear: '2026年11月期',
+        before: null,
+        after: null,
+        reason: null,
+        page: null,
+      },
+    };
+    expect(refineEarningsExtraction(data, context).dividend?.currentRevision).toBeNull();
   });
 
   it('営業利益率の比較値がなければ現在値だけを表示対象にする', () => {

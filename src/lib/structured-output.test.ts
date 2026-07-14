@@ -176,7 +176,7 @@ describe('抽出JSON検証', () => {
     expect(result.errors.join(' ')).toContain('forecastがあります');
   });
 
-  it('配当の意味説明がnullならJSON修復対象にする', () => {
+  it('配当の意味説明が不要な場合はnullを正当な欠損として受理する', () => {
     const value = validEarnings({
       dividend: {
         forecastAvailability: 'reported',
@@ -199,7 +199,6 @@ describe('抽出JSON検証', () => {
       },
     });
     const result = parseAndValidateExtraction(JSON.stringify(value), 'earnings', 2);
-    expect(result.success).toBe(false);
-    expect(result.errors.join(' ')).toContain('dividend.periods[0].interpretation');
+    expect(result.success).toBe(true);
   });
 });

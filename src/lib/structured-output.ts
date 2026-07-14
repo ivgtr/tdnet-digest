@@ -136,7 +136,7 @@ function validateEarningsSemantics(value: Record<string, unknown>, errors: strin
             errors
           );
         }
-        validateRequiredString(
+        validateNullableString(
           period.interpretation,
           `dividend.periods[${index}].interpretation`,
           errors
@@ -163,6 +163,17 @@ function validateEarningsSemantics(value: Record<string, unknown>, errors: strin
         dividend.periods.some((period) => isRecord(period) && period.status === 'forecast')
       ) {
         errors.push('dividend.periodsにforecastがありますが配当予想がnotReportedです');
+      }
+      if (dividend.currentRevision != null && isRecord(dividend.currentRevision)) {
+        for (const field of ['fiscalYear', 'before', 'after', 'reason'] as const) {
+          validateNullableString(
+            dividend.currentRevision[field],
+            `dividend.currentRevision.${field}`,
+            errors
+          );
+        }
+      } else if (dividend.currentRevision != null) {
+        errors.push('dividend.currentRevision はオブジェクトまたはnullである必要があります');
       }
     }
   }

@@ -63,6 +63,7 @@ export function refineEarningsExtraction(
             interpretation: normalizeOptionalInterpretation(period.interpretation),
             displayText: buildDividendPeriodDisplayText(period),
           })),
+          currentRevision: normalizeDividendRevision(extraction.dividend.currentRevision),
         }
       : null,
     businessPl: buildBusinessPl(
@@ -90,6 +91,13 @@ export function refineEarningsExtraction(
       ),
     },
   };
+}
+
+function normalizeDividendRevision(
+  revision: NonNullable<EarningsExtraction['dividend']>['currentRevision']
+): NonNullable<EarningsExtraction['dividend']>['currentRevision'] {
+  if (!revision?.before || !revision.after) return null;
+  return revision;
 }
 
 function buildDividendPeriodDisplayText(

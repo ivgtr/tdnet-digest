@@ -66,7 +66,7 @@ export interface DividendPeriodAnalysis {
   comparisonAnnual: string | null;
   comparisonBasis: 'reported' | 'splitAdjusted' | 'unknown';
   assessment: 'increase' | 'unchanged' | 'decrease' | 'unknown';
-  interpretation: string;
+  interpretation: string | null;
   evidenceText: string;
   page: number | null;
   confidence: SemanticConfidence;
@@ -75,9 +75,9 @@ export interface DividendPeriodAnalysis {
 }
 
 export interface DividendRevisionAnalysis {
-  fiscalYear: string;
-  before: string;
-  after: string;
+  fiscalYear: string | null;
+  before: string | null;
+  after: string | null;
   reason: string | null;
   page: number | null;
 }
@@ -410,9 +410,10 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "dividend": {
     "forecastAvailability": "配当の状況の表に（予想）行があればreported、明示的になければnotReported、判別不能ならunknown",
     "periods": [
-      { "fiscalYear": "年度ラベル", "status": "actualまたはforecast", "interim": "中間配当額 ※なければnull", "yearEnd": "期末配当額 ※なければnull", "annual": "年間配当額 ※なければnull", "comparisonAnnual": "この年度と比較可能な直前年度の年間配当額 ※株式分割等があれば調整後金額、なければ記載額、不明ならnull", "comparisonBasis": "reported/splitAdjusted/unknown", "assessment": "increase/unchanged/decrease/unknown", "interpretation": "株式数変化も考慮した配当の意味を簡潔に説明", "evidenceText": "判断根拠となる表または本文の記述", "page": 1, "confidence": "high/medium/low" }
+      { "fiscalYear": "年度ラベル", "status": "actualまたはforecast", "interim": "中間配当額 ※なければnull", "yearEnd": "期末配当額 ※なければnull", "annual": "年間配当額 ※なければnull", "comparisonAnnual": "この年度と比較可能な直前年度の年間配当額 ※株式分割等があれば調整後金額、なければ記載額、不明ならnull", "comparisonBasis": "reported/splitAdjusted/unknown", "assessment": "increase/unchanged/decrease/unknown", "interpretation": "株式数変化も考慮した配当の意味を簡潔に説明 ※説明不要ならnull", "evidenceText": "判断根拠となる表または本文の記述", "page": 1, "confidence": "high/medium/low" }
     ],
     "currentRevision": { "fiscalYear": "修正対象年度", "before": "修正前年間配当", "after": "修正後年間配当", "reason": "修正理由 ※なければnull", "page": 1 }
+    // 配当修正がない場合はcurrentRevision全体をnull。beforeとafterが両方ないオブジェクトを作らない
   },
   "earningsQuality": {
     "operatingMargin": {
