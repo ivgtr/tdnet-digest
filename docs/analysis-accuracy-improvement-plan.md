@@ -246,7 +246,12 @@ interface EarningsQuality {
 }
 
 type InvestmentStance =
-  'positive' | 'slightlyPositive' | 'neutral' | 'slightlyNegative' | 'negative' | 'unknown';
+  | 'positive'
+  | 'slightlyPositive'
+  | 'neutral'
+  | 'slightlyNegative'
+  | 'negative'
+  | 'unknown';
 
 interface HorizonAssessment {
   stance: InvestmentStance;
@@ -666,6 +671,24 @@ PDFそのものをリポジトリへ追加できない場合は、出典URL、�
 - 同一PDFの3回実行で大幅な判定反転がない
 - スコア理由が抽出事実と根拠ページに結び付く
 - 実験機能を無効にすれば従来表示へ戻せる
+
+### Phase 8: 実PDFフィードバック補正
+
+作業:
+
+- TDnet実PDFコーパスでタイトル分類と決算コンテキストを検証
+- 全角英数字を正規化し、複合タイトルの分類優先順位を補正
+- 会計基準別の評価指標から★評価と四半期進捗を決定論的に再計算
+- 損益に計上されていないM&A・合併施策を一時損益から除外
+- 同一PDF・同一モデルで修正前後を再評価
+
+完了条件:
+
+- 実PDF 11文書タイプのタイトル分類が全件成功する
+- IFRS四半期決算を税引前利益ベースで評価・表示する
+- 実績、通期予想、進捗の★評価が定義済み閾値と一致する
+- 実APIの構造化出力が検証を通り、主要数値と根拠ページが一致する
+- 分析スキーマバージョンを更新し、旧結果を再利用しない
 
 ## 17. テスト方針
 

@@ -119,16 +119,17 @@ const NON_EARNINGS_INVESTMENT_RULES = `
  * 重要: これは出力フォーマットではなく、LLMへの判定指示。
  * 基準表自体は出力に含めないよう明示する。
  *
- * 評価は経常利益に一本化し、実績/予想の2グループで構成する。
+ * 評価は会計基準に応じた利益指標に一本化し、実績/予想の2グループで構成する。
  */
 function buildRatingRules(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   const progressOrLanding = isQuarterly
-    ? `■ 進捗: 経常利益の進捗率 − 標準進捗率の差で判定
+    ? `■ 進捗: ${evaluationMetric}の進捗率 − 標準進捗率の差で判定
 ★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超 / 通期予想が「未定」と明記→「★—」
 ※レンジ予想の場合は中央値で進捗率を算出して判定すること（レンジ予想は「未定」ではない）`
-    : `■ 着地: 経常利益の実績 vs 会社予想の乖離率で判定
+    : `■ 着地: ${evaluationMetric}の実績 vs 会社予想の乖離率で判定
 ★5: +15%以上or黒字転換 / ★4: +5〜+15% / ★3: ±5% / ★2: △5〜△15% / ★1: △15%未満or赤字転落 / 会社予想なし→「—（取得不能）」`;
 
   const forecastRevision = isQuarterly
@@ -140,7 +141,7 @@ function buildRatingRules(ctx: EarningsContext): string {
   return `
 【内部判定ルール】以下は判定用の基準です。出力には判定結果（★の数と根拠数値）のみを記載してください。基準表は出力しないでください。
 
-■ 対前年: 経常利益の増減率で判定（実績・予想共通）
+■ 対前年: ${evaluationMetric}の増減率で判定（実績・予想共通）
 ★5: +30%以上or黒字転換 / ★4: +10〜+30% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満or赤字転落
 ※前年同期比/前期比の増減率が本文に記載されていない場合（初連結化、新規上場、会計基準変更等）は「★—（前年同期比なし）」
 
@@ -155,16 +156,17 @@ ${forecastRevision}
 /**
  * 決算評価の出力テンプレート（出力形式の中に配置）
  *
- * 経常利益ベースの【実績】【通期予想/来期予想】2グループ構造。
+ * 会計基準別の利益指標を使う【実績】【通期予想/来期予想】2グループ構造。
  */
 function buildEvaluationTemplate(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
   const actualComparisonLabel = isQuarterly ? '前年同期比' : '前期比';
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   if (isQuarterly) {
     const standardRate = getStandardProgressRate(ctx.period);
     return `
-## 決算評価（経常利益ベース）
+## 決算評価（${evaluationMetric}ベース）
 【実績】
 - 対前年:  ★★★★☆（${actualComparisonLabel}+XX.X%）  ※増減率が本文にない場合は「★—（前年同期比なし）」
 - 進捗:   ★★★★☆（進捗率XX.X% / 標準${standardRate}%）  ※レンジ予想なら中央値で算出。通期予想が「未定」明記の場合のみ「★—」
@@ -175,7 +177,7 @@ function buildEvaluationTemplate(ctx: EarningsContext): string {
   }
 
   return `
-## 決算評価（経常利益ベース）
+## 決算評価（${evaluationMetric}ベース）
 【実績】
 - 対前年:  ★★★★☆（${actualComparisonLabel}+XX.X%）
 - 着地:   ★★★★★（対会社予想+XX.X%）
@@ -286,10 +288,11 @@ function getStandardProgressRate(period: EarningsPeriod): number {
 
 function buildProgressSection(ctx: EarningsContext): string {
   const standardRate = getStandardProgressRate(ctx.period);
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   return `
 ## 進捗率（通期予想に対して）
-- 経常利益: {進捗率}（前年同期{前年進捗率}、標準進捗率${standardRate}%） [p.{根拠ページ}]
+- ${evaluationMetric}: {進捗率}（前年同期{前年進捗率}、標準進捗率${standardRate}%） [p.{根拠ページ}]
 ※進捗率は「当期実績 ÷ 通期予想 × 100」で必ず自分で計算すること
 ※通期予想がレンジ形式（例: 3,706〜4,097百万円）の場合は下限・上限それぞれで「XX.X%〜YY.Y%」形式で記載（レンジ予想は「未定」ではないので必ず算出すること）
 ※通期予想が「未定」と本文に明記されている場合のみセクションごと省略
@@ -366,9 +369,10 @@ function buildTopicsSection(): string {
 
 function buildEarningsSpecificRules(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
+  const evaluationMetric = getEvaluationMetricName(ctx);
   const progressRules = isQuarterly
     ? `
-- 進捗率は経常利益について「当期実績 ÷ 通期予想 × 100」で算出してください
+- 進捗率は${evaluationMetric}について「当期実績 ÷ 通期予想 × 100」で算出してください
 - 通期予想がレンジ形式の場合は下限・上限それぞれで算出し「XX.X%〜YY.Y%」形式で記載してください
 - 1行形式で記載し、計算式・計算過程・説明文は書かないでください
 - 前年同期の進捗率が本文から得られない場合は省略可
@@ -381,7 +385,7 @@ function buildEarningsSpecificRules(ctx: EarningsContext): string {
 - 黒字転換/赤字転落/赤字拡大/赤字縮小は本文に明記がある場合のみ記載し、増減率の後ろに補足として付記してください${progressRules}
 - 営業利益率または事業利益率は、本文に利益と売上の計算根拠がある場合だけ「利益 ÷ 売上 × 100」で算出してください
 - 純利益が特別利益に依存する場合は利益の質を下げて記載しますが、本業の増益は別に評価してください
-- 特別損失は内容、金額、継続性を分けてください
+- 特別損失は内容、金額、継続性を分けてください。M&A、合併、事業施策の説明だけを一時損益として扱わないでください
 - 好業績でも通期予想が据え置かれる場合、据え置きだけを理由に大幅なマイナス評価をしないでください
 - 進捗率の標準値は参考基準です。強い季節性や前年同期進捗が本文にある場合は、それらも併記してください
 - 好材料とリスクは根拠があるものだけ各最大2点とし、存在しない側を捏造しないでください
@@ -830,11 +834,12 @@ function buildEarningsExtractionNote(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
   const accountingNote = buildAccountingNote(ctx);
   const ratingRules = getEarningsRatingRulesText(ctx);
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   const progressNote = isQuarterly
     ? `
 【進捗率について】
-- 進捗率は経常利益について「当期実績 ÷ 通期予想 × 100」で算出してください
+- 進捗率は${evaluationMetric}について「当期実績 ÷ 通期予想 × 100」で算出してください
 - 通期予想がレンジ形式（例: 3,706〜4,097百万円）の場合は、下限と上限それぞれで進捗率を算出し「XX.X%〜YY.Y%」形式で記載してください
 - 通期予想が「未定」と明記されている場合、またはゼロ・赤字予想の場合のみ「算出不可（理由）」と記載してください
 - 通期予想が数値として存在する場合（レンジ含む）は必ず算出してください`
@@ -849,13 +854,19 @@ function buildEarningsExtractionNote(ctx: EarningsContext): string {
 ${ratingRules}${progressNote}
 
 【利益の質と時間軸別評価】
+- 日本基準では経常利益、IFRS・米国基準では税引前利益を評価対象とし、実績と通期予想のitemsへ必ず含めてください
 - 営業利益率または事業利益率は、本文に利益と売上の計算根拠がある場合だけ「利益 ÷ 売上 × 100」で算出してください
 - 純利益が特別利益に依存する場合は利益の質を下げますが、本業利益の改善は別に評価してください
+- oneOffItemsには実際に損益へ計上された利益・損失・費用だけを入れ、M&A、合併、事業施策の説明だけを入れないでください
 - 営業CF、自己資本、有利子負債、株主還元は本文にある情報だけを抽出してください
 - 通期予想の据え置きだけを理由に大幅なマイナス評価をしないでください
 - 短期は開示直後〜数週間、中期は6か月〜1年、長期は1年以上の観点とします
 - 短期・中期・長期とも、PDFにある事実だけを根拠に方向性を判定してください
 - 市場コンセンサス、現在株価、バリュエーション、織り込み度は推測しないでください`;
+}
+
+function getEvaluationMetricName(ctx: EarningsContext): '経常利益' | '税引前利益' {
+  return ctx.accountingStandard === 'jpGaap' ? '経常利益' : '税引前利益';
 }
 
 function buildNonEarningsExtractionNote(documentType: DocumentType): string {

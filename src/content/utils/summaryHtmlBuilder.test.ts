@@ -10,9 +10,9 @@ describe('分析メタデータ表示', () => {
       provider: 'custom',
       model: '<model>',
       summaryMode: 'two-pass',
-      analysisSchemaVersion: 3,
+      analysisSchemaVersion: 4,
     });
-    expect(html).toContain('custom/&lt;model&gt;・2パス・v3');
+    expect(html).toContain('custom/&lt;model&gt;・2パス・v4');
     expect(html).not.toContain('custom/<model>');
   });
 });

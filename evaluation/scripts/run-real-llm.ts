@@ -3,10 +3,11 @@ import path from 'node:path';
 import process from 'node:process';
 import { detectEarningsContext, type DocumentType } from '../../src/lib/document-type';
 import { getFormatPrompt } from '../../src/lib/format-prompts';
+import { refineEarningsExtraction } from '../../src/lib/earnings-refinement';
 import { generateText, type ChatMessage, type LLMConfig } from '../../src/lib/llm-client';
 import { getProvider } from '../../src/lib/llm-providers';
 import { getExtractionPrompt } from '../../src/lib/prompts';
-import { getJsonSchema } from '../../src/lib/summary-schema';
+import { getJsonSchema, type EarningsExtraction } from '../../src/lib/summary-schema';
 import {
   buildJsonRepairMessages,
   getProviderCapabilities,
@@ -105,7 +106,11 @@ if (!validation.success || !validation.data) {
   throw new Error(`JSON検証に失敗しました: ${validation.errors.join(' / ')}`);
 }
 
-const formatPrompt = getFormatPrompt(item.expectedType, validation.data, earningsContext);
+const extractionData =
+  item.expectedType === 'earnings' && earningsContext
+    ? refineEarningsExtraction(validation.data as EarningsExtraction, earningsContext)
+    : validation.data;
+const formatPrompt = getFormatPrompt(item.expectedType, extractionData, earningsContext);
 const summary = await generateText(
   { ...extractionConfig, responseFormat: undefined, temperature: 0.3 },
   toMessages(formatPrompt)
@@ -117,7 +122,7 @@ const outputPath = await saveResult({
   totalPages,
   repairAttempted,
   success: true,
-  extraction: validation.data,
+  extraction: extractionData,
   summary,
 });
 

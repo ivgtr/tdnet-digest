@@ -4,6 +4,8 @@ import { detectDocumentType, detectEarningsContext, type DocumentType } from '@/
 import { getPromptForDocumentType, getExtractionPrompt } from '@/lib/prompts';
 import { getFormatPrompt } from '@/lib/format-prompts';
 import { getJsonSchema } from '@/lib/summary-schema';
+import type { EarningsExtraction } from '@/lib/summary-schema';
+import { refineEarningsExtraction } from '@/lib/earnings-refinement';
 import { calculateExperimentalScore, formatExperimentalScore } from '@/lib/scoring';
 import {
   buildJsonRepairMessages,
@@ -315,16 +317,21 @@ async function summarizeTwoPass(
 
   console.log('[Background] 2パス要約: パス1完了、パス2（フォーマット整形）開始');
 
+  const extractionData =
+    documentType === 'earnings' && earningsContext
+      ? refineEarningsExtraction(validation.data as EarningsExtraction, earningsContext)
+      : validation.data;
+
   // パス2: フォーマット整形（低temperature）
   const formatConfig: LLMConfig = { ...llmConfig, temperature: 0.3 };
-  const { system: s2, user: u2 } = getFormatPrompt(documentType, validation.data, earningsContext);
+  const { system: s2, user: u2 } = getFormatPrompt(documentType, extractionData, earningsContext);
   let formatted = await generateText(formatConfig, [
     { role: 'system', content: s2 },
     { role: 'user', content: u2 },
   ]);
 
   if (experimentalScoring) {
-    const score = calculateExperimentalScore(documentType, validation.data);
+    const score = calculateExperimentalScore(documentType, extractionData);
     if (score) formatted += formatExperimentalScore(score);
   }
 

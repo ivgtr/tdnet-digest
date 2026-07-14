@@ -54,6 +54,7 @@ const INVESTMENT_VIEW_TEMPLATE = `
 function buildEarningsTemplate(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
   const forecastGroupLabel = isQuarterly ? '【通期予想】' : '【来期予想】（データがある場合のみ）';
+  const evaluationMetric = ctx.accountingStandard === 'jpGaap' ? '経常利益' : '税引前利益';
 
   return `
 --- 出力テンプレート ---
@@ -61,7 +62,7 @@ function buildEarningsTemplate(ctx: EarningsContext): string {
 ## 全体要約
 {{summary}}
 
-## 決算評価（経常利益ベース）
+## 決算評価（${evaluationMetric}ベース）
 【実績】
 - 対前年: {{evaluation.actual.vsLastYear}}
 - ${isQuarterly ? '進捗' : '着地'}:   {{evaluation.actual.progressOrLanding}}
@@ -76,7 +77,7 @@ ${forecastGroupLabel}
 ${
   isQuarterly
     ? `## 進捗率（通期予想に対して）
-- 経常利益: {{progress.ordinaryIncome}}（前年同期{{progress.lastYearProgress}}） [p.{{progress.page}}]
+- ${evaluationMetric}: {{progress.ordinaryIncome}}{{progress.lastYearProgressがnullでない場合のみ: （前年同期{progress.lastYearProgress}）}} [p.{{progress.page}}]
 `
     : ''
 }## {{forecast.label}}

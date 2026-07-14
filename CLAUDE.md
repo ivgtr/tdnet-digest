@@ -60,6 +60,7 @@ src/
 │   └── Options.tsx              # 設定ページコンポーネント
 ├── lib/
 │   ├── document-type.ts         # 文書タイプ判別（決算短信/業績修正/配当/M&A等）
+│   ├── earnings-refinement.ts   # 決算評価・進捗率の決定論的補正と一時損益の精査
 │   ├── format-prompts.ts        # 2パス要約の整形用プロンプト
 │   ├── llm-client.ts            # 統一LLMクライアント（OpenAI/Anthropic互換API）
 │   ├── llm-providers.ts         # LLMプロバイダー・モデル定義

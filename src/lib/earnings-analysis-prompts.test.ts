@@ -26,6 +26,14 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('investmentView');
   });
 
+  it('会計基準別の評価指標と一時損益の境界を明示する', () => {
+    const ifrsContext = { ...context, accountingStandard: 'ifrs' as const };
+    const { system } = getExtractionPrompt('earnings', '[PDF_PAGE:1]\n税引前利益', ifrsContext);
+    expect(system).toContain('IFRS・米国基準では税引前利益');
+    expect(system).toContain('進捗率は税引前利益について');
+    expect(system).toContain('M&A、合併、事業施策の説明だけを入れない');
+  });
+
   it('決算JSONスキーマに利益品質と投資診断を含める', () => {
     const schema = getJsonSchema('earnings', context);
     expect(schema).toContain('"earningsQuality"');
@@ -38,5 +46,14 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('positive=強気');
     expect(system).toContain('[p.{page}]');
     expect(system).toContain('## 評価理由');
+  });
+
+  it('IFRSのパス2では税引前利益の表示名を使う', () => {
+    const ifrsContext = { ...context, accountingStandard: 'ifrs' as const };
+    const { system } = getFormatPrompt('earnings', {}, ifrsContext);
+    expect(system).toContain('## 決算評価（税引前利益ベース）');
+    expect(system).toContain('- 税引前利益: {{progress.ordinaryIncome}}');
+    expect(system).toContain('lastYearProgressがnullでない場合のみ');
+    expect(system).not.toContain('## 決算評価（経常利益ベース）');
   });
 });
