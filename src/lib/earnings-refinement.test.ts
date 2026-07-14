@@ -159,6 +159,32 @@ describe('決算抽出の決定論的補正', () => {
     expect(result.dividend?.periods[0].interpretation).toBe('');
   });
 
+  it('LLMが配当の意味説明へnullを返してもクラッシュしない', () => {
+    const data = extraction();
+    data.dividend = {
+      forecastAvailability: 'reported',
+      periods: [
+        {
+          fiscalYear: '2026年11月期',
+          status: 'forecast',
+          interim: '0.00円',
+          yearEnd: '10.00円',
+          annual: '10.00円',
+          comparisonAnnual: '10.00円',
+          comparisonBasis: 'reported',
+          assessment: 'unchanged',
+          interpretation: null as unknown as string,
+          evidenceText: '配当の状況',
+          page: 1,
+          confidence: 'high',
+        },
+      ],
+      currentRevision: null,
+    };
+    expect(() => refineEarningsExtraction(data, context)).not.toThrow();
+    expect(refineEarningsExtraction(data, context).dividend?.periods[0].interpretation).toBe('');
+  });
+
   it.each([
     ['キャッシュ・フロー計算書は作成していない', 'notPrepared'],
     ['当該情報は開示していない', 'notReported'],

@@ -160,7 +160,8 @@ function normalizeDividendAmount(value: string): string {
     .replace(/(\d+)\.00円/g, '$1円');
 }
 
-function normalizeOptionalInterpretation(value: string): string {
+function normalizeOptionalInterpretation(value: unknown): string {
+  if (typeof value !== 'string') return '';
   return /^(?:unknown|不明|判定不能)$/i.test(value.trim()) ? '' : value.trim();
 }
 

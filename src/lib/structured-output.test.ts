@@ -175,4 +175,31 @@ describe('抽出JSON検証', () => {
     expect(result.success).toBe(false);
     expect(result.errors.join(' ')).toContain('forecastがあります');
   });
+
+  it('配当の意味説明がnullならJSON修復対象にする', () => {
+    const value = validEarnings({
+      dividend: {
+        forecastAvailability: 'reported',
+        periods: [
+          {
+            fiscalYear: '2026年11月期',
+            status: 'forecast',
+            interim: '0.00円',
+            yearEnd: '10.00円',
+            annual: '10.00円',
+            comparisonAnnual: '10.00円',
+            comparisonBasis: 'reported',
+            assessment: 'unchanged',
+            interpretation: null,
+            evidenceText: '配当の状況',
+            confidence: 'high',
+            page: 1,
+          },
+        ],
+      },
+    });
+    const result = parseAndValidateExtraction(JSON.stringify(value), 'earnings', 2);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('dividend.periods[0].interpretation');
+  });
 });

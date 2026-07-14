@@ -124,6 +124,28 @@ function validateEarningsSemantics(value: Record<string, unknown>, errors: strin
         if (!new Set(['reported', 'splitAdjusted', 'unknown']).has(String(period.comparisonBasis))) {
           errors.push(`dividend.periods[${index}].comparisonBasis が許可値ではありません`);
         }
+        validateRequiredString(
+          period.fiscalYear,
+          `dividend.periods[${index}].fiscalYear`,
+          errors
+        );
+        for (const field of ['interim', 'yearEnd', 'annual', 'comparisonAnnual'] as const) {
+          validateNullableString(
+            period[field],
+            `dividend.periods[${index}].${field}`,
+            errors
+          );
+        }
+        validateRequiredString(
+          period.interpretation,
+          `dividend.periods[${index}].interpretation`,
+          errors
+        );
+        validateRequiredString(
+          period.evidenceText,
+          `dividend.periods[${index}].evidenceText`,
+          errors
+        );
         validateConfidence(period.confidence, `dividend.periods[${index}].confidence`, errors);
       });
       const availability = String(dividend.forecastAvailability);
@@ -159,6 +181,21 @@ function validateEarningsSemantics(value: Record<string, unknown>, errors: strin
         errors.push('earningsQuality.operatingCashFlow.status が許可値ではありません');
       }
       validateConfidence(cashFlow.confidence, 'earningsQuality.operatingCashFlow.confidence', errors);
+      validateNullableString(
+        cashFlow.amount,
+        'earningsQuality.operatingCashFlow.amount',
+        errors
+      );
+      validateRequiredString(
+        cashFlow.interpretation,
+        'earningsQuality.operatingCashFlow.interpretation',
+        errors
+      );
+      validateRequiredString(
+        cashFlow.evidenceText,
+        'earningsQuality.operatingCashFlow.evidenceText',
+        errors
+      );
     }
   }
   if (!Array.isArray(quality.capitalActions)) {
@@ -173,6 +210,16 @@ function validateEarningsSemantics(value: Record<string, unknown>, errors: strin
       if (!assessments.has(String(action.returnAssessment))) {
         errors.push(`earningsQuality.capitalActions[${index}].returnAssessment が許可値ではありません`);
       }
+      validateRequiredString(
+        action.interpretation,
+        `earningsQuality.capitalActions[${index}].interpretation`,
+        errors
+      );
+      validateRequiredString(
+        action.evidenceText,
+        `earningsQuality.capitalActions[${index}].evidenceText`,
+        errors
+      );
       validateConfidence(
         action.confidence,
         `earningsQuality.capitalActions[${index}].confidence`,
@@ -185,6 +232,18 @@ function validateEarningsSemantics(value: Record<string, unknown>, errors: strin
 function validateConfidence(value: unknown, path: string, errors: string[]): void {
   if (!new Set(['high', 'medium', 'low']).has(String(value))) {
     errors.push(`${path} が許可値ではありません`);
+  }
+}
+
+function validateRequiredString(value: unknown, path: string, errors: string[]): void {
+  if (typeof value !== 'string' || value.trim() === '') {
+    errors.push(`${path} は空でない文字列である必要があります`);
+  }
+}
+
+function validateNullableString(value: unknown, path: string, errors: string[]): void {
+  if (value !== null && typeof value !== 'string') {
+    errors.push(`${path} は文字列またはnullである必要があります`);
   }
 }
 
