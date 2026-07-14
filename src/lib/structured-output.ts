@@ -23,7 +23,15 @@ const INVESTMENT_STANCES = new Set<InvestmentStance>([
 ]);
 
 const REQUIRED_ROOT_FIELDS: Record<DocumentType, string[]> = {
-  earnings: ['summary', 'performance', 'dividend', 'earningsQuality', 'investmentView', 'topics'],
+  earnings: [
+    'summary',
+    'performance',
+    'forecastRevision',
+    'dividend',
+    'earningsQuality',
+    'investmentView',
+    'topics',
+  ],
   earningsRevision: ['summary', 'revisionItems', 'investmentView', 'topics'],
   shareholderBenefit: ['summary', 'changeType', 'details', 'investmentView', 'topics'],
   dividend: ['summary', 'dividendDetails', 'investmentView', 'topics'],
@@ -83,6 +91,18 @@ export function parseAndValidateExtraction(
 }
 
 function validateEarningsSemantics(value: Record<string, unknown>, errors: string[]): void {
+  const forecastRevision = value.forecastRevision;
+  if (forecastRevision !== null) {
+    if (!isRecord(forecastRevision)) {
+      errors.push('forecastRevision はオブジェクトまたはnullである必要があります');
+    } else {
+      if (!new Set(['up', 'unchanged', 'down', 'unknown']).has(String(forecastRevision.direction))) {
+        errors.push('forecastRevision.direction が許可値ではありません');
+      }
+      validateConfidence(forecastRevision.confidence, 'forecastRevision.confidence', errors);
+    }
+  }
+
   const dividend = value.dividend;
   if (dividend !== null) {
     if (!isRecord(dividend) || !Array.isArray(dividend.periods)) {
@@ -101,8 +121,27 @@ function validateEarningsSemantics(value: Record<string, unknown>, errors: strin
         if (!assessments.has(String(period.assessment))) {
           errors.push(`dividend.periods[${index}].assessment が許可値ではありません`);
         }
+        if (!new Set(['reported', 'splitAdjusted', 'unknown']).has(String(period.comparisonBasis))) {
+          errors.push(`dividend.periods[${index}].comparisonBasis が許可値ではありません`);
+        }
         validateConfidence(period.confidence, `dividend.periods[${index}].confidence`, errors);
       });
+      const availability = String(dividend.forecastAvailability);
+      if (!new Set(['reported', 'notReported', 'unknown']).has(availability)) {
+        errors.push('dividend.forecastAvailability が許可値ではありません');
+      }
+      if (
+        availability === 'reported' &&
+        !dividend.periods.some((period) => isRecord(period) && period.status === 'forecast')
+      ) {
+        errors.push('配当予想がreportedですがdividend.periodsにforecastがありません');
+      }
+      if (
+        availability === 'notReported' &&
+        dividend.periods.some((period) => isRecord(period) && period.status === 'forecast')
+      ) {
+        errors.push('dividend.periodsにforecastがありますが配当予想がnotReportedです');
+      }
     }
   }
 

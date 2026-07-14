@@ -28,6 +28,7 @@ function validEarnings(overrides: Record<string, unknown> = {}): Record<string, 
   return {
     summary: '決算要約',
     performance: { periodLabel: '通期実績', items: [] },
+    forecastRevision: null,
     dividend: null,
     earningsQuality: {
       operatingMargin: null,
@@ -133,5 +134,45 @@ describe('抽出JSON検証', () => {
     expect(result.success).toBe(false);
     expect(result.errors.join(' ')).toContain('operatingCashFlow.status');
     expect(result.errors.join(' ')).toContain('operatingCashFlow.confidence');
+  });
+
+  it('配当予想ありならforecast年度の欠落を拒否する', () => {
+    const value = validEarnings({
+      dividend: {
+        forecastAvailability: 'reported',
+        periods: [
+          {
+            status: 'actual',
+            assessment: 'increase',
+            comparisonBasis: 'reported',
+            confidence: 'high',
+            page: 1,
+          },
+        ],
+      },
+    });
+    const result = parseAndValidateExtraction(JSON.stringify(value), 'earnings', 2);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('forecastがありません');
+  });
+
+  it('配当予想なしとforecast年度の矛盾を拒否する', () => {
+    const value = validEarnings({
+      dividend: {
+        forecastAvailability: 'notReported',
+        periods: [
+          {
+            status: 'forecast',
+            assessment: 'unchanged',
+            comparisonBasis: 'reported',
+            confidence: 'high',
+            page: 1,
+          },
+        ],
+      },
+    });
+    const result = parseAndValidateExtraction(JSON.stringify(value), 'earnings', 2);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('forecastがあります');
   });
 });

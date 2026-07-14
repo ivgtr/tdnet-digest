@@ -42,7 +42,9 @@ export function refineEarningsExtraction(
           revisionOrDividend:
             context.period === 'fullYear'
               ? dividendEvaluation
-              : (previousEvaluation?.forecast?.revisionOrDividend ?? null),
+              : (buildForecastRevisionEvaluation(extraction.forecastRevision) ??
+                previousEvaluation?.forecast?.revisionOrDividend ??
+                null),
         }
       : null,
   };
@@ -53,6 +55,15 @@ export function refineEarningsExtraction(
       ...extraction.performance,
       periodLabel: buildPerformanceLabel(extraction.performance.periodLabel, context, documentTitle),
     },
+    dividend: extraction.dividend
+      ? {
+          ...extraction.dividend,
+          periods: extraction.dividend.periods.map((period) => ({
+            ...period,
+            interpretation: normalizeOptionalInterpretation(period.interpretation),
+          })),
+        }
+      : null,
     businessPl: buildBusinessPl(
       [...(extraction.businessPl?.items ?? []), ...extraction.performance.items],
       context
@@ -69,6 +80,22 @@ export function refineEarningsExtraction(
       ),
     },
   };
+}
+
+function buildForecastRevisionEvaluation(
+  revision: EarningsExtraction['forecastRevision']
+): string | null {
+  if (!revision || revision.confidence === 'low') return null;
+  if (revision.direction === 'unchanged') return '→修正なし';
+
+  const arrow = { up: '↑上方修正', down: '↓下方修正', unknown: '—判定不能' }[
+    revision.direction
+  ];
+  const amounts =
+    revision.before && revision.after
+      ? `${revision.metric ? `${revision.metric}：` : ''}${revision.before}→${revision.after}`
+      : revision.interpretation;
+  return amounts ? `${arrow}（${amounts}）` : arrow;
 }
 
 function refineOperatingCashFlow(
@@ -127,7 +154,14 @@ function buildDividendEvaluation(extraction: EarningsExtraction): string | null 
 }
 
 function normalizeDividendAmount(value: string): string {
-  return value.normalize('NFKC').replace(/(\d+)円00銭/g, '$1円');
+  return value
+    .normalize('NFKC')
+    .replace(/(\d+)円00銭/g, '$1円')
+    .replace(/(\d+)\.00円/g, '$1円');
+}
+
+function normalizeOptionalInterpretation(value: string): string {
+  return /^(?:unknown|不明|判定不能)$/i.test(value.trim()) ? '' : value.trim();
 }
 
 function buildBusinessPl(

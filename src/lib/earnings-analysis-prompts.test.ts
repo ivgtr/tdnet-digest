@@ -31,6 +31,9 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('businessPl.items');
     expect(system).toContain('会社固有の言い回しを意味として解釈');
     expect(system).toContain('当期の配当修正と来期配当予想を混同しない');
+    expect(system).toContain('「（予想）」行を省略せず');
+    expect(system).toContain('旧予想レンジがゼロをまたぐ場合');
+    expect(system).toContain('comparisonBasisをsplitAdjusted');
     expect(system).toContain('根拠原文と確信度');
   });
 

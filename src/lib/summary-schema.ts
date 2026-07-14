@@ -64,7 +64,9 @@ export interface DividendPeriodAnalysis {
   yearEnd: string | null;
   annual: string | null;
   comparisonAnnual: string | null;
+  comparisonBasis: 'reported' | 'splitAdjusted' | 'unknown';
   assessment: 'increase' | 'unchanged' | 'decrease' | 'unknown';
+  interpretation: string;
   evidenceText: string;
   page: number | null;
   confidence: SemanticConfidence;
@@ -76,6 +78,16 @@ export interface DividendRevisionAnalysis {
   after: string;
   reason: string | null;
   page: number | null;
+}
+
+export interface ForecastRevisionAnalysis {
+  direction: 'up' | 'unchanged' | 'down' | 'unknown';
+  metric: string | null;
+  before: string | null;
+  after: string | null;
+  interpretation: string;
+  page: number | null;
+  confidence: SemanticConfidence;
 }
 
 export interface EarningsQuality {
@@ -140,8 +152,10 @@ export interface EarningsExtraction {
     label: string;
     items: FinancialItem[];
   } | null;
+  forecastRevision: ForecastRevisionAnalysis | null;
   revision: string | null;
   dividend: {
+    forecastAvailability: 'reported' | 'notReported' | 'unknown';
     periods: DividendPeriodAnalysis[];
     currentRevision: DividendRevisionAnalysis | null;
   } | null;
@@ -387,10 +401,12 @@ function buildEarningsSchema(ctx: EarningsContext): string {
       { "name": "勘定科目名", "amount": "予想金額", "previousAmount": "比較対象となる前期実績金額 ※本文になければnull", "change": "前期比（例: +8.5%） ※本文に増減率がない場合はnull", "page": 1 }
     ]
   },
+  "forecastRevision": { "direction": "up/unchanged/down/unknown", "metric": "評価対象の利益指標 ※なければnull", "before": "従来予想額またはレンジ ※なければnull", "after": "今回予想額またはレンジ ※なければnull", "interpretation": "予想修正の内容を金額ベースで簡潔に正規化", "page": 1, "confidence": "high/medium/low" },
   "revision": "業績予想の修正内容（修正なしの場合は'修正なし'）",
   "dividend": {
+    "forecastAvailability": "配当の状況の表に（予想）行があればreported、明示的になければnotReported、判別不能ならunknown",
     "periods": [
-      { "fiscalYear": "年度ラベル", "status": "actualまたはforecast", "interim": "中間配当額 ※なければnull", "yearEnd": "期末配当額 ※なければnull", "annual": "年間配当額 ※なければnull", "comparisonAnnual": "この年度と比較する直前年度の年間配当額 ※なければnull", "assessment": "increase/unchanged/decrease/unknown", "evidenceText": "判断根拠となる表または本文の記述", "page": 1, "confidence": "high/medium/low" }
+      { "fiscalYear": "年度ラベル", "status": "actualまたはforecast", "interim": "中間配当額 ※なければnull", "yearEnd": "期末配当額 ※なければnull", "annual": "年間配当額 ※なければnull", "comparisonAnnual": "この年度と比較可能な直前年度の年間配当額 ※株式分割等があれば調整後金額、なければ記載額、不明ならnull", "comparisonBasis": "reported/splitAdjusted/unknown", "assessment": "increase/unchanged/decrease/unknown", "interpretation": "株式数変化も考慮した配当の意味を簡潔に説明", "evidenceText": "判断根拠となる表または本文の記述", "page": 1, "confidence": "high/medium/low" }
     ],
     "currentRevision": { "fiscalYear": "修正対象年度", "before": "修正前年間配当", "after": "修正後年間配当", "reason": "修正理由 ※なければnull", "page": 1 }
   },

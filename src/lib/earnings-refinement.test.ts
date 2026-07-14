@@ -48,6 +48,15 @@ function extraction(): EarningsExtraction {
       label: '通期予想',
       items: [{ name: '税引前利益', amount: '8,000百万円', change: '+1.8%', page: 1 }],
     },
+    forecastRevision: {
+      direction: 'unchanged',
+      metric: null,
+      before: null,
+      after: null,
+      interpretation: '修正なし',
+      page: 1,
+      confidence: 'high',
+    },
     revision: '修正なし',
     dividend: null,
     earningsQuality: {
@@ -101,6 +110,7 @@ describe('決算抽出の決定論的補正', () => {
   it('来期配当予想と当期配当修正の時間軸を混同しない', () => {
     const data = extraction();
     data.dividend = {
+      forecastAvailability: 'reported',
       periods: [
         {
           fiscalYear: '2026年5月期',
@@ -109,7 +119,9 @@ describe('決算抽出の決定論的補正', () => {
           yearEnd: '32円00銭',
           annual: '32円00銭',
           comparisonAnnual: '13円50銭',
+          comparisonBasis: 'reported',
           assessment: 'increase',
+          interpretation: 'unknown',
           evidenceText: '2026年5月期 32円00銭',
           page: 1,
           confidence: 'high',
@@ -121,7 +133,9 @@ describe('決算抽出の決定論的補正', () => {
           yearEnd: '57円00銭',
           annual: '57円00銭',
           comparisonAnnual: '32円00銭',
+          comparisonBasis: 'reported',
           assessment: 'increase',
+          interpretation: '来期も増配予想',
           evidenceText: '2027年5月期（予想）57円00銭',
           page: 1,
           confidence: 'high',
@@ -142,6 +156,7 @@ describe('決算抽出の決定論的補正', () => {
     });
     expect(result.evaluation?.forecast?.revisionOrDividend).toBe('↑増配（32円→57円）');
     expect(result.dividend?.currentRevision).toMatchObject({ before: '30円00銭', after: '32円00銭' });
+    expect(result.dividend?.periods[0].interpretation).toBe('');
   });
 
   it.each([
@@ -176,6 +191,27 @@ describe('決算抽出の決定論的補正', () => {
       amount: '527,243千円',
       direction: 'inflow',
     });
+  });
+
+  it('ゼロをまたぐ予想修正レンジは増減率を作らず金額で表示する', () => {
+    const data = extraction();
+    data.forecastRevision = {
+      direction: 'up',
+      metric: '経常利益',
+      before: '△100〜100百万円',
+      after: '200〜300百万円',
+      interpretation: '経常利益予想を上方修正',
+      page: 6,
+      confidence: 'high',
+    };
+    const result = refineEarningsExtraction(data, {
+      period: 'q2',
+      accountingStandard: 'jpGaap',
+      isConsolidated: true,
+    });
+    expect(result.evaluation?.forecast?.revisionOrDividend).toBe(
+      '↑上方修正（経常利益：△100〜100百万円→200〜300百万円）'
+    );
   });
 
   it('LLMの意味分類に基づき株主還元だけを表示対象にする', () => {
