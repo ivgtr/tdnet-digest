@@ -31,6 +31,24 @@ const FORMAT_RULES = `
 【方向性の表示】
 - positive=強気、slightlyPositive=やや強気、neutral=中立、slightlyNegative=やや弱気、negative=弱気、unknown=判断不能 と変換してください`;
 
+const INVESTMENT_VIEW_TEMPLATE = `
+## 時間軸別の見方
+- 短期: {{investmentView.shortTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 中期: {{investmentView.mediumTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 長期: {{investmentView.longTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+
+## 好材料
+{{investmentView.positives を1行ずつ: - {text} [p.{page}]}}
+
+## リスク
+{{investmentView.risks を1行ずつ: - {text} [p.{page}]}}
+
+## 次回確認点
+{{investmentView.watchPoints を1行ずつ: - {text} [p.{page}]}}
+
+## 評価理由
+{{investmentView.rationale}}`;
+
 // ── 決算短信テンプレート ──
 
 function buildEarningsTemplate(ctx: EarningsContext): string {
@@ -121,6 +139,8 @@ const EARNINGS_REVISION_TEMPLATE = `
 - 修正内容: {{dividendRevision.content}}
 - 修正理由: {{dividendRevision.reason}}
 
+${INVESTMENT_VIEW_TEMPLATE}
+
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
 
@@ -144,6 +164,8 @@ const DIVIDEND_TEMPLATE = `
 
 ## 配当方針
 {{policy}}
+
+${INVESTMENT_VIEW_TEMPLATE}
 
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
@@ -175,6 +197,8 @@ const MA_TEMPLATE = `
 - 利益への影響: {{impact.profit}}
 - 連結範囲の変更: {{impact.consolidation}}
 
+${INVESTMENT_VIEW_TEMPLATE}
+
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
 
@@ -197,6 +221,139 @@ const SHARE_REPURCHASE_TEMPLATE = `
 
 ## 目的
 {{purpose}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const SHAREHOLDER_BENEFIT_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 優待変更
+- 変更区分: {{changeType}}
+- 変更前: {{details.before}}
+- 変更後: {{details.after}}
+- 対象株主: {{details.eligibleShareholders}}
+- 必要保有株数: {{details.requiredShares}}
+- 基準日: {{details.referenceDate}}
+- 開始日: {{details.startDate}}
+- 継続保有条件: {{details.holdingRequirement}}
+- 会社負担・業績影響: {{details.costImpact}}
+
+## 目的
+{{purpose}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const STOCK_SPLIT_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 分割・併合内容
+- 区分: {{details.action}}
+- 比率: {{details.ratio}}
+- 基準日: {{details.recordDate}}
+- 効力発生日: {{details.effectiveDate}}
+- 実施前株式数: {{details.sharesBefore}}
+- 実施後株式数: {{details.sharesAfter}}
+- 発行可能株式総数: {{details.authorizedSharesChange}}
+- 配当への影響: {{details.dividendImpact}}
+
+## 目的
+{{purpose}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const CAPITAL_POLICY_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 取引内容
+- 方法: {{transaction.method}}
+- 割当先・提携先: {{transaction.counterparty}}
+- 調達額: {{transaction.amount}}
+- 発行株式・新株予約権: {{transaction.sharesOrRights}}
+- 希薄化率: {{transaction.dilution}}
+- 発行・行使価額: {{transaction.price}}
+- 払込期日: {{transaction.paymentDate}}
+
+## 資金使途
+{{useOfFunds を1行ずつ: - {text} [p.{page}]}}
+
+## 業務提携
+{{partnership を1行ずつ: - {text} [p.{page}]}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const BUSINESS_UPDATE_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 対象期間
+{{period}}
+
+## 主要KPI
+{{kpis を1行ずつ: - {name}: {value}（{comparison}、{scope}） [p.{page}] ※null部分は省略}}
+
+## 増減要因
+{{drivers を1行ずつ: - {text} [p.{page}]}}
+
+## 一過性要因
+{{oneOffFactors を1行ずつ: - {text} [p.{page}]}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const GOVERNANCE_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 変更区分
+{{changeType}}
+
+## 人事
+{{people を1行ずつ: - {name}: {previousRole} → {newRole}（{effectiveDate}） ※null部分は省略}}
+
+## ガバナンス体制
+{{governanceChanges を1行ずつ: - {text} [p.{page}]}}
+
+## 内部統制・再発防止
+{{internalControl を1行ずつ: - {text} [p.{page}]}}
+
+${INVESTMENT_VIEW_TEMPLATE}
 
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
@@ -249,11 +406,19 @@ export function getFormatPrompt(
       template = EARNINGS_REVISION_TEMPLATE;
       break;
     case 'shareholderBenefit':
+      template = SHAREHOLDER_BENEFIT_TEMPLATE;
+      break;
     case 'stockSplit':
+      template = STOCK_SPLIT_TEMPLATE;
+      break;
     case 'capitalPolicy':
+      template = CAPITAL_POLICY_TEMPLATE;
+      break;
     case 'businessUpdate':
+      template = BUSINESS_UPDATE_TEMPLATE;
+      break;
     case 'governance':
-      template = OTHER_TEMPLATE;
+      template = GOVERNANCE_TEMPLATE;
       break;
     case 'dividend':
       template = DIVIDEND_TEMPLATE;

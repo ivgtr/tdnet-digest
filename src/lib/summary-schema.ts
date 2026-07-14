@@ -108,6 +108,25 @@ export interface EarningsRevisionExtraction {
     content: string;
     reason: string | null;
   } | null;
+  investmentView: InvestmentView;
+  topics: string[];
+}
+
+export interface ShareholderBenefitExtraction {
+  summary: string;
+  changeType: 'establish' | 'expand' | 'reduce' | 'abolish' | 'change' | 'unknown';
+  details: {
+    before: string | null;
+    after: string | null;
+    eligibleShareholders: string | null;
+    requiredShares: string | null;
+    referenceDate: string | null;
+    startDate: string | null;
+    holdingRequirement: string | null;
+    costImpact: string | null;
+  };
+  purpose: string | null;
+  investmentView: InvestmentView;
   topics: string[];
 }
 
@@ -124,6 +143,7 @@ export interface DividendExtraction {
     comparison: string | null;
   };
   policy: string | null;
+  investmentView: InvestmentView;
   topics: string[];
 }
 
@@ -146,6 +166,7 @@ export interface MAExtraction {
     profit: string | null;
     consolidation: string | null;
   } | null;
+  investmentView: InvestmentView;
   topics: string[];
 }
 
@@ -161,6 +182,72 @@ export interface ShareRepurchaseExtraction {
     cancellation: string | null;
   };
   purpose: string | null;
+  investmentView: InvestmentView;
+  topics: string[];
+}
+
+export interface StockSplitExtraction {
+  summary: string;
+  details: {
+    action: 'split' | 'consolidation' | 'unknown';
+    ratio: string | null;
+    recordDate: string | null;
+    effectiveDate: string | null;
+    sharesBefore: string | null;
+    sharesAfter: string | null;
+    authorizedSharesChange: string | null;
+    dividendImpact: string | null;
+  };
+  purpose: string | null;
+  investmentView: InvestmentView;
+  topics: string[];
+}
+
+export interface CapitalPolicyExtraction {
+  summary: string;
+  transaction: {
+    method: string | null;
+    counterparty: string | null;
+    amount: string | null;
+    sharesOrRights: string | null;
+    dilution: string | null;
+    price: string | null;
+    paymentDate: string | null;
+  };
+  useOfFunds: EvidenceFact[];
+  partnership: EvidenceFact[];
+  investmentView: InvestmentView;
+  topics: string[];
+}
+
+export interface BusinessUpdateExtraction {
+  summary: string;
+  period: string | null;
+  kpis: {
+    name: string;
+    value: string;
+    comparison: string | null;
+    scope: string | null;
+    page: number | null;
+  }[];
+  drivers: EvidenceFact[];
+  oneOffFactors: EvidenceFact[];
+  investmentView: InvestmentView;
+  topics: string[];
+}
+
+export interface GovernanceExtraction {
+  summary: string;
+  changeType: string | null;
+  people: {
+    name: string;
+    previousRole: string | null;
+    newRole: string | null;
+    effectiveDate: string | null;
+  }[];
+  governanceChanges: EvidenceFact[];
+  internalControl: EvidenceFact[];
+  investmentView: InvestmentView;
   topics: string[];
 }
 
@@ -182,9 +269,14 @@ export interface OtherExtraction {
 export type ExtractionResult =
   | EarningsExtraction
   | EarningsRevisionExtraction
+  | ShareholderBenefitExtraction
   | DividendExtraction
   | MAExtraction
   | ShareRepurchaseExtraction
+  | StockSplitExtraction
+  | CapitalPolicyExtraction
+  | BusinessUpdateExtraction
+  | GovernanceExtraction
   | OtherExtraction;
 
 // ── スキーマ文字列生成 ──
@@ -303,6 +395,16 @@ ${forecastRevision}
 ※赤字で増減率が無意味な場合は「★—（赤字のため評価対象外）」`;
 }
 
+const INVESTMENT_VIEW_SCHEMA = `"investmentView": {
+    "shortTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "短期の根拠（最大2点）", "page": 1 }] },
+    "mediumTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "中期の根拠（最大2点）", "page": 1 }] },
+    "longTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "長期の根拠（最大2点）", "page": 1 }] },
+    "positives": [{ "text": "好材料（最大2点）", "page": 1 }],
+    "risks": [{ "text": "リスク（最大2点。根拠がなければ空配列）", "page": 1 }],
+    "watchPoints": [{ "text": "次回確認点（最大3点）", "page": 1 }],
+    "rationale": "最大の加点要因と減点要因を一文で説明。点数や市場データは使用しない"
+  }`;
+
 const EARNINGS_REVISION_SCHEMA = `{
   "summary": "全体要約（1-3文。修正の方向性と主要因、配当への影響を含む）",
   "revisionItems": [
@@ -313,6 +415,25 @@ const EARNINGS_REVISION_SCHEMA = `{
     "content": "配当予想の修正内容（中間/期末/年間の旧→新）",
     "reason": "配当修正の理由"
   },
+  ${INVESTMENT_VIEW_SCHEMA},
+  "topics": ["具体的な数値を含むトピック（最大4点）"]
+}`;
+
+const SHAREHOLDER_BENEFIT_SCHEMA = `{
+  "summary": "全体要約（1-3文。拡充/縮小/廃止と対象範囲を含む）",
+  "changeType": "establish/expand/reduce/abolish/change/unknown",
+  "details": {
+    "before": "変更前の優待内容。なければnull",
+    "after": "変更後の優待内容。なければnull",
+    "eligibleShareholders": "対象株主",
+    "requiredShares": "必要保有株数",
+    "referenceDate": "基準日",
+    "startDate": "開始日",
+    "holdingRequirement": "継続保有条件",
+    "costImpact": "会社負担・業績影響。本文になければnull"
+  },
+  "purpose": "制度変更の目的",
+  ${INVESTMENT_VIEW_SCHEMA},
   "topics": ["具体的な数値を含むトピック（最大4点）"]
 }`;
 
@@ -327,6 +448,7 @@ const DIVIDEND_SCHEMA = `{
     "comparison": "前期比較（前期年間配当→今期年間配当、増減額、増配/減配/据置）"
   },
   "policy": "配当方針や株主還元方針（1-2行）",
+  ${INVESTMENT_VIEW_SCHEMA},
   "topics": ["具体的な数値を含むトピック（最大4点）"]
 }`;
 
@@ -347,6 +469,7 @@ const MA_SCHEMA = `{
     "profit": "利益への影響",
     "consolidation": "連結範囲の変更"
   },
+  ${INVESTMENT_VIEW_SCHEMA},
   "topics": ["具体的な数値を含むトピック（最大4点）"]
 }`;
 
@@ -360,7 +483,62 @@ const SHARE_REPURCHASE_SCHEMA = `{
     "cancellation": "消却予定の有無と時期"
   },
   "purpose": "取得の目的（1-2行で簡潔に）",
+  ${INVESTMENT_VIEW_SCHEMA},
   "topics": ["具体的な数値を含むトピック（最大4点）"]
+}`;
+
+const STOCK_SPLIT_SCHEMA = `{
+  "summary": "全体要約（1-3文。比率、日程、実質的な株主価値の変更有無を含む）",
+  "details": {
+    "action": "split/consolidation/unknown",
+    "ratio": "分割・併合比率",
+    "recordDate": "基準日",
+    "effectiveDate": "効力発生日",
+    "sharesBefore": "実施前株式数",
+    "sharesAfter": "実施後株式数",
+    "authorizedSharesChange": "発行可能株式総数の変更",
+    "dividendImpact": "1株配当と実質配当への影響"
+  },
+  "purpose": "実施目的",
+  ${INVESTMENT_VIEW_SCHEMA},
+  "topics": ["具体的な数値を含むトピック（最大4点）"]
+}`;
+
+const CAPITAL_POLICY_SCHEMA = `{
+  "summary": "全体要約（1-3文。調達・提携内容、希薄化、資金使途を含む）",
+  "transaction": {
+    "method": "第三者割当/新株予約権/資本業務提携等",
+    "counterparty": "割当先・提携先",
+    "amount": "調達額",
+    "sharesOrRights": "発行株式数・新株予約権数",
+    "dilution": "希薄化率",
+    "price": "発行価額・行使価額",
+    "paymentDate": "払込期日"
+  },
+  "useOfFunds": [{ "text": "資金使途（最大3点）", "page": 1 }],
+  "partnership": [{ "text": "業務提携内容（最大3点）", "page": 1 }],
+  ${INVESTMENT_VIEW_SCHEMA},
+  "topics": ["具体的な数値を含むトピック（最大4点）"]
+}`;
+
+const BUSINESS_UPDATE_SCHEMA = `{
+  "summary": "全体要約（1-3文。主要KPIの方向と要因を含む）",
+  "period": "対象月・対象期間",
+  "kpis": [{ "name": "KPI名", "value": "実績値", "comparison": "前年同月比/前年同期比", "scope": "既存店/全店/事業範囲等", "page": 1 }],
+  "drivers": [{ "text": "増減要因（最大3点）", "page": 1 }],
+  "oneOffFactors": [{ "text": "天候・休日数等の一過性要因（最大2点）", "page": 1 }],
+  ${INVESTMENT_VIEW_SCHEMA},
+  "topics": ["具体的な数値を含むトピック（最大4点）"]
+}`;
+
+const GOVERNANCE_SCHEMA = `{
+  "summary": "全体要約（1-3文。変更内容と施行日を含む）",
+  "changeType": "役員異動/体制変更/内部統制/再発防止等",
+  "people": [{ "name": "氏名", "previousRole": "旧役職", "newRole": "新役職", "effectiveDate": "就任・退任日" }],
+  "governanceChanges": [{ "text": "ガバナンス体制の変更（最大3点）", "page": 1 }],
+  "internalControl": [{ "text": "内部統制・再発防止策（最大3点）", "page": 1 }],
+  ${INVESTMENT_VIEW_SCHEMA},
+  "topics": ["具体的な事実を含むトピック（最大4点）"]
 }`;
 
 const OTHER_SCHEMA = `{
@@ -389,17 +567,21 @@ export function getJsonSchema(
     case 'earningsRevision':
       return EARNINGS_REVISION_SCHEMA;
     case 'shareholderBenefit':
-    case 'stockSplit':
-    case 'capitalPolicy':
-    case 'businessUpdate':
-    case 'governance':
-      return OTHER_SCHEMA;
+      return SHAREHOLDER_BENEFIT_SCHEMA;
     case 'dividend':
       return DIVIDEND_SCHEMA;
     case 'ma':
       return MA_SCHEMA;
     case 'shareRepurchase':
       return SHARE_REPURCHASE_SCHEMA;
+    case 'stockSplit':
+      return STOCK_SPLIT_SCHEMA;
+    case 'capitalPolicy':
+      return CAPITAL_POLICY_SCHEMA;
+    case 'businessUpdate':
+      return BUSINESS_UPDATE_SCHEMA;
+    case 'governance':
+      return GOVERNANCE_SCHEMA;
     case 'other':
       return OTHER_SCHEMA;
   }

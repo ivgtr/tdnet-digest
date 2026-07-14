@@ -105,6 +105,14 @@ const COMMON_TOPICS_RULES = `
   - 先行指標（受注残、パイプライン、月次動向、新規出店等）
   - 前回開示からの変化点やサプライズ要素`;
 
+const NON_EARNINGS_INVESTMENT_RULES = `
+【投資判断の注意事項】
+- 短期は開示直後〜数週間、中期は6か月〜1年、長期は1年以上の観点とします
+- 各時間軸の方向性はPDFに記載された事実だけを根拠に判定してください
+- 好材料とリスクは根拠があるものだけ各最大2点とし、存在しない側を捏造しないでください
+- 次回確認点は最大3点とし、将来を断定せず確認すべき事実・指標として記載してください
+- 市場コンセンサス、現在株価、バリュエーション、織り込み度は推測しないでください`;
+
 /**
  * 決算評価の判定ルールを生成（出力形式の前に配置する内部ルール）
  *
@@ -389,6 +397,7 @@ function buildEarningsRevisionPrompt(): string {
 
 【業績修正の注意事項】
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.earningsRevision}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -407,6 +416,8 @@ ${COMMON_TOPICS_RULES}
 - 修正内容: {中間/期末/年間の 旧予想→新予想を記載}
 - 修正理由: {配当修正の理由を1-2行で簡潔に}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
@@ -421,6 +432,7 @@ function buildDividendPrompt(): string {
 【配当の注意事項】
 - 増配/減配/据置は本文に明記されている場合のみ記載してください
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.dividend}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -438,6 +450,8 @@ ${COMMON_TOPICS_RULES}
 ## 配当方針
 {配当方針や株主還元方針を1-2行で簡潔に}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
@@ -451,6 +465,7 @@ function buildMAPrompt(): string {
 
 【M&Aの注意事項】
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.ma}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -474,6 +489,8 @@ ${COMMON_TOPICS_RULES}
 - 利益への影響: {金額または説明}
 - 連結範囲の変更: {変更内容}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
@@ -487,6 +504,7 @@ function buildShareRepurchasePrompt(): string {
 
 【自己株式取得の注意事項】
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.shareRepurchase}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -503,8 +521,185 @@ ${COMMON_TOPICS_RULES}
 ## 目的
 {取得の目的を1-2行で簡潔に}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
+--- 出力形式ここまで ---`;
+}
+
+function buildShareholderBenefitPrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【株主優待の注意事項】
+- 新設/拡充/縮小/廃止/変更を、変更前後の内容と対象株主を比較して判定してください
+- 必要保有株数、基準日、開始日、継続保有条件、会社負担は本文にある場合のみ記載してください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.shareholderBenefit}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.shareholderBenefit}で、変更区分と対象範囲を含めて記載}
+
+## 優待変更
+- 変更区分: {新設/拡充/縮小/廃止/変更/判断不能}
+- 変更前: {変更前の優待内容}
+- 変更後: {変更後の優待内容}
+- 対象株主: {対象株主}
+- 必要保有株数: {株数}
+- 基準日: {日付}
+- 開始日: {日付}
+- 継続保有条件: {期間等}
+- 会社負担・業績影響: {本文記載の内容}
+
+## 目的
+{制度変更の目的}
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildStockSplitPrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【株式分割・併合の注意事項】
+- 分割/併合比率、基準日、効力発生日、実施前後の株式数を正確に記載してください
+- 1株配当が変わっても実質配当総額が維持される場合は区別してください
+- 株式分割それ自体は企業価値や株主価値を創出するものと断定しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.stockSplit}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.stockSplit}で、比率、日程、実質的な株主価値の変更有無を含めて記載}
+
+## 分割・併合内容
+- 区分: {分割/併合/判断不能}
+- 比率: {比率}
+- 基準日: {日付}
+- 効力発生日: {日付}
+- 実施前株式数: {株式数}
+- 実施後株式数: {株式数}
+- 発行可能株式総数: {変更内容}
+- 配当への影響: {1株配当と実質配当への影響}
+
+## 目的
+{実施目的}
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildCapitalPolicyPrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【資本政策の注意事項】
+- 調達方法、割当先、調達額、発行数、希薄化率、発行・行使価額、払込期日を区別してください
+- 資金使途と業務提携の内容を混同せず、本文の根拠ページを付けてください
+- 希薄化率や調達額が本文にない場合は推測・独自計算しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.capitalPolicy}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.capitalPolicy}で、調達・提携内容、希薄化、資金使途を含めて記載}
+
+## 取引内容
+- 方法: {第三者割当/新株予約権/資本業務提携等}
+- 割当先・提携先: {名称}
+- 調達額: {金額}
+- 発行株式・新株予約権: {数量}
+- 希薄化率: {パーセント}
+- 発行・行使価額: {金額}
+- 払込期日: {日付}
+
+## 資金使途
+- {用途と金額} [p.{根拠ページ}]
+
+## 業務提携
+- {提携内容} [p.{根拠ページ}]
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildBusinessUpdatePrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【月次・事業進捗の注意事項】
+- 対象期間、KPIの値、前年比、既存店/全店等の対象範囲を一組として記載してください
+- 増減要因と天候・休日数等の一過性要因を区別してください
+- 単月や短期間の実績だけから通期業績を外挿・断定しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.businessUpdate}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.businessUpdate}で、主要KPIの方向と要因を含めて記載}
+
+## 対象期間
+{対象月・対象期間}
+
+## 主要KPI
+- {KPI名}: {実績値}（{前年同月比/前年同期比}、{対象範囲}） [p.{根拠ページ}]
+
+## 増減要因
+- {要因} [p.{根拠ページ}]
+
+## 一過性要因
+- {天候・休日数等} [p.{根拠ページ}]
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildGovernancePrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【ガバナンスの注意事項】
+- 人物名、旧役職、新役職、就任・退任日を混同せず記載してください
+- 体制変更と内部統制・再発防止策を区別してください
+- 本文に記載がない業績・株価への影響を推測しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.governance}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.governance}で、変更内容と施行日を含めて記載}
+
+## 変更区分
+{役員異動/体制変更/内部統制/再発防止等}
+
+## 人事
+- {氏名}: {旧役職} → {新役職}（{就任・退任日}）
+
+## ガバナンス体制
+- {変更内容} [p.{根拠ページ}]
+
+## 内部統制・再発防止
+- {施策} [p.{根拠ページ}]
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な事実}
 --- 出力形式ここまで ---`;
 }
 
@@ -545,14 +740,14 @@ const PROMPTS: Record<DocumentType, string> = {
     isConsolidated: true,
   }),
   earningsRevision: buildEarningsRevisionPrompt(),
-  shareholderBenefit: buildOtherPrompt(),
+  shareholderBenefit: buildShareholderBenefitPrompt(),
   dividend: buildDividendPrompt(),
   shareRepurchase: buildShareRepurchasePrompt(),
-  stockSplit: buildOtherPrompt(),
-  capitalPolicy: buildOtherPrompt(),
+  stockSplit: buildStockSplitPrompt(),
+  capitalPolicy: buildCapitalPolicyPrompt(),
   ma: buildMAPrompt(),
-  businessUpdate: buildOtherPrompt(),
-  governance: buildOtherPrompt(),
+  businessUpdate: buildBusinessUpdatePrompt(),
+  governance: buildGovernancePrompt(),
   other: buildOtherPrompt(),
 };
 
@@ -663,6 +858,25 @@ ${ratingRules}${progressNote}
 - 市場コンセンサス、現在株価、バリュエーション、織り込み度は推測しないでください`;
 }
 
+function buildNonEarningsExtractionNote(documentType: DocumentType): string {
+  const specificRules: Partial<Record<DocumentType, string>> = {
+    shareholderBenefit:
+      '変更前後、対象株主、必要保有株数、基準日、開始日、継続保有条件を区別してください。',
+    stockSplit:
+      '分割・併合比率と日程を正確に抽出し、株式分割それ自体を企業価値の創出と評価しないでください。',
+    capitalPolicy:
+      '調達条件、希薄化、資金使途、業務提携を区別し、本文にない希薄化率を計算しないでください。',
+    businessUpdate:
+      'KPIごとに対象期間・比較値・対象範囲を保持し、短期実績から通期業績を外挿しないでください。',
+    governance:
+      '人事、体制変更、内部統制・再発防止を区別し、本文にない業績影響を推測しないでください。',
+  };
+
+  if (documentType === 'other') return '';
+
+  return `${NON_EARNINGS_INVESTMENT_RULES}\n${specificRules[documentType] ?? ''}`;
+}
+
 /**
  * パス1（情報抽出）用プロンプトを取得
  *
@@ -681,7 +895,7 @@ export function getExtractionPrompt(
   const extraRules =
     documentType === 'earnings' && earningsContext
       ? buildEarningsExtractionNote(earningsContext)
-      : '';
+      : buildNonEarningsExtractionNote(documentType);
 
   const maxTopics =
     documentType === 'earnings'
