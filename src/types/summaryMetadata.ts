@@ -2,6 +2,16 @@ import type { DocumentType } from '../lib/document-type';
 
 export type ExtractionMode = 'smart' | 'full';
 
+export interface ExtractedPage {
+  pageNumber: number;
+  text: string;
+}
+
+export interface EvidenceFact {
+  text: string;
+  page: number | null;
+}
+
 export interface QualityWarning {
   message: string;
   missingKeywords: string[];
@@ -15,6 +25,12 @@ export interface SummaryMetadata {
   extractionMode: ExtractionMode;
   documentType?: DocumentType;
   qualityWarning?: QualityWarning;
+}
+
+export interface PdfExtractionResult {
+  text: string;
+  pages: ExtractedPage[];
+  metadata: SummaryMetadata;
 }
 
 export interface CachedSummary {

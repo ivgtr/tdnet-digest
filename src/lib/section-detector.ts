@@ -11,9 +11,9 @@ import type { DocumentType } from './document-type';
  * セクション情報
  */
 export interface Section {
-  heading: string;      // 見出し
-  text: string;         // 本文
-  pageNumber: number;   // ページ番号（開始位置）
+  heading: string; // 見出し
+  text: string; // 本文
+  pageNumber: number; // ページ番号（開始位置）
 }
 
 /**
@@ -28,10 +28,10 @@ export interface PageScore {
  * 品質チェック結果
  */
 export interface QualityCheckResult {
-  passed: boolean;           // 品質基準を満たしているか
+  passed: boolean; // 品質基準を満たしているか
   matchedKeywords: string[]; // マッチしたキーワード
   missingKeywords: string[]; // 不足しているキーワード
-  matchRate: number;         // マッチ率（0-1）
+  matchRate: number; // マッチ率（0-1）
 }
 
 /**
@@ -71,24 +71,8 @@ const IMPORTANT_SECTION_KEYWORDS: Record<DocumentType, string[]> = {
   ],
   earningsRevision: ['業績予想', '修正', '理由', '業績', '見通し'],
   dividend: ['配当', '株主還元', '剰余金', '配当予想'],
-  ma: [
-    '取得',
-    '譲渡',
-    '子会社',
-    '関連会社',
-    '目的',
-    '取得価額',
-    '業績',
-    '日程',
-  ],
-  shareRepurchase: [
-    '自己株式',
-    '取得',
-    '株数',
-    '取得価額',
-    '取得期間',
-    '取得方法',
-  ],
+  ma: ['取得', '譲渡', '子会社', '関連会社', '目的', '取得価額', '業績', '日程'],
+  shareRepurchase: ['自己株式', '取得', '株数', '取得価額', '取得期間', '取得方法'],
   other: [],
 };
 
@@ -120,33 +104,10 @@ const PAGE_SCORING_KEYWORDS: Record<DocumentType, string[]> = {
     '通期予想',
     '修正',
   ],
-  earningsRevision: [
-    '売上高',
-    '営業利益',
-    '経常利益',
-    '当期純利益',
-    '修正',
-    '理由',
-    '前回予想',
-  ],
+  earningsRevision: ['売上高', '営業利益', '経常利益', '当期純利益', '修正', '理由', '前回予想'],
   dividend: ['配当', '1株当たり', '配当金', '期末配当', '中間配当'],
-  ma: [
-    '取得価額',
-    '譲渡価額',
-    '取得株数',
-    '議決権',
-    '子会社',
-    '関連会社',
-    '業績',
-  ],
-  shareRepurchase: [
-    '自己株式',
-    '取得株数',
-    '取得価額',
-    '取得期間',
-    '取得方法',
-    '消却',
-  ],
+  ma: ['取得価額', '譲渡価額', '取得株数', '議決権', '子会社', '関連会社', '業績'],
+  shareRepurchase: ['自己株式', '取得株数', '取得価額', '取得期間', '取得方法', '消却'],
   other: [],
 };
 
@@ -168,7 +129,10 @@ const QUALITY_GATE_KEYWORD_SETS: Record<DocumentType, string[][]> = {
     ['修正', '変更'],
     ['理由', '要因'],
   ],
-  dividend: [['配当', '配当金'], ['1株当たり', '1株']],
+  dividend: [
+    ['配当', '配当金'],
+    ['1株当たり', '1株'],
+  ],
   ma: [
     ['取得価額', '譲渡価額', '対価'],
     ['取得株数', '議決権'],
@@ -220,6 +184,7 @@ export function detectSections(text: string): Section[] {
   let currentHeading = '';
   let currentText = '';
   let currentPageNumber = 1;
+  let currentSectionPageNumber = 1;
 
   for (const line of lines) {
     // ページ番号の検出（行が数字のみの場合）
@@ -241,13 +206,14 @@ export function detectSections(text: string): Section[] {
           sections.push({
             heading: currentHeading,
             text: currentText.trim(),
-            pageNumber: currentPageNumber,
+            pageNumber: currentSectionPageNumber,
           });
         }
 
         // 新しいセクション開始
         currentHeading = match[1] || match[2] || '';
         currentText = '';
+        currentSectionPageNumber = currentPageNumber;
         isHeading = true;
         break;
       }
@@ -264,7 +230,7 @@ export function detectSections(text: string): Section[] {
     sections.push({
       heading: currentHeading,
       text: currentText.trim(),
-      pageNumber: currentPageNumber,
+      pageNumber: currentSectionPageNumber,
     });
   }
 
@@ -289,14 +255,10 @@ export function filterImportantSections(
 
   return sections.filter((section) => {
     // 見出しにキーワードが含まれているか
-    const headingMatch = keywords.some((keyword) =>
-      section.heading.includes(keyword)
-    );
+    const headingMatch = keywords.some((keyword) => section.heading.includes(keyword));
 
     // 本文にキーワードが含まれているか（ボーナススコア）
-    const textMatch = keywords.some((keyword) =>
-      section.text.includes(keyword)
-    );
+    const textMatch = keywords.some((keyword) => section.text.includes(keyword));
 
     return headingMatch || textMatch;
   });
@@ -309,10 +271,7 @@ export function filterImportantSections(
  * @param documentType 文書タイプ
  * @returns ページスコア配列（スコア降順）
  */
-export function scorePages(
-  text: string,
-  documentType: DocumentType
-): PageScore[] {
+export function scorePages(text: string, documentType: DocumentType): PageScore[] {
   const keywords = PAGE_SCORING_KEYWORDS[documentType];
   if (keywords.length === 0) {
     return [];
