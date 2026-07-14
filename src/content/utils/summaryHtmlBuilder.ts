@@ -33,10 +33,11 @@ export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
     model,
     summaryMode,
     analysisSchemaVersion,
+    experimentalScoring,
   } = metadata;
   const analysisInfo =
     provider && model && summaryMode
-      ? ` | <span style="font-weight: bold;">分析:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・${summaryMode === 'two-pass' ? '2パス' : '1パス'}・v${analysisSchemaVersion ?? '?'}`
+      ? ` | <span style="font-weight: bold;">分析:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・${summaryMode === 'two-pass' ? '2パス' : '1パス'}・v${analysisSchemaVersion ?? '?'}${experimentalScoring ? '・実験スコアON' : ''}`
       : '';
 
   let html = `

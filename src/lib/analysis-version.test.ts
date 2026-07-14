@@ -12,9 +12,10 @@ describe('分析バージョン付きキャッシュキー', () => {
       model: 'google/gemini flash',
       extractionMode: 'full',
       twoPassMode: true,
+      experimentalScoring: false,
     });
     expect(fingerprint).toBe(
-      `v${ANALYSIS_SCHEMA_VERSION}:openrouter:google%2Fgemini%20flash:full:two-pass`
+      `v${ANALYSIS_SCHEMA_VERSION}:openrouter:google%2Fgemini%20flash:full:two-pass:score-off`
     );
     expect(buildSummaryCacheKey('20260714.pdf', fingerprint)).toBe(`${fingerprint}:20260714.pdf`);
   });
@@ -25,12 +26,16 @@ describe('分析バージョン付きキャッシュキー', () => {
       model: 'gpt-4o',
       extractionMode: 'full' as const,
       twoPassMode: true,
+      experimentalScoring: false,
     };
     expect(buildAnalysisFingerprint(base)).not.toBe(
       buildAnalysisFingerprint({ ...base, model: 'gpt-4o-mini' })
     );
     expect(buildAnalysisFingerprint(base)).not.toBe(
       buildAnalysisFingerprint({ ...base, twoPassMode: false })
+    );
+    expect(buildAnalysisFingerprint(base)).not.toBe(
+      buildAnalysisFingerprint({ ...base, experimentalScoring: true })
     );
   });
 });

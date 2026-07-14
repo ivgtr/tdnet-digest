@@ -4,6 +4,7 @@ import { detectDocumentType, detectEarningsContext, type DocumentType } from '@/
 import { getPromptForDocumentType, getExtractionPrompt } from '@/lib/prompts';
 import { getFormatPrompt } from '@/lib/format-prompts';
 import { getJsonSchema } from '@/lib/summary-schema';
+import { calculateExperimentalScore, formatExperimentalScore } from '@/lib/scoring';
 import {
   buildJsonRepairMessages,
   getProviderCapabilities,
@@ -25,6 +26,7 @@ interface Settings {
   customUrl?: string;
   extractionMode?: ExtractionMode;
   twoPassMode?: boolean;
+  experimentalScoring?: boolean;
 }
 
 // 拡張機能のインストール・更新時
@@ -128,7 +130,15 @@ async function handleSummarize(
 async function getSettings(): Promise<Settings> {
   return new Promise((resolve) => {
     chrome.storage.sync.get(
-      ['provider', 'apiKey', 'model', 'customUrl', 'extractionMode', 'twoPassMode'],
+      [
+        'provider',
+        'apiKey',
+        'model',
+        'customUrl',
+        'extractionMode',
+        'twoPassMode',
+        'experimentalScoring',
+      ],
       (result) => {
         resolve({
           provider: result.provider || 'openai',
@@ -137,6 +147,7 @@ async function getSettings(): Promise<Settings> {
           customUrl: result.customUrl || '',
           extractionMode: result.extractionMode || 'full',
           twoPassMode: result.twoPassMode !== undefined ? result.twoPassMode : true,
+          experimentalScoring: result.experimentalScoring === true,
         });
       }
     );
@@ -211,15 +222,24 @@ async function summarizeWithLLM(
     metadata.provider = settings.provider;
     metadata.model = settings.model;
     metadata.summaryMode = useTwoPass ? 'two-pass' : 'one-pass';
+    metadata.experimentalScoring = useTwoPass && settings.experimentalScoring === true;
     metadata.analysisFingerprint = buildAnalysisFingerprint({
       provider: settings.provider,
       model: settings.model,
       extractionMode,
       twoPassMode: useTwoPass,
+      experimentalScoring: metadata.experimentalScoring,
     });
 
     if (useTwoPass) {
-      return await summarizeTwoPass(llmConfig, documentType, pdfText, earningsContext, metadata);
+      return await summarizeTwoPass(
+        llmConfig,
+        documentType,
+        pdfText,
+        earningsContext,
+        metadata,
+        settings.experimentalScoring === true
+      );
     } else {
       return await summarizeOnePass(llmConfig, documentType, pdfText, earningsContext, metadata);
     }
@@ -256,7 +276,8 @@ async function summarizeTwoPass(
   documentType: DocumentType,
   pdfText: string,
   earningsContext: ReturnType<typeof detectEarningsContext> | undefined,
-  metadata: SummaryMetadata
+  metadata: SummaryMetadata,
+  experimentalScoring: boolean
 ): Promise<{ summary: string; metadata: SummaryMetadata }> {
   // パス1: 情報抽出（JSON）
   console.log('[Background] 2パス要約: パス1（情報抽出）開始');
@@ -297,10 +318,15 @@ async function summarizeTwoPass(
   // パス2: フォーマット整形（低temperature）
   const formatConfig: LLMConfig = { ...llmConfig, temperature: 0.3 };
   const { system: s2, user: u2 } = getFormatPrompt(documentType, validation.data, earningsContext);
-  const formatted = await generateText(formatConfig, [
+  let formatted = await generateText(formatConfig, [
     { role: 'system', content: s2 },
     { role: 'user', content: u2 },
   ]);
+
+  if (experimentalScoring) {
+    const score = calculateExperimentalScore(documentType, validation.data);
+    if (score) formatted += formatExperimentalScore(score);
+  }
 
   console.log('[Background] 2パス要約: パス2完了');
   return { summary: formatted, metadata };

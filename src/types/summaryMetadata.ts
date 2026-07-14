@@ -30,6 +30,7 @@ export interface SummaryMetadata {
   model?: string;
   summaryMode?: 'one-pass' | 'two-pass';
   analysisFingerprint?: string;
+  experimentalScoring?: boolean;
 }
 
 export interface PdfExtractionResult {

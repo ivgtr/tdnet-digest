@@ -1,12 +1,13 @@
 import type { ExtractionMode } from '@/types/summaryMetadata';
 
-export const ANALYSIS_SCHEMA_VERSION = 2;
+export const ANALYSIS_SCHEMA_VERSION = 3;
 
 export interface AnalysisFingerprintSettings {
   provider: string;
   model: string;
   extractionMode: ExtractionMode;
   twoPassMode: boolean;
+  experimentalScoring: boolean;
 }
 
 export function buildAnalysisFingerprint(settings: AnalysisFingerprintSettings): string {
@@ -17,6 +18,7 @@ export function buildAnalysisFingerprint(settings: AnalysisFingerprintSettings):
     encodeURIComponent(settings.model),
     settings.extractionMode,
     mode,
+    settings.experimentalScoring ? 'score-on' : 'score-off',
   ].join(':');
 }
 

@@ -33,15 +33,21 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
   const [cacheKey, setCacheKey] = useState<string | null>(null);
 
   useEffect(() => {
-    chrome.storage.sync.get(['provider', 'model', 'extractionMode', 'twoPassMode'], (settings) => {
-      const fingerprint = buildAnalysisFingerprint({
-        provider: settings.provider || 'openai',
-        model: settings.model || 'gpt-4o',
-        extractionMode: settings.extractionMode || 'full',
-        twoPassMode: settings.twoPassMode !== undefined ? settings.twoPassMode : true,
-      });
-      setCacheKey(buildSummaryCacheKey(pdfUrl, fingerprint));
-    });
+    chrome.storage.sync.get(
+      ['provider', 'model', 'extractionMode', 'twoPassMode', 'experimentalScoring'],
+      (settings) => {
+        const fingerprint = buildAnalysisFingerprint({
+          provider: settings.provider || 'openai',
+          model: settings.model || 'gpt-4o',
+          extractionMode: settings.extractionMode || 'full',
+          twoPassMode: settings.twoPassMode !== undefined ? settings.twoPassMode : true,
+          experimentalScoring:
+            (settings.twoPassMode !== undefined ? settings.twoPassMode : true) &&
+            settings.experimentalScoring === true,
+        });
+        setCacheKey(buildSummaryCacheKey(pdfUrl, fingerprint));
+      }
+    );
   }, [pdfUrl]);
 
   // マウント時にキャッシュの存在チェック
