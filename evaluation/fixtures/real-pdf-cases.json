@@ -10,6 +10,16 @@
     "requiredTerms": ["売上収益", "営業利益"]
   },
   {
+    "id": "140120260714592721",
+    "publishedDate": "2026-07-14",
+    "code": "92150",
+    "company": "CaSy",
+    "title": "2026年11月期 第２四半期（中間期）決算短信〔日本基準〕（連結）",
+    "expectedType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120260714592721.pdf",
+    "requiredTerms": ["売上高", "経常利益"]
+  },
+  {
     "id": "140120260714593203",
     "publishedDate": "2026-07-14",
     "code": "62250",

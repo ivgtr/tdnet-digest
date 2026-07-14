@@ -17,4 +17,14 @@ describe('TDnet実PDFコーパスのタイトル分類', () => {
       isConsolidated: true,
     });
   });
+
+  it('全角表記の日本基準連結中間期コンテキストを判定する', () => {
+    const earnings = cases.find((item) => item.id === '140120260714592721');
+    expect(earnings).toBeDefined();
+    expect(detectEarningsContext(earnings!.title)).toEqual({
+      period: 'q2',
+      accountingStandard: 'jpGaap',
+      isConsolidated: true,
+    });
+  });
 });
