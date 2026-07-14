@@ -9,6 +9,7 @@ export interface LLMConfig {
   model: string;
   baseUrl?: string; // カスタムプロバイダー用
   temperature?: number; // 生成温度（0-2、低いほど安定した出力）
+  responseFormat?: 'json_object';
 }
 
 export interface ChatMessage {
@@ -69,6 +70,9 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
         content: msg.content,
       })),
       ...(config.temperature !== undefined && { temperature: config.temperature }),
+      ...(config.responseFormat === 'json_object' && {
+        response_format: { type: 'json_object' },
+      }),
     }),
   });
 

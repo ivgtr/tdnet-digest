@@ -2,6 +2,12 @@ import { generateText, type LLMConfig, type ChatMessage } from '@/lib/llm-client
 import { detectDocumentType, detectEarningsContext, type DocumentType } from '@/lib/document-type';
 import { getPromptForDocumentType, getExtractionPrompt } from '@/lib/prompts';
 import { getFormatPrompt } from '@/lib/format-prompts';
+import { getJsonSchema } from '@/lib/summary-schema';
+import {
+  buildJsonRepairMessages,
+  getProviderCapabilities,
+  parseAndValidateExtraction,
+} from '@/lib/structured-output';
 import type { SummaryMetadata, ExtractionMode } from '@/types/summaryMetadata';
 
 interface SummarizeRequest {
@@ -92,9 +98,7 @@ async function handleSummarize(
     }
 
     if (settings.provider === 'custom' && !settings.customUrl) {
-      throw new Error(
-        'カスタムプロバイダーを使用する場合はAPI URLを設定してください。'
-      );
+      throw new Error('カスタムプロバイダーを使用する場合はAPI URLを設定してください。');
     }
 
     // 文書タイプを判別
@@ -150,27 +154,6 @@ async function fetchPDF(url: string): Promise<ArrayBuffer> {
   } catch (error) {
     console.error('[Background] PDF取得エラー:', error);
     throw error;
-  }
-}
-
-/**
- * LLMレスポンスからJSONを解析する（フォールバック付き）
- */
-function tryParseJson(text: string): unknown | null {
-  // コードブロック内のJSONを抽出
-  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch {
-    // 先頭/末尾の非JSON文字を除去して再試行
-    const cleaned = jsonStr.replace(/^[^{[]*/, '').replace(/[^}\]]*$/, '');
-    try {
-      return JSON.parse(cleaned);
-    } catch {
-      return null;
-    }
   }
 }
 
@@ -267,24 +250,42 @@ async function summarizeTwoPass(
   // パス1: 情報抽出（JSON）
   console.log('[Background] 2パス要約: パス1（情報抽出）開始');
   const { system: s1, user: u1 } = getExtractionPrompt(documentType, pdfText, earningsContext);
-  const extractedText = await generateText(llmConfig, [
+  const capabilities = getProviderCapabilities(llmConfig.provider);
+  const extractionConfig: LLMConfig = {
+    ...llmConfig,
+    temperature: 0,
+    ...(capabilities.jsonObject && { responseFormat: 'json_object' as const }),
+  };
+  const extractedText = await generateText(extractionConfig, [
     { role: 'system', content: s1 },
     { role: 'user', content: u1 },
   ]);
 
-  // JSON解析
-  const parsed = tryParseJson(extractedText);
-  if (!parsed) {
-    // JSON解析失敗 → パス1の出力をそのまま返す（1パスフォールバック）
-    console.warn('[Background] 2パス要約: JSON解析失敗、パス1出力をそのまま使用');
-    return { summary: extractedText, metadata };
+  let validation = parseAndValidateExtraction(extractedText, documentType, metadata.totalPages);
+  if (!validation.success) {
+    console.warn('[Background] 2パス要約: 検証失敗、JSON修復を1回実行', validation.errors);
+    const repairMessages = buildJsonRepairMessages(
+      extractedText,
+      validation.errors,
+      getJsonSchema(documentType, earningsContext)
+    );
+    const repairedText = await generateText(extractionConfig, repairMessages);
+    validation = parseAndValidateExtraction(repairedText, documentType, metadata.totalPages);
+  }
+
+  if (!validation.success || !validation.data) {
+    console.warn(
+      '[Background] 2パス要約: JSON修復後も検証失敗、検証済み1パス要約へフォールバック',
+      validation.errors
+    );
+    return summarizeOnePass(llmConfig, documentType, pdfText, earningsContext, metadata);
   }
 
   console.log('[Background] 2パス要約: パス1完了、パス2（フォーマット整形）開始');
 
   // パス2: フォーマット整形（低temperature）
   const formatConfig: LLMConfig = { ...llmConfig, temperature: 0.3 };
-  const { system: s2, user: u2 } = getFormatPrompt(documentType, parsed, earningsContext);
+  const { system: s2, user: u2 } = getFormatPrompt(documentType, validation.data, earningsContext);
   const formatted = await generateText(formatConfig, [
     { role: 'system', content: s2 },
     { role: 'user', content: u2 },
