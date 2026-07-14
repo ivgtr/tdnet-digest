@@ -21,7 +21,15 @@ const FORMAT_RULES = `
 - セクション全体のデータがnull・空配列の場合: セクション（見出し含む）を丸ごと省略
 - 箇条書き項目の値がnullの場合: その行を丸ごと省略（「null」という文字列を出力しない）
 - items配列内のchangeがnullの場合: 括弧部分を省略し「- {name}: {amount}」のみ出力
-- 「null」という文字列は絶対に出力しないでください`;
+- 「null」という文字列は絶対に出力しないでください
+
+【根拠ページ】
+- EvidenceFactのpageが整数の場合は文末に「[p.{page}]」を付けてください
+- pageがnullの場合はページ表記を省略してください
+- 同じ項目内に複数の根拠がある場合は「[p.1, p.3]」形式にまとめてください
+
+【方向性の表示】
+- positive=強気、slightlyPositive=やや強気、neutral=中立、slightlyNegative=やや弱気、negative=弱気、unknown=判断不能 と変換してください`;
 
 // ── 決算短信テンプレート ──
 
@@ -32,6 +40,9 @@ function buildEarningsTemplate(ctx: EarningsContext): string {
   return `
 --- 出力テンプレート ---
 
+## 全体要約
+{{summary}}
+
 ## 決算評価（経常利益ベース）
 【実績】
 - 対前年: {{evaluation.actual.vsLastYear}}
@@ -41,20 +52,17 @@ ${forecastGroupLabel}
 - 対前年:  {{evaluation.forecast.vsLastYear}}
 - ${isQuarterly ? '予想修正' : '配当'}:  {{evaluation.forecast.revisionOrDividend}}
 
-## 全体要約
-{{summary}}
-
 ## 業績サマリー（{{performance.periodLabel}}）
-{{performance.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
+{{performance.items を1行ずつ: - {name}: {amount}（{change}） [p.{page}]  ※changeがnullなら括弧ごと省略}}
 
 ${
   isQuarterly
     ? `## 進捗率（通期予想に対して）
-- 経常利益: {{progress.ordinaryIncome}}（前年同期{{progress.lastYearProgress}}）
+- 経常利益: {{progress.ordinaryIncome}}（前年同期{{progress.lastYearProgress}}） [p.{{progress.page}}]
 `
     : ''
 }## {{forecast.label}}
-{{forecast.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
+{{forecast.items を1行ずつ: - {name}: {amount}（{change}） [p.{page}]  ※changeがnullなら括弧ごと省略}}
 
 ## 修正・配当
 - 業績予想の修正: {{revision}}
@@ -63,6 +71,31 @@ ${
 - 期末配当: {{dividend.yearEnd}}
 - 年間配当: {{dividend.annual}}
 - 配当予想の修正: {{dividend.dividendRevision}}
+
+## 利益の質
+- 営業利益率: {{earningsQuality.operatingMargin.current}}（前年同期{{earningsQuality.operatingMargin.previous}}、前年差{{earningsQuality.operatingMargin.change}}） {{pageがあれば[p.N]}}
+- 本業利益: {{earningsQuality.coreEarnings.text}} {{pageがあれば[p.N]}}
+{{earningsQuality.oneOffItems を1行ずつ: - 一時損益: {text} [p.{page}]}}
+- 営業CF: {{earningsQuality.operatingCashFlow.text}} {{pageがあれば[p.N]}}
+{{earningsQuality.financialHealth を1行ずつ: - 財務: {text} [p.{page}]}}
+{{earningsQuality.shareholderReturns を1行ずつ: - 株主還元: {text} [p.{page}]}}
+
+## 時間軸別の見方
+- 短期: {{investmentView.shortTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 中期: {{investmentView.mediumTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 長期: {{investmentView.longTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+
+## 好材料
+{{investmentView.positives を1行ずつ: - {text} [p.{page}]}}
+
+## リスク
+{{investmentView.risks を1行ずつ: - {text} [p.{page}]}}
+
+## 次回確認点
+{{investmentView.watchPoints を1行ずつ: - {text} [p.{page}]}}
+
+## 評価理由
+{{investmentView.rationale}}
 
 ## トピックス
 {{topics を1行ずつ: - {内容}}}

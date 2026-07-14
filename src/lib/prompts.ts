@@ -39,7 +39,7 @@ const PROMPT_CONFIG = {
   },
   /** 全体要約の推奨スタイル */
   SUMMARY_STYLE: {
-    earnings: '簡潔な文章体（2-5段落程度）',
+    earnings: '簡潔な文章体（1-3文）',
     earningsRevision: '簡潔な文章体（1-3段落程度）',
     shareholderBenefit: '簡潔な文章体（1-3段落程度）',
     dividend: '簡潔な文章体（1-3段落程度）',
@@ -74,6 +74,9 @@ const COMMON_RULES = `
 6. 前年同期比/前期比の増減率が本文にある場合は必ず記載し、省略しないでください
 7. 勘定科目名は本文の表記をそのまま使用してください（例: 売上収益、事業利益、経常収益など）。赤字の場合は金額を「△」で始め、括弧内に「赤字」または「損失」を付記してください
 8. 日付は「YYYY年M月D日」形式で統一してください（例: 2026年1月14日、元号表記がある場合も西暦に変換）
+9. [PDF_PAGE:N]はPDFのページ境界です。根拠ページを求める項目は、このNを使用してください
+10. PDFにない市場コンセンサス、現在株価、バリュエーション、織り込み度を推測しないでください
+11. 「サプライズ」は会社計画比、従来予想比、前年同期比の根拠を明示できる場合だけ使用してください
 
 【数値表記ルール】
 - 金額単位は本文の表記をそのまま使用してください（同一セクション内で統一）
@@ -191,6 +194,8 @@ function buildEarningsPrompt(ctx: EarningsContext): string {
   const progressSection = isQuarterly ? buildProgressSection(ctx) : '';
   const forecastSection = buildForecastSection(ctx);
   const revisionAndDividendSection = buildRevisionAndDividendSection();
+  const earningsQualitySection = buildEarningsQualitySection();
+  const investmentViewSection = buildInvestmentViewSection();
   const topicsSection = buildTopicsSection();
 
   return [
@@ -200,12 +205,14 @@ function buildEarningsPrompt(ctx: EarningsContext): string {
     buildRatingRules(ctx),
     buildEarningsSpecificRules(ctx),
     `\n--- 出力形式 ---`,
-    buildEvaluationTemplate(ctx),
     summarySection,
+    buildEvaluationTemplate(ctx),
     performanceSection,
     progressSection,
     forecastSection,
     revisionAndDividendSection,
+    earningsQualitySection,
+    investmentViewSection,
     topicsSection,
     `\n--- 出力形式ここまで ---`,
   ]
@@ -246,7 +253,7 @@ function buildAccountingNote(ctx: EarningsContext): string {
 function buildPerformanceSection(comparisonLabel: string, periodLabel: string): string {
   return `
 ## 業績サマリー（${periodLabel}）
-- {勘定科目}: {金額}（${comparisonLabel}{増減率}）  ※増減率が本文にない場合は括弧ごと省略し「- {勘定科目}: {金額}」のみ
+- {勘定科目}: {金額}（${comparisonLabel}{増減率}） [p.{根拠ページ}]  ※増減率が本文にない場合は括弧ごと省略
 - ...（本文に記載されている主要な勘定科目をすべて記載）`;
 }
 
@@ -274,7 +281,7 @@ function buildProgressSection(ctx: EarningsContext): string {
 
   return `
 ## 進捗率（通期予想に対して）
-- 経常利益: {進捗率}（前年同期{前年進捗率}、標準進捗率${standardRate}%）
+- 経常利益: {進捗率}（前年同期{前年進捗率}、標準進捗率${standardRate}%） [p.{根拠ページ}]
 ※進捗率は「当期実績 ÷ 通期予想 × 100」で必ず自分で計算すること
 ※通期予想がレンジ形式（例: 3,706〜4,097百万円）の場合は下限・上限それぞれで「XX.X%〜YY.Y%」形式で記載（レンジ予想は「未定」ではないので必ず算出すること）
 ※通期予想が「未定」と本文に明記されている場合のみセクションごと省略
@@ -285,12 +292,12 @@ function buildForecastSection(ctx: EarningsContext): string {
   if (ctx.period !== 'fullYear') {
     return `
 ## 通期予想
-- {勘定科目}: {金額}（前期比{増減率}）  ※増減率が本文にない場合は括弧ごと省略
+- {勘定科目}: {金額}（前期比{増減率}） [p.{根拠ページ}]  ※増減率が本文にない場合は括弧ごと省略
 - ...`;
   }
   return `
 ## 来期予想（本文に記載がある場合のみ）
-- {勘定科目}: {金額}（前期比{増減率}）  ※増減率が本文にない場合は括弧ごと省略
+- {勘定科目}: {金額}（前期比{増減率}） [p.{根拠ページ}]  ※増減率が本文にない場合は括弧ごと省略
 - ...`;
 }
 
@@ -309,6 +316,38 @@ function buildSummarySection(): string {
   return `
 ## 全体要約
 {${PROMPT_CONFIG.SUMMARY_STYLE.earnings}で、業績の傾向、通期見通し、修正/配当の有無を含めて記載}`;
+}
+
+function buildEarningsQualitySection(): string {
+  return `
+## 利益の質
+- 営業利益率: {当期利益率}（前年同期{前年利益率}、前年差{増減pt}） [p.{根拠ページ}]
+- 本業利益: {営業利益・事業利益等から見た本業の方向} [p.{根拠ページ}]
+- 一時損益: {特別利益・特別損失等の内容と金額} [p.{根拠ページ}]
+- 営業CF: {営業CFの状況} [p.{根拠ページ}]
+- 財務: {自己資本比率・有利子負債・資金余力等} [p.{根拠ページ}]
+- 株主還元: {配当・自己株式取得等} [p.{根拠ページ}]
+※本文と計算根拠がある項目だけを出力してください`;
+}
+
+function buildInvestmentViewSection(): string {
+  return `
+## 時間軸別の見方
+- 短期: {強気/やや強気/中立/やや弱気/弱気/判断不能} — {根拠を最大2点} [p.{根拠ページ}]
+- 中期: {強気/やや強気/中立/やや弱気/弱気/判断不能} — {根拠を最大2点} [p.{根拠ページ}]
+- 長期: {強気/やや強気/中立/やや弱気/弱気/判断不能} — {根拠を最大2点} [p.{根拠ページ}]
+
+## 好材料
+- {最大2点。根拠がなければセクションごと省略} [p.{根拠ページ}]
+
+## リスク
+- {最大2点。根拠がなければセクションごと省略} [p.{根拠ページ}]
+
+## 次回確認点
+- {最大3点。将来予測ではなく確認すべき指標・事実} [p.{現在の根拠ページ}]
+
+## 評価理由
+{最大の加点要因と減点要因を一文で記載。点数は付けない}`;
 }
 
 function buildTopicsSection(): string {
@@ -332,6 +371,12 @@ function buildEarningsSpecificRules(ctx: EarningsContext): string {
 【決算短信の注意事項】
 - ★評価は★（黒星）と☆（白星）を並べて5段階で表記してください（例: ★★★★☆=4点、★★☆☆☆=2点）。数字やMarkdown記法（**太字**等）は使わないでください。括弧は全角（）を使用してください
 - 黒字転換/赤字転落/赤字拡大/赤字縮小は本文に明記がある場合のみ記載し、増減率の後ろに補足として付記してください${progressRules}
+- 営業利益率または事業利益率は、本文に利益と売上の計算根拠がある場合だけ「利益 ÷ 売上 × 100」で算出してください
+- 純利益が特別利益に依存する場合は利益の質を下げて記載しますが、本業の増益は別に評価してください
+- 特別損失は内容、金額、継続性を分けてください
+- 好業績でも通期予想が据え置かれる場合、据え置きだけを理由に大幅なマイナス評価をしないでください
+- 進捗率の標準値は参考基準です。強い季節性や前年同期進捗が本文にある場合は、それらも併記してください
+- 好材料とリスクは根拠があるものだけ各最大2点とし、存在しない側を捏造しないでください
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.earnings}点までにしてください
 ${COMMON_TOPICS_RULES}`;
 }
@@ -567,7 +612,10 @@ const EXTRACTION_RULES = `
 9. 増減率は小数点第1位まで記載してください（例: +12.3%、△5.0%）
 10. 該当情報がない項目はnullを設定してください（空文字""ではなくnull）
 11. 配列フィールドで該当情報がない場合は空配列[]を設定してください
-12. items配列内のchangeフィールド: 増減率が本文にない場合はnullを設定してください（"null"という文字列ではなくJSON null値）`;
+12. items配列内のchangeフィールド: 増減率が本文にない場合はnullを設定してください（"null"という文字列ではなくJSON null値）
+13. [PDF_PAGE:N]はPDFのページ境界です。根拠ページにはNを整数で設定し、特定不能な場合はnullにしてください
+14. PDFにない市場コンセンサス、現在株価、バリュエーション、織り込み度を推測しないでください
+15. 好材料・リスクに根拠がない場合は空配列にし、項目数を満たすための内容を捏造しないでください`;
 
 const EXTRACTION_TOPICS_RULES = `
 【トピックス抽出の重点事項】
@@ -603,7 +651,16 @@ function buildEarningsExtractionNote(ctx: EarningsContext): string {
 以下の基準に従って★評価を判定してください。
 ★は★（黒星）と☆（白星）を並べて5段階で表記してください（例: ★★★★☆=4点、★★☆☆☆=2点）。
 括弧は全角（）を使用してください。
-${ratingRules}${progressNote}`;
+${ratingRules}${progressNote}
+
+【利益の質と時間軸別評価】
+- 営業利益率または事業利益率は、本文に利益と売上の計算根拠がある場合だけ「利益 ÷ 売上 × 100」で算出してください
+- 純利益が特別利益に依存する場合は利益の質を下げますが、本業利益の改善は別に評価してください
+- 営業CF、自己資本、有利子負債、株主還元は本文にある情報だけを抽出してください
+- 通期予想の据え置きだけを理由に大幅なマイナス評価をしないでください
+- 短期は開示直後〜数週間、中期は6か月〜1年、長期は1年以上の観点とします
+- 短期・中期・長期とも、PDFにある事実だけを根拠に方向性を判定してください
+- 市場コンセンサス、現在株価、バリュエーション、織り込み度は推測しないでください`;
 }
 
 /**

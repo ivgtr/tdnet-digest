@@ -6,6 +6,7 @@
  */
 
 import type { DocumentType, EarningsContext } from './document-type';
+import type { EvidenceFact } from '@/types/summaryMetadata';
 
 // ── 共通型 ──
 
@@ -13,6 +14,44 @@ interface FinancialItem {
   name: string;
   amount: string;
   change?: string | null;
+  page: number | null;
+}
+
+export type InvestmentStance =
+  | 'positive'
+  | 'slightlyPositive'
+  | 'neutral'
+  | 'slightlyNegative'
+  | 'negative'
+  | 'unknown';
+
+export interface EarningsQuality {
+  operatingMargin: {
+    current: string | null;
+    previous: string | null;
+    change: string | null;
+    page: number | null;
+  } | null;
+  coreEarnings: EvidenceFact | null;
+  oneOffItems: EvidenceFact[];
+  operatingCashFlow: EvidenceFact | null;
+  financialHealth: EvidenceFact[];
+  shareholderReturns: EvidenceFact[];
+}
+
+export interface HorizonAssessment {
+  stance: InvestmentStance;
+  rationale: EvidenceFact[];
+}
+
+export interface InvestmentView {
+  shortTerm: HorizonAssessment;
+  mediumTerm: HorizonAssessment;
+  longTerm: HorizonAssessment;
+  positives: EvidenceFact[];
+  risks: EvidenceFact[];
+  watchPoints: EvidenceFact[];
+  rationale: string;
 }
 
 // ── 決算短信 ──
@@ -36,6 +75,7 @@ export interface EarningsExtraction {
   progress: {
     ordinaryIncome: string;
     lastYearProgress: string | null;
+    page: number | null;
   } | null;
   forecast: {
     label: string;
@@ -48,6 +88,8 @@ export interface EarningsExtraction {
     annual: string | null;
     dividendRevision: string | null;
   } | null;
+  earningsQuality: EarningsQuality;
+  investmentView: InvestmentView;
   topics: string[];
 }
 
@@ -160,17 +202,18 @@ function buildEarningsSchema(ctx: EarningsContext): string {
     ? `
   "progress": {                          // 進捗率（通期予想に対して）※通期予想が「未定」と明記の場合のみprogress全体をnull
     "ordinaryIncome": "経常利益の進捗率（例: 58.3%）※レンジ予想なら「XX.X%〜YY.Y%」形式。通期予想が「未定」と明記の場合のみprogress全体をnullに",
-    "lastYearProgress": "前年同期の進捗率 ※不明ならnull"
+    "lastYearProgress": "前年同期の進捗率 ※不明ならnull",
+    "page": 3
   },`
     : `
   "progress": null,                      // 通期決算では不要`;
 
   return `{
-  "summary": "全体要約（2-5文。業績の傾向、通期見通し、修正/配当の有無を含む）",
+  "summary": "全体要約（1-3文。業績の傾向、通期見通し、修正/配当の有無を含む）",
   "performance": {
     "periodLabel": "期間ラベル（例: 第2四半期連結実績）",
     "items": [
-      { "name": "勘定科目名", "amount": "金額（単位付き）", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull" }
+      { "name": "勘定科目名", "amount": "金額（単位付き）", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull", "page": 1 }
     ]
   },
   "evaluation": {
@@ -186,7 +229,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "forecast": {
     "label": "${forecastLabel}",
     "items": [
-      { "name": "勘定科目名", "amount": "金額", "change": "前期比（例: +8.5%） ※本文に増減率がない場合はnull" }
+      { "name": "勘定科目名", "amount": "金額", "change": "前期比（例: +8.5%） ※本文に増減率がない場合はnull", "page": 1 }
     ]
   },
   "revision": "業績予想の修正内容（修正なしの場合は'修正なし'）",
@@ -195,6 +238,28 @@ function buildEarningsSchema(ctx: EarningsContext): string {
     "yearEnd": "期末配当額 ※本文に記載がなければnull",
     "annual": "年間配当額 ※本文に記載がなければnull",
     "dividendRevision": "配当予想の修正（旧→新） ※修正がなければnull"
+  },
+  "earningsQuality": {
+    "operatingMargin": {
+      "current": "当期の営業利益率/事業利益率（例: 8.2%）",
+      "previous": "前年同期の利益率 ※算出根拠がなければnull",
+      "change": "前年差（例: +1.2pt） ※算出不能ならnull",
+      "page": 1
+    },
+    "coreEarnings": { "text": "本業利益の方向と根拠", "page": 1 },
+    "oneOffItems": [{ "text": "特別損益など一時要因（最大3点）", "page": 1 }],
+    "operatingCashFlow": { "text": "営業CFの状況", "page": 4 },
+    "financialHealth": [{ "text": "自己資本・有利子負債・資金余力等（最大3点）", "page": 4 }],
+    "shareholderReturns": [{ "text": "配当・自己株式取得等（最大2点）", "page": 1 }]
+  },
+  "investmentView": {
+    "shortTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "開示直後〜数週間の根拠（最大2点）", "page": 1 }] },
+    "mediumTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "6か月〜1年の根拠（最大2点）", "page": 2 }] },
+    "longTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "1年以上の根拠（最大2点）", "page": 4 }] },
+    "positives": [{ "text": "最大の好材料（最大2点）", "page": 1 }],
+    "risks": [{ "text": "最大のリスク（最大2点。根拠がなければ空配列）", "page": 4 }],
+    "watchPoints": [{ "text": "次回確認点（最大3点）", "page": 2 }],
+    "rationale": "最大の加点要因と減点要因を一文で説明。点数や市場データは使用しない"
   },
   "topics": ["具体的な数値を含むトピック（最大8点）"]
 }`;
