@@ -77,7 +77,7 @@ ${forecastGroupLabel}
 ${
   isQuarterly
     ? `## 進捗率（通期予想に対して）
-- ${evaluationMetric}: {{progress.ordinaryIncome}}{{progress.lastYearProgressがnullでない場合のみ: （前年同期{progress.lastYearProgress}）}} [p.{{progress.page}}]
+{{progress.basisがlossConsumptionなら「- ${evaluationMetric}の損失消化率: {progress.ordinaryIncome}」、それ以外は「- ${evaluationMetric}: {progress.ordinaryIncome}」}}{{progress.lastYearProgressがnullでない場合のみ: （前年同期{progress.lastYearProgress}）}} [p.{{progress.page}}]
 `
     : ''
 }## {{forecast.label}}

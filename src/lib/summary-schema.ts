@@ -75,6 +75,7 @@ export interface EarningsExtraction {
   } | null;
   progress: {
     ordinaryIncome: string;
+    basis?: 'profitProgress' | 'lossConsumption';
     lastYearProgress: string | null;
     page: number | null;
   } | null;
@@ -295,6 +296,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
     ? `
   "progress": {                          // 進捗率（通期予想に対して）※通期予想が「未定」と明記の場合のみprogress全体をnull
     "ordinaryIncome": "経常利益の進捗率（例: 58.3%）※レンジ予想なら「XX.X%〜YY.Y%」形式。通期予想が「未定」と明記の場合のみprogress全体をnullに",
+    "basis": "profitProgress（黒字実績÷黒字予想）またはlossConsumption（赤字実績の絶対値÷赤字予想の絶対値）",
     "lastYearProgress": "前年同期の進捗率 ※不明ならnull",
     "page": 3
   },`
@@ -306,7 +308,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
   "performance": {
     "periodLabel": "期間ラベル（例: 第2四半期連結実績）",
     "items": [
-      { "name": "勘定科目名", "amount": "当期金額（単位付き）", "previousAmount": "同じ表または本文にある前年同期/前期の比較金額（単位付き） ※なければnull", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull", "page": 1 }
+      { "name": "勘定科目名", "amount": "当期金額（単位付き。同じ数値が複数ある場合は最も精密な桁を優先）", "previousAmount": "同じ表または本文にある前年同期/前期の比較金額（当期金額と同じ単位） ※なければnull", "change": "前年同期比/前期比（例: +12.3%） ※本文に増減率がない場合はnull", "page": 1 }
     ]
   },
   "evaluation": {
@@ -360,6 +362,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
 
 function getEarningsRatingRules(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
+  const evaluationMetric = ctx.accountingStandard === 'jpGaap' ? '経常利益' : '税引前利益';
 
   const standardRates: Record<string, number> = {
     q1: 25,
@@ -370,10 +373,11 @@ function getEarningsRatingRules(ctx: EarningsContext): string {
   const standardRate = standardRates[ctx.period];
 
   const progressOrLanding = isQuarterly
-    ? `■ 進捗: 経常利益の進捗率 − 標準進捗率(${standardRate}%)の差で判定
+    ? `■ 進捗: 実績と通期予想が黒字なら${evaluationMetric}の進捗率、両方赤字なら損失消化率を標準進捗率(${standardRate}%)と比較して判定
 ★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超 / 通期予想が「未定」と明記→「★—」
+※損失消化率は「当期損失の絶対値 ÷ 通期予想損失の絶対値 × 100」で算出し、標準より低いほど高評価とする
 ※レンジ予想の場合は中央値で進捗率を算出して判定すること（レンジ予想は「未定」ではない）`
-    : `■ 着地: 経常利益の実績 vs 会社予想の乖離率で判定
+    : `■ 着地: ${evaluationMetric}の実績 vs 会社予想の乖離率で判定
 ★5: +15%以上or黒字転換 / ★4: +5〜+15% / ★3: ±5% / ★2: △5〜△15% / ★1: △15%未満or赤字転落 / 会社予想なし→「—（取得不能）」`;
 
   const forecastRevision = isQuarterly
@@ -383,8 +387,9 @@ function getEarningsRatingRules(ctx: EarningsContext): string {
 ↑増配（XX円→YY円） / →据置 / ↓減配 / —未定or記載なし`;
 
   return `
-■ 対前年: 経常利益の増減率で判定
+■ 対前年: ${evaluationMetric}の増減率で判定
 ★5: +30%以上or黒字転換 / ★4: +10〜+30% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満or赤字転落
+※当期・前年がともに赤字なら損失改善率を算出し、赤字縮小はプラス、赤字拡大はマイナスとして同じ★基準で判定する
 ※前年同期比/前期比の増減率が本文に記載されていない場合（初連結化、新規上場等）は「★—（前年同期比なし）」
 
 ${progressOrLanding}
@@ -393,7 +398,7 @@ ${forecastRevision}
 
 ※★は★（黒星）と☆（白星）を並べて5段階（例: ★★★★☆=4点）。括弧は全角（）
 ※数値が本文にない場合は「—（取得不能）」
-※赤字で増減率が無意味な場合は「★—（赤字のため評価対象外）」`;
+※赤字でも比較金額がある場合は評価対象外にせず、黒字転換・赤字転落・赤字縮小・赤字拡大を判定する`;
 }
 
 const INVESTMENT_VIEW_SCHEMA = `"investmentView": {

@@ -98,8 +98,8 @@ describe('決算抽出の決定論的補正', () => {
     data.performance.items = [
       {
         name: '経常利益',
-        amount: '△5百万円（損失）',
-        previousAmount: '16百万円',
+        amount: '△5,818千円（損失）',
+        previousAmount: '16,185千円',
         change: null,
         page: 1,
       },
@@ -121,10 +121,13 @@ describe('決算抽出の決定論的補正', () => {
       accountingStandard: 'jpGaap',
       isConsolidated: true,
     });
-    expect(result.evaluation?.actual.vsLastYear).toBe('★☆☆☆☆（赤字転落: 16百万円 → △5百万円）');
-    expect(result.evaluation?.actual.progressOrLanding).toBe('★—（赤字予想のため進捗率対象外）');
+    expect(result.evaluation?.actual.vsLastYear).toBe('★☆☆☆☆（赤字転落: 16,185千円 → △5,818千円）');
+    expect(result.evaluation?.actual.progressOrLanding).toBe('★★★★★（損失消化率4.2% / 標準50%）');
     expect(result.evaluation?.forecast?.vsLastYear).toBe('★—（赤字・前期比を算出不能）');
-    expect(result.progress).toBeNull();
+    expect(result.progress).toMatchObject({
+      ordinaryIncome: '4.2%',
+      basis: 'lossConsumption',
+    });
   });
 
   it('赤字継続は金額の文脈から縮小・拡大を区別する', () => {
@@ -137,6 +140,8 @@ describe('決算抽出の決定論的補正', () => {
       page: 1,
     };
     const result = refineEarningsExtraction(data, context);
-    expect(result.evaluation?.actual.vsLastYear).toBe('★—（赤字縮小: △16百万円 → △5百万円）');
+    expect(result.evaluation?.actual.vsLastYear).toBe(
+      '★★★★★（赤字縮小68.8%: △16百万円 → △5百万円）'
+    );
   });
 });

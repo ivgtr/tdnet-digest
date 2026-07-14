@@ -31,7 +31,7 @@ export function refineEarningsExtraction(
         context.period === 'fullYear'
           ? (previousEvaluation?.actual.progressOrLanding ?? null)
           : progress
-            ? buildProgressRating(progress.ordinaryIncome, context)
+            ? buildProgressRating(progress, context)
             : buildUnavailableProgressRating(actualMetric, forecastMetric),
     },
     forecast: extraction.forecast
@@ -68,9 +68,11 @@ function buildYearComparisonRating(item: FinancialItem | undefined, label: strin
     const comparison = `${formatComparisonAmount(item?.previousAmount)} → ${formatComparisonAmount(item?.amount)}`;
     if (previous > 0 && current < 0) return `★☆☆☆☆（赤字転落: ${comparison}）`;
     if (previous < 0 && current > 0) return `★★★★★（黒字転換: ${comparison}）`;
+    if (previous < 0 && current === 0) return `★★★★★（赤字解消: ${comparison}）`;
     if (previous < 0 && current < 0) {
-      const state = Math.abs(current) < Math.abs(previous) ? '赤字縮小' : '赤字拡大';
-      return `★—（${state}: ${comparison}）`;
+      const improvement = ((Math.abs(previous) - Math.abs(current)) / Math.abs(previous)) * 100;
+      const state = improvement > 0 ? '赤字縮小' : improvement < 0 ? '赤字拡大' : '赤字横ばい';
+      return `${ratingStars(yearComparisonScore(improvement))}（${state}${Math.abs(improvement).toFixed(1)}%: ${comparison}）`;
     }
   }
 
@@ -105,12 +107,18 @@ function buildProgress(
   forecast: FinancialItem | undefined,
   lastYearProgress: string | null | undefined
 ): EarningsExtraction['progress'] {
-  const actualAmount = parseAmounts(actual?.amount)[0];
-  const forecastAmounts = parseAmounts(forecast?.amount).filter((amount) => amount > 0);
-  if (actualAmount === undefined || actualAmount <= 0 || forecastAmounts.length === 0) return null;
+  const actualAmount = parseFinancialAmount(actual?.amount);
+  const forecastAmounts = parseFinancialAmounts(forecast?.amount).filter((amount) => amount !== 0);
+  if (actualAmount === null || actualAmount === 0 || forecastAmounts.length === 0) return null;
+
+  const isLossConsumption =
+    actualAmount < 0 && forecastAmounts.every((forecastAmount) => forecastAmount < 0);
+  const isProfitProgress =
+    actualAmount > 0 && forecastAmounts.every((forecastAmount) => forecastAmount > 0);
+  if (!isLossConsumption && !isProfitProgress) return null;
 
   const rates = forecastAmounts
-    .map((amount) => (actualAmount / amount) * 100)
+    .map((amount) => (Math.abs(actualAmount) / Math.abs(amount)) * 100)
     .sort((a, b) => a - b);
   const ordinaryIncome =
     rates.length === 1
@@ -118,24 +126,30 @@ function buildProgress(
       : `${rates[0].toFixed(1)}%〜${rates[rates.length - 1].toFixed(1)}%`;
   return {
     ordinaryIncome,
+    basis: isLossConsumption ? 'lossConsumption' : 'profitProgress',
     lastYearProgress: lastYearProgress ?? null,
     page: actual?.page ?? forecast?.page ?? null,
   };
 }
 
-function buildProgressRating(progress: string, context: EarningsContext): string {
-  const rates = parseAmounts(progress);
+function buildProgressRating(
+  progress: NonNullable<EarningsExtraction['progress']>,
+  context: EarningsContext
+): string {
+  const rates = parseAmounts(progress.ordinaryIncome);
   if (rates.length === 0) return '—（進捗率を算出不能）';
   const midpoint = rates.reduce((sum, rate) => sum + rate, 0) / rates.length;
   const standard = { q1: 25, q2: 50, q3: 75, fullYear: 100 }[context.period];
-  const difference = midpoint - standard;
+  const difference =
+    progress.basis === 'lossConsumption' ? standard - midpoint : midpoint - standard;
   let score: number;
   if (difference >= 10) score = 5;
   else if (difference >= 5) score = 4;
   else if (difference > -5) score = 3;
   else if (difference >= -10) score = 2;
   else score = 1;
-  return `${ratingStars(score)}（進捗率${progress} / 標準${standard}%）`;
+  const label = progress.basis === 'lossConsumption' ? '損失消化率' : '進捗率';
+  return `${ratingStars(score)}（${label}${progress.ordinaryIncome} / 標準${standard}%）`;
 }
 
 function buildUnavailableProgressRating(
@@ -143,12 +157,14 @@ function buildUnavailableProgressRating(
   forecast: FinancialItem | undefined
 ): string {
   const forecastAmount = parseFinancialAmount(forecast?.amount);
-  if (forecastAmount !== null && forecastAmount <= 0) {
-    return '★—（赤字予想のため進捗率対象外）';
-  }
   const actualAmount = parseFinancialAmount(actual?.amount);
-  if (actualAmount !== null && actualAmount <= 0) {
-    return '★—（赤字実績のため進捗率対象外）';
+  if (actualAmount !== null && forecastAmount !== null) {
+    if (actualAmount < 0 && forecastAmount > 0) {
+      return '★—（赤字実績 / 通期黒字予想）';
+    }
+    if (actualAmount > 0 && forecastAmount < 0) {
+      return '★—（黒字実績 / 通期赤字予想）';
+    }
   }
   return '—（進捗率を算出不能）';
 }
@@ -172,10 +188,12 @@ function parseAmounts(value: string | null | undefined): number[] {
 }
 
 function parseFinancialAmount(value: string | null | undefined): number | null {
-  if (!value) return null;
+  return parseFinancialAmounts(value)[0] ?? null;
+}
+
+function parseFinancialAmounts(value: string | null | undefined): number[] {
+  if (!value) return [];
   const normalized = value.normalize('NFKC').replace(/,/g, '').replace(/▲/g, '△');
-  const match = normalized.match(/([△-]?)(\d+(?:\.\d+)?)(兆円|億円|百万円|千円|円)?/);
-  if (!match) return null;
   const multipliers: Record<string, number> = {
     兆円: 1e12,
     億円: 1e8,
@@ -183,9 +201,14 @@ function parseFinancialAmount(value: string | null | undefined): number | null {
     千円: 1e3,
     円: 1,
   };
-  const multiplier = multipliers[match[3] ?? '円'] ?? 1;
-  const amount = Number(match[2]) * multiplier;
-  return match[1] === '△' || match[1] === '-' ? -amount : amount;
+  const sharedUnit = normalized.match(/兆円|億円|百万円|千円|円/)?.[0] ?? '円';
+  return [...normalized.matchAll(/([△-]?)(\d+(?:\.\d+)?)(兆円|億円|百万円|千円|円)?/g)].map(
+    (match) => {
+      const multiplier = multipliers[match[3] ?? sharedUnit] ?? 1;
+      const amount = Number(match[2]) * multiplier;
+      return match[1] === '△' || match[1] === '-' ? -amount : amount;
+    }
+  );
 }
 
 function formatPercentage(value: number): string {
