@@ -22,6 +22,9 @@ npm run type-check
 # Lint
 npm run lint
 
+# テスト
+npm test
+
 # フォーマット
 npm run format
 ```
@@ -60,8 +63,10 @@ src/
 │   ├── format-prompts.ts        # 2パス要約の整形用プロンプト
 │   ├── llm-client.ts            # 統一LLMクライアント（OpenAI/Anthropic互換API）
 │   ├── llm-providers.ts         # LLMプロバイダー・モデル定義
-│   ├── prompts.ts               # 文書タイプ別プロンプト（6種類）
+│   ├── prompts.ts               # 文書タイプ別プロンプト（11種類）
 │   ├── section-detector.ts      # セクション検出・ページスコアリング・品質ゲート
+│   ├── structured-output.ts     # JSON検証・プロバイダー能力・1回修復指示
+│   ├── analysis-version.ts      # 分析仕様バージョン・キャッシュ指紋
 │   └── summary-schema.ts        # 2パス要約の情報抽出用JSONスキーマ
 ├── types/
 │   └── summaryMetadata.ts       # 共通型定義（ExtractionMode, SummaryMetadata等）
@@ -113,9 +118,9 @@ src/
   - テーブルの各行（開示情報）の最後に要約ボタンを注入
   - ボタンクリック時に行データ（時刻、コード、会社名、表題、PDF URL）を抽出
   - 要約結果は同じ行のすぐ下に新しい行として挿入（colspanで全列を使用）
-  - 要約結果をPDF URL単位で`chrome.storage.local`にキャッシュし、2回目以降はAPIを呼ばず表示
+  - 要約結果をPDF URLと分析指紋（仕様版・プロバイダー・モデル・抽出方式・パス方式）単位で`chrome.storage.local`にキャッシュ
   - キャッシュ済みボタンは表示/非表示を切り替え、再要約時はキャッシュを更新
-  - メタデータ表示（抽出ページ数、抽出モード、品質警告）
+  - メタデータ表示（抽出ページ数、抽出モード、分析条件、品質警告）
   - smartモード時に全文再要約ボタンを表示
 - **通信**: `chrome.runtime.sendMessage`でBackground Scriptに要約リクエスト送信
 - **iframe再読み込み対応**:
@@ -139,14 +144,14 @@ src/
   - `src/lib/prompts.ts`で文書タイプ別プロンプトを構築
   - `src/lib/llm-client.ts`でLLM APIを呼び出し（OpenAI/Anthropic互換）
   - デフォルトの2パス要約では、パス1でJSONスキーマに沿って情報抽出し、パス2で低temperature（0.3）の固定テンプレートへ整形
-  - パス1のJSON解析に失敗した場合は、パス1の出力をそのまま返す
+  - パス1のJSONを実行時検証し、失敗時はPDFを再送せず1回修復。再失敗時は1パス要約へフォールバック
   - 設定により従来の1パス要約も選択可能
   - APIエラーの詳細抽出（ネストされたエラーメッセージの再帰的取得）
 
 ### 共通ライブラリ (`src/lib/`)
 
-- **`document-type.ts`**: 文書タイトルから6種類の文書タイプを判別
-  - 決算短信、業績修正、配当予想修正、M&A・組織再編、自己株式取得、その他
+- **`document-type.ts`**: 文書タイトルから11種類の文書タイプを判別
+  - 決算短信、業績修正、株主優待、配当、自己株式取得、株式分割・併合、資本政策、M&A・組織再編、月次・事業進捗、ガバナンス、その他
 - **`llm-client.ts`**: 統一LLMクライアント
   - OpenAI互換API（OpenAI/Google/OpenRouter/カスタム）とAnthropic APIを統一的に呼び出し
   - `buildApiError()`: エラーレスポンスからの詳細メッセージ抽出
@@ -154,14 +159,19 @@ src/
   - OpenAI、Anthropic、Google、OpenRouter、カスタムの5種類
   - 各プロバイダーのデフォルトURL、デフォルトモデル、モデルリスト
 - **`prompts.ts`**: 文書タイプ別プロンプト
-  - 6種類の文書タイプごとに最適化されたプロンプトを定義
+  - 11種類の文書タイプごとに最適化されたプロンプトを定義
   - 1パス要約用プロンプトと、2パス要約の情報抽出用プロンプトを構築
-  - 捏造対策ルールを明記
+  - 根拠ページ、時間軸別評価、利益の質、捏造対策ルールを明記
 - **`format-prompts.ts`**: 2パス要約のパス2用プロンプト
   - パス1の構造化データを文書タイプ別の固定テンプレートへ整形
   - `null`の項目やセクションを表示しないルールを定義
 - **`summary-schema.ts`**: 2パス要約のパス1用JSONスキーマ
   - 文書タイプと決算期に応じた抽出項目・決算評価ルールを定義
+- **`structured-output.ts`**: パス1のJSON検証と修復
+  - 必須項目、enum、件数上限、根拠ページ範囲を検証
+  - プロバイダー能力を過大評価せず、対応時だけJSON objectモードを使用
+- **`analysis-version.ts`**: 分析仕様バージョンとキャッシュ指紋
+  - プロンプト仕様や利用モデルが異なる結果を別キャッシュとして管理
 - **`section-detector.ts`**: PDF抽出の知的フィルタリング
   - セクション検出（5種類の見出しパターン）
   - ページスコアリング（キーワード出現回数ベース）

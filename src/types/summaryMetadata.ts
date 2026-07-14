@@ -25,6 +25,11 @@ export interface SummaryMetadata {
   extractionMode: ExtractionMode;
   documentType?: DocumentType;
   qualityWarning?: QualityWarning;
+  analysisSchemaVersion?: number;
+  provider?: string;
+  model?: string;
+  summaryMode?: 'one-pass' | 'two-pass';
+  analysisFingerprint?: string;
 }
 
 export interface PdfExtractionResult {

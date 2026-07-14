@@ -24,12 +24,25 @@ export function buildErrorHtml(errorText: string): string {
 export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
   if (!metadata) return '';
 
-  const { extractionMode, totalPages, extractedPages, qualityWarning } = metadata;
+  const {
+    extractionMode,
+    totalPages,
+    extractedPages,
+    qualityWarning,
+    provider,
+    model,
+    summaryMode,
+    analysisSchemaVersion,
+  } = metadata;
+  const analysisInfo =
+    provider && model && summaryMode
+      ? ` | <span style="font-weight: bold;">分析:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・${summaryMode === 'two-pass' ? '2パス' : '1パス'}・v${analysisSchemaVersion ?? '?'}`
+      : '';
 
   let html = `
     <div style="${SUMMARY_STYLES.metadataInfo}">
       <span style="font-weight: bold;">抽出モード:</span> ${extractionMode === 'smart' ? 'スマート抽出' : '全文抽出'} |
-      <span style="font-weight: bold;">ページ:</span> ${extractedPages?.length || totalPages}/${totalPages}ページ
+      <span style="font-weight: bold;">ページ:</span> ${extractedPages?.length || totalPages}/${totalPages}ページ${analysisInfo}
     </div>
   `;
 
@@ -43,6 +56,15 @@ export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
   }
 
   return html;
+}
+
+function escapeMetadataText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**

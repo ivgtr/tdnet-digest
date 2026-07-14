@@ -1,4 +1,5 @@
 import { generateText, type LLMConfig, type ChatMessage } from '@/lib/llm-client';
+import { ANALYSIS_SCHEMA_VERSION, buildAnalysisFingerprint } from '@/lib/analysis-version';
 import { detectDocumentType, detectEarningsContext, type DocumentType } from '@/lib/document-type';
 import { getPromptForDocumentType, getExtractionPrompt } from '@/lib/prompts';
 import { getFormatPrompt } from '@/lib/format-prompts';
@@ -206,6 +207,16 @@ async function summarizeWithLLM(
 
     // 2パスモード判定（デフォルトON）
     const useTwoPass = settings.twoPassMode !== false;
+    metadata.analysisSchemaVersion = ANALYSIS_SCHEMA_VERSION;
+    metadata.provider = settings.provider;
+    metadata.model = settings.model;
+    metadata.summaryMode = useTwoPass ? 'two-pass' : 'one-pass';
+    metadata.analysisFingerprint = buildAnalysisFingerprint({
+      provider: settings.provider,
+      model: settings.model,
+      extractionMode,
+      twoPassMode: useTwoPass,
+    });
 
     if (useTwoPass) {
       return await summarizeTwoPass(llmConfig, documentType, pdfText, earningsContext, metadata);

@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
 import type {
   SummaryMetadata,
   ExtractionMode,
@@ -25,19 +26,27 @@ interface SummarizeResult {
 
 const CACHE_KEY = 'summaryCache';
 
-function buildCacheKey(pdfUrl: string): string {
-  return pdfUrl;
-}
-
 export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeOptions) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SummarizeResult | null>(null);
   const [hasCached, setHasCached] = useState(false);
+  const [cacheKey, setCacheKey] = useState<string | null>(null);
 
-  const cacheKey = buildCacheKey(pdfUrl);
+  useEffect(() => {
+    chrome.storage.sync.get(['provider', 'model', 'extractionMode', 'twoPassMode'], (settings) => {
+      const fingerprint = buildAnalysisFingerprint({
+        provider: settings.provider || 'openai',
+        model: settings.model || 'gpt-4o',
+        extractionMode: settings.extractionMode || 'full',
+        twoPassMode: settings.twoPassMode !== undefined ? settings.twoPassMode : true,
+      });
+      setCacheKey(buildSummaryCacheKey(pdfUrl, fingerprint));
+    });
+  }, [pdfUrl]);
 
   // マウント時にキャッシュの存在チェック
   useEffect(() => {
+    if (!cacheKey) return;
     chrome.storage.local.get(CACHE_KEY, (data) => {
       const store: SummaryCacheStore = data[CACHE_KEY] || {};
       setHasCached(cacheKey in store);
@@ -49,6 +58,11 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
    */
   const saveToCache = useCallback(
     (summary: string, metadata: SummaryMetadata) => {
+      const entryKey = metadata.analysisFingerprint
+        ? buildSummaryCacheKey(pdfUrl, metadata.analysisFingerprint)
+        : cacheKey;
+      if (!entryKey) return;
+
       chrome.storage.local.get(CACHE_KEY, (data) => {
         const store: SummaryCacheStore = data[CACHE_KEY] || {};
         const entry: CachedSummary = {
@@ -59,19 +73,20 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
           code,
           cachedAt: Date.now(),
         };
-        store[cacheKey] = entry;
+        store[entryKey] = entry;
         chrome.storage.local.set({ [CACHE_KEY]: store }, () => {
-          setHasCached(true);
+          setHasCached(entryKey === cacheKey);
         });
       });
     },
-    [cacheKey, companyName, title, code]
+    [cacheKey, companyName, title, code, pdfUrl]
   );
 
   /**
    * キャッシュから読み込んで result にセット
    */
   const showCached = useCallback(() => {
+    if (!cacheKey) return;
     chrome.storage.local.get(CACHE_KEY, (data) => {
       const store: SummaryCacheStore = data[CACHE_KEY] || {};
       const cached = store[cacheKey];
