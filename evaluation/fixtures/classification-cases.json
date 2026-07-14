@@ -1,0 +1,260 @@
+[
+  {
+    "id": "earnings-q1-jp-consolidated-01",
+    "title": "2026年3月期 第1四半期決算短信〔日本基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q1", "accountingStandard": "jpGaap", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q1-jp-standalone-02",
+    "title": "2026年3月期 第1四半期決算短信〔日本基準〕（非連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q1", "accountingStandard": "jpGaap", "isConsolidated": false }
+  },
+  {
+    "id": "earnings-q1-ifrs-03",
+    "title": "2026年12月期 第1四半期決算短信〔IFRS〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q1", "accountingStandard": "ifrs", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q1-usgaap-04",
+    "title": "2026年12月期 第1四半期決算短信〔米国基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q1", "accountingStandard": "usGaap", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q2-jp-consolidated-05",
+    "title": "2026年3月期 第2四半期（中間期）決算短信〔日本基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q2", "accountingStandard": "jpGaap", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q2-jp-standalone-06",
+    "title": "2026年3月期 中間決算短信〔日本基準〕（個別）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q2", "accountingStandard": "jpGaap", "isConsolidated": false }
+  },
+  {
+    "id": "earnings-q2-ifrs-07",
+    "title": "2026年12月期 第2四半期決算短信〔国際会計基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q2", "accountingStandard": "ifrs", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q2-2q-08",
+    "title": "2026年8月期 2Q決算短信〔日本基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q2", "accountingStandard": "jpGaap", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q3-jp-consolidated-09",
+    "title": "2026年3月期 第3四半期決算短信〔日本基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q3", "accountingStandard": "jpGaap", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q3-jp-standalone-10",
+    "title": "2026年3月期 第3四半期決算短信〔日本基準〕（単体）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q3", "accountingStandard": "jpGaap", "isConsolidated": false }
+  },
+  {
+    "id": "earnings-q3-ifrs-11",
+    "title": "2026年12月期 3Q決算短信〔IFRS〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q3", "accountingStandard": "ifrs", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-q3-usgaap-12",
+    "title": "2026年12月期 第3四半期決算短信〔米国基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": { "period": "q3", "accountingStandard": "usGaap", "isConsolidated": true }
+  },
+  {
+    "id": "earnings-full-jp-consolidated-13",
+    "title": "2026年3月期 決算短信〔日本基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": {
+      "period": "fullYear",
+      "accountingStandard": "jpGaap",
+      "isConsolidated": true
+    }
+  },
+  {
+    "id": "earnings-full-jp-standalone-14",
+    "title": "2026年3月期 決算短信〔日本基準〕（個別）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": {
+      "period": "fullYear",
+      "accountingStandard": "jpGaap",
+      "isConsolidated": false
+    }
+  },
+  {
+    "id": "earnings-full-ifrs-15",
+    "title": "2026年12月期 決算短信〔IFRS〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": {
+      "period": "fullYear",
+      "accountingStandard": "ifrs",
+      "isConsolidated": true
+    }
+  },
+  {
+    "id": "earnings-full-usgaap-16",
+    "title": "2026年12月期 決算短信〔米国基準〕（連結）",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": {
+      "period": "fullYear",
+      "accountingStandard": "usGaap",
+      "isConsolidated": true
+    }
+  },
+  {
+    "id": "earnings-quarter-generic-17",
+    "title": "四半期決算短信の補足説明資料",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": {
+      "period": "fullYear",
+      "accountingStandard": "jpGaap",
+      "isConsolidated": true
+    }
+  },
+  {
+    "id": "earnings-full-correction-18",
+    "title": "2026年3月期 決算短信の一部訂正について",
+    "baselineType": "earnings",
+    "targetType": "earnings",
+    "expectedContext": {
+      "period": "fullYear",
+      "accountingStandard": "jpGaap",
+      "isConsolidated": true
+    }
+  },
+  {
+    "id": "revision-full-up-19",
+    "title": "通期業績予想の上方修正に関するお知らせ",
+    "baselineType": "earningsRevision",
+    "targetType": "earningsRevision"
+  },
+  {
+    "id": "revision-full-down-20",
+    "title": "通期業績予想の下方修正に関するお知らせ",
+    "baselineType": "earningsRevision",
+    "targetType": "earningsRevision"
+  },
+  {
+    "id": "revision-range-21",
+    "title": "業績予想レンジの修正に関するお知らせ",
+    "baselineType": "earningsRevision",
+    "targetType": "earningsRevision"
+  },
+  {
+    "id": "revision-dividend-combined-22",
+    "title": "業績予想及び配当予想の修正に関するお知らせ",
+    "baselineType": "earningsRevision",
+    "targetType": "earningsRevision"
+  },
+  {
+    "id": "revision-consolidated-23",
+    "title": "連結業績予想の修正について",
+    "baselineType": "earningsRevision",
+    "targetType": "earningsRevision"
+  },
+  {
+    "id": "revision-individual-24",
+    "title": "個別業績予想の修正に関するお知らせ",
+    "baselineType": "earningsRevision",
+    "targetType": "earningsRevision"
+  },
+  {
+    "id": "shareholder-benefit-expand-25",
+    "title": "株主優待制度の変更（拡充）に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "shareholderBenefit"
+  },
+  {
+    "id": "shareholder-benefit-abolish-26",
+    "title": "株主優待制度の廃止に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "shareholderBenefit"
+  },
+  {
+    "id": "dividend-increase-27",
+    "title": "剰余金の配当（増配）に関するお知らせ",
+    "baselineType": "dividend",
+    "targetType": "dividend"
+  },
+  {
+    "id": "share-repurchase-28",
+    "title": "自己株式の取得に係る事項の決定に関するお知らせ",
+    "baselineType": "shareRepurchase",
+    "targetType": "shareRepurchase"
+  },
+  {
+    "id": "stock-split-29",
+    "title": "株式分割及び定款の一部変更に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "stockSplit"
+  },
+  {
+    "id": "capital-policy-30",
+    "title": "資本業務提携及び第三者割当増資に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "capitalPolicy"
+  },
+  {
+    "id": "ma-acquisition-31",
+    "title": "子会社の株式取得に関するお知らせ",
+    "baselineType": "ma",
+    "targetType": "ma"
+  },
+  {
+    "id": "ma-merger-32",
+    "title": "連結子会社間の吸収合併に関するお知らせ",
+    "baselineType": "ma",
+    "targetType": "ma"
+  },
+  {
+    "id": "business-update-monthly-33",
+    "title": "2026年6月度 月次売上高に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "businessUpdate"
+  },
+  {
+    "id": "business-update-orders-34",
+    "title": "受注状況及び受注残高に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "businessUpdate"
+  },
+  {
+    "id": "governance-officers-35",
+    "title": "取締役及び執行役員の異動に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "governance"
+  },
+  {
+    "id": "other-office-move-36",
+    "title": "本店移転に関するお知らせ",
+    "baselineType": "other",
+    "targetType": "other"
+  }
+]

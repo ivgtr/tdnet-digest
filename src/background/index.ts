@@ -1,7 +1,17 @@
 import { generateText, type LLMConfig, type ChatMessage } from '@/lib/llm-client';
+import { ANALYSIS_SCHEMA_VERSION, buildAnalysisFingerprint } from '@/lib/analysis-version';
 import { detectDocumentType, detectEarningsContext, type DocumentType } from '@/lib/document-type';
 import { getPromptForDocumentType, getExtractionPrompt } from '@/lib/prompts';
 import { getFormatPrompt } from '@/lib/format-prompts';
+import { getJsonSchema } from '@/lib/summary-schema';
+import type { EarningsExtraction } from '@/lib/summary-schema';
+import { refineEarningsExtraction } from '@/lib/earnings-refinement';
+import { calculateExperimentalScore, formatExperimentalScore } from '@/lib/scoring';
+import {
+  buildJsonRepairMessages,
+  getProviderCapabilities,
+  parseAndValidateExtraction,
+} from '@/lib/structured-output';
 import type { SummaryMetadata, ExtractionMode } from '@/types/summaryMetadata';
 
 interface SummarizeRequest {
@@ -18,6 +28,7 @@ interface Settings {
   customUrl?: string;
   extractionMode?: ExtractionMode;
   twoPassMode?: boolean;
+  experimentalScoring?: boolean;
 }
 
 // 拡張機能のインストール・更新時
@@ -92,9 +103,7 @@ async function handleSummarize(
     }
 
     if (settings.provider === 'custom' && !settings.customUrl) {
-      throw new Error(
-        'カスタムプロバイダーを使用する場合はAPI URLを設定してください。'
-      );
+      throw new Error('カスタムプロバイダーを使用する場合はAPI URLを設定してください。');
     }
 
     // 文書タイプを判別
@@ -123,7 +132,15 @@ async function handleSummarize(
 async function getSettings(): Promise<Settings> {
   return new Promise((resolve) => {
     chrome.storage.sync.get(
-      ['provider', 'apiKey', 'model', 'customUrl', 'extractionMode', 'twoPassMode'],
+      [
+        'provider',
+        'apiKey',
+        'model',
+        'customUrl',
+        'extractionMode',
+        'twoPassMode',
+        'experimentalScoring',
+      ],
       (result) => {
         resolve({
           provider: result.provider || 'openai',
@@ -132,6 +149,7 @@ async function getSettings(): Promise<Settings> {
           customUrl: result.customUrl || '',
           extractionMode: result.extractionMode || 'full',
           twoPassMode: result.twoPassMode !== undefined ? result.twoPassMode : true,
+          experimentalScoring: result.experimentalScoring === true,
         });
       }
     );
@@ -150,27 +168,6 @@ async function fetchPDF(url: string): Promise<ArrayBuffer> {
   } catch (error) {
     console.error('[Background] PDF取得エラー:', error);
     throw error;
-  }
-}
-
-/**
- * LLMレスポンスからJSONを解析する（フォールバック付き）
- */
-function tryParseJson(text: string): unknown | null {
-  // コードブロック内のJSONを抽出
-  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const jsonStr = codeBlockMatch ? codeBlockMatch[1].trim() : text.trim();
-
-  try {
-    return JSON.parse(jsonStr);
-  } catch {
-    // 先頭/末尾の非JSON文字を除去して再試行
-    const cleaned = jsonStr.replace(/^[^{[]*/, '').replace(/[^}\]]*$/, '');
-    try {
-      return JSON.parse(cleaned);
-    } catch {
-      return null;
-    }
   }
 }
 
@@ -223,9 +220,29 @@ async function summarizeWithLLM(
 
     // 2パスモード判定（デフォルトON）
     const useTwoPass = settings.twoPassMode !== false;
+    metadata.analysisSchemaVersion = ANALYSIS_SCHEMA_VERSION;
+    metadata.provider = settings.provider;
+    metadata.model = settings.model;
+    metadata.summaryMode = useTwoPass ? 'two-pass' : 'one-pass';
+    metadata.experimentalScoring = useTwoPass && settings.experimentalScoring === true;
+    metadata.analysisFingerprint = buildAnalysisFingerprint({
+      provider: settings.provider,
+      model: settings.model,
+      extractionMode,
+      twoPassMode: useTwoPass,
+      experimentalScoring: metadata.experimentalScoring,
+    });
 
     if (useTwoPass) {
-      return await summarizeTwoPass(llmConfig, documentType, pdfText, earningsContext, metadata);
+      return await summarizeTwoPass(
+        llmConfig,
+        documentType,
+        pdfText,
+        earningsContext,
+        title,
+        metadata,
+        settings.experimentalScoring === true
+      );
     } else {
       return await summarizeOnePass(llmConfig, documentType, pdfText, earningsContext, metadata);
     }
@@ -262,33 +279,67 @@ async function summarizeTwoPass(
   documentType: DocumentType,
   pdfText: string,
   earningsContext: ReturnType<typeof detectEarningsContext> | undefined,
-  metadata: SummaryMetadata
+  documentTitle: string,
+  metadata: SummaryMetadata,
+  experimentalScoring: boolean
 ): Promise<{ summary: string; metadata: SummaryMetadata }> {
   // パス1: 情報抽出（JSON）
   console.log('[Background] 2パス要約: パス1（情報抽出）開始');
   const { system: s1, user: u1 } = getExtractionPrompt(documentType, pdfText, earningsContext);
-  const extractedText = await generateText(llmConfig, [
+  const capabilities = getProviderCapabilities(llmConfig.provider);
+  const extractionConfig: LLMConfig = {
+    ...llmConfig,
+    temperature: 0,
+    ...(capabilities.jsonObject && { responseFormat: 'json_object' as const }),
+  };
+  const extractedText = await generateText(extractionConfig, [
     { role: 'system', content: s1 },
     { role: 'user', content: u1 },
   ]);
 
-  // JSON解析
-  const parsed = tryParseJson(extractedText);
-  if (!parsed) {
-    // JSON解析失敗 → パス1の出力をそのまま返す（1パスフォールバック）
-    console.warn('[Background] 2パス要約: JSON解析失敗、パス1出力をそのまま使用');
-    return { summary: extractedText, metadata };
+  let validation = parseAndValidateExtraction(extractedText, documentType, metadata.totalPages);
+  if (!validation.success) {
+    console.warn('[Background] 2パス要約: 検証失敗、JSON修復を1回実行', validation.errors);
+    const repairMessages = buildJsonRepairMessages(
+      extractedText,
+      validation.errors,
+      getJsonSchema(documentType, earningsContext)
+    );
+    const repairedText = await generateText(extractionConfig, repairMessages);
+    validation = parseAndValidateExtraction(repairedText, documentType, metadata.totalPages);
+  }
+
+  if (!validation.success || !validation.data) {
+    console.warn(
+      '[Background] 2パス要約: JSON修復後も検証失敗、検証済み1パス要約へフォールバック',
+      validation.errors
+    );
+    return summarizeOnePass(llmConfig, documentType, pdfText, earningsContext, metadata);
   }
 
   console.log('[Background] 2パス要約: パス1完了、パス2（フォーマット整形）開始');
 
+  const extractionData =
+    documentType === 'earnings' && earningsContext
+      ? refineEarningsExtraction(
+          validation.data as EarningsExtraction,
+          earningsContext,
+          documentTitle
+        )
+      : validation.data;
+
   // パス2: フォーマット整形（低temperature）
   const formatConfig: LLMConfig = { ...llmConfig, temperature: 0.3 };
-  const { system: s2, user: u2 } = getFormatPrompt(documentType, parsed, earningsContext);
-  const formatted = await generateText(formatConfig, [
+  const { system: s2, user: u2 } = getFormatPrompt(documentType, extractionData, earningsContext);
+  let formatted = await generateText(formatConfig, [
     { role: 'system', content: s2 },
     { role: 'user', content: u2 },
   ]);
+
+  if (experimentalScoring) {
+    const score = calculateExperimentalScore(documentType, extractionData);
+    if (score) formatted += formatExperimentalScore(score);
+  }
 
   console.log('[Background] 2パス要約: パス2完了');
   return { summary: formatted, metadata };

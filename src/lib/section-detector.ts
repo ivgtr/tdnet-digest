@@ -11,9 +11,9 @@ import type { DocumentType } from './document-type';
  * セクション情報
  */
 export interface Section {
-  heading: string;      // 見出し
-  text: string;         // 本文
-  pageNumber: number;   // ページ番号（開始位置）
+  heading: string; // 見出し
+  text: string; // 本文
+  pageNumber: number; // ページ番号（開始位置）
 }
 
 /**
@@ -28,10 +28,10 @@ export interface PageScore {
  * 品質チェック結果
  */
 export interface QualityCheckResult {
-  passed: boolean;           // 品質基準を満たしているか
+  passed: boolean; // 品質基準を満たしているか
   matchedKeywords: string[]; // マッチしたキーワード
   missingKeywords: string[]; // 不足しているキーワード
-  matchRate: number;         // マッチ率（0-1）
+  matchRate: number; // マッチ率（0-1）
 }
 
 /**
@@ -45,9 +45,14 @@ export const EXTRACTION_PARAMS: Record<
 > = {
   earnings: { summaryPages: 2, topK: 8, neighbor: 1 },
   earningsRevision: { summaryPages: 1, topK: 3, neighbor: 1 },
+  shareholderBenefit: { summaryPages: 1, topK: 3, neighbor: 1 },
   dividend: { summaryPages: 1, topK: 2, neighbor: 1 },
-  ma: { summaryPages: 2, topK: 4, neighbor: 1 },
   shareRepurchase: { summaryPages: 1, topK: 2, neighbor: 1 },
+  stockSplit: { summaryPages: 1, topK: 2, neighbor: 1 },
+  capitalPolicy: { summaryPages: 2, topK: 4, neighbor: 1 },
+  ma: { summaryPages: 2, topK: 4, neighbor: 1 },
+  businessUpdate: { summaryPages: 1, topK: 4, neighbor: 1 },
+  governance: { summaryPages: 1, topK: 3, neighbor: 1 },
   other: { summaryPages: 2, topK: 5, neighbor: 1 },
 };
 
@@ -70,25 +75,14 @@ const IMPORTANT_SECTION_KEYWORDS: Record<DocumentType, string[]> = {
     '業務純益',
   ],
   earningsRevision: ['業績予想', '修正', '理由', '業績', '見通し'],
+  shareholderBenefit: ['株主優待', '優待内容', '対象株主', '保有株式数', '基準日', '継続保有'],
   dividend: ['配当', '株主還元', '剰余金', '配当予想'],
-  ma: [
-    '取得',
-    '譲渡',
-    '子会社',
-    '関連会社',
-    '目的',
-    '取得価額',
-    '業績',
-    '日程',
-  ],
-  shareRepurchase: [
-    '自己株式',
-    '取得',
-    '株数',
-    '取得価額',
-    '取得期間',
-    '取得方法',
-  ],
+  shareRepurchase: ['自己株式', '取得', '株数', '取得価額', '取得期間', '取得方法'],
+  stockSplit: ['株式分割', '株式併合', '分割割合', '基準日', '効力発生日', '配当'],
+  capitalPolicy: ['資本業務提携', '第三者割当', '新株予約権', '希薄化', '資金使途', '日程'],
+  ma: ['取得', '譲渡', '子会社', '関連会社', '目的', '取得価額', '業績', '日程'],
+  businessUpdate: ['月次', '売上高', '受注', '受注残', '既存店', '全店', 'KPI'],
+  governance: ['取締役', '役員', 'ガバナンス', '内部統制', '異動', '就任', '退任'],
   other: [],
 };
 
@@ -120,33 +114,15 @@ const PAGE_SCORING_KEYWORDS: Record<DocumentType, string[]> = {
     '通期予想',
     '修正',
   ],
-  earningsRevision: [
-    '売上高',
-    '営業利益',
-    '経常利益',
-    '当期純利益',
-    '修正',
-    '理由',
-    '前回予想',
-  ],
+  earningsRevision: ['売上高', '営業利益', '経常利益', '当期純利益', '修正', '理由', '前回予想'],
+  shareholderBenefit: ['株主優待', '優待内容', '保有株式数', '基準日', '継続保有'],
   dividend: ['配当', '1株当たり', '配当金', '期末配当', '中間配当'],
-  ma: [
-    '取得価額',
-    '譲渡価額',
-    '取得株数',
-    '議決権',
-    '子会社',
-    '関連会社',
-    '業績',
-  ],
-  shareRepurchase: [
-    '自己株式',
-    '取得株数',
-    '取得価額',
-    '取得期間',
-    '取得方法',
-    '消却',
-  ],
+  shareRepurchase: ['自己株式', '取得株数', '取得価額', '取得期間', '取得方法', '消却'],
+  stockSplit: ['分割割合', '分割比率', '基準日', '効力発生日', '発行可能株式総数'],
+  capitalPolicy: ['調達額', '希薄化', '割当先', '資金使途', '払込期日', '提携内容'],
+  ma: ['取得価額', '譲渡価額', '取得株数', '議決権', '子会社', '関連会社', '業績'],
+  businessUpdate: ['前年同月比', '既存店', '全店', '受注高', '受注残高', '稼働率'],
+  governance: ['取締役', '役員', '異動', '内部統制', '再発防止', '就任日'],
   other: [],
 };
 
@@ -168,7 +144,14 @@ const QUALITY_GATE_KEYWORD_SETS: Record<DocumentType, string[][]> = {
     ['修正', '変更'],
     ['理由', '要因'],
   ],
-  dividend: [['配当', '配当金'], ['1株当たり', '1株']],
+  shareholderBenefit: [
+    ['株主優待', '優待制度'],
+    ['基準日', '対象株主', '保有株式数'],
+  ],
+  dividend: [
+    ['配当', '配当金'],
+    ['1株当たり', '1株'],
+  ],
   ma: [
     ['取得価額', '譲渡価額', '対価'],
     ['取得株数', '議決権'],
@@ -180,6 +163,24 @@ const QUALITY_GATE_KEYWORD_SETS: Record<DocumentType, string[][]> = {
     ['取得価額', '取得総額'],
     ['取得期間', '期間'],
     ['取得方法', '方法'],
+  ],
+  stockSplit: [
+    ['株式分割', '株式併合'],
+    ['分割割合', '分割比率', '併合比率'],
+    ['基準日', '効力発生日'],
+  ],
+  capitalPolicy: [
+    ['第三者割当', '新株予約権', '資本業務提携'],
+    ['資金使途', '提携内容'],
+    ['払込期日', '日程', '予定'],
+  ],
+  businessUpdate: [
+    ['月次', '受注', '事業進捗'],
+    ['前年同月比', '前年同期比', '受注残高', 'KPI'],
+  ],
+  governance: [
+    ['取締役', '役員', 'ガバナンス', '内部統制'],
+    ['異動', '就任', '退任', '再発防止'],
   ],
   other: [],
 };
@@ -220,6 +221,7 @@ export function detectSections(text: string): Section[] {
   let currentHeading = '';
   let currentText = '';
   let currentPageNumber = 1;
+  let currentSectionPageNumber = 1;
 
   for (const line of lines) {
     // ページ番号の検出（行が数字のみの場合）
@@ -241,13 +243,14 @@ export function detectSections(text: string): Section[] {
           sections.push({
             heading: currentHeading,
             text: currentText.trim(),
-            pageNumber: currentPageNumber,
+            pageNumber: currentSectionPageNumber,
           });
         }
 
         // 新しいセクション開始
         currentHeading = match[1] || match[2] || '';
         currentText = '';
+        currentSectionPageNumber = currentPageNumber;
         isHeading = true;
         break;
       }
@@ -264,7 +267,7 @@ export function detectSections(text: string): Section[] {
     sections.push({
       heading: currentHeading,
       text: currentText.trim(),
-      pageNumber: currentPageNumber,
+      pageNumber: currentSectionPageNumber,
     });
   }
 
@@ -289,14 +292,10 @@ export function filterImportantSections(
 
   return sections.filter((section) => {
     // 見出しにキーワードが含まれているか
-    const headingMatch = keywords.some((keyword) =>
-      section.heading.includes(keyword)
-    );
+    const headingMatch = keywords.some((keyword) => section.heading.includes(keyword));
 
     // 本文にキーワードが含まれているか（ボーナススコア）
-    const textMatch = keywords.some((keyword) =>
-      section.text.includes(keyword)
-    );
+    const textMatch = keywords.some((keyword) => section.text.includes(keyword));
 
     return headingMatch || textMatch;
   });
@@ -309,10 +308,7 @@ export function filterImportantSections(
  * @param documentType 文書タイプ
  * @returns ページスコア配列（スコア降順）
  */
-export function scorePages(
-  text: string,
-  documentType: DocumentType
-): PageScore[] {
+export function scorePages(text: string, documentType: DocumentType): PageScore[] {
   const keywords = PAGE_SCORING_KEYWORDS[documentType];
   if (keywords.length === 0) {
     return [];

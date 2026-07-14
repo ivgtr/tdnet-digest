@@ -12,6 +12,7 @@ const Options: React.FC = () => {
   const [useCustomModel, setUseCustomModel] = useState(false);
   const [extractionMode, setExtractionMode] = useState<ExtractionMode>('full');
   const [twoPassMode, setTwoPassMode] = useState(true);
+  const [experimentalScoring, setExperimentalScoring] = useState(false);
   const [saved, setSaved] = useState(false);
   const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
   const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
@@ -25,6 +26,7 @@ const Options: React.FC = () => {
     'useCustomModel',
     'extractionMode',
     'twoPassMode',
+    'experimentalScoring',
   ] as const;
 
   const handleExportSettings = () => {
@@ -69,7 +71,10 @@ const Options: React.FC = () => {
               setUseCustomModel(validData.useCustomModel as boolean);
             if (validData.extractionMode)
               setExtractionMode(validData.extractionMode as ExtractionMode);
-            if (validData.twoPassMode !== undefined) setTwoPassMode(validData.twoPassMode as boolean);
+            if (validData.twoPassMode !== undefined)
+              setTwoPassMode(validData.twoPassMode as boolean);
+            if (validData.experimentalScoring !== undefined)
+              setExperimentalScoring(validData.experimentalScoring as boolean);
             setSaved(true);
             setTimeout(() => setSaved(false), 3000);
           });
@@ -104,7 +109,16 @@ const Options: React.FC = () => {
 
   useEffect(() => {
     chrome.storage.sync.get(
-      ['provider', 'apiKey', 'model', 'customUrl', 'useCustomModel', 'extractionMode', 'twoPassMode'],
+      [
+        'provider',
+        'apiKey',
+        'model',
+        'customUrl',
+        'useCustomModel',
+        'extractionMode',
+        'twoPassMode',
+        'experimentalScoring',
+      ],
       (result) => {
         if (result.provider) setProvider(result.provider);
         if (result.apiKey) setApiKey(result.apiKey);
@@ -113,6 +127,8 @@ const Options: React.FC = () => {
         if (result.useCustomModel !== undefined) setUseCustomModel(result.useCustomModel);
         if (result.extractionMode) setExtractionMode(result.extractionMode);
         if (result.twoPassMode !== undefined) setTwoPassMode(result.twoPassMode);
+        if (result.experimentalScoring !== undefined)
+          setExperimentalScoring(result.experimentalScoring);
       }
     );
     loadCacheEntries();
@@ -180,6 +196,7 @@ const Options: React.FC = () => {
         useCustomModel,
         extractionMode,
         twoPassMode,
+        experimentalScoring,
       },
       () => {
         setSaved(true);
@@ -216,9 +233,7 @@ const Options: React.FC = () => {
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-gray-500">
-              使用するLLMプロバイダーを選択してください
-            </p>
+            <p className="mt-1 text-xs text-gray-500">使用するLLMプロバイダーを選択してください</p>
           </div>
 
           {/* カスタムURL入力（カスタムプロバイダーの場合のみ表示） */}
@@ -322,7 +337,10 @@ const Options: React.FC = () => {
           </div>
 
           <div>
-            <label htmlFor="extractionMode" className="block text-sm font-medium text-gray-700 mb-2">
+            <label
+              htmlFor="extractionMode"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
               抽出モード
             </label>
             <select
@@ -389,6 +407,22 @@ const Options: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+
+          <div>
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={experimentalScoring}
+                disabled={!twoPassMode}
+                onChange={(e) => setExperimentalScoring(e.target.checked)}
+                className="h-4 w-4"
+              />
+              実験的スコアを表示（既定OFF）
+            </label>
+            <p className="mt-2 text-xs text-gray-500">
+              検証済みの短期・中期・長期の方向性を固定換算します。投資判断や将来収益を保証する点数ではなく、2パス要約でのみ表示されます。
+            </p>
           </div>
 
           <div className="flex items-center gap-4">

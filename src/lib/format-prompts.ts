@@ -21,18 +21,48 @@ const FORMAT_RULES = `
 - セクション全体のデータがnull・空配列の場合: セクション（見出し含む）を丸ごと省略
 - 箇条書き項目の値がnullの場合: その行を丸ごと省略（「null」という文字列を出力しない）
 - items配列内のchangeがnullの場合: 括弧部分を省略し「- {name}: {amount}」のみ出力
-- 「null」という文字列は絶対に出力しないでください`;
+- 「null」という文字列は絶対に出力しないでください
+
+【根拠ページ】
+- EvidenceFactのpageが整数の場合は文末に「[p.{page}]」を付けてください
+- pageがnullの場合はページ表記を省略してください
+- 同じ項目内に複数の根拠がある場合は「[p.1, p.3]」形式にまとめてください
+
+【方向性の表示】
+- positive=強気、slightlyPositive=やや強気、neutral=中立、slightlyNegative=やや弱気、negative=弱気、unknown=判断不能 と変換してください`;
+
+const INVESTMENT_VIEW_TEMPLATE = `
+## 時間軸別の見方
+- 短期: {{investmentView.shortTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 中期: {{investmentView.mediumTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 長期: {{investmentView.longTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+
+## 好材料
+{{investmentView.positives を1行ずつ: - {text} [p.{page}]}}
+
+## リスク
+{{investmentView.risks を1行ずつ: - {text} [p.{page}]}}
+
+## 次回確認点
+{{investmentView.watchPoints を1行ずつ: - {text} [p.{page}]}}
+
+## 評価理由
+{{investmentView.rationale}}`;
 
 // ── 決算短信テンプレート ──
 
 function buildEarningsTemplate(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
   const forecastGroupLabel = isQuarterly ? '【通期予想】' : '【来期予想】（データがある場合のみ）';
+  const evaluationMetric = ctx.accountingStandard === 'jpGaap' ? '経常利益' : '税引前利益';
 
   return `
 --- 出力テンプレート ---
 
-## 決算評価（経常利益ベース）
+## 全体要約
+{{summary}}
+
+## 決算評価（${evaluationMetric}ベース）
 【実績】
 - 対前年: {{evaluation.actual.vsLastYear}}
 - ${isQuarterly ? '進捗' : '着地'}:   {{evaluation.actual.progressOrLanding}}
@@ -41,24 +71,50 @@ ${forecastGroupLabel}
 - 対前年:  {{evaluation.forecast.vsLastYear}}
 - ${isQuarterly ? '予想修正' : '配当'}:  {{evaluation.forecast.revisionOrDividend}}
 
-## 全体要約
-{{summary}}
-
 ## 業績サマリー（{{performance.periodLabel}}）
-{{performance.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
+{{performance.items を1行ずつ: - {name}: {amount}（{change}） [p.{page}]  ※changeがnullなら括弧ごと省略}}
 
-${isQuarterly ? `## 進捗率（通期予想に対して）
-- 経常利益: {{progress.ordinaryIncome}}（前年同期{{progress.lastYearProgress}}）
-` : ''}## {{forecast.label}}
-{{forecast.items を1行ずつ: - {name}: {amount}（{change}）  ※changeがnullなら括弧ごと省略}}
+## 事業P/L
+{{businessPl.items を1行ずつ: - {name}: {amount} — {assessment} [p.{page}]}}
+
+${
+  isQuarterly
+    ? `## 進捗率（通期予想に対して）
+{{progress.basisがlossConsumptionなら「- ${evaluationMetric}の損失消化率: {progress.ordinaryIncome}」、それ以外は「- ${evaluationMetric}: {progress.ordinaryIncome}」}}{{progress.lastYearProgressがnullでない場合のみ: （前年同期{progress.lastYearProgress}）}} [p.{{progress.page}}]
+`
+    : ''
+}## {{forecast.label}}
+{{forecast.items を1行ずつ: - {name}: {amount}（{change}） [p.{page}]  ※changeがnullなら括弧ごと省略}}
 
 ## 修正・配当
 - 業績予想の修正: {{revision}}
-※以下のdividendフィールドがnullの項目は行ごと省略すること:
-- 中間配当: {{dividend.interim}}
-- 期末配当: {{dividend.yearEnd}}
-- 年間配当: {{dividend.annual}}
-- 配当予想の修正: {{dividend.dividendRevision}}
+{{dividend.periods を年度ごとに1行ずつ: - 配当（{fiscalYear}・{statusがactualなら実績、forecastなら予想}）: {displayText}{{interpretationが空でない場合のみ: — {interpretation}}} [p.{page}]}}
+- 当期配当予想の修正（{{dividend.currentRevision.fiscalYear}}）: {{dividend.currentRevision.before}}→{{dividend.currentRevision.after}} {{pageがあれば[p.N]}}
+
+## 利益の質
+- 営業利益率: {{earningsQuality.operatingMargin.current}}{{earningsQuality.operatingMargin.comparisonTextがnullでない場合のみ: （{comparisonText}）}} {{pageがあれば[p.N]}}
+- 本業利益: {{earningsQuality.coreEarnings.text}} {{pageがあれば[p.N]}}
+{{earningsQuality.oneOffItems を1行ずつ: - 一時損益: {text} [p.{page}]}}
+- 営業CF: {{earningsQuality.operatingCashFlow.interpretation}}{{earningsQuality.operatingCashFlow.amountがnullでなければ: （{amount}）}} {{pageがあれば[p.N]}}
+{{earningsQuality.financialHealth を1行ずつ: - 財務: {text} [p.{page}]}}
+{{earningsQuality.capitalActions を1行ずつ: - 株主還元: {interpretation} [p.{page}]}}
+
+## 時間軸別の見方
+- 短期: {{investmentView.shortTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 中期: {{investmentView.mediumTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+- 長期: {{investmentView.longTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
+
+## 好材料
+{{investmentView.positives を1行ずつ: - {text} [p.{page}]}}
+
+## リスク
+{{investmentView.risks を1行ずつ: - {text} [p.{page}]}}
+
+## 次回確認点
+{{investmentView.watchPoints を1行ずつ: - {text} [p.{page}]}}
+
+## 評価理由
+{{investmentView.rationale}}
 
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
@@ -84,6 +140,8 @@ const EARNINGS_REVISION_TEMPLATE = `
 - 修正内容: {{dividendRevision.content}}
 - 修正理由: {{dividendRevision.reason}}
 
+${INVESTMENT_VIEW_TEMPLATE}
+
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
 
@@ -107,6 +165,8 @@ const DIVIDEND_TEMPLATE = `
 
 ## 配当方針
 {{policy}}
+
+${INVESTMENT_VIEW_TEMPLATE}
 
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
@@ -138,6 +198,8 @@ const MA_TEMPLATE = `
 - 利益への影響: {{impact.profit}}
 - 連結範囲の変更: {{impact.consolidation}}
 
+${INVESTMENT_VIEW_TEMPLATE}
+
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
 
@@ -160,6 +222,139 @@ const SHARE_REPURCHASE_TEMPLATE = `
 
 ## 目的
 {{purpose}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const SHAREHOLDER_BENEFIT_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 優待変更
+- 変更区分: {{changeType}}
+- 変更前: {{details.before}}
+- 変更後: {{details.after}}
+- 対象株主: {{details.eligibleShareholders}}
+- 必要保有株数: {{details.requiredShares}}
+- 基準日: {{details.referenceDate}}
+- 開始日: {{details.startDate}}
+- 継続保有条件: {{details.holdingRequirement}}
+- 会社負担・業績影響: {{details.costImpact}}
+
+## 目的
+{{purpose}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const STOCK_SPLIT_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 分割・併合内容
+- 区分: {{details.action}}
+- 比率: {{details.ratio}}
+- 基準日: {{details.recordDate}}
+- 効力発生日: {{details.effectiveDate}}
+- 実施前株式数: {{details.sharesBefore}}
+- 実施後株式数: {{details.sharesAfter}}
+- 発行可能株式総数: {{details.authorizedSharesChange}}
+- 配当への影響: {{details.dividendImpact}}
+
+## 目的
+{{purpose}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const CAPITAL_POLICY_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 取引内容
+- 方法: {{transaction.method}}
+- 割当先・提携先: {{transaction.counterparty}}
+- 調達額: {{transaction.amount}}
+- 発行株式・新株予約権: {{transaction.sharesOrRights}}
+- 希薄化率: {{transaction.dilution}}
+- 発行・行使価額: {{transaction.price}}
+- 払込期日: {{transaction.paymentDate}}
+
+## 資金使途
+{{useOfFunds を1行ずつ: - {text} [p.{page}]}}
+
+## 業務提携
+{{partnership を1行ずつ: - {text} [p.{page}]}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const BUSINESS_UPDATE_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 対象期間
+{{period}}
+
+## 主要KPI
+{{kpis を1行ずつ: - {name}: {value}（{comparison}、{scope}） [p.{page}] ※null部分は省略}}
+
+## 増減要因
+{{drivers を1行ずつ: - {text} [p.{page}]}}
+
+## 一過性要因
+{{oneOffFactors を1行ずつ: - {text} [p.{page}]}}
+
+${INVESTMENT_VIEW_TEMPLATE}
+
+## トピックス
+{{topics を1行ずつ: - {内容}}}
+
+--- テンプレートここまで ---`;
+
+const GOVERNANCE_TEMPLATE = `
+--- 出力テンプレート ---
+
+## 全体要約
+{{summary}}
+
+## 変更区分
+{{changeType}}
+
+## 人事
+{{people を1行ずつ: - {name}: {previousRole} → {newRole}（{effectiveDate}） ※null部分は省略}}
+
+## ガバナンス体制
+{{governanceChanges を1行ずつ: - {text} [p.{page}]}}
+
+## 内部統制・再発防止
+{{internalControl を1行ずつ: - {text} [p.{page}]}}
+
+${INVESTMENT_VIEW_TEMPLATE}
 
 ## トピックス
 {{topics を1行ずつ: - {内容}}}
@@ -210,6 +405,21 @@ export function getFormatPrompt(
       break;
     case 'earningsRevision':
       template = EARNINGS_REVISION_TEMPLATE;
+      break;
+    case 'shareholderBenefit':
+      template = SHAREHOLDER_BENEFIT_TEMPLATE;
+      break;
+    case 'stockSplit':
+      template = STOCK_SPLIT_TEMPLATE;
+      break;
+    case 'capitalPolicy':
+      template = CAPITAL_POLICY_TEMPLATE;
+      break;
+    case 'businessUpdate':
+      template = BUSINESS_UPDATE_TEMPLATE;
+      break;
+    case 'governance':
+      template = GOVERNANCE_TEMPLATE;
       break;
     case 'dividend':
       template = DIVIDEND_TEMPLATE;

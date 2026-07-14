@@ -1,0 +1,48 @@
+# 分析精度評価フィクスチャ
+
+このディレクトリは、分析精度向上計画のベースラインと回帰評価データを管理します。
+
+## データの区分
+
+- `fixtures/classification-cases.json`: 文書タイトル分類と決算コンテキストの合成フィクスチャ
+- `fixtures/real-pdf-cases.json`: TDnet公式PDFの出典、期待分類、抽出必須語
+- `expected/`: 公開PDFから人手で作成する期待値JSON（今後追加）
+- `results/`: モデル、設定、実行日時を含む評価結果（APIキーは保存しない）
+- `scripts/check-real-pdfs.mjs`: ローカルに取得したPDFのページ抽出・境界・必須語チェック
+
+`classification-cases.json`の`baselineType`はPhase 0時点の実装結果、`targetType`は分類拡張後の期待値です。Phase 2で分類を拡張した後も、旧挙動との差分を追跡できるよう両方を残します。
+
+## 評価上の原則
+
+- PDF本文にない情報を正解データへ補わない
+- 数値、単位、比較期間、根拠ページをセットで記録する
+- 市場コンセンサス、現在株価、バリュエーションを評価対象にしない
+- 同じ抽出本文、モデル、設定で変更前後を比較する
+- APIキー、非公開資料、個人情報をコミットしない
+
+## 実PDFコーパス
+
+合成フィクスチャは分類・計算・スキーマの回帰確認に使用します。LLMの読み取り精度を評価する実PDFコーパスは、計画書の条件に従い、公開TDnet資料36件以上を別途登録します。PDFを直接コミットできない場合は、出典URL、取得日、タイトル、ページ単位抽出テキスト、期待値JSONを保存します。
+
+## ローカルLLM評価
+
+この機能は評価用CLIだけで使用し、Chrome拡張の実行環境には影響しません。
+
+```bash
+cp .env.example .env
+# .envへAPIキー、プロバイダー、モデル、対象ケースIDを設定
+
+# 取得済みPDFからページ境界付きテキストを生成
+npm run test:real-pdf -- /tmp/tdnet-real-eval
+
+# 既存のパス1抽出→検証→必要時1回修復→パス2整形を実行
+npm run test:real-llm
+```
+
+APIキーは`TDNET_DIGEST_API_KEY`を優先する。未設定の場合は、選択したプロバイダーに応じて`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENROUTER_API_KEY`、`GOOGLE_API_KEY`も利用できる。
+
+- `.env`はGit管理外
+- `VITE_`接頭辞は使用せず、拡張機能のバンドルへ公開しない
+- 評価対象は誤課金を避けるため1回につき1件
+- 結果はGit管理外の`evaluation/results/local/`へ保存
+- APIキーの値はログ・結果ファイルへ出力しない

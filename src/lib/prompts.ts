@@ -27,18 +27,28 @@ const PROMPT_CONFIG = {
   MAX_TOPICS: {
     earnings: 8,
     earningsRevision: 4,
+    shareholderBenefit: 4,
     dividend: 4,
-    ma: 4,
     shareRepurchase: 4,
+    stockSplit: 4,
+    capitalPolicy: 4,
+    ma: 4,
+    businessUpdate: 4,
+    governance: 4,
     other: 4,
   },
   /** 全体要約の推奨スタイル */
   SUMMARY_STYLE: {
-    earnings: '簡潔な文章体（2-5段落程度）',
+    earnings: '簡潔な文章体（1-3文）',
     earningsRevision: '簡潔な文章体（1-3段落程度）',
+    shareholderBenefit: '簡潔な文章体（1-3段落程度）',
     dividend: '簡潔な文章体（1-3段落程度）',
-    ma: '簡潔な文章体（1-3段落程度）',
     shareRepurchase: '簡潔な文章体（1-3段落程度）',
+    stockSplit: '簡潔な文章体（1-3段落程度）',
+    capitalPolicy: '簡潔な文章体（1-3段落程度）',
+    ma: '簡潔な文章体（1-3段落程度）',
+    businessUpdate: '簡潔な文章体（1-3段落程度）',
+    governance: '簡潔な文章体（1-3段落程度）',
     other: '簡潔な文章体（1-3段落程度）',
   },
 } as const;
@@ -64,6 +74,9 @@ const COMMON_RULES = `
 6. 前年同期比/前期比の増減率が本文にある場合は必ず記載し、省略しないでください
 7. 勘定科目名は本文の表記をそのまま使用してください（例: 売上収益、事業利益、経常収益など）。赤字の場合は金額を「△」で始め、括弧内に「赤字」または「損失」を付記してください
 8. 日付は「YYYY年M月D日」形式で統一してください（例: 2026年1月14日、元号表記がある場合も西暦に変換）
+9. [PDF_PAGE:N]はPDFのページ境界です。根拠ページを求める項目は、このNを使用してください
+10. PDFにない市場コンセンサス、現在株価、バリュエーション、織り込み度を推測しないでください
+11. 「サプライズ」は会社計画比、従来予想比、前年同期比の根拠を明示できる場合だけ使用してください
 
 【数値表記ルール】
 - 金額単位は本文の表記をそのまま使用してください（同一セクション内で統一）
@@ -92,22 +105,32 @@ const COMMON_TOPICS_RULES = `
   - 先行指標（受注残、パイプライン、月次動向、新規出店等）
   - 前回開示からの変化点やサプライズ要素`;
 
+const NON_EARNINGS_INVESTMENT_RULES = `
+【投資判断の注意事項】
+- 短期は開示直後〜数週間、中期は6か月〜1年、長期は1年以上の観点とします
+- 各時間軸の方向性はPDFに記載された事実だけを根拠に判定してください
+- 好材料とリスクは根拠があるものだけ各最大2点とし、存在しない側を捏造しないでください
+- 次回確認点は最大3点とし、将来を断定せず確認すべき事実・指標として記載してください
+- 市場コンセンサス、現在株価、バリュエーション、織り込み度は推測しないでください`;
+
 /**
  * 決算評価の判定ルールを生成（出力形式の前に配置する内部ルール）
  *
  * 重要: これは出力フォーマットではなく、LLMへの判定指示。
  * 基準表自体は出力に含めないよう明示する。
  *
- * 評価は経常利益に一本化し、実績/予想の2グループで構成する。
+ * 評価は会計基準に応じた利益指標に一本化し、実績/予想の2グループで構成する。
  */
 function buildRatingRules(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   const progressOrLanding = isQuarterly
-    ? `■ 進捗: 経常利益の進捗率 − 標準進捗率の差で判定
+    ? `■ 進捗: 実績と通期予想が黒字なら${evaluationMetric}の進捗率、両方赤字なら損失消化率で判定
 ★5: +10pt以上 / ★4: +5〜+10pt / ★3: ±5pt / ★2: △5〜△10pt / ★1: △10pt超 / 通期予想が「未定」と明記→「★—」
+※損失消化率は「当期損失の絶対値 ÷ 通期予想損失の絶対値 × 100」で算出し、標準より低いほど高評価とする
 ※レンジ予想の場合は中央値で進捗率を算出して判定すること（レンジ予想は「未定」ではない）`
-    : `■ 着地: 経常利益の実績 vs 会社予想の乖離率で判定
+    : `■ 着地: ${evaluationMetric}の実績 vs 会社予想の乖離率で判定
 ★5: +15%以上or黒字転換 / ★4: +5〜+15% / ★3: ±5% / ★2: △5〜△15% / ★1: △15%未満or赤字転落 / 会社予想なし→「—（取得不能）」`;
 
   const forecastRevision = isQuarterly
@@ -119,31 +142,33 @@ function buildRatingRules(ctx: EarningsContext): string {
   return `
 【内部判定ルール】以下は判定用の基準です。出力には判定結果（★の数と根拠数値）のみを記載してください。基準表は出力しないでください。
 
-■ 対前年: 経常利益の増減率で判定（実績・予想共通）
+■ 対前年: ${evaluationMetric}の増減率で判定（実績・予想共通）
 ★5: +30%以上or黒字転換 / ★4: +10〜+30% / ★3: +3〜+10% / ★2: △3〜+3% / ★1: △3%未満or赤字転落
+※当期・前年がともに赤字なら「（前年損失の絶対値 − 当期損失の絶対値）÷ 前年損失の絶対値」で損失改善率を算出し、赤字縮小はプラス、赤字拡大はマイナスとして同じ★基準で判定する
 ※前年同期比/前期比の増減率が本文に記載されていない場合（初連結化、新規上場、会計基準変更等）は「★—（前年同期比なし）」
 
 ${progressOrLanding}
 
 ${forecastRevision}
 
-※数値が本文にない場合は「—（取得不能）」、赤字で増減率が無意味な場合は「★—（赤字のため評価対象外）」
+※数値が本文にない場合は「—（取得不能）」
 ※必ず本文の数値に基づいて判断し、印象で評価しないこと`;
 }
 
 /**
  * 決算評価の出力テンプレート（出力形式の中に配置）
  *
- * 経常利益ベースの【実績】【通期予想/来期予想】2グループ構造。
+ * 会計基準別の利益指標を使う【実績】【通期予想/来期予想】2グループ構造。
  */
 function buildEvaluationTemplate(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
   const actualComparisonLabel = isQuarterly ? '前年同期比' : '前期比';
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   if (isQuarterly) {
     const standardRate = getStandardProgressRate(ctx.period);
     return `
-## 決算評価（経常利益ベース）
+## 決算評価（${evaluationMetric}ベース）
 【実績】
 - 対前年:  ★★★★☆（${actualComparisonLabel}+XX.X%）  ※増減率が本文にない場合は「★—（前年同期比なし）」
 - 進捗:   ★★★★☆（進捗率XX.X% / 標準${standardRate}%）  ※レンジ予想なら中央値で算出。通期予想が「未定」明記の場合のみ「★—」
@@ -154,7 +179,7 @@ function buildEvaluationTemplate(ctx: EarningsContext): string {
   }
 
   return `
-## 決算評価（経常利益ベース）
+## 決算評価（${evaluationMetric}ベース）
 【実績】
 - 対前年:  ★★★★☆（${actualComparisonLabel}+XX.X%）
 - 着地:   ★★★★★（対会社予想+XX.X%）
@@ -181,6 +206,8 @@ function buildEarningsPrompt(ctx: EarningsContext): string {
   const progressSection = isQuarterly ? buildProgressSection(ctx) : '';
   const forecastSection = buildForecastSection(ctx);
   const revisionAndDividendSection = buildRevisionAndDividendSection();
+  const earningsQualitySection = buildEarningsQualitySection();
+  const investmentViewSection = buildInvestmentViewSection();
   const topicsSection = buildTopicsSection();
 
   return [
@@ -190,12 +217,14 @@ function buildEarningsPrompt(ctx: EarningsContext): string {
     buildRatingRules(ctx),
     buildEarningsSpecificRules(ctx),
     `\n--- 出力形式 ---`,
-    buildEvaluationTemplate(ctx),
     summarySection,
+    buildEvaluationTemplate(ctx),
     performanceSection,
     progressSection,
     forecastSection,
     revisionAndDividendSection,
+    earningsQualitySection,
+    investmentViewSection,
     topicsSection,
     `\n--- 出力形式ここまで ---`,
   ]
@@ -233,13 +262,10 @@ function buildAccountingNote(ctx: EarningsContext): string {
   }
 }
 
-function buildPerformanceSection(
-  comparisonLabel: string,
-  periodLabel: string
-): string {
+function buildPerformanceSection(comparisonLabel: string, periodLabel: string): string {
   return `
 ## 業績サマリー（${periodLabel}）
-- {勘定科目}: {金額}（${comparisonLabel}{増減率}）  ※増減率が本文にない場合は括弧ごと省略し「- {勘定科目}: {金額}」のみ
+- {勘定科目}: {金額}（${comparisonLabel}{増減率}） [p.{根拠ページ}]  ※増減率が本文にない場合は括弧ごと省略
 - ...（本文に記載されている主要な勘定科目をすべて記載）`;
 }
 
@@ -264,10 +290,11 @@ function getStandardProgressRate(period: EarningsPeriod): number {
 
 function buildProgressSection(ctx: EarningsContext): string {
   const standardRate = getStandardProgressRate(ctx.period);
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   return `
 ## 進捗率（通期予想に対して）
-- 経常利益: {進捗率}（前年同期{前年進捗率}、標準進捗率${standardRate}%）
+- ${evaluationMetric}: {進捗率}（前年同期{前年進捗率}、標準進捗率${standardRate}%） [p.{根拠ページ}]
 ※進捗率は「当期実績 ÷ 通期予想 × 100」で必ず自分で計算すること
 ※通期予想がレンジ形式（例: 3,706〜4,097百万円）の場合は下限・上限それぞれで「XX.X%〜YY.Y%」形式で記載（レンジ予想は「未定」ではないので必ず算出すること）
 ※通期予想が「未定」と本文に明記されている場合のみセクションごと省略
@@ -278,12 +305,12 @@ function buildForecastSection(ctx: EarningsContext): string {
   if (ctx.period !== 'fullYear') {
     return `
 ## 通期予想
-- {勘定科目}: {金額}（前期比{増減率}）  ※増減率が本文にない場合は括弧ごと省略
+- {勘定科目}: {金額}（前期比{増減率}） [p.{根拠ページ}]  ※増減率が本文にない場合は括弧ごと省略
 - ...`;
   }
   return `
 ## 来期予想（本文に記載がある場合のみ）
-- {勘定科目}: {金額}（前期比{増減率}）  ※増減率が本文にない場合は括弧ごと省略
+- {勘定科目}: {金額}（前期比{増減率}） [p.{根拠ページ}]  ※増減率が本文にない場合は括弧ごと省略
 - ...`;
 }
 
@@ -304,6 +331,38 @@ function buildSummarySection(): string {
 {${PROMPT_CONFIG.SUMMARY_STYLE.earnings}で、業績の傾向、通期見通し、修正/配当の有無を含めて記載}`;
 }
 
+function buildEarningsQualitySection(): string {
+  return `
+## 利益の質
+- 営業利益率: {当期利益率}（前年同期{前年利益率}、前年差{増減pt}） [p.{根拠ページ}]
+- 本業利益: {営業利益・事業利益等から見た本業の方向} [p.{根拠ページ}]
+- 一時損益: {特別利益・特別損失等の内容と金額} [p.{根拠ページ}]
+- 営業CF: {営業CFの状況} [p.{根拠ページ}]
+- 財務: {自己資本比率・有利子負債・資金余力等} [p.{根拠ページ}]
+- 株主還元: {配当・自己株式取得等} [p.{根拠ページ}]
+※本文と計算根拠がある項目だけを出力してください`;
+}
+
+function buildInvestmentViewSection(): string {
+  return `
+## 時間軸別の見方
+- 短期: {強気/やや強気/中立/やや弱気/弱気/判断不能} — {根拠を最大2点} [p.{根拠ページ}]
+- 中期: {強気/やや強気/中立/やや弱気/弱気/判断不能} — {根拠を最大2点} [p.{根拠ページ}]
+- 長期: {強気/やや強気/中立/やや弱気/弱気/判断不能} — {根拠を最大2点} [p.{根拠ページ}]
+
+## 好材料
+- {最大2点。根拠がなければセクションごと省略} [p.{根拠ページ}]
+
+## リスク
+- {最大2点。根拠がなければセクションごと省略} [p.{根拠ページ}]
+
+## 次回確認点
+- {最大3点。将来予測ではなく確認すべき指標・事実} [p.{現在の根拠ページ}]
+
+## 評価理由
+{最大の加点要因と減点要因を一文で記載。点数は付けない}`;
+}
+
 function buildTopicsSection(): string {
   return `
 ## トピックス
@@ -312,19 +371,27 @@ function buildTopicsSection(): string {
 
 function buildEarningsSpecificRules(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
+  const evaluationMetric = getEvaluationMetricName(ctx);
   const progressRules = isQuarterly
     ? `
-- 進捗率は経常利益について「当期実績 ÷ 通期予想 × 100」で算出してください
+- 実績と通期予想が黒字なら、${evaluationMetric}について「当期実績 ÷ 通期予想 × 100」で進捗率を算出してください
+- 実績と通期予想が赤字なら「当期損失の絶対値 ÷ 通期予想損失の絶対値 × 100」で損失消化率を算出してください
 - 通期予想がレンジ形式の場合は下限・上限それぞれで算出し「XX.X%〜YY.Y%」形式で記載してください
 - 1行形式で記載し、計算式・計算過程・説明文は書かないでください
 - 前年同期の進捗率が本文から得られない場合は省略可
-- 通期予想が「未定」と明記されている場合、またはゼロ・赤字予想の場合のみ「算出不可（理由）」と記載してください`
+- 通期予想が「未定」と明記されている場合、ゼロ予想、または実績と予想の符号が異なる場合のみ「算出不可（理由）」と記載してください`
     : '';
 
   return `
 【決算短信の注意事項】
 - ★評価は★（黒星）と☆（白星）を並べて5段階で表記してください（例: ★★★★☆=4点、★★☆☆☆=2点）。数字やMarkdown記法（**太字**等）は使わないでください。括弧は全角（）を使用してください
 - 黒字転換/赤字転落/赤字拡大/赤字縮小は本文に明記がある場合のみ記載し、増減率の後ろに補足として付記してください${progressRules}
+- 営業利益率または事業利益率は、本文に利益と売上の計算根拠がある場合だけ「利益 ÷ 売上 × 100」で算出してください
+- 純利益が特別利益に依存する場合は利益の質を下げて記載しますが、本業の増益は別に評価してください
+- 特別損失は内容、金額、継続性を分けてください。M&A、合併、事業施策の説明だけを一時損益として扱わないでください
+- 好業績でも通期予想が据え置かれる場合、据え置きだけを理由に大幅なマイナス評価をしないでください
+- 進捗率の標準値は参考基準です。強い季節性や前年同期進捗が本文にある場合は、それらも併記してください
+- 好材料とリスクは根拠があるものだけ各最大2点とし、存在しない側を捏造しないでください
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.earnings}点までにしてください
 ${COMMON_TOPICS_RULES}`;
 }
@@ -337,6 +404,7 @@ function buildEarningsRevisionPrompt(): string {
 
 【業績修正の注意事項】
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.earningsRevision}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -355,6 +423,8 @@ ${COMMON_TOPICS_RULES}
 - 修正内容: {中間/期末/年間の 旧予想→新予想を記載}
 - 修正理由: {配当修正の理由を1-2行で簡潔に}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
@@ -369,6 +439,7 @@ function buildDividendPrompt(): string {
 【配当の注意事項】
 - 増配/減配/据置は本文に明記されている場合のみ記載してください
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.dividend}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -386,6 +457,8 @@ ${COMMON_TOPICS_RULES}
 ## 配当方針
 {配当方針や株主還元方針を1-2行で簡潔に}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
@@ -399,6 +472,7 @@ function buildMAPrompt(): string {
 
 【M&Aの注意事項】
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.ma}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -422,6 +496,8 @@ ${COMMON_TOPICS_RULES}
 - 利益への影響: {金額または説明}
 - 連結範囲の変更: {変更内容}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
 --- 出力形式ここまで ---`;
@@ -435,6 +511,7 @@ function buildShareRepurchasePrompt(): string {
 
 【自己株式取得の注意事項】
 - トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.shareRepurchase}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
 ${COMMON_TOPICS_RULES}
 
 --- 出力形式 ---
@@ -451,8 +528,185 @@ ${COMMON_TOPICS_RULES}
 ## 目的
 {取得の目的を1-2行で簡潔に}
 
+${buildInvestmentViewSection()}
+
 ## トピックス
 - {全体要約で触れていない具体的な数値・事実を簡潔に記載}
+--- 出力形式ここまで ---`;
+}
+
+function buildShareholderBenefitPrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【株主優待の注意事項】
+- 新設/拡充/縮小/廃止/変更を、変更前後の内容と対象株主を比較して判定してください
+- 必要保有株数、基準日、開始日、継続保有条件、会社負担は本文にある場合のみ記載してください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.shareholderBenefit}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.shareholderBenefit}で、変更区分と対象範囲を含めて記載}
+
+## 優待変更
+- 変更区分: {新設/拡充/縮小/廃止/変更/判断不能}
+- 変更前: {変更前の優待内容}
+- 変更後: {変更後の優待内容}
+- 対象株主: {対象株主}
+- 必要保有株数: {株数}
+- 基準日: {日付}
+- 開始日: {日付}
+- 継続保有条件: {期間等}
+- 会社負担・業績影響: {本文記載の内容}
+
+## 目的
+{制度変更の目的}
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildStockSplitPrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【株式分割・併合の注意事項】
+- 分割/併合比率、基準日、効力発生日、実施前後の株式数を正確に記載してください
+- 1株配当が変わっても実質配当総額が維持される場合は区別してください
+- 株式分割それ自体は企業価値や株主価値を創出するものと断定しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.stockSplit}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.stockSplit}で、比率、日程、実質的な株主価値の変更有無を含めて記載}
+
+## 分割・併合内容
+- 区分: {分割/併合/判断不能}
+- 比率: {比率}
+- 基準日: {日付}
+- 効力発生日: {日付}
+- 実施前株式数: {株式数}
+- 実施後株式数: {株式数}
+- 発行可能株式総数: {変更内容}
+- 配当への影響: {1株配当と実質配当への影響}
+
+## 目的
+{実施目的}
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildCapitalPolicyPrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【資本政策の注意事項】
+- 調達方法、割当先、調達額、発行数、希薄化率、発行・行使価額、払込期日を区別してください
+- 資金使途と業務提携の内容を混同せず、本文の根拠ページを付けてください
+- 希薄化率や調達額が本文にない場合は推測・独自計算しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.capitalPolicy}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.capitalPolicy}で、調達・提携内容、希薄化、資金使途を含めて記載}
+
+## 取引内容
+- 方法: {第三者割当/新株予約権/資本業務提携等}
+- 割当先・提携先: {名称}
+- 調達額: {金額}
+- 発行株式・新株予約権: {数量}
+- 希薄化率: {パーセント}
+- 発行・行使価額: {金額}
+- 払込期日: {日付}
+
+## 資金使途
+- {用途と金額} [p.{根拠ページ}]
+
+## 業務提携
+- {提携内容} [p.{根拠ページ}]
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildBusinessUpdatePrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【月次・事業進捗の注意事項】
+- 対象期間、KPIの値、前年比、既存店/全店等の対象範囲を一組として記載してください
+- 増減要因と天候・休日数等の一過性要因を区別してください
+- 単月や短期間の実績だけから通期業績を外挿・断定しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.businessUpdate}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.businessUpdate}で、主要KPIの方向と要因を含めて記載}
+
+## 対象期間
+{対象月・対象期間}
+
+## 主要KPI
+- {KPI名}: {実績値}（{前年同月比/前年同期比}、{対象範囲}） [p.{根拠ページ}]
+
+## 増減要因
+- {要因} [p.{根拠ページ}]
+
+## 一過性要因
+- {天候・休日数等} [p.{根拠ページ}]
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な数値・事実}
+--- 出力形式ここまで ---`;
+}
+
+function buildGovernancePrompt(): string {
+  return `${ROLE_DEFINITION}${COMMON_RULES}
+
+【ガバナンスの注意事項】
+- 人物名、旧役職、新役職、就任・退任日を混同せず記載してください
+- 体制変更と内部統制・再発防止策を区別してください
+- 本文に記載がない業績・株価への影響を推測しないでください
+- トピックスは最大${PROMPT_CONFIG.MAX_TOPICS.governance}点までにしてください
+${NON_EARNINGS_INVESTMENT_RULES}
+${COMMON_TOPICS_RULES}
+
+--- 出力形式 ---
+## 全体要約
+{${PROMPT_CONFIG.SUMMARY_STYLE.governance}で、変更内容と施行日を含めて記載}
+
+## 変更区分
+{役員異動/体制変更/内部統制/再発防止等}
+
+## 人事
+- {氏名}: {旧役職} → {新役職}（{就任・退任日}）
+
+## ガバナンス体制
+- {変更内容} [p.{根拠ページ}]
+
+## 内部統制・再発防止
+- {施策} [p.{根拠ページ}]
+
+${buildInvestmentViewSection()}
+
+## トピックス
+- {全体要約で触れていない具体的な事実}
 --- 出力形式ここまで ---`;
 }
 
@@ -493,9 +747,14 @@ const PROMPTS: Record<DocumentType, string> = {
     isConsolidated: true,
   }),
   earningsRevision: buildEarningsRevisionPrompt(),
+  shareholderBenefit: buildShareholderBenefitPrompt(),
   dividend: buildDividendPrompt(),
-  ma: buildMAPrompt(),
   shareRepurchase: buildShareRepurchasePrompt(),
+  stockSplit: buildStockSplitPrompt(),
+  capitalPolicy: buildCapitalPolicyPrompt(),
+  ma: buildMAPrompt(),
+  businessUpdate: buildBusinessUpdatePrompt(),
+  governance: buildGovernancePrompt(),
   other: buildOtherPrompt(),
 };
 
@@ -555,7 +814,10 @@ const EXTRACTION_RULES = `
 9. 増減率は小数点第1位まで記載してください（例: +12.3%、△5.0%）
 10. 該当情報がない項目はnullを設定してください（空文字""ではなくnull）
 11. 配列フィールドで該当情報がない場合は空配列[]を設定してください
-12. items配列内のchangeフィールド: 増減率が本文にない場合はnullを設定してください（"null"という文字列ではなくJSON null値）`;
+12. items配列内のchangeフィールド: 増減率が本文にない場合はnullを設定してください（"null"という文字列ではなくJSON null値）
+13. [PDF_PAGE:N]はPDFのページ境界です。根拠ページにはNを整数で設定し、特定不能な場合はnullにしてください
+14. PDFにない市場コンセンサス、現在株価、バリュエーション、織り込み度を推測しないでください
+15. 好材料・リスクに根拠がない場合は空配列にし、項目数を満たすための内容を捏造しないでください`;
 
 const EXTRACTION_TOPICS_RULES = `
 【トピックス抽出の重点事項】
@@ -575,13 +837,15 @@ function buildEarningsExtractionNote(ctx: EarningsContext): string {
   const isQuarterly = ctx.period !== 'fullYear';
   const accountingNote = buildAccountingNote(ctx);
   const ratingRules = getEarningsRatingRulesText(ctx);
+  const evaluationMetric = getEvaluationMetricName(ctx);
 
   const progressNote = isQuarterly
     ? `
 【進捗率について】
-- 進捗率は経常利益について「当期実績 ÷ 通期予想 × 100」で算出してください
+- 実績と通期予想が黒字なら、${evaluationMetric}について「当期実績 ÷ 通期予想 × 100」で進捗率を算出してください
+- 実績と通期予想が赤字なら「当期損失の絶対値 ÷ 通期予想損失の絶対値 × 100」で損失消化率を算出してください
 - 通期予想がレンジ形式（例: 3,706〜4,097百万円）の場合は、下限と上限それぞれで進捗率を算出し「XX.X%〜YY.Y%」形式で記載してください
-- 通期予想が「未定」と明記されている場合、またはゼロ・赤字予想の場合のみ「算出不可（理由）」と記載してください
+- 通期予想が「未定」と明記されている場合、ゼロ予想、または実績と予想の符号が異なる場合のみ「算出不可（理由）」と記載してください
 - 通期予想が数値として存在する場合（レンジ含む）は必ず算出してください`
     : '';
 
@@ -591,7 +855,52 @@ function buildEarningsExtractionNote(ctx: EarningsContext): string {
 以下の基準に従って★評価を判定してください。
 ★は★（黒星）と☆（白星）を並べて5段階で表記してください（例: ★★★★☆=4点、★★☆☆☆=2点）。
 括弧は全角（）を使用してください。
-${ratingRules}${progressNote}`;
+${ratingRules}${progressNote}
+
+【利益の質と時間軸別評価】
+- 日本基準では経常利益、IFRS・米国基準では税引前利益を評価対象とし、実績と通期予想のitemsへ必ず含めてください
+- performance.itemsのpreviousAmountには、同じ表または本文にある前年同期・前期の比較金額を入れてください。増減率が「－」でも、比較金額は省略しないでください
+- businessPl.itemsには、売上高/売上収益、売上総利益/粗利、営業利益/事業利益を本文にある範囲で必ず含め、同一勘定科目を当期と前年で比較できるようにしてください
+- 同じ業績項目が複数ページにある場合は、百万円単位のサマリーより千円単位の財務諸表など、最も精密な金額とそのページを優先してください
+- 当期と比較対象の利益・損失の符号が変わる場合は、黒字転換または赤字転落として判定してください
+- 営業利益率または事業利益率は、本文に利益と売上の計算根拠がある場合だけ「利益 ÷ 売上 × 100」で算出してください
+- 純利益が特別利益に依存する場合は利益の質を下げますが、本業利益の改善は別に評価してください
+- oneOffItemsには実際に損益へ計上された利益・損失・費用だけを入れ、M&A、合併、事業施策の説明だけを入れないでください
+- 営業CFは会社固有の言い回しを意味として解釈し、数値報告、未記載、未作成、不明を区別してください。単語の完全一致ではなく根拠文全体で判定してください
+- 「配当の状況」の表は全年度行を確認し、実績行と「（予想）」行を省略せずdividend.periodsへ別々に入れてください。「（予想）」行が1行でもあればforecastAvailabilityはreportedとし、forecastのperiodを必ず含めてください
+- 配当表は年度ラベル、実績/予想、年間配当、比較対象を組にして抽出し、当期の配当修正と来期配当予想を混同しないでください
+- 株式分割・併合で1株配当の比較基準が変わる場合、表の生値を直接増配・減配判定せず、資料に調整根拠があればcomparisonAnnualを調整後金額、comparisonBasisをsplitAdjustedとしてください。根拠不足ならassessmentとcomparisonBasisをunknownにし、interpretationで比較不能の理由を説明してください
+- 株式施策は配当、自己株式取得・消却、優待、分割・併合等を分類し、会社が記載した目的と根拠から株主還元か資本施策かを判断してください
+- 営業CF、自己資本、有利子負債、配当、株式施策は本文にある情報だけを抽出し、意味分類には根拠原文と確信度を付けてください
+- 表現が曖昧な場合は推測で埋めず、status、assessment、returnAssessmentをunknownにしてください
+- 通期予想の据え置きだけを理由に大幅なマイナス評価をしないでください
+- forecastRevisionは従来予想と今回予想を同じ利益指標で抽出してください。旧予想レンジがゼロをまたぐ場合や増減率が本文で「－」の場合、増減率を推測せず金額レンジの変化をinterpretationへ記載してください
+- 短期は開示直後〜数週間、中期は6か月〜1年、長期は1年以上の観点とします
+- 短期・中期・長期とも、PDFにある事実だけを根拠に方向性を判定してください
+- 市場コンセンサス、現在株価、バリュエーション、織り込み度は推測しないでください`;
+}
+
+function getEvaluationMetricName(ctx: EarningsContext): '経常利益' | '税引前利益' {
+  return ctx.accountingStandard === 'jpGaap' ? '経常利益' : '税引前利益';
+}
+
+function buildNonEarningsExtractionNote(documentType: DocumentType): string {
+  const specificRules: Partial<Record<DocumentType, string>> = {
+    shareholderBenefit:
+      '変更前後、対象株主、必要保有株数、基準日、開始日、継続保有条件を区別してください。',
+    stockSplit:
+      '分割・併合比率と日程を正確に抽出し、株式分割それ自体を企業価値の創出と評価しないでください。',
+    capitalPolicy:
+      '調達条件、希薄化、資金使途、業務提携を区別し、本文にない希薄化率を計算しないでください。',
+    businessUpdate:
+      'KPIごとに対象期間・比較値・対象範囲を保持し、短期実績から通期業績を外挿しないでください。',
+    governance:
+      '人事、体制変更、内部統制・再発防止を区別し、本文にない業績影響を推測しないでください。',
+  };
+
+  if (documentType === 'other') return '';
+
+  return `${NON_EARNINGS_INVESTMENT_RULES}\n${specificRules[documentType] ?? ''}`;
 }
 
 /**
@@ -612,7 +921,7 @@ export function getExtractionPrompt(
   const extraRules =
     documentType === 'earnings' && earningsContext
       ? buildEarningsExtractionNote(earningsContext)
-      : '';
+      : buildNonEarningsExtractionNote(documentType);
 
   const maxTopics =
     documentType === 'earnings'

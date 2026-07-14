@@ -18,7 +18,18 @@ import {
   checkExtractionQuality,
   type QualityCheckResult,
 } from '@/lib/section-detector';
-import type { SummaryMetadata, ExtractionMode } from '@/types/summaryMetadata';
+import {
+  cleanPageText,
+  selectExtractedPages,
+  serializePagesForAnalysis,
+  serializePagesForDetection,
+} from '@/lib/page-text';
+import type {
+  SummaryMetadata,
+  ExtractionMode,
+  ExtractedPage,
+  PdfExtractionResult,
+} from '@/types/summaryMetadata';
 
 console.log('[Offscreen] Offscreen Documentが起動しました');
 
@@ -49,7 +60,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
  * 品質ゲートを常に実行し、リトライ判定を正しく処理
  */
 async function extractSmartMode(
-  fullText: string,
+  allPages: ExtractedPage[],
   totalPages: number,
   documentType: DocumentType
 ): Promise<ExtractionResult> {
@@ -63,7 +74,8 @@ async function extractSmartMode(
     missingKeywords: [],
     matchRate: 0,
   };
-  let extractedText = '';
+  const detectionText = serializePagesForDetection(allPages);
+  let extractedPageData: ExtractedPage[] = [];
   let extractedPages: number[] = [];
   let sectionsUsed: string[] = [];
 
@@ -73,7 +85,7 @@ async function extractSmartMode(
     const params = getExtractionParams(documentType, retryCount);
 
     // セクション検出を試みる
-    const allSections = detectSections(fullText);
+    const allSections = detectSections(detectionText);
     console.log(`[Offscreen] セクション検出: ${allSections.length}個 (試行 ${retryCount + 1})`);
 
     if (allSections.length > 0) {
@@ -84,29 +96,27 @@ async function extractSmartMode(
       // 重要セクションが空の場合はページスコアリングに切り替え
       if (importantSections.length === 0) {
         console.log('[Offscreen] 重要セクション空 → ページスコアリングに切替');
-        const result = extractByPageScoring(fullText, totalPages, documentType, params);
-        extractedText = result.text;
-        extractedPages = result.metadata.extractedPages;
-        sectionsUsed = result.metadata.sectionsUsed ?? [];
+        extractedPages = selectPagesByScoring(detectionText, documentType, params);
+        sectionsUsed = [`topK=${params.topK} (スコアリング)`];
       } else {
-        // 重要セクションからテキストを抽出
-        extractedText = importantSections.map((s) => s.text).join('\n\n');
-        extractedPages = Array.from(
-          new Set(importantSections.map((s) => s.pageNumber))
-        ).sort((a, b) => a - b);
+        extractedPages = Array.from(new Set(importantSections.map((s) => s.pageNumber))).sort(
+          (a, b) => a - b
+        );
         sectionsUsed = importantSections.map((s) => s.heading || '（見出しなし）');
       }
     } else {
       // セクション検出失敗 → ページスコアリング
       console.log('[Offscreen] セクション検出失敗 → ページスコアリング');
-      const result = extractByPageScoring(fullText, totalPages, documentType, params);
-      extractedText = result.text;
-      extractedPages = result.metadata.extractedPages;
-      sectionsUsed = result.metadata.sectionsUsed ?? [];
+      extractedPages = selectPagesByScoring(detectionText, documentType, params);
+      sectionsUsed = [`topK=${params.topK} (スコアリング)`];
     }
 
+    extractedPageData = selectExtractedPages(allPages, extractedPages);
+    extractedPages = extractedPageData.map(({ pageNumber }) => pageNumber);
+    const qualityText = extractedPageData.map(({ text }) => text).join('\n\n');
+
     // 品質ゲートを常に実行（セクション検出の成否に関わらず）
-    qualityCheck = checkExtractionQuality(extractedText, documentType);
+    qualityCheck = checkExtractionQuality(qualityText, documentType);
     console.log(
       `[Offscreen] 品質チェック: ${qualityCheck.passed ? '合格' : '不合格'} (マッチ率: ${(qualityCheck.matchRate * 100).toFixed(0)}%)`
     );
@@ -124,10 +134,9 @@ async function extractSmartMode(
     }
   }
 
-  // テキストクリーニング
-  const cleanedText = cleanExtractedText(extractedText);
+  const analysisText = serializePagesForAnalysis(extractedPageData);
   console.log(
-    `[Offscreen] PDF抽出完了 (smartモード, ${extractedPages.length}/${totalPages}ページ, ${cleanedText.length}文字)`
+    `[Offscreen] PDF抽出完了 (smartモード, ${extractedPages.length}/${totalPages}ページ, ${analysisText.length}文字)`
   );
 
   // メタデータ作成
@@ -149,7 +158,8 @@ async function extractSmartMode(
   }
 
   return {
-    text: cleanedText,
+    text: analysisText,
+    pages: extractedPageData,
     metadata,
   };
 }
@@ -157,61 +167,17 @@ async function extractSmartMode(
 /**
  * ページスコアリングによる抽出
  */
-function extractByPageScoring(
+function selectPagesByScoring(
   fullText: string,
-  totalPages: number,
   documentType: DocumentType,
   params: { summaryPages: number; topK: number; neighbor: number }
-): ExtractionResult {
+): number[] {
   // ページスコアリングを実行
   const pageScores = scorePages(fullText, documentType);
   console.log(`[Offscreen] ページスコアリング: トップ${params.topK}ページを選択`);
 
   // topKページとその近傍ページを選択
-  const selectedPages = selectTopPages(
-    pageScores,
-    params.topK,
-    params.neighbor,
-    params.summaryPages
-  );
-
-  // 選択されたページのテキストを抽出
-  const lines = fullText.split('\n');
-  const extractedLines: string[] = [];
-  let currentPage = 0;
-
-  for (const line of lines) {
-    // ページ番号の検出（行が数字のみの場合）
-    if (/^\d+$/.test(line.trim())) {
-      const pageNum = parseInt(line.trim(), 10);
-      if (pageNum > currentPage) {
-        currentPage = pageNum;
-      }
-    }
-
-    // 選択されたページの場合、行を追加
-    if (selectedPages.includes(currentPage)) {
-      extractedLines.push(line);
-    }
-  }
-
-  const extractedText = extractedLines.join('\n');
-  const cleanedText = cleanExtractedText(extractedText);
-
-  console.log(
-    `[Offscreen] ページスコアリング完了 (${selectedPages.length}/${totalPages}ページ, ${cleanedText.length}文字)`
-  );
-
-  return {
-    text: cleanedText,
-    metadata: {
-      totalPages,
-      extractedPages: selectedPages,
-      sectionsUsed: [`topK=${params.topK} (スコアリング)`],
-      extractionMode: 'smart',
-      documentType,
-    },
-  };
+  return selectTopPages(pageScores, params.topK, params.neighbor, params.summaryPages);
 }
 
 /**
@@ -258,41 +224,6 @@ function groupTextItemsByY(items: Array<TextItem | TextMarkedContent>): string[]
 }
 
 /**
- * 抽出したテキストをクリーニング
- */
-function cleanExtractedText(text: string): string {
-  let cleaned = text;
-
-  // 1. 連続する空白を1つに
-  cleaned = cleaned.replace(/[ \t]+/g, ' ');
-
-  // 2. 連続する改行を最大2つに（段落区切りを維持）
-  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-
-  // 3. 行末の空白を削除
-  cleaned = cleaned.replace(/[ \t]+\n/g, '\n');
-
-  // 4. 全角スペースを半角スペースに統一
-  // eslint-disable-next-line no-irregular-whitespace
-  cleaned = cleaned.replace(/　/g, ' ');
-
-  // 5. 制御文字を除去（改行・タブは維持）
-  // eslint-disable-next-line no-control-regex
-  cleaned = cleaned.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
-
-  // 6. ページ番号を行限定で除去
-  // 行全体が数字のみの場合のみ削除（本文中の数値は保持）
-  cleaned = cleaned.replace(/^[-\s]*\d+[-\s]*$/gm, '');
-  cleaned = cleaned.replace(/^\d+\s*\/\s*\d+$/gm, '');
-  cleaned = cleaned.replace(/^ページ\s*\d+$/gm, '');
-
-  // 7. 先頭と末尾の空白を除去
-  cleaned = cleaned.trim();
-
-  return cleaned;
-}
-
-/**
  * メタデータ型定義
  */
 type ExtractionMetadata = SummaryMetadata;
@@ -300,10 +231,7 @@ type ExtractionMetadata = SummaryMetadata;
 /**
  * 抽出結果型定義
  */
-interface ExtractionResult {
-  text: string;
-  metadata: ExtractionMetadata;
-}
+type ExtractionResult = PdfExtractionResult;
 
 /**
  * PDFからテキストを抽出
@@ -338,7 +266,7 @@ async function extractTextFromPDF(
     const numPages = pdf.numPages;
     console.log(`[Offscreen] PDF抽出開始 (${numPages}ページ)`);
 
-    const textPages: string[] = [];
+    const pages: ExtractedPage[] = [];
 
     // 全ページからテキストを抽出
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
@@ -349,34 +277,35 @@ async function extractTextFromPDF(
         // Y座標で行をグループ化して改行を復元
         const lines = groupTextItemsByY(textContent.items);
 
-        // ページ番号を先頭に追加（セクション検出・ページスコアリングで使用）
-        const pageText = `${pageNum}\n${lines.join('\n')}`;
-
-        textPages.push(pageText);
+        pages.push({
+          pageNumber: pageNum,
+          text: cleanPageText(lines.join('\n'), pageNum),
+        });
 
         // メモリ解放
         page.cleanup();
       } catch (pageError) {
         console.error(`[Offscreen] ページ ${pageNum} の抽出エラー:`, pageError);
-        textPages.push(`[ページ ${pageNum} の抽出に失敗しました]`);
+        pages.push({
+          pageNumber: pageNum,
+          text: `[ページ ${pageNum} の抽出に失敗しました]`,
+        });
       }
     }
 
-    // 全ページのテキストを結合
-    const fullText = textPages.join('\n\n');
-
-    if (!fullText.trim()) {
+    if (!pages.some(({ text }) => text.trim())) {
       throw new Error('PDFからテキストを抽出できませんでした。画像PDFの可能性があります。');
     }
 
     // 抽出モード分岐
     if (extractionMode === 'full') {
       // fullモード: 全文返却
-      const cleanedText = cleanExtractedText(fullText);
-      console.log(`[Offscreen] PDF抽出完了 (fullモード, ${cleanedText.length}文字)`);
+      const analysisText = serializePagesForAnalysis(pages);
+      console.log(`[Offscreen] PDF抽出完了 (fullモード, ${analysisText.length}文字)`);
 
       return {
-        text: cleanedText,
+        text: analysisText,
+        pages,
         metadata: {
           totalPages: numPages,
           extractedPages: Array.from({ length: numPages }, (_, i) => i + 1),
@@ -387,7 +316,7 @@ async function extractTextFromPDF(
       };
     } else {
       // smartモード: セマンティック抽出
-      return await extractSmartMode(fullText, numPages, documentType);
+      return await extractSmartMode(pages, numPages, documentType);
     }
   } catch (error) {
     console.error('[Offscreen] PDF抽出エラー:', error);

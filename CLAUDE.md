@@ -22,6 +22,9 @@ npm run type-check
 # Lint
 npm run lint
 
+# テスト
+npm test
+
 # フォーマット
 npm run format
 ```
@@ -45,6 +48,7 @@ src/
 │   ├── types/
 │   │   └── summaryMetadata.ts   # 型のre-export
 │   └── utils/
+│       ├── markdownParser.ts     # Markdown→HTML変換（インラインスタイル・コード/リンク検証）
 │       ├── rowDataExtractor.ts  # テーブル行データ抽出
 │       ├── summaryHtmlBuilder.ts # 要約表示HTML生成
 │       └── tdnetDomHelper.ts    # TDnet固有DOM操作
@@ -56,10 +60,16 @@ src/
 │   └── Options.tsx              # 設定ページコンポーネント
 ├── lib/
 │   ├── document-type.ts         # 文書タイプ判別（決算短信/業績修正/配当/M&A等）
+│   ├── earnings-refinement.ts   # 決算評価・進捗率の決定論的補正と一時損益の精査
+│   ├── format-prompts.ts        # 2パス要約の整形用プロンプト
 │   ├── llm-client.ts            # 統一LLMクライアント（OpenAI/Anthropic互換API）
 │   ├── llm-providers.ts         # LLMプロバイダー・モデル定義
-│   ├── prompts.ts               # 文書タイプ別プロンプト（6種類）
-│   └── section-detector.ts      # セクション検出・ページスコアリング・品質ゲート
+│   ├── prompts.ts               # 文書タイプ別プロンプト（11種類）
+│   ├── section-detector.ts      # セクション検出・ページスコアリング・品質ゲート
+│   ├── structured-output.ts     # JSON検証・プロバイダー能力・1回修復指示
+│   ├── analysis-version.ts      # 分析仕様バージョン・キャッシュ指紋
+│   ├── scoring.ts               # 既定OFFの実験的スコア固定換算
+│   └── summary-schema.ts        # 2パス要約の情報抽出用JSONスキーマ
 ├── types/
 │   └── summaryMetadata.ts       # 共通型定義（ExtractionMode, SummaryMetadata等）
 └── index.css                    # Tailwind CSS（Popup/Optionsのみ）
@@ -76,6 +86,7 @@ src/
 
 - **Manifest**: `manifest.config.ts`（ルートディレクトリ）
   - TypeScriptで定義し、package.jsonからバージョンを取得
+  - 固定`key`で拡張機能IDを安定させ、更新・再配置時も`chrome.storage`を引き継ぐ
   - ビルド時に自動的にmanifest.jsonを生成
 
 - **エントリーポイント**:
@@ -101,6 +112,7 @@ src/
   - `hooks/useSummaryRow.ts`: 要約行のDOM挿入・削除
   - `utils/rowDataExtractor.ts`: テーブル行から会社名・タイトル・PDF URLを抽出
   - `utils/summaryHtmlBuilder.ts`: 要約結果・エラー・メタデータのHTML生成
+  - `utils/markdownParser.ts`: LLM出力のMarkdownをインラインスタイル付きHTMLへ変換し、コードとリンクを検証
   - `utils/tdnetDomHelper.ts`: ヘッダー列追加、セルクラス更新
 - **動作**:
   - 開示情報一覧ページのiframe内（`#main_list`）のテーブルを監視
@@ -108,7 +120,9 @@ src/
   - テーブルの各行（開示情報）の最後に要約ボタンを注入
   - ボタンクリック時に行データ（時刻、コード、会社名、表題、PDF URL）を抽出
   - 要約結果は同じ行のすぐ下に新しい行として挿入（colspanで全列を使用）
-  - メタデータ表示（抽出ページ数、抽出モード、品質警告）
+  - 要約結果をPDF URLと分析指紋（仕様版・プロバイダー・モデル・抽出方式・パス方式）単位で`chrome.storage.local`にキャッシュ
+  - キャッシュ済みボタンは表示/非表示を切り替え、再要約時はキャッシュを更新
+  - メタデータ表示（抽出ページ数、抽出モード、分析条件、品質警告）
   - smartモード時に全文再要約ボタンを表示
 - **通信**: `chrome.runtime.sendMessage`でBackground Scriptに要約リクエスト送信
 - **iframe再読み込み対応**:
@@ -131,21 +145,38 @@ src/
   - `src/lib/document-type.ts`で文書タイトルから文書タイプを自動判別
   - `src/lib/prompts.ts`で文書タイプ別プロンプトを構築
   - `src/lib/llm-client.ts`でLLM APIを呼び出し（OpenAI/Anthropic互換）
+  - デフォルトの2パス要約では、パス1でJSONスキーマに沿って情報抽出し、パス2で低temperature（0.3）の固定テンプレートへ整形
+  - パス1のJSONを実行時検証し、失敗時はPDFを再送せず1回修復。再失敗時は1パス要約へフォールバック
+  - 設定により従来の1パス要約も選択可能
   - APIエラーの詳細抽出（ネストされたエラーメッセージの再帰的取得）
 
 ### 共通ライブラリ (`src/lib/`)
 
-- **`document-type.ts`**: 文書タイトルから6種類の文書タイプを判別
-  - 決算短信、業績修正、配当予想修正、M&A・組織再編、自己株式取得、その他
+- **`document-type.ts`**: 文書タイトルから11種類の文書タイプを判別
+  - 決算短信、業績修正、株主優待、配当、自己株式取得、株式分割・併合、資本政策、M&A・組織再編、月次・事業進捗、ガバナンス、その他
 - **`llm-client.ts`**: 統一LLMクライアント
   - OpenAI互換API（OpenAI/Google/OpenRouter/カスタム）とAnthropic APIを統一的に呼び出し
   - `buildApiError()`: エラーレスポンスからの詳細メッセージ抽出
 - **`llm-providers.ts`**: LLMプロバイダー定義
   - OpenAI、Anthropic、Google、OpenRouter、カスタムの5種類
-  - 各プロバイダーのデフォルトURL、モデルリスト、APIキープレースホルダー
+  - 各プロバイダーのデフォルトURL、デフォルトモデル、モデルリスト
 - **`prompts.ts`**: 文書タイプ別プロンプト
-  - 6種類の文書タイプごとに最適化されたプロンプトを定義
-  - 捏造対策ルールを明記
+  - 11種類の文書タイプごとに最適化されたプロンプトを定義
+  - 1パス要約用プロンプトと、2パス要約の情報抽出用プロンプトを構築
+  - 根拠ページ、時間軸別評価、利益の質、捏造対策ルールを明記
+- **`format-prompts.ts`**: 2パス要約のパス2用プロンプト
+  - パス1の構造化データを文書タイプ別の固定テンプレートへ整形
+  - `null`の項目やセクションを表示しないルールを定義
+- **`summary-schema.ts`**: 2パス要約のパス1用JSONスキーマ
+  - 文書タイプと決算期に応じた抽出項目・決算評価ルールを定義
+- **`structured-output.ts`**: パス1のJSON検証と修復
+  - 必須項目、enum、件数上限、根拠ページ範囲を検証
+  - プロバイダー能力を過大評価せず、対応時だけJSON objectモードを使用
+- **`analysis-version.ts`**: 分析仕様バージョンとキャッシュ指紋
+  - プロンプト仕様や利用モデルが異なる結果を別キャッシュとして管理
+- **`scoring.ts`**: 実験的スコア
+  - 検証済みの短期・中期・長期スタンスを文書タイプ別の固定重みで換算
+  - LLMに点数を生成させず、既存の評価理由を根拠として表示。既定OFF
 - **`section-detector.ts`**: PDF抽出の知的フィルタリング
   - セクション検出（5種類の見出しパターン）
   - ページスコアリング（キーワード出現回数ベース）
@@ -161,7 +192,7 @@ src/
   - Viteが自動的にWorkerファイルをバンドル（ハッシュ化されたファイル名で最適化）
 - **抽出モード**:
   - **smartモード**: セクション検出→重要セクションフィルタ→品質ゲート→リトライ（最大2回、topK増加）
-  - **fullモード**: 全ページのテキストを返却
+  - **fullモード（デフォルト・推奨）**: 全ページのテキストを返却。低コストモデルを前提に抽出量より精度を優先
 - **テキスト抽出処理**:
   - Background Scriptから受信したArrayをUint8Arrayに変換
   - pdf.jsの`getDocument()`でPDFを読み込み
@@ -176,10 +207,14 @@ src/
   - LLMプロバイダー選択（OpenAI/Anthropic/Google/OpenRouter/カスタム）
   - APIキー入力（パスワードフィールド）
   - モデル選択（プロバイダー別プリセット or カスタム入力）
-  - 抽出モード選択（smartモード / fullモード）
+  - 抽出モード選択（デフォルトはfullモード、smartモードも選択可能）
+  - 要約モード選択（デフォルトは2パス、1パスも選択可能）
+  - 実験的スコア（デフォルトOFF、2パスのみ）
   - カスタムプロバイダーのURL入力
   - 保存済みモデルがリストにない場合の自動カスタムモード切り替え通知
-  - `chrome.storage.sync`に保存
+  - 設定をJSONファイルでエクスポート/インポート
+  - 要約キャッシュの一覧表示・個別削除・全削除
+  - 設定は`chrome.storage.sync`、要約キャッシュは`chrome.storage.local`に保存
 - **Popup** (`Popup.tsx`):
   - 拡張機能の有効/無効を切り替えるトグルスイッチ
   - API設定の状態表示（設定済み/未設定）
@@ -196,6 +231,7 @@ src/
 - **ビルド**: Vite 6 + @crxjs/vite-plugin + @vitejs/plugin-react
 - **Chrome拡張**: Manifest V3（Service Worker + Offscreen Document使用）
 - **PDF処理**: pdfjs-dist（Offscreen Documentで実行）
+- **Markdown処理**: marked（Content ScriptでLLM出力をHTMLへ変換）
 - **パスエイリアス**: `@/`は`./src/`を指す（vite.config.ts）
 - **アイコン**: `public/logo.png`（全サイズで使用）
 - **Node要件**: >=20.0.0
@@ -215,6 +251,11 @@ src/
   - Chrome拡張機能では`chrome.runtime.getURL()`で相対パスを絶対URLに変換
 
 - **セキュリティ**: この拡張機能は`https://www.release.tdnet.info/*`ドメインでのみ動作するように制限されている。他のドメインでの動作は不要。
+
+- **LLM出力のHTML化**:
+  - `markdownParser.ts`のカスタムレンダラーを経由し、Content Script向けのインラインスタイルを付与する
+  - コード、言語名、リンク属性はHTMLエスケープし、リンク先は`http:`/`https:`のみに制限する
+  - Markdown変換処理を変更する場合は、上記のエスケープとURLスキーム制限を維持する
 
 - **iframe内DOM操作**:
   - TDnetの一覧ページはiframe構造のため、`iframe.contentDocument`を経由してDOM操作を行う必要がある
