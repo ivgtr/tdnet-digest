@@ -88,11 +88,11 @@ ${
 
 ## 修正・配当
 - 業績予想の修正: {{revision}}
-{{dividend.periods を年度ごとに1行ずつ: - 配当（{fiscalYear}・{statusがactualなら実績、forecastなら予想}）: 中間{interim} / 期末{yearEnd} / 年間{annual}{{interpretationが空でない場合のみ: — {interpretation}}} [p.{page}] ※nullの内訳は省略}}
+{{dividend.periods を年度ごとに1行ずつ: - 配当（{fiscalYear}・{statusがactualなら実績、forecastなら予想}）: {displayText}{{interpretationが空でない場合のみ: — {interpretation}}} [p.{page}]}}
 - 当期配当予想の修正（{{dividend.currentRevision.fiscalYear}}）: {{dividend.currentRevision.before}}→{{dividend.currentRevision.after}} {{pageがあれば[p.N]}}
 
 ## 利益の質
-- 営業利益率: {{earningsQuality.operatingMargin.current}}（前年同期{{earningsQuality.operatingMargin.previous}}、前年差{{earningsQuality.operatingMargin.change}}） {{pageがあれば[p.N]}}
+- 営業利益率: {{earningsQuality.operatingMargin.current}}{{earningsQuality.operatingMargin.comparisonTextがnullでない場合のみ: （{comparisonText}）}} {{pageがあれば[p.N]}}
 - 本業利益: {{earningsQuality.coreEarnings.text}} {{pageがあれば[p.N]}}
 {{earningsQuality.oneOffItems を1行ずつ: - 一時損益: {text} [p.{page}]}}
 - 営業CF: {{earningsQuality.operatingCashFlow.interpretation}}{{earningsQuality.operatingCashFlow.amountがnullでなければ: （{amount}）}} {{pageがあれば[p.N]}}

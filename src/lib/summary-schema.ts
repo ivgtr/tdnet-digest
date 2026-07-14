@@ -70,6 +70,8 @@ export interface DividendPeriodAnalysis {
   evidenceText: string;
   page: number | null;
   confidence: SemanticConfidence;
+  /** パス1後にコード側で生成する欠損安全な表示文字列 */
+  displayText?: string;
 }
 
 export interface DividendRevisionAnalysis {
@@ -96,6 +98,8 @@ export interface EarningsQuality {
     previous: string | null;
     change: string | null;
     page: number | null;
+    /** パス1後にコード側で生成する比較表示。比較不能ならnull */
+    comparisonText?: string | null;
   } | null;
   coreEarnings: EvidenceFact | null;
   oneOffItems: EvidenceFact[];

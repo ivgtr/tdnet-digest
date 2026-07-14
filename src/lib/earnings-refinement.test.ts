@@ -185,6 +185,52 @@ describe('決算抽出の決定論的補正', () => {
     expect(refineEarningsExtraction(data, context).dividend?.periods[0].interpretation).toBe('');
   });
 
+  it('欠損した配当内訳の区切りを表示文字列へ残さない', () => {
+    const data = extraction();
+    data.dividend = {
+      forecastAvailability: 'reported',
+      periods: [
+        {
+          fiscalYear: '2027年5月期',
+          status: 'forecast',
+          interim: null,
+          yearEnd: '0.00円',
+          annual: '0.00円',
+          comparisonAnnual: '0.00円',
+          comparisonBasis: 'reported',
+          assessment: 'unchanged',
+          interpretation: '無配継続',
+          evidenceText: '配当の状況',
+          page: 1,
+          confidence: 'high',
+        },
+      ],
+      currentRevision: null,
+    };
+    const result = refineEarningsExtraction(data, context);
+    expect(result.dividend?.periods[0].displayText).toBe('期末0.00円 / 年間0.00円');
+    expect(result.dividend?.periods[0].displayText).not.toContain('中間');
+  });
+
+  it('営業利益率の比較値がなければ現在値だけを表示対象にする', () => {
+    const data = extraction();
+    data.earningsQuality.operatingMargin = {
+      current: '△21.9%',
+      previous: null,
+      change: null,
+      page: 1,
+    };
+    const result = refineEarningsExtraction(data, {
+      period: 'fullYear',
+      accountingStandard: 'jpGaap',
+      isConsolidated: true,
+    });
+    expect(result.earningsQuality.operatingMargin).toMatchObject({
+      current: '△21.9%',
+      comparisonText: null,
+    });
+  });
+
   it.each([
     ['キャッシュ・フロー計算書は作成していない', 'notPrepared'],
     ['当該情報は開示していない', 'notReported'],

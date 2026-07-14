@@ -61,6 +61,7 @@ export function refineEarningsExtraction(
           periods: extraction.dividend.periods.map((period) => ({
             ...period,
             interpretation: normalizeOptionalInterpretation(period.interpretation),
+            displayText: buildDividendPeriodDisplayText(period),
           })),
         }
       : null,
@@ -72,6 +73,15 @@ export function refineEarningsExtraction(
     progress,
     earningsQuality: {
       ...extraction.earningsQuality,
+      operatingMargin: extraction.earningsQuality.operatingMargin
+        ? {
+            ...extraction.earningsQuality.operatingMargin,
+            comparisonText: buildOperatingMarginComparison(
+              extraction.earningsQuality.operatingMargin,
+              context
+            ),
+          }
+        : null,
       oneOffItems: extraction.earningsQuality.oneOffItems.filter(isProfitAndLossItem),
       operatingCashFlow: refineOperatingCashFlow(extraction.earningsQuality.operatingCashFlow),
       capitalActions: extraction.earningsQuality.capitalActions.filter(
@@ -80,6 +90,29 @@ export function refineEarningsExtraction(
       ),
     },
   };
+}
+
+function buildDividendPeriodDisplayText(
+  period: NonNullable<EarningsExtraction['dividend']>['periods'][number]
+): string {
+  const details = [
+    period.interim ? `中間${period.interim}` : null,
+    period.yearEnd ? `期末${period.yearEnd}` : null,
+    period.annual ? `年間${period.annual}` : null,
+  ].filter((value): value is string => value !== null);
+  return details.length > 0 ? details.join(' / ') : '配当額の記載なし';
+}
+
+function buildOperatingMarginComparison(
+  margin: NonNullable<EarningsExtraction['earningsQuality']['operatingMargin']>,
+  context: EarningsContext
+): string | null {
+  const comparisonLabel = context.period === 'fullYear' ? '前期' : '前年同期';
+  const details = [
+    margin.previous ? `${comparisonLabel}${margin.previous}` : null,
+    margin.change ? `前年差${margin.change}` : null,
+  ].filter((value): value is string => value !== null);
+  return details.length > 0 ? details.join('、') : null;
 }
 
 function buildForecastRevisionEvaluation(

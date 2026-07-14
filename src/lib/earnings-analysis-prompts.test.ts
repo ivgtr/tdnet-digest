@@ -66,6 +66,9 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('当期配当予想の修正');
     expect(system).toContain('operatingCashFlow.interpretation');
     expect(system).toContain('capitalActions');
+    expect(system).toContain('{displayText}');
+    expect(system).toContain('operatingMargin.comparisonText');
+    expect(system).not.toContain('前年同期{{earningsQuality.operatingMargin.previous}}');
   });
 
   it('IFRSのパス2では税引前利益の表示名を使う', () => {
