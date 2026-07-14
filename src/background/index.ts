@@ -239,6 +239,7 @@ async function summarizeWithLLM(
         documentType,
         pdfText,
         earningsContext,
+        title,
         metadata,
         settings.experimentalScoring === true
       );
@@ -278,6 +279,7 @@ async function summarizeTwoPass(
   documentType: DocumentType,
   pdfText: string,
   earningsContext: ReturnType<typeof detectEarningsContext> | undefined,
+  documentTitle: string,
   metadata: SummaryMetadata,
   experimentalScoring: boolean
 ): Promise<{ summary: string; metadata: SummaryMetadata }> {
@@ -319,7 +321,11 @@ async function summarizeTwoPass(
 
   const extractionData =
     documentType === 'earnings' && earningsContext
-      ? refineEarningsExtraction(validation.data as EarningsExtraction, earningsContext)
+      ? refineEarningsExtraction(
+          validation.data as EarningsExtraction,
+          earningsContext,
+          documentTitle
+        )
       : validation.data;
 
   // パス2: フォーマット整形（低temperature）

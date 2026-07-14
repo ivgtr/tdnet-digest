@@ -87,6 +87,63 @@ describe('決算抽出の決定論的補正', () => {
     expect(result.evaluation?.forecast?.vsLastYear).toBe('★★☆☆☆（前期比+1.8%）');
   });
 
+  it('タイトルから非連結の業績期間ラベルを確定する', () => {
+    const data = extraction();
+    data.performance.periodLabel = '2026年5月期連結実績';
+    const result = refineEarningsExtraction(
+      data,
+      { period: 'fullYear', accountingStandard: 'jpGaap', isConsolidated: false },
+      '2026年5月期 決算短信〔日本基準〕（非連結）'
+    );
+    expect(result.performance.periodLabel).toBe('2026年5月期 実績');
+  });
+
+  it('来期配当予想と当期配当修正の時間軸を混同しない', () => {
+    const data = extraction();
+    data.dividend = {
+      periods: [
+        {
+          fiscalYear: '2026年5月期',
+          status: 'actual',
+          interim: '0円00銭',
+          yearEnd: '32円00銭',
+          annual: '32円00銭',
+          comparisonAnnual: '13円50銭',
+          assessment: 'increase',
+          evidenceText: '2026年5月期 32円00銭',
+          page: 1,
+          confidence: 'high',
+        },
+        {
+          fiscalYear: '2027年5月期',
+          status: 'forecast',
+          interim: '0円00銭',
+          yearEnd: '57円00銭',
+          annual: '57円00銭',
+          comparisonAnnual: '32円00銭',
+          assessment: 'increase',
+          evidenceText: '2027年5月期（予想）57円00銭',
+          page: 1,
+          confidence: 'high',
+        },
+      ],
+      currentRevision: {
+        fiscalYear: '2026年5月期',
+        before: '30円00銭',
+        after: '32円00銭',
+        reason: '増配',
+        page: 1,
+      },
+    };
+    const result = refineEarningsExtraction(data, {
+      period: 'fullYear',
+      accountingStandard: 'jpGaap',
+      isConsolidated: false,
+    });
+    expect(result.evaluation?.forecast?.revisionOrDividend).toBe('↑増配（32円→57円）');
+    expect(result.dividend?.currentRevision).toMatchObject({ before: '30円00銭', after: '32円00銭' });
+  });
+
   it('実績と通期予想から四半期進捗を再計算する', () => {
     const result = refineEarningsExtraction(extraction(), context);
     expect(result.progress?.ordinaryIncome).toBe('40.3%');

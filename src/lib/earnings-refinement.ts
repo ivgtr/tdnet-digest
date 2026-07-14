@@ -5,7 +5,8 @@ type FinancialItem = EarningsExtraction['performance']['items'][number];
 
 export function refineEarningsExtraction(
   extraction: EarningsExtraction,
-  context: EarningsContext
+  context: EarningsContext,
+  documentTitle?: string
 ): EarningsExtraction {
   const actualMetric = findEvaluationMetric(extraction.performance.items, context);
   const forecastMetric = extraction.forecast
@@ -24,6 +25,7 @@ export function refineEarningsExtraction(
       : buildProgress(actualMetric, forecastMetric, extraction.progress?.lastYearProgress);
 
   const previousEvaluation = extraction.evaluation;
+  const dividendEvaluation = buildDividendEvaluation(extraction);
   const evaluation = {
     actual: {
       vsLastYear: actualComparison,
@@ -37,13 +39,20 @@ export function refineEarningsExtraction(
     forecast: extraction.forecast
       ? {
           vsLastYear: forecastComparison,
-          revisionOrDividend: previousEvaluation?.forecast?.revisionOrDividend ?? null,
+          revisionOrDividend:
+            context.period === 'fullYear'
+              ? dividendEvaluation
+              : (previousEvaluation?.forecast?.revisionOrDividend ?? null),
         }
       : null,
   };
 
   return {
     ...extraction,
+    performance: {
+      ...extraction.performance,
+      periodLabel: buildPerformanceLabel(extraction.performance.periodLabel, context, documentTitle),
+    },
     businessPl: buildBusinessPl(
       [...(extraction.businessPl?.items ?? []), ...extraction.performance.items],
       context
@@ -55,6 +64,51 @@ export function refineEarningsExtraction(
       oneOffItems: extraction.earningsQuality.oneOffItems.filter(isProfitAndLossItem),
     },
   };
+}
+
+function buildPerformanceLabel(
+  llmLabel: string,
+  context: EarningsContext,
+  documentTitle?: string
+): string {
+  const fiscalYear = extractFiscalYearLabel(documentTitle) ?? extractFiscalYearLabel(llmLabel);
+  const period = {
+    q1: '第1四半期',
+    q2: '第2四半期',
+    q3: '第3四半期',
+    fullYear: '',
+  }[context.period];
+  const consolidation = context.isConsolidated ? '連結' : '';
+  return [fiscalYear, `${period}${consolidation}実績`].filter(Boolean).join(' ');
+}
+
+function extractFiscalYearLabel(value: string | undefined): string | null {
+  const match = value?.normalize('NFKC').match(/\d{4}年\s*\d{1,2}月期/);
+  return match ? match[0].replace(/\s+/g, '') : null;
+}
+
+function buildDividendEvaluation(extraction: EarningsExtraction): string | null {
+  const forecast = extraction.dividend?.periods.find((period) => period.status === 'forecast');
+  if (!forecast) return null;
+  const before = forecast.comparisonAnnual;
+  const after = forecast.annual;
+  if (!before || !after) return '—未定or記載なし';
+
+  const comparison = `${normalizeDividendAmount(before)}→${normalizeDividendAmount(after)}`;
+  switch (forecast.assessment) {
+    case 'increase':
+      return `↑増配（${comparison}）`;
+    case 'unchanged':
+      return `→据置（${comparison}）`;
+    case 'decrease':
+      return `↓減配（${comparison}）`;
+    case 'unknown':
+      return `—判定不能（${comparison}）`;
+  }
+}
+
+function normalizeDividendAmount(value: string): string {
+  return value.normalize('NFKC').replace(/(\d+)円00銭/g, '$1円');
 }
 
 function buildBusinessPl(

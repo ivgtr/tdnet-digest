@@ -59,6 +59,8 @@ describe('決算分析プロンプト', () => {
     expect(system).toContain('[p.{page}]');
     expect(system).toContain('## 評価理由');
     expect(system).toContain('## 事業P/L');
+    expect(system).toContain('dividend.periods');
+    expect(system).toContain('当期配当予想の修正');
   });
 
   it('IFRSのパス2では税引前利益の表示名を使う', () => {

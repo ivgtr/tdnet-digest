@@ -108,7 +108,7 @@ if (!validation.success || !validation.data) {
 
 const extractionData =
   item.expectedType === 'earnings' && earningsContext
-    ? refineEarningsExtraction(validation.data as EarningsExtraction, earningsContext)
+    ? refineEarningsExtraction(validation.data as EarningsExtraction, earningsContext, item.title)
     : validation.data;
 const formatPrompt = getFormatPrompt(item.expectedType, extractionData, earningsContext);
 const summary = await generateText(
