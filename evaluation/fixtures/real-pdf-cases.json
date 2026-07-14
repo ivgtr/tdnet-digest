@@ -1,0 +1,112 @@
+[
+  {
+    "id": "140120260709590576",
+    "publishedDate": "2026-07-14",
+    "code": "33870",
+    "company": "クリエイト・レストランツ・ホールディングス",
+    "title": "2027年２月期第１四半期決算短信〔ＩＦＲＳ〕（連結）",
+    "expectedType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120260709590576.pdf",
+    "requiredTerms": ["売上収益", "営業利益"]
+  },
+  {
+    "id": "140120260714593203",
+    "publishedDate": "2026-07-14",
+    "code": "62250",
+    "company": "エコム",
+    "title": "通期業績予想の修正に関するお知らせ",
+    "expectedType": "earningsRevision",
+    "url": "https://www.release.tdnet.info/inbs/140120260714593203.pdf",
+    "requiredTerms": ["通期業績予想", "前回発表予想"]
+  },
+  {
+    "id": "140120260714593388",
+    "publishedDate": "2026-07-14",
+    "code": "46680",
+    "company": "明光ネットワークジャパン",
+    "title": "株主優待制度の変更及び拡充に関するお知らせ",
+    "expectedType": "shareholderBenefit",
+    "url": "https://www.release.tdnet.info/inbs/140120260714593388.pdf",
+    "requiredTerms": ["株主優待", "継続保有"]
+  },
+  {
+    "id": "140120260714593367",
+    "publishedDate": "2026-07-14",
+    "code": "46680",
+    "company": "明光ネットワークジャパン",
+    "title": "2026年８月期剰余金の配当（増配）に関するお知らせ",
+    "expectedType": "dividend",
+    "url": "https://www.release.tdnet.info/inbs/140120260714593367.pdf",
+    "requiredTerms": ["増配", "１株当たり"]
+  },
+  {
+    "id": "140120260709590524",
+    "publishedDate": "2026-07-14",
+    "code": "93130",
+    "company": "丸八倉庫",
+    "title": "自己株式の取得及び自己株式立会外買付取引（ToSTNeT-3）による自己株式の買付けに関するお知らせ",
+    "expectedType": "shareRepurchase",
+    "url": "https://www.release.tdnet.info/inbs/140120260709590524.pdf",
+    "requiredTerms": ["自己株式", "取得価額"]
+  },
+  {
+    "id": "140120260612569757",
+    "publishedDate": "2026-06-25",
+    "code": "68630",
+    "company": "ニレコ",
+    "title": "株式分割及び株式分割に伴う定款の一部変更並びに配当予想の修正に関するお知らせ",
+    "expectedType": "stockSplit",
+    "url": "https://www.release.tdnet.info/inbs/140120260612569757.pdf",
+    "requiredTerms": ["株式分割", "３株の割合"]
+  },
+  {
+    "id": "140120260714592771",
+    "publishedDate": "2026-07-14",
+    "code": "34900",
+    "company": "アズ企画設計",
+    "title": "第三者割当による第７回及び第８回新株予約権（行使価額修正条項選択権付）並びに第９回新株予約権（行使価額固定型）の発行条件等の決定に関するお知らせ",
+    "expectedType": "capitalPolicy",
+    "url": "https://www.release.tdnet.info/inbs/140120260714592771.pdf",
+    "requiredTerms": ["新株予約権", "希薄化"]
+  },
+  {
+    "id": "140120260709590424",
+    "publishedDate": "2026-07-13",
+    "code": "551A0",
+    "company": "IZUMI",
+    "title": "株式会社富士設計の株式の取得（子会社化）に関するお知らせ",
+    "expectedType": "ma",
+    "url": "https://www.release.tdnet.info/inbs/140120260709590424.pdf",
+    "requiredTerms": ["富士設計", "取得価額"]
+  },
+  {
+    "id": "140120260714592844",
+    "publishedDate": "2026-07-14",
+    "code": "39790",
+    "company": "うるる",
+    "title": "2026年6月 月次IRレポート (NJSS月次情報含む)",
+    "expectedType": "businessUpdate",
+    "url": "https://www.release.tdnet.info/inbs/140120260714592844.pdf",
+    "requiredTerms": ["月次", "NJSS"]
+  },
+  {
+    "id": "140120260714592726",
+    "publishedDate": "2026-07-14",
+    "code": "39550",
+    "company": "イムラ",
+    "title": "人事異動に関するお知らせ",
+    "expectedType": "governance",
+    "url": "https://www.release.tdnet.info/inbs/140120260714592726.pdf",
+    "requiredTerms": ["人事異動", "執行役員"]
+  },
+  {
+    "id": "140120260714593268",
+    "publishedDate": "2026-07-14",
+    "code": "41930",
+    "company": "ファブリカホールディングス",
+    "title": "サイバー攻撃による不正アクセス及び情報漏洩等に関するお知らせとお詫び",
+    "expectedType": "other",
+    "url": "https://www.release.tdnet.info/inbs/140120260714593268.pdf",
+    "requiredTerms": ["不正アクセス", "情報漏洩"]
+  }
+]

@@ -5,8 +5,10 @@
 ## データの区分
 
 - `fixtures/classification-cases.json`: 文書タイトル分類と決算コンテキストの合成フィクスチャ
+- `fixtures/real-pdf-cases.json`: TDnet公式PDFの出典、期待分類、抽出必須語
 - `expected/`: 公開PDFから人手で作成する期待値JSON（今後追加）
 - `results/`: モデル、設定、実行日時を含む評価結果（APIキーは保存しない）
+- `scripts/check-real-pdfs.mjs`: ローカルに取得したPDFのページ抽出・境界・必須語チェック
 
 `classification-cases.json`の`baselineType`はPhase 0時点の実装結果、`targetType`は分類拡張後の期待値です。Phase 2で分類を拡張した後も、旧挙動との差分を追跡できるよう両方を残します。
 
