@@ -50,6 +50,7 @@ export interface CapitalActionAnalysis {
     | 'other';
   purpose: string | null;
   returnAssessment: 'shareholderReturn' | 'capitalAction' | 'unknown';
+  interpretation: string;
   reason: string;
   evidenceText: string;
   page: number | null;
@@ -404,7 +405,7 @@ function buildEarningsSchema(ctx: EarningsContext): string {
     "oneOffItems": [{ "text": "特別損益など一時要因（最大3点）", "page": 1 }],
     "operatingCashFlow": { "status": "reported/notReported/notPrepared/unknown", "amount": "営業CF金額 ※数値がなければnull", "direction": "inflow/outflow/unknown", "interpretation": "会社固有の表現を正規化した意味", "evidenceText": "判断根拠となる原文", "page": 4, "confidence": "high/medium/low" },
     "financialHealth": [{ "text": "自己資本・有利子負債・資金余力等（最大3点）", "page": 4 }],
-    "capitalActions": [{ "type": "dividend/shareRepurchase/shareCancellation/shareholderBenefit/stockSplit/stockConsolidation/lotSizeChange/other", "purpose": "資料に記載された目的 ※なければnull", "returnAssessment": "shareholderReturn/capitalAction/unknown", "reason": "分類理由", "evidenceText": "判断根拠となる原文", "page": 1, "confidence": "high/medium/low" }]
+    "capitalActions": [{ "type": "dividend/shareRepurchase/shareCancellation/shareholderBenefit/stockSplit/stockConsolidation/lotSizeChange/other", "purpose": "資料に記載された目的 ※なければnull", "returnAssessment": "shareholderReturn/capitalAction/unknown", "interpretation": "投資家向けに簡潔に正規化した施策内容", "reason": "分類理由", "evidenceText": "判断根拠となる原文", "page": 1, "confidence": "high/medium/low" }]
   },
   "investmentView": {
     "shortTerm": { "stance": "positive/slightlyPositive/neutral/slightlyNegative/negative/unknown", "rationale": [{ "text": "開示直後〜数週間の根拠（最大2点）", "page": 1 }] },

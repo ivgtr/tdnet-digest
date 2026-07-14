@@ -62,8 +62,27 @@ export function refineEarningsExtraction(
     earningsQuality: {
       ...extraction.earningsQuality,
       oneOffItems: extraction.earningsQuality.oneOffItems.filter(isProfitAndLossItem),
+      operatingCashFlow: refineOperatingCashFlow(extraction.earningsQuality.operatingCashFlow),
+      capitalActions: extraction.earningsQuality.capitalActions.filter(
+        (action) =>
+          action.returnAssessment === 'shareholderReturn' && action.confidence !== 'low'
+      ),
     },
   };
+}
+
+function refineOperatingCashFlow(
+  cashFlow: EarningsExtraction['earningsQuality']['operatingCashFlow']
+): EarningsExtraction['earningsQuality']['operatingCashFlow'] {
+  if (
+    !cashFlow ||
+    cashFlow.status !== 'reported' ||
+    !cashFlow.amount ||
+    cashFlow.confidence === 'low'
+  ) {
+    return null;
+  }
+  return cashFlow;
 }
 
 function buildPerformanceLabel(

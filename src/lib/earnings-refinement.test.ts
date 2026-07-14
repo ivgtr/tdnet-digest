@@ -144,6 +144,69 @@ describe('決算抽出の決定論的補正', () => {
     expect(result.dividend?.currentRevision).toMatchObject({ before: '30円00銭', after: '32円00銭' });
   });
 
+  it.each([
+    ['キャッシュ・フロー計算書は作成していない', 'notPrepared'],
+    ['当該情報は開示していない', 'notReported'],
+  ] as const)('営業CFの非報告表現「%s」を意味分類から非表示にする', (evidenceText, status) => {
+    const data = extraction();
+    data.earningsQuality.operatingCashFlow = {
+      status,
+      amount: null,
+      direction: 'unknown',
+      interpretation: '営業CFは確認できない',
+      evidenceText,
+      page: 7,
+      confidence: 'high',
+    };
+    expect(refineEarningsExtraction(data, context).earningsQuality.operatingCashFlow).toBeNull();
+  });
+
+  it('金額と根拠のある営業CFは会社固有の表現でも保持する', () => {
+    const data = extraction();
+    data.earningsQuality.operatingCashFlow = {
+      status: 'reported',
+      amount: '527,243千円',
+      direction: 'inflow',
+      interpretation: '営業活動による資金は増加',
+      evidenceText: '営業活動の結果得られた資金は527,243千円となりました',
+      page: 5,
+      confidence: 'high',
+    };
+    expect(refineEarningsExtraction(data, context).earningsQuality.operatingCashFlow).toMatchObject({
+      amount: '527,243千円',
+      direction: 'inflow',
+    });
+  });
+
+  it('LLMの意味分類に基づき株主還元だけを表示対象にする', () => {
+    const data = extraction();
+    data.earningsQuality.capitalActions = [
+      {
+        type: 'stockSplit',
+        purpose: '投資単位の引下げ',
+        returnAssessment: 'capitalAction',
+        interpretation: '1株を3株に分割',
+        reason: '金銭的還元を伴わない',
+        evidenceText: '普通株式1株につき3株の割合で株式分割を行う',
+        page: 1,
+        confidence: 'high',
+      },
+      {
+        type: 'dividend',
+        purpose: '利益還元',
+        returnAssessment: 'shareholderReturn',
+        interpretation: '年間配当を32円へ増額',
+        reason: '配当額の増加を伴う',
+        evidenceText: '期末配当金を30円から32円に変更予定',
+        page: 1,
+        confidence: 'high',
+      },
+    ];
+    expect(refineEarningsExtraction(data, context).earningsQuality.capitalActions).toEqual([
+      expect.objectContaining({ type: 'dividend', interpretation: '年間配当を32円へ増額' }),
+    ]);
+  });
+
   it('実績と通期予想から四半期進捗を再計算する', () => {
     const result = refineEarningsExtraction(extraction(), context);
     expect(result.progress?.ordinaryIncome).toBe('40.3%');

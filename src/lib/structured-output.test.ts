@@ -24,6 +24,25 @@ function validDividend(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
+function validEarnings(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    summary: '決算要約',
+    performance: { periodLabel: '通期実績', items: [] },
+    dividend: null,
+    earningsQuality: {
+      operatingMargin: null,
+      coreEarnings: null,
+      oneOffItems: [],
+      operatingCashFlow: null,
+      financialHealth: [],
+      capitalActions: [],
+    },
+    investmentView: validDividend().investmentView,
+    topics: [],
+    ...overrides,
+  };
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe('プロバイダー能力', () => {
@@ -99,5 +118,20 @@ describe('抽出JSON検証', () => {
     expect(messages[1].content).toContain('summaryがありません');
     expect(messages[1].content).toContain('{broken}');
     expect(messages[1].content).not.toContain('[PDF_PAGE:');
+  });
+
+  it('決算の意味分類に許可されていない値を拒否する', () => {
+    const value = validEarnings();
+    const quality = value.earningsQuality as Record<string, unknown>;
+    quality.operatingCashFlow = {
+      status: 'omittedMaybe',
+      amount: null,
+      confidence: 'certain',
+      page: 1,
+    };
+    const result = parseAndValidateExtraction(JSON.stringify(value), 'earnings', 2);
+    expect(result.success).toBe(false);
+    expect(result.errors.join(' ')).toContain('operatingCashFlow.status');
+    expect(result.errors.join(' ')).toContain('operatingCashFlow.confidence');
   });
 });

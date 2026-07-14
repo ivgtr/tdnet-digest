@@ -23,7 +23,7 @@ const INVESTMENT_STANCES = new Set<InvestmentStance>([
 ]);
 
 const REQUIRED_ROOT_FIELDS: Record<DocumentType, string[]> = {
-  earnings: ['summary', 'performance', 'investmentView', 'topics'],
+  earnings: ['summary', 'performance', 'dividend', 'earningsQuality', 'investmentView', 'topics'],
   earningsRevision: ['summary', 'revisionItems', 'investmentView', 'topics'],
   shareholderBenefit: ['summary', 'changeType', 'details', 'investmentView', 'topics'],
   dividend: ['summary', 'dividendDetails', 'investmentView', 'topics'],
@@ -72,6 +72,7 @@ export function parseAndValidateExtraction(
   if (documentType !== 'other') {
     validateInvestmentView(parsed.investmentView, errors);
   }
+  if (documentType === 'earnings') validateEarningsSemantics(parsed, errors);
   validateArrayLimits(parsed, documentType, errors);
   validatePageValues(parsed, totalPages, 'root', errors);
 
@@ -79,6 +80,73 @@ export function parseAndValidateExtraction(
 
   sanitizeArraysAndPages(parsed, totalPages);
   return { success: true, data: parsed as unknown as ExtractionResult, errors: [] };
+}
+
+function validateEarningsSemantics(value: Record<string, unknown>, errors: string[]): void {
+  const dividend = value.dividend;
+  if (dividend !== null) {
+    if (!isRecord(dividend) || !Array.isArray(dividend.periods)) {
+      errors.push('dividend.periods は配列である必要があります');
+    } else {
+      const statuses = new Set(['actual', 'forecast']);
+      const assessments = new Set(['increase', 'unchanged', 'decrease', 'unknown']);
+      dividend.periods.forEach((period, index) => {
+        if (!isRecord(period)) {
+          errors.push(`dividend.periods[${index}] はオブジェクトである必要があります`);
+          return;
+        }
+        if (!statuses.has(String(period.status))) {
+          errors.push(`dividend.periods[${index}].status が許可値ではありません`);
+        }
+        if (!assessments.has(String(period.assessment))) {
+          errors.push(`dividend.periods[${index}].assessment が許可値ではありません`);
+        }
+        validateConfidence(period.confidence, `dividend.periods[${index}].confidence`, errors);
+      });
+    }
+  }
+
+  const quality = value.earningsQuality;
+  if (!isRecord(quality)) {
+    errors.push('earningsQuality はオブジェクトである必要があります');
+    return;
+  }
+  const cashFlow = quality.operatingCashFlow;
+  if (cashFlow !== null) {
+    if (!isRecord(cashFlow)) {
+      errors.push('earningsQuality.operatingCashFlow はオブジェクトまたはnullである必要があります');
+    } else {
+      if (!new Set(['reported', 'notReported', 'notPrepared', 'unknown']).has(String(cashFlow.status))) {
+        errors.push('earningsQuality.operatingCashFlow.status が許可値ではありません');
+      }
+      validateConfidence(cashFlow.confidence, 'earningsQuality.operatingCashFlow.confidence', errors);
+    }
+  }
+  if (!Array.isArray(quality.capitalActions)) {
+    errors.push('earningsQuality.capitalActions は配列である必要があります');
+  } else {
+    const assessments = new Set(['shareholderReturn', 'capitalAction', 'unknown']);
+    quality.capitalActions.forEach((action, index) => {
+      if (!isRecord(action)) {
+        errors.push(`earningsQuality.capitalActions[${index}] はオブジェクトである必要があります`);
+        return;
+      }
+      if (!assessments.has(String(action.returnAssessment))) {
+        errors.push(`earningsQuality.capitalActions[${index}].returnAssessment が許可値ではありません`);
+      }
+      validateConfidence(
+        action.confidence,
+        `earningsQuality.capitalActions[${index}].confidence`,
+        errors
+      );
+    });
+  }
+}
+
+function validateConfidence(value: unknown, path: string, errors: string[]): void {
+  if (!new Set(['high', 'medium', 'low']).has(String(value))) {
+    errors.push(`${path} が許可値ではありません`);
+  }
 }
 
 export function buildJsonRepairMessages(

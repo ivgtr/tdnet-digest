@@ -95,9 +95,9 @@ ${
 - 営業利益率: {{earningsQuality.operatingMargin.current}}（前年同期{{earningsQuality.operatingMargin.previous}}、前年差{{earningsQuality.operatingMargin.change}}） {{pageがあれば[p.N]}}
 - 本業利益: {{earningsQuality.coreEarnings.text}} {{pageがあれば[p.N]}}
 {{earningsQuality.oneOffItems を1行ずつ: - 一時損益: {text} [p.{page}]}}
-- 営業CF: {{earningsQuality.operatingCashFlow.text}} {{pageがあれば[p.N]}}
+- 営業CF: {{earningsQuality.operatingCashFlow.interpretation}}{{earningsQuality.operatingCashFlow.amountがnullでなければ: （{amount}）}} {{pageがあれば[p.N]}}
 {{earningsQuality.financialHealth を1行ずつ: - 財務: {text} [p.{page}]}}
-{{earningsQuality.shareholderReturns を1行ずつ: - 株主還元: {text} [p.{page}]}}
+{{earningsQuality.capitalActions を1行ずつ: - 株主還元: {interpretation} [p.{page}]}}
 
 ## 時間軸別の見方
 - 短期: {{investmentView.shortTerm.stanceを日本語変換}} — {{rationaleのtextを「 / 」で連結}} {{根拠ページ}}
