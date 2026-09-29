@@ -67,7 +67,7 @@ export function factPrompt(
   const maxFacts = documentType === 'ma' ? 8 : 12;
   return {
     system:
-      'TDnet開示の事実抽出器です。JSONオブジェクトだけを返してください。コードフェンスは禁止です。全項目を省略せず、不要な値はnullにしてください。投資評価、星、解釈、株価推測を含めないでください。PDF_PAGEは物理ページ番号です。quoteは該当ページから連続する原文をそのままコピーし、離れたセルや行を省略して連結しないでください。表の数値では、指標名のある見出し行、単位行、対象の行をすべて含む連続した引用にしてください。見出しが複数行に分かれた表では列順を復元してください。親会社株主に帰属する純利益と、末尾の調整後EBITDAを混同しないでください。数値の説明文が同じページにあれば表よりその連続した文を優先してください。columnには値の属する列または行見出しを原文どおり書いてください。valueKind=forecastは現在公表されている通常予想、forecastBefore/forecastAfterは同じ開示内の修正前後の値だけです。eventのstatementはquoteからそのまま抜いた短い連続文字列にしてください。原文で確かめられない項目はfactsに入れずunverifiedへ記入してください。',
+      'TDnet開示の事実抽出器です。JSONオブジェクトだけを返してください。コードフェンスは禁止です。全項目を省略せず、不要な値はnullにしてください。投資評価、星、解釈、株価推測を含めないでください。PDF_PAGEは物理ページ番号です。quoteは該当ページから連続する原文をそのままコピーし、離れたセルや行を省略して連結しないでください。表の数値では、指標名のある見出し行、単位行、対象の行をすべて含む連続した引用にしてください。見出しが複数行に分かれた表では列順を復元してください。親会社株主に帰属する純利益と、末尾の調整後EBITDAを混同しないでください。数値の説明文が同じページにあれば表よりその連続した文を優先してください。決算短信のperiodには同じページの見出しで確認した対象年度と決算月を必ず含め、「当第3四半期連結累計期間」「通期」だけにしないでください。columnには値の属する列または行見出しを原文どおり書いてください。valueKind=forecastは現在公表されている通常予想、forecastBefore/forecastAfterは同じ開示内の修正前後の値だけです。eventのstatementはquoteからそのまま抜いた短い連続文字列にしてください。原文で確かめられない項目はfactsに入れずunverifiedへ記入してください。',
     user: `文書種別: ${documentType}\n形式: ${fields}\n数値の例: {"id":"f1","importance":"key","kind":"number","label":"売上高","value":3393,"unit":"百万円","period":"2026年9月期第3四半期","valueKind":"actual","column":"売上高","statement":null,"page":1,"quote":"売上高 営業利益\\n百万円 百万円\\n2026年9月期第3四半期 3,393 634"}。これは形式例であり、実資料の引用だけを使ってください。eventではvalue/unit/period/valueKind/columnをnullにしてください。決算は実績の売上・営業利益・純利益、通期予想の同3指標、配当を必ず優先してください。業績修正は売上・営業利益・配当の修正前後を優先してください。提携は締結済み事項と検討事項を区別してください。重複を避け、要点を先に最大${maxFacts}件。\n\n${text}`,
   };
 }
@@ -169,6 +169,8 @@ export function parseFactSummary(
         ) {
           throw new Error(`${item.id}: 値または対象期間を原文で確認できません`);
         }
+        if (documentType === 'earnings' && !/20\d{2}年\d{1,2}月期/.test(normalize(item.period)))
+          throw new Error(`${item.id}: 決算の対象年度と決算月を確認できません`);
         const lines = page.text.split('\n');
         const quoteLine = findQuoteStart(page.text, item.quote as string);
         const context = normalize(lines.slice(Math.max(0, quoteLine - 8), quoteLine + 13).join(''));

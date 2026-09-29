@@ -46,6 +46,27 @@ describe('事実要約の原文照合', () => {
       expect(() => parseFactSummary(raw({ ...fact, ...change }), 'other', pages)).toThrow();
     }
   });
+  it('決算短信では年度のない対象期間を採用しない', () => {
+    const source = [
+      {
+        pageNumber: 1,
+        text: '2026年9月期通期\n単位: 百万円\n営業利益 100 1150\n前回予想 今回予想',
+      },
+    ];
+    const candidate = {
+      ...fact,
+      valueKind: 'forecast',
+      period: '通期',
+    };
+    const result = parseFactSummary(
+      JSON.stringify({ version: 2, documentType: 'earnings', facts: [candidate], unverified: [] }),
+      'earnings',
+      source,
+      false
+    );
+    expect(result.facts).toHaveLength(0);
+    expect(result.unverified.join('')).toContain('対象年度と決算月');
+  });
   it('同じ表にある別列の値を営業利益として採用しない', () => {
     expect(() => parseFactSummary(raw({ ...fact, value: 100 }), 'other', pages)).toThrow(
       '重要事実'

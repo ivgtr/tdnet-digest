@@ -144,7 +144,7 @@ function extractQuarterlyEarnings(
     (fact) =>
       fact.kind === 'number' &&
       fact.valueKind === 'actual' &&
-      fact.unit === '千円' &&
+      (fact.unit === '千円' || fact.unit === '百万円') &&
       metrics.some((metric) => metric.label === fact.label)
   );
   if (
@@ -182,12 +182,22 @@ function extractQuarterlyEarnings(
   const claims = [];
   for (const fact of matchedFacts) {
     const period = fact.period?.normalize('NFKC').replace(/\s/g, '');
-    const match = period?.match(/^(20\d{2})年(\d{1,2})月期第([1-3])四半期$/);
+    const match = period?.match(
+      /^(20\d{2})年(\d{1,2})月期第([1-3])四半期(?:連結累計期間(?:\(.*\))?)?$/
+    );
     const metric = metrics.find((item) => item.label === fact.label);
     if (!period || !match || !metric || typeof fact.value !== 'number' || !fact.page) continue;
     const year = Number(match[1]);
+    const sourcePeriod = `${year}年${Number(match[2])}月期第${match[3]}四半期`;
     const previousPeriod = `${year - 1}年${Number(match[2])}月期第${match[3]}四半期`;
-    const currentPage = pageBody(current, fact.page);
+    const currentPage = [
+      ...current.text.matchAll(/\[PDF_PAGE:(\d+)\]([\s\S]*?)(?=\[PDF_PAGE:|$)/g),
+    ].find(
+      (page) =>
+        compact(page[2]).includes(sourcePeriod) &&
+        (fact.unit === '百万円' || Number(page[1]) === fact.page) &&
+        /この結果、当第[\s\S]{0,100}経営成績は/.test(page[2])
+    );
     const previousPage = [
       ...previous.text.matchAll(/\[PDF_PAGE:(\d+)\]([\s\S]*?)(?=\[PDF_PAGE:|$)/g),
     ].find(
@@ -200,12 +210,18 @@ function extractQuarterlyEarnings(
       text.match(
         /この結果、当第[\s\S]{0,100}経営成績は、売上高[\s\S]{0,180}営業\s*利益[\s\S]{0,50}千円/
       )?.[0];
-    const currentQuote = passage(currentPage)?.match(metric.pattern);
+    const currentQuote = passage(currentPage[2])?.match(metric.pattern);
     const previousQuote = passage(previousPage[2])?.match(metric.pattern);
     if (!currentQuote || !previousQuote) continue;
     const currentValue = Number(currentQuote[1].replace(/,/g, ''));
     const previousValue = Number(previousQuote[1].replace(/,/g, ''));
-    if (currentValue !== fact.value) continue;
+    const factMatches =
+      fact.unit === '千円'
+        ? currentValue === fact.value
+        : fact.page === 1 &&
+          compact(pageBody(current, 1) ?? '').includes('百万円未満切捨て') &&
+          Math.floor(currentValue / 1000) === fact.value;
+    if (!factMatches) continue;
     const source = (
       document: ScoreDocument,
       page: number,
@@ -230,7 +246,7 @@ function extractQuarterlyEarnings(
       current: {
         value: currentValue,
         unit: '千円',
-        source: source(current, fact.page, currentQuote[0], year, period),
+        source: source(current, Number(currentPage[1]), currentQuote[0], year, sourcePeriod),
       },
       previous: {
         value: previousValue,
@@ -254,7 +270,7 @@ function extractQuarterlyEarnings(
     documents,
     searchStatus
   );
-  return checked.claims.length ? restrictToFacts(checked, facts, current.url) : null;
+  return checked.claims.length ? checked : null;
 }
 
 function restrictToFacts(input: ScoreInput, facts: FactSummary, originalUrl: string): ScoreInput {

@@ -79,6 +79,7 @@ describe('検算済み事実からの推論スコア', () => {
       text:
         `[PDF_PAGE:1]\n${year}年9月期 第3四半期決算短信〔日本基準〕（連結）\n会社 4055\n` +
         `１．${year}年9月期第3四半期の連結業績（${year - 1}年10月1日～${year}年6月30日）\n` +
+        `（百万円未満切捨て）\n売上高 営業利益\n百万円 ％ 百万円 ％\n${year}年9月期第3四半期 ${Math.floor(Number(sales.replace(/,/g, '')) / 1000).toLocaleString('en-US')} 11.9 ${Math.floor(Number(profit.replace(/,/g, '')) / 1000)} 18.9\n` +
         `[PDF_PAGE:4]\n会社 4055\n${year}年9月期 第3四半期決算短信\n` +
         `この結果、当第3四半期連結累計期間の経営成績は、売上高${sales}千円（前年同四半期比11.9％増）、営業\n利益${profit}千円（前年同四半期比18.9％増）となりました。`,
     });
@@ -123,6 +124,27 @@ describe('検算済み事実からの推論スコア', () => {
         (item) => item.current.source.page === 4 && item.previous?.source.page === 4
       )
     ).toBe(true);
+    expect(generateText).not.toHaveBeenCalled();
+
+    const roundedFacts: FactSummary = {
+      ...facts,
+      facts: facts.facts.map((item) => ({
+        ...item,
+        value: Math.floor((item.value as number) / 1000),
+        unit: '百万円',
+        page: 1,
+        period: '2026年9月期第3四半期連結累計期間(2025年10月1日～2026年6月30日)',
+      })),
+    };
+    const rounded = await extractScoreInput(
+      config,
+      'earnings',
+      documents,
+      '過去資料候補を取得',
+      roundedFacts
+    );
+    expect(rounded.claims.map((item) => item.current.value)).toEqual([3393604, 634398]);
+    expect(rounded.claims.every((item) => item.current.source.page === 4)).toBe(true);
     expect(generateText).not.toHaveBeenCalled();
 
     generateText.mockResolvedValueOnce(JSON.stringify({ claims: [], unverified: [] }));

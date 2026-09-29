@@ -42,6 +42,8 @@ npm run test:real-llm
 
 `fixtures/fact-summary-cases.json` の3件のPDFを記載URLから取得し、`evaluation/fixtures/real-pdfs/<ID>.pdf` に保存します。`.env` に `TDNET_DIGEST_PROVIDER`、`TDNET_DIGEST_MODEL`、`TDNET_DIGEST_API_KEY` を設定して実行します。
 
+現行の評価設定例はOpenRouterの `deepseek/deepseek-v4.1-flash` です。ローカルの `.env` が旧モデルを指している場合は、モデル名を更新してから実行してください。
+
 ```bash
 npm run test:fact-summary
 ```

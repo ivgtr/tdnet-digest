@@ -204,7 +204,7 @@ function responseText(data: unknown, provider: LLMConfig['provider']): string {
 async function post(url: string, body: unknown, headers: Record<string, string>): Promise<unknown> {
   const response = await fetch(url, {
     method: 'POST',
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(60_000),
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
