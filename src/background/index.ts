@@ -1,348 +1,389 @@
-import { generateText, type LLMConfig, type ChatMessage } from '@/lib/llm-client';
-import { ANALYSIS_SCHEMA_VERSION, buildAnalysisFingerprint } from '@/lib/analysis-version';
-import { detectDocumentType, detectEarningsContext, type DocumentType } from '@/lib/document-type';
-import { getPromptForDocumentType, getExtractionPrompt } from '@/lib/prompts';
-import { getFormatPrompt } from '@/lib/format-prompts';
-import { getJsonSchema } from '@/lib/summary-schema';
-import type { EarningsExtraction } from '@/lib/summary-schema';
-import { refineEarningsExtraction } from '@/lib/earnings-refinement';
-import { calculateExperimentalScore, formatExperimentalScore } from '@/lib/scoring';
+import type { LLMConfig } from '@/lib/llm-client';
+import { detectDocumentType, type DocumentType } from '@/lib/document-type';
 import {
-  buildJsonRepairMessages,
-  getProviderCapabilities,
-  parseAndValidateExtraction,
-} from '@/lib/structured-output';
-import type { SummaryMetadata, ExtractionMode } from '@/types/summaryMetadata';
+  FACT_SCHEMA_VERSION,
+  generateVerifiedFactSummary,
+  parseFactSummary,
+  renderFacts,
+  type FactSummary,
+} from '@/lib/fact-summary';
+import { analyzeFacts, type AdditionalAnalysis } from '@/lib/additional-analysis';
+import { buildAnalysisFingerprint } from '@/lib/analysis-version';
+import { assessClaim, inferExperimentalScore, type ExperimentalScore } from '@/lib/scoring';
+import { extractScoreInput, type ScoreDocument } from '@/lib/score-extraction';
+import { fetchCandidatePdf, searchDisclosureCandidates } from '@/lib/disclosure-search';
+import { getProvider } from '@/lib/llm-providers';
+import { customApiPermission, SCORING_PDF_PERMISSIONS } from '@/lib/host-permissions';
+import type { SummaryMetadata, ExtractionMode, PdfExtractionResult } from '@/types/summaryMetadata';
 
-interface SummarizeRequest {
-  action: 'summarize';
+interface BaseRequest {
   pdfUrl: string;
-  title: string; // 文書タイプ判別用
-  forceExtractionMode?: ExtractionMode; // 全文再要約ボタン用
+  title: string;
+  code: string;
+  companyName: string;
 }
-
+interface SummarizeRequest extends BaseRequest {
+  action: 'summarize';
+  forceExtractionMode?: ExtractionMode;
+}
+interface FollowupRequest extends BaseRequest {
+  action: 'score' | 'analyze';
+  facts: FactSummary;
+  resultId: string;
+  fingerprint: string;
+}
+type Request = SummarizeRequest | FollowupRequest;
 interface Settings {
   provider: string;
   apiKey: string;
   model: string;
-  customUrl?: string;
-  extractionMode?: ExtractionMode;
-  twoPassMode?: boolean;
-  experimentalScoring?: boolean;
+  customUrl: string;
+  extractionMode: ExtractionMode;
+  experimentalScoring: boolean;
 }
+class RetryableScoringError extends Error {}
 
-// 拡張機能のインストール・更新時
 chrome.runtime.onInstalled.addListener((details) => {
-  console.log('[Background] 拡張機能がインストールされました:', details.reason);
+  if (details.reason !== 'update') return;
+  void chrome.permissions
+    .getAll()
+    .then(async ({ origins }) => {
+      if (origins?.includes('https://*/*')) {
+        const removed = await chrome.permissions.remove({ origins: ['https://*/*'] });
+        if (!removed) throw new Error('旧HTTPS全域権限を削除できませんでした');
+      }
+    })
+    .catch((error) => console.error('旧ホスト権限の削除に失敗:', error));
+});
+chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
+  if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
+  const task = request.action === 'summarize' ? handleSummarize(request) : handleFollowup(request);
+  task
+    .then(sendResponse)
+    .catch((error) =>
+      sendResponse({ error: error instanceof Error ? error.message : String(error) })
+    );
+  return true;
 });
 
-// Service Workerの起動時
-console.log('[Background] Service Workerが起動しました');
-
-/**
- * Offscreen Documentをセットアップ（既に存在する場合は何もしない）
- */
 async function setupOffscreenDocument(): Promise<void> {
-  try {
-    // 既存のOffscreen Documentをチェック
-    const existingContexts = await chrome.runtime.getContexts({
-      contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType],
-    });
-
-    if (existingContexts.length > 0) {
-      return;
-    }
-
-    // Offscreen Documentを作成
+  const existing = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType],
+  });
+  if (!existing.length)
     await chrome.offscreen.createDocument({
       url: 'offscreen.html',
       reasons: ['DOM_PARSER' as chrome.offscreen.Reason],
-      justification: 'PDF.jsを使用してPDFからテキストを抽出するためにDOM APIが必要です',
+      justification: 'PDF.jsによる文字抽出',
     });
-  } catch (error) {
-    console.error('[Background] Offscreen Document作成エラー:', error);
-    throw error;
-  }
-}
-
-// メッセージリスナー
-chrome.runtime.onMessage.addListener((request: SummarizeRequest, _sender, sendResponse) => {
-  console.log('[Background DEBUG] Message received:', request.action);
-
-  if (request.action === 'summarize') {
-    console.log('[Background DEBUG] Summarize params:', {
-      pdfUrl: request.pdfUrl,
-      title: request.title,
-      forceExtractionMode: request.forceExtractionMode,
-    });
-
-    handleSummarize(request.pdfUrl, request.title, request.forceExtractionMode)
-      .then((result) => {
-        console.log('[Background DEBUG] Summarize completed');
-        sendResponse({ summary: result.summary, metadata: result.metadata });
-      })
-      .catch((error) => {
-        console.error('[Background] エラー:', error);
-        sendResponse({ error: error instanceof Error ? error.message : '不明なエラー' });
-      });
-    return true; // 非同期レスポンスを示す
-  }
-});
-
-async function handleSummarize(
-  pdfUrl: string,
-  title: string,
-  forceExtractionMode?: ExtractionMode
-): Promise<{ summary: string; metadata: SummaryMetadata }> {
-  try {
-    // 設定を取得
-    const settings = await getSettings();
-
-    if (!settings.apiKey) {
-      throw new Error('APIキーが設定されていません。拡張機能の設定ページで設定してください。');
-    }
-
-    if (settings.provider === 'custom' && !settings.customUrl) {
-      throw new Error('カスタムプロバイダーを使用する場合はAPI URLを設定してください。');
-    }
-
-    // 文書タイプを判別
-    const documentType = detectDocumentType(title);
-    console.log(`[Background] 文書タイプ: ${documentType} (タイトル: ${title})`);
-
-    // 強制抽出モードがあれば設定より優先
-    const extractionMode = forceExtractionMode || settings.extractionMode || 'full';
-    console.log(
-      `[Background] 抽出モード: ${extractionMode}${forceExtractionMode ? ' (強制)' : ''}`
-    );
-
-    // PDFを取得
-    const pdfData = await fetchPDF(pdfUrl);
-
-    // LLMで要約
-    const result = await summarizeWithLLM(pdfData, settings, documentType, extractionMode, title);
-
-    return result;
-  } catch (error) {
-    console.error('[Background] 要約処理エラー:', error);
-    throw error;
-  }
 }
 
 async function getSettings(): Promise<Settings> {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get(
-      [
-        'provider',
-        'apiKey',
-        'model',
-        'customUrl',
-        'extractionMode',
-        'twoPassMode',
-        'experimentalScoring',
-      ],
-      (result) => {
-        resolve({
-          provider: result.provider || 'openai',
-          apiKey: result.apiKey || '',
-          model: result.model || 'gpt-4o',
-          customUrl: result.customUrl || '',
-          extractionMode: result.extractionMode || 'full',
-          twoPassMode: result.twoPassMode !== undefined ? result.twoPassMode : true,
-          experimentalScoring: result.experimentalScoring === true,
-        });
-      }
-    );
-  });
-}
-
-async function fetchPDF(url: string): Promise<ArrayBuffer> {
-  try {
-    const response = await fetch('https://www.release.tdnet.info/inbs/' + url);
-
-    if (!response.ok) {
-      throw new Error(`PDF取得に失敗しました: ${response.status} ${response.statusText}`);
-    }
-
-    return await response.arrayBuffer();
-  } catch (error) {
-    console.error('[Background] PDF取得エラー:', error);
-    throw error;
+  const result = await chrome.storage.sync.get([
+    'provider',
+    'apiKey',
+    'model',
+    'customUrl',
+    'extractionMode',
+    'experimentalScoring',
+    'twoPassMode',
+  ]);
+  if (result.twoPassMode !== undefined) {
+    await chrome.storage.sync.remove('twoPassMode');
+    console.info('廃止された twoPassMode 設定を削除しました');
   }
-}
-
-async function summarizeWithLLM(
-  pdfData: ArrayBuffer,
-  settings: Settings,
-  documentType: DocumentType,
-  extractionMode: ExtractionMode,
-  title: string
-): Promise<{ summary: string; metadata: SummaryMetadata }> {
-  try {
-    // 設定の検証
-    if (!settings.apiKey) {
-      throw new Error('APIキーが設定されていません');
-    }
-
-    // カスタムプロバイダーの場合はURLも必須
-    if (settings.provider === 'custom' && !settings.customUrl) {
-      throw new Error('カスタムプロバイダーを使用する場合はAPI URLを設定してください');
-    }
-
-    // Offscreen Documentをセットアップ
-    await setupOffscreenDocument();
-
-    // PDFのテキスト抽出（Offscreen Documentで処理）
-    const extractionResult = await extractTextFromPDF(pdfData, documentType, extractionMode);
-    const pdfText = extractionResult.text;
-    const metadata = extractionResult.metadata;
-
-    // 抽出メタデータをログ出力
-    console.log('[Background] 抽出メタデータ:', {
-      documentType: metadata.documentType,
-      extractionMode: metadata.extractionMode,
-      totalPages: metadata.totalPages,
-      extractedPages: `${metadata.extractedPages.length}ページ`,
-      sectionsUsed: metadata.sectionsUsed,
-      qualityWarning: metadata.qualityWarning?.message || 'なし',
-    });
-
-    // LLM設定を構築
-    const llmConfig: LLMConfig = {
-      provider: settings.provider,
-      apiKey: settings.apiKey,
-      model: settings.model,
-      baseUrl: settings.customUrl || undefined,
-    };
-
-    // 文書タイプ別コンテキスト
-    const earningsContext = documentType === 'earnings' ? detectEarningsContext(title) : undefined;
-
-    // 2パスモード判定（デフォルトON）
-    const useTwoPass = settings.twoPassMode !== false;
-    metadata.analysisSchemaVersion = ANALYSIS_SCHEMA_VERSION;
-    metadata.provider = settings.provider;
-    metadata.model = settings.model;
-    metadata.summaryMode = useTwoPass ? 'two-pass' : 'one-pass';
-    metadata.experimentalScoring = useTwoPass && settings.experimentalScoring === true;
-    metadata.analysisFingerprint = buildAnalysisFingerprint({
-      provider: settings.provider,
-      model: settings.model,
-      extractionMode,
-      twoPassMode: useTwoPass,
-      experimentalScoring: metadata.experimentalScoring,
-    });
-
-    if (useTwoPass) {
-      return await summarizeTwoPass(
-        llmConfig,
-        documentType,
-        pdfText,
-        earningsContext,
-        title,
-        metadata,
-        settings.experimentalScoring === true
-      );
-    } else {
-      return await summarizeOnePass(llmConfig, documentType, pdfText, earningsContext, metadata);
-    }
-  } catch (error) {
-    console.error('[Background] LLM要約エラー:', error);
-    throw error;
+  const provider = result.provider ?? 'openai';
+  const model = result.model ?? 'gpt-4o';
+  const extractionMode = result.extractionMode ?? 'full';
+  if (
+    typeof provider !== 'string' ||
+    !getProvider(provider) ||
+    typeof model !== 'string' ||
+    !model.trim() ||
+    !['full', 'smart'].includes(extractionMode) ||
+    (result.experimentalScoring !== undefined && typeof result.experimentalScoring !== 'boolean')
+  )
+    throw new Error('設定値が不正です。設定画面で確認してください');
+  if (typeof result.apiKey !== 'string' || !result.apiKey)
+    throw new Error('APIキーが設定されていません');
+  const customUrl = result.customUrl ?? '';
+  if (typeof customUrl !== 'string' || (provider === 'custom' && !customUrl))
+    throw new Error('API URLが不正です');
+  if (provider === 'custom') {
+    const origin = customApiPermission(customUrl);
+    if (!(await chrome.permissions.contains({ origins: [origin] })))
+      throw new Error('カスタムAPIホストへのアクセス権がありません。設定画面で保存してください');
   }
-}
-
-/**
- * 1パス要約（従来方式）
- */
-async function summarizeOnePass(
-  llmConfig: LLMConfig,
-  documentType: DocumentType,
-  pdfText: string,
-  earningsContext: ReturnType<typeof detectEarningsContext> | undefined,
-  metadata: SummaryMetadata
-): Promise<{ summary: string; metadata: SummaryMetadata }> {
-  const { system, user } = getPromptForDocumentType(documentType, pdfText, earningsContext);
-  const messages: ChatMessage[] = [
-    { role: 'system', content: system },
-    { role: 'user', content: user },
-  ];
-  const summary = await generateText(llmConfig, messages);
-  return { summary, metadata };
-}
-
-/**
- * 2パス要約（情報抽出→フォーマット整形）
- */
-async function summarizeTwoPass(
-  llmConfig: LLMConfig,
-  documentType: DocumentType,
-  pdfText: string,
-  earningsContext: ReturnType<typeof detectEarningsContext> | undefined,
-  documentTitle: string,
-  metadata: SummaryMetadata,
-  experimentalScoring: boolean
-): Promise<{ summary: string; metadata: SummaryMetadata }> {
-  // パス1: 情報抽出（JSON）
-  console.log('[Background] 2パス要約: パス1（情報抽出）開始');
-  const { system: s1, user: u1 } = getExtractionPrompt(documentType, pdfText, earningsContext);
-  const capabilities = getProviderCapabilities(llmConfig.provider);
-  const extractionConfig: LLMConfig = {
-    ...llmConfig,
-    temperature: 0,
-    ...(capabilities.jsonObject && { responseFormat: 'json_object' as const }),
+  return {
+    provider,
+    apiKey: result.apiKey,
+    model,
+    customUrl,
+    extractionMode,
+    experimentalScoring: result.experimentalScoring === true,
   };
-  const extractedText = await generateText(extractionConfig, [
-    { role: 'system', content: s1 },
-    { role: 'user', content: u1 },
-  ]);
+}
+function configOf(settings: Settings): LLMConfig {
+  return {
+    provider: settings.provider,
+    apiKey: settings.apiKey,
+    model: settings.model,
+    baseUrl: settings.customUrl || undefined,
+  };
+}
+function fullUrl(url: string): string {
+  const parsed = new URL(url, 'https://www.release.tdnet.info/inbs/');
+  if (
+    parsed.origin !== 'https://www.release.tdnet.info' ||
+    parsed.username ||
+    parsed.password ||
+    !parsed.pathname.startsWith('/inbs/') ||
+    !/\.pdf$/i.test(parsed.pathname)
+  )
+    throw new Error('TDnetのPDF URLではありません');
+  return parsed.href;
+}
+async function fetchPDF(url: string): Promise<ArrayBuffer> {
+  const response = await fetch(fullUrl(url));
+  if (!response.ok)
+    throw new Error(`PDF取得に失敗しました: ${response.status} ${response.statusText}`);
+  return response.arrayBuffer();
+}
+async function resultId(pdfUrl: string, fingerprint: string, facts: FactSummary): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify([pdfUrl, fingerprint, facts]));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
-  let validation = parseAndValidateExtraction(extractedText, documentType, metadata.totalPages);
-  if (!validation.success) {
-    console.warn('[Background] 2パス要約: 検証失敗、JSON修復を1回実行', validation.errors);
-    const repairMessages = buildJsonRepairMessages(
-      extractedText,
-      validation.errors,
-      getJsonSchema(documentType, earningsContext)
-    );
-    const repairedText = await generateText(extractionConfig, repairMessages);
-    validation = parseAndValidateExtraction(repairedText, documentType, metadata.totalPages);
+async function handleSummarize(request: SummarizeRequest) {
+  const settings = await getSettings();
+  const documentType = detectDocumentType(request.title);
+  const mode = request.forceExtractionMode ?? settings.extractionMode;
+  if (!['full', 'smart'].includes(mode)) throw new Error('抽出モードが不正です');
+  const data = await fetchPDF(request.pdfUrl);
+  await setupOffscreenDocument();
+  const extraction = await extractTextFromPDF(data, documentType, mode);
+  const config = configOf(settings);
+  const { facts } = await generateVerifiedFactSummary(
+    config,
+    documentType,
+    extraction.text,
+    extraction.pages
+  );
+  const fingerprint = buildAnalysisFingerprint({
+    provider: settings.provider,
+    model: settings.model,
+    extractionMode: mode,
+  });
+  const id = await resultId(request.pdfUrl, fingerprint, facts);
+  const metadata: SummaryMetadata = {
+    ...extraction.metadata,
+    analysisSchemaVersion: FACT_SCHEMA_VERSION,
+    provider: settings.provider,
+    model: settings.model,
+    summaryMode: 'one-pass',
+    analysisFingerprint: fingerprint,
+  };
+  return { summary: renderFacts(facts), facts, resultId: id, metadata };
+}
+
+async function handleFollowup(
+  request: FollowupRequest
+): Promise<{ score?: ExperimentalScore; analysis?: AdditionalAnalysis }> {
+  const settings = await getSettings();
+  const fingerprints = (['full', 'smart'] as const).map((extractionMode) =>
+    buildAnalysisFingerprint({ provider: settings.provider, model: settings.model, extractionMode })
+  );
+  if (!fingerprints.includes(request.fingerprint))
+    throw new Error('設定が変更されています。要約をやり直してください');
+  const documentType = detectDocumentType(request.title);
+  const data = await fetchPDF(request.pdfUrl);
+  await setupOffscreenDocument();
+  const extraction = await extractTextFromPDF(data, documentType, 'full');
+  const facts = parseFactSummary(JSON.stringify(request.facts), documentType, extraction.pages);
+  if ((await resultId(request.pdfUrl, request.fingerprint, facts)) !== request.resultId)
+    throw new Error('要約結果の識別子が一致しません');
+  const config = configOf(settings);
+  if (request.action === 'analyze') return { analysis: await analyzeFacts(config, facts) };
+  if (!settings.experimentalScoring) throw new Error('実験的スコアがOFFです');
+  const score = await attachScore(
+    config,
+    documentType,
+    request.title,
+    fullUrl(request.pdfUrl),
+    request.code,
+    request.companyName,
+    data,
+    'full',
+    extraction,
+    facts
+  );
+  if (score.value === null)
+    throw new RetryableScoringError(score.unverified.join(' / ') || '採点の根拠を確認できません');
+  return { score };
+}
+
+async function attachScore(
+  config: LLMConfig,
+  documentType: DocumentType,
+  title: string,
+  pdfUrl: string,
+  code: string,
+  companyName: string,
+  pdfData: ArrayBuffer,
+  extractionMode: ExtractionMode,
+  extractionResult: { text: string; metadata: SummaryMetadata },
+  facts: FactSummary
+): Promise<ExperimentalScore> {
+  let searchStatus = '元PDF内を確認';
+  try {
+    const scoringText =
+      extractionMode === 'smart'
+        ? (await extractTextFromPDF(pdfData, documentType, 'full')).text
+        : extractionResult.text;
+    const original: ScoreDocument = {
+      url: pdfUrl,
+      text: scoringText,
+      issuer: companyName,
+      code,
+      publishedDate: readPublishedDate(scoringText),
+    };
+    const documents = [original];
+    let input = await extractScoreInput(config, documentType, documents, searchStatus, facts);
+    const needsPast =
+      !input.claims.some((claim) => assessClaim(claim) !== null) ||
+      (input.claims.some((claim) => claim.category === 'oneOff') &&
+        !input.claims.some((claim) =>
+          ['operatingProfit', 'revenue', 'margin', 'kpi', 'coreForecast'].includes(claim.category)
+        )) ||
+      input.claims.some(
+        (claim) => ['operatingProfit', 'revenue', 'kpi'].includes(claim.category) && !claim.earlier
+      );
+    if (needsPast && !(await chrome.permissions.contains({ origins: SCORING_PDF_PERMISSIONS }))) {
+      searchStatus = '過去資料へのアクセス権がありません。設定画面で実験的スコアを保存してください';
+    } else if (needsPast && companyName && code && original.publishedDate) {
+      const search = await searchDisclosureCandidates(
+        config,
+        companyName,
+        code,
+        title,
+        original.publishedDate
+      );
+      if (search.error) throw new RetryableScoringError(`過去資料の検索に失敗: ${search.error}`);
+      searchStatus = `${search.status}（API要求${search.apiRequests}回、実検索${search.requests === null ? '不明' : search.requests + '回'}、候補${search.urls.length}件）。${search.costStatus}`;
+      for (const url of search.urls) {
+        try {
+          const data = await fetchCandidatePdf(url, code);
+          const result = await extractTextFromPDF(data, documentType, 'full');
+          const candidate: ScoreDocument = {
+            url,
+            text: result.text,
+            issuer: companyName,
+            code,
+            publishedDate: readPublishedDate(result.text),
+          };
+          if (
+            !original.publishedDate ||
+            !candidate.publishedDate ||
+            candidate.publishedDate >= original.publishedDate
+          )
+            throw new Error('開示日の前後を照合できません');
+          if (
+            !candidate.text
+              .normalize('NFKC')
+              .replace(/\s/g, '')
+              .includes(companyName.normalize('NFKC').replace(/\s/g, '')) &&
+            !candidate.text.includes(code.slice(0, 4))
+          )
+            throw new Error('発行会社を照合できません');
+          const next = await extractScoreInput(
+            config,
+            documentType,
+            [original, candidate],
+            searchStatus,
+            facts
+          );
+          const candidateClaims = next.claims.filter(
+            (claim) =>
+              assessClaim(claim) !== null &&
+              [claim.current, claim.previous, claim.earlier, claim.relatedValue].some(
+                (value) => value?.source.url === candidate.url
+              )
+          );
+          if (candidateClaims.length) {
+            const key = (claim: (typeof input.claims)[number]) =>
+              [
+                claim.category,
+                claim.current.source.metric,
+                claim.current.source.period,
+                claim.current.source.scope,
+              ].join('|');
+            const merged = new Map(input.claims.map((claim) => [key(claim), claim]));
+            for (const claim of candidateClaims) {
+              const existing = merged.get(key(claim));
+              if (
+                !existing ||
+                assessClaim(existing) === null ||
+                (!existing.earlier && claim.earlier)
+              )
+                merged.set(key(claim), claim);
+            }
+            input = {
+              claims: [...merged.values()],
+              unverified: [...new Set([...input.unverified, ...next.unverified])],
+              searchStatus,
+            };
+            documents.push(candidate);
+          } else {
+            searchStatus += ' / 候補の比較条件が不一致';
+          }
+        } catch (error) {
+          searchStatus += ` / 候補不採用: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    }
+    if (needsPast && (!companyName || !code || !original.publishedDate))
+      searchStatus = '会社名、証券コード、または元PDFの開示日を確認できず過去資料を検索できません';
+    if (!input.claims.some((claim) => assessClaim(claim) !== null))
+      throw new RetryableScoringError(
+        `採点に必要な比較値を原文で確認できませんでした。${searchStatus}`
+      );
+    input.searchStatus = searchStatus;
+    return await inferExperimentalScore(config, documentType, input);
+  } catch (error) {
+    if (error instanceof RetryableScoringError) throw error;
+    return {
+      value: null,
+      verdict: '算出不能',
+      positives: [],
+      negatives: [],
+      breakdown: [],
+      unverified: [
+        `採点根拠を検証できません: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+      searchStatus,
+    };
   }
+}
 
-  if (!validation.success || !validation.data) {
-    console.warn(
-      '[Background] 2パス要約: JSON修復後も検証失敗、検証済み1パス要約へフォールバック',
-      validation.errors
-    );
-    return summarizeOnePass(llmConfig, documentType, pdfText, earningsContext, metadata);
+export function readPublishedDate(text: string): string | null {
+  const firstPage = text.match(/\[PDF_PAGE:1\]([\s\S]*?)(?=\[PDF_PAGE:|$)/)?.[1];
+  if (!firstPage) return null;
+  for (const line of firstPage.normalize('NFKC').split('\n').slice(0, 12)) {
+    const match = line.replace(/\s/g, '').match(/^(20\d{2})[年/.-](\d{1,2})[月/.-](\d{1,2})日?$/);
+    if (!match) continue;
+    const year = Number(match[1]),
+      month = Number(match[2]),
+      day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    )
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
-
-  console.log('[Background] 2パス要約: パス1完了、パス2（フォーマット整形）開始');
-
-  const extractionData =
-    documentType === 'earnings' && earningsContext
-      ? refineEarningsExtraction(
-          validation.data as EarningsExtraction,
-          earningsContext,
-          documentTitle
-        )
-      : validation.data;
-
-  // パス2: フォーマット整形（低temperature）
-  const formatConfig: LLMConfig = { ...llmConfig, temperature: 0.3 };
-  const { system: s2, user: u2 } = getFormatPrompt(documentType, extractionData, earningsContext);
-  let formatted = await generateText(formatConfig, [
-    { role: 'system', content: s2 },
-    { role: 'user', content: u2 },
-  ]);
-
-  if (experimentalScoring) {
-    const score = calculateExperimentalScore(documentType, extractionData);
-    if (score) formatted += formatExperimentalScore(score);
-  }
-
-  console.log('[Background] 2パス要約: パス2完了');
-  return { summary: formatted, metadata };
+  return null;
 }
 
 /**
@@ -352,7 +393,7 @@ async function extractTextFromPDF(
   pdfData: ArrayBuffer,
   documentType: DocumentType,
   extractionMode: ExtractionMode
-): Promise<{ text: string; metadata: SummaryMetadata }> {
+): Promise<PdfExtractionResult> {
   try {
     // ArrayBufferを配列に変換して送信
     const uint8Array = new Uint8Array(pdfData);
@@ -371,6 +412,7 @@ async function extractTextFromPDF(
 
     return {
       text: response.text,
+      pages: response.pages,
       metadata: response.metadata,
     };
   } catch (error) {
@@ -381,5 +423,3 @@ async function extractTextFromPDF(
     throw new Error('PDFからテキストを抽出できませんでした。');
   }
 }
-
-export {};

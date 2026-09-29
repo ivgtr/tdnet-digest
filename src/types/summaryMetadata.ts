@@ -1,4 +1,5 @@
 import type { DocumentType } from '../lib/document-type';
+import type { FactSummary } from '../lib/fact-summary';
 
 export type ExtractionMode = 'smart' | 'full';
 
@@ -28,9 +29,8 @@ export interface SummaryMetadata {
   analysisSchemaVersion?: number;
   provider?: string;
   model?: string;
-  summaryMode?: 'one-pass' | 'two-pass';
+  summaryMode?: 'one-pass';
   analysisFingerprint?: string;
-  experimentalScoring?: boolean;
 }
 
 export interface PdfExtractionResult {
@@ -41,6 +41,8 @@ export interface PdfExtractionResult {
 
 export interface CachedSummary {
   summary: string;
+  facts: FactSummary;
+  resultId: string;
   metadata: SummaryMetadata;
   companyName: string;
   title: string;

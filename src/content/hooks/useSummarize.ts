@@ -1,155 +1,312 @@
-/**
- * 要約処理とAPI通信を管理するカスタムフック
- */
-
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
-import type {
-  SummaryMetadata,
-  ExtractionMode,
-  CachedSummary,
-  SummaryCacheStore,
-} from '../types/summaryMetadata';
+import { FACT_SCHEMA_VERSION, renderFacts } from '@/lib/fact-summary';
+import type { FactSummary } from '@/lib/fact-summary';
+import type { AdditionalAnalysis } from '@/lib/additional-analysis';
+import type { ExperimentalScore } from '@/lib/scoring';
+import type { SummaryMetadata, ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 
-interface UseSummarizeOptions {
+interface Options {
   pdfUrl: string;
   title: string;
   code: string;
   companyName: string;
 }
-
-interface SummarizeResult {
+export interface SummaryResult {
   summary: string | null;
   error: string | null;
   metadata: SummaryMetadata | null;
+  facts: FactSummary | null;
+  resultId: string | null;
+}
+export interface Stage<T> {
+  loading: boolean;
+  data: T | null;
+  error: string | null;
+}
+const emptyStage = <T>(): Stage<T> => ({ loading: false, data: null, error: null });
+const SUMMARY_PREFIX = 'summaryCacheV2:';
+const SCORE_PREFIX = 'scoreCacheV3:';
+const ANALYSIS_PREFIX = 'analysisCacheV1:';
+function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is CachedSummary {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<CachedSummary>;
+  try {
+    return (
+      typeof item.summary === 'string' &&
+      typeof item.resultId === 'string' &&
+      /^[a-f0-9]{64}$/.test(item.resultId) &&
+      item.facts?.version === FACT_SCHEMA_VERSION &&
+      item.metadata?.analysisSchemaVersion === FACT_SCHEMA_VERSION &&
+      item.metadata?.analysisFingerprint !== undefined &&
+      buildSummaryCacheKey(pdfUrl, item.metadata.analysisFingerprint) === key &&
+      renderFacts(item.facts) === item.summary
+    );
+  } catch {
+    return false;
+  }
 }
 
-const CACHE_KEY = 'summaryCache';
-
-export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeOptions) {
+export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<SummarizeResult | null>(null);
+  const [result, setResult] = useState<SummaryResult | null>(null);
+  const [score, setScore] = useState<Stage<ExperimentalScore>>(emptyStage());
+  const [analysis, setAnalysis] = useState<Stage<AdditionalAnalysis>>(emptyStage());
+  const [scoringEnabled, setScoringEnabled] = useState(false);
   const [hasCached, setHasCached] = useState(false);
+  const [stagesReady, setStagesReady] = useState(false);
   const [cacheKey, setCacheKey] = useState<string | null>(null);
+  const keyRef = useRef<string | null>(null);
+  const configuredKeyRef = useRef<string | null>(null);
+  const settingsRef = useRef<{
+    provider: string;
+    model: string;
+    extractionMode: ExtractionMode;
+  } | null>(null);
+  const idRef = useRef<string | null>(null);
+  const scoreStarted = useRef<string | null>(null);
+  const runRef = useRef(0);
 
   useEffect(() => {
-    chrome.storage.sync.get(
-      ['provider', 'model', 'extractionMode', 'twoPassMode', 'experimentalScoring'],
-      (settings) => {
-        const fingerprint = buildAnalysisFingerprint({
-          provider: settings.provider || 'openai',
-          model: settings.model || 'gpt-4o',
-          extractionMode: settings.extractionMode || 'full',
-          twoPassMode: settings.twoPassMode !== undefined ? settings.twoPassMode : true,
-          experimentalScoring:
-            (settings.twoPassMode !== undefined ? settings.twoPassMode : true) &&
-            settings.experimentalScoring === true,
-        });
-        setCacheKey(buildSummaryCacheKey(pdfUrl, fingerprint));
-      }
-    );
+    let active = true;
+    const keys = ['provider', 'model', 'extractionMode', 'experimentalScoring'];
+    const refresh = () =>
+      chrome.storage.sync.get(keys, (settings) => {
+        if (!active) return;
+        const mode = settings.extractionMode ?? 'full';
+        const currentSettings = {
+          provider: settings.provider ?? 'openai',
+          model: settings.model ?? 'gpt-4o',
+          extractionMode: mode as ExtractionMode,
+        };
+        const next = buildSummaryCacheKey(pdfUrl, buildAnalysisFingerprint(currentSettings));
+        settingsRef.current = currentSettings;
+        if (next !== configuredKeyRef.current) {
+          configuredKeyRef.current = next;
+          keyRef.current = next;
+          idRef.current = null;
+          scoreStarted.current = null;
+          runRef.current++;
+          setResult(null);
+          setScore(emptyStage());
+          setAnalysis(emptyStage());
+          setHasCached(false);
+          setStagesReady(false);
+          setCacheKey(next);
+        }
+        setScoringEnabled(settings.experimentalScoring === true);
+      });
+    refresh();
+    const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'sync' && keys.some((key) => key in changes)) refresh();
+    };
+    chrome.storage.onChanged.addListener(changed);
+    return () => {
+      active = false;
+      chrome.storage.onChanged.removeListener(changed);
+    };
   }, [pdfUrl]);
 
-  // マウント時にキャッシュの存在チェック
   useEffect(() => {
     if (!cacheKey) return;
-    chrome.storage.local.get(CACHE_KEY, (data) => {
-      const store: SummaryCacheStore = data[CACHE_KEY] || {};
-      setHasCached(cacheKey in store);
+    chrome.storage.local.get(SUMMARY_PREFIX + cacheKey, (data) => {
+      if (cacheKey !== keyRef.current) return;
+      const entry = data[SUMMARY_PREFIX + cacheKey] as CachedSummary | undefined;
+      setHasCached(isCachedSummary(entry, cacheKey, pdfUrl));
     });
-  }, [cacheKey]);
+  }, [cacheKey, pdfUrl]);
 
-  /**
-   * キャッシュに保存
-   */
-  const saveToCache = useCallback(
-    (summary: string, metadata: SummaryMetadata) => {
-      const entryKey = metadata.analysisFingerprint
-        ? buildSummaryCacheKey(pdfUrl, metadata.analysisFingerprint)
-        : cacheKey;
-      if (!entryKey) return;
+  const restoreStages = useCallback(async (id: string) => {
+    const data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
+    if (idRef.current !== id) return;
+    const cachedScore = data[SCORE_PREFIX + id] as ExperimentalScore | undefined;
+    if (cachedScore?.value === null) {
+      await chrome.storage.local.remove(SCORE_PREFIX + id);
+      if (idRef.current !== id) return;
+    }
+    setScore(
+      cachedScore && cachedScore.value !== null
+        ? { loading: false, data: cachedScore, error: null }
+        : emptyStage()
+    );
+    setAnalysis(
+      data[ANALYSIS_PREFIX + id]
+        ? { loading: false, data: data[ANALYSIS_PREFIX + id], error: null }
+        : emptyStage()
+    );
+    setStagesReady(true);
+  }, []);
 
-      chrome.storage.local.get(CACHE_KEY, (data) => {
-        const store: SummaryCacheStore = data[CACHE_KEY] || {};
+  const showCached = useCallback(async () => {
+    const key = keyRef.current;
+    if (!key) return;
+    setStagesReady(false);
+    const data = await chrome.storage.local.get(SUMMARY_PREFIX + key);
+    if (key !== keyRef.current) return;
+    const entry = data[SUMMARY_PREFIX + key] as CachedSummary | undefined;
+    if (!isCachedSummary(entry, key, pdfUrl)) return;
+    idRef.current = entry.resultId;
+    setResult({
+      summary: entry.summary,
+      metadata: entry.metadata,
+      facts: entry.facts,
+      resultId: entry.resultId,
+      error: null,
+    });
+    await restoreStages(entry.resultId);
+  }, [restoreStages, pdfUrl]);
+
+  const summarize = useCallback(
+    async (forceExtractionMode?: ExtractionMode) => {
+      const run = ++runRef.current;
+      setLoading(true);
+      setResult(null);
+      setScore(emptyStage());
+      setAnalysis(emptyStage());
+      setStagesReady(false);
+      scoreStarted.current = null;
+      idRef.current = null;
+      try {
+        const settings = settingsRef.current;
+        if (!settings) throw new Error('設定の読み込みが完了していません');
+        const expectedKey = buildSummaryCacheKey(
+          pdfUrl,
+          buildAnalysisFingerprint({
+            ...settings,
+            extractionMode: forceExtractionMode ?? settings.extractionMode,
+          })
+        );
+        const response = await chrome.runtime.sendMessage({
+          action: 'summarize',
+          pdfUrl,
+          title,
+          code,
+          companyName,
+          ...(forceExtractionMode ? { forceExtractionMode } : {}),
+        });
+        if (run !== runRef.current) return;
+        if (response.error) throw new Error(response.error);
+        const key = buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint);
+        if (key !== expectedKey) throw new Error('要約結果の設定が一致しません');
+        keyRef.current = key;
+        setCacheKey(key);
+        idRef.current = response.resultId;
+        setResult({
+          summary: response.summary,
+          metadata: response.metadata,
+          facts: response.facts,
+          resultId: response.resultId,
+          error: null,
+        });
+        setStagesReady(true);
         const entry: CachedSummary = {
-          summary,
-          metadata,
+          summary: response.summary,
+          facts: response.facts,
+          resultId: response.resultId,
+          metadata: response.metadata,
           companyName,
           title,
           code,
           cachedAt: Date.now(),
         };
-        store[entryKey] = entry;
-        chrome.storage.local.set({ [CACHE_KEY]: store }, () => {
-          setHasCached(entryKey === cacheKey);
-        });
-      });
-    },
-    [cacheKey, companyName, title, code, pdfUrl]
-  );
-
-  /**
-   * キャッシュから読み込んで result にセット
-   */
-  const showCached = useCallback(() => {
-    if (!cacheKey) return;
-    chrome.storage.local.get(CACHE_KEY, (data) => {
-      const store: SummaryCacheStore = data[CACHE_KEY] || {};
-      const cached = store[cacheKey];
-      if (cached) {
-        setResult({
-          summary: cached.summary,
-          error: null,
-          metadata: cached.metadata,
-        });
-      }
-    });
-  }, [cacheKey]);
-
-  /**
-   * 要約を実行
-   * @param forceExtractionMode 強制抽出モード（全文再要約ボタン用）
-   */
-  const summarize = useCallback(
-    async (forceExtractionMode?: ExtractionMode) => {
-      setLoading(true);
-      setResult(null);
-
-      try {
-        const cleanPdfUrl = String(pdfUrl);
-        const cleanTitle = String(title);
-
-        const response = await chrome.runtime.sendMessage({
-          action: 'summarize' as const,
-          pdfUrl: cleanPdfUrl,
-          title: cleanTitle,
-          ...(forceExtractionMode && { forceExtractionMode }),
-        });
-
-        if (response.error) {
-          console.error('[Content] 要約エラー:', response.error);
-          setResult({ summary: null, error: response.error, metadata: null });
-        } else {
-          setResult({ summary: response.summary, error: null, metadata: response.metadata });
-          saveToCache(response.summary, response.metadata);
-        }
-      } catch (err) {
-        console.error('[Content] 例外が発生:', err);
-        const errorMessage = err instanceof Error ? err.message : '要約に失敗しました';
-        setResult({ summary: null, error: errorMessage, metadata: null });
+        await chrome.storage.local.set({ [SUMMARY_PREFIX + key]: entry });
+        if (key === keyRef.current) setHasCached(true);
+      } catch (error) {
+        if (run === runRef.current)
+          setResult({
+            summary: null,
+            metadata: null,
+            facts: null,
+            resultId: null,
+            error: error instanceof Error ? error.message : String(error),
+          });
       } finally {
-        setLoading(false);
+        if (run === runRef.current) setLoading(false);
       }
     },
-    [pdfUrl, title, saveToCache]
+    [pdfUrl, title, code, companyName]
   );
 
-  /**
-   * 結果をリセット
-   */
-  const reset = useCallback(() => {
-    setResult(null);
-  }, []);
+  const requestStage = useCallback(
+    async (action: 'score' | 'analyze', current: SummaryResult) => {
+      if (!current.facts || !current.resultId || !current.metadata?.analysisFingerprint) return;
+      const id = current.resultId;
+      const set = action === 'score' ? setScore : setAnalysis;
+      const cache = (action === 'score' ? SCORE_PREFIX : ANALYSIS_PREFIX) + id;
+      set({ loading: true, data: null, error: null });
+      try {
+        const response = await chrome.runtime.sendMessage({
+          action,
+          pdfUrl,
+          title,
+          code,
+          companyName,
+          facts: current.facts,
+          resultId: id,
+          fingerprint: current.metadata.analysisFingerprint,
+        });
+        if (idRef.current !== id) return;
+        if (response.error) throw new Error(response.error);
+        const data = action === 'score' ? response.score : response.analysis;
+        if (!data) throw new Error(`${action} の結果がありません`);
+        if (action === 'score' && data.value === null)
+          throw new Error(data.unverified?.join(' / ') || '採点の根拠を確認できません');
+        set({ loading: false, data, error: null });
+        await chrome.storage.local.set({ [cache]: data });
+      } catch (error) {
+        if (idRef.current === id)
+          set({
+            loading: false,
+            data: null,
+            error: error instanceof Error ? error.message : String(error),
+          });
+      }
+    },
+    [pdfUrl, title, code, companyName]
+  );
 
-  return { loading, result, hasCached, summarize, showCached, reset };
+  const startScore = useCallback(() => {
+    if (
+      !scoringEnabled ||
+      !stagesReady ||
+      !result?.resultId ||
+      score.loading ||
+      score.data ||
+      scoreStarted.current === result.resultId
+    )
+      return;
+    scoreStarted.current = result.resultId;
+    void requestStage('score', result);
+  }, [scoringEnabled, stagesReady, result, score, requestStage]);
+  const retryScore = useCallback(() => {
+    if (!scoringEnabled || !result?.resultId || score.loading || !score.error) return;
+    scoreStarted.current = result.resultId;
+    void requestStage('score', result);
+  }, [scoringEnabled, result, score.loading, score.error, requestStage]);
+  const analyze = useCallback(() => {
+    if (result && !analysis.loading) void requestStage('analyze', result);
+  }, [result, analysis.loading, requestStage]);
+  const reset = useCallback(() => {
+    idRef.current = null;
+    scoreStarted.current = null;
+    setResult(null);
+    setScore(emptyStage());
+    setAnalysis(emptyStage());
+    setStagesReady(false);
+  }, []);
+  return {
+    loading,
+    result,
+    score,
+    analysis,
+    scoringEnabled,
+    hasCached,
+    cacheKey,
+    summarize,
+    showCached,
+    startScore,
+    retryScore,
+    analyze,
+    reset,
+  };
 }

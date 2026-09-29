@@ -6,6 +6,9 @@
 import { SUMMARY_STYLES } from '../constants/styles';
 import type { SummaryMetadata } from '../types/summaryMetadata';
 import { parseMarkdown } from './markdownParser';
+import type { ExperimentalScore, ScoreValue } from '@/lib/scoring';
+import type { AdditionalAnalysis, AnalysisView } from '@/lib/additional-analysis';
+import type { Stage } from '../hooks/useSummarize';
 
 /**
  * エラー表示のHTMLを生成
@@ -13,7 +16,7 @@ import { parseMarkdown } from './markdownParser';
 export function buildErrorHtml(errorText: string): string {
   return `
     <div style="${SUMMARY_STYLES.errorContainer}">
-      <p style="${SUMMARY_STYLES.errorText}">${errorText}</p>
+      <p style="${SUMMARY_STYLES.errorText}">${escapeMetadataText(errorText)}</p>
     </div>
   `;
 }
@@ -33,11 +36,10 @@ export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
     model,
     summaryMode,
     analysisSchemaVersion,
-    experimentalScoring,
   } = metadata;
   const analysisInfo =
     provider && model && summaryMode
-      ? ` | <span style="font-weight: bold;">分析:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・${summaryMode === 'two-pass' ? '2パス' : '1パス'}・v${analysisSchemaVersion ?? '?'}${experimentalScoring ? '・実験スコアON' : ''}`
+      ? ` | <span style="font-weight: bold;">要約:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・1回・v${analysisSchemaVersion ?? '?'}`
       : '';
 
   let html = `
@@ -50,8 +52,8 @@ export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
   if (qualityWarning) {
     html += `
       <div style="${SUMMARY_STYLES.warningBox}">
-        <strong>⚠️ 品質警告:</strong> ${qualityWarning.message}<br>
-        <span style="font-size: 11px;">不足キーワード: ${qualityWarning.missingKeywords?.join(', ') || 'なし'}</span>
+        <strong>⚠️ 品質警告:</strong> ${escapeMetadataText(qualityWarning.message)}<br>
+        <span style="font-size: 11px;">不足キーワード: ${qualityWarning.missingKeywords?.map(escapeMetadataText).join(', ') || 'なし'}</span>
       </div>
     `;
   }
@@ -74,7 +76,9 @@ function escapeMetadataText(value: string): string {
 export function buildSummaryHtml(
   summaryText: string,
   metadata: SummaryMetadata | null,
-  rowData: { companyName: string; title: string }
+  rowData: { companyName: string; title: string },
+  score?: Stage<ExperimentalScore>,
+  analysis?: Stage<AdditionalAnalysis>
 ): string {
   const metadataHtml = buildMetadataHtml(metadata);
   const fullRetryButton =
@@ -86,15 +90,85 @@ export function buildSummaryHtml(
     <div style="${SUMMARY_STYLES.summaryContainer}">
       <div style="${SUMMARY_STYLES.headerRow}">
         <h4 style="${SUMMARY_STYLES.headerTitle}">
-          AI要約: ${rowData.companyName} - ${rowData.title}
+          AI要約: ${escapeMetadataText(rowData.companyName)} - ${escapeMetadataText(rowData.title)}
         </h4>
         <div style="${SUMMARY_STYLES.buttonGroup}">
           ${fullRetryButton}
           <button type="button" id="resummarize-btn" style="${SUMMARY_STYLES.resummarizeButton}">再要約</button>
+          <button type="button" id="analyze-btn" style="${SUMMARY_STYLES.resummarizeButton}">追加分析</button>
         </div>
       </div>
       ${metadataHtml}
       <div style="${SUMMARY_STYLES.summaryText}">${parseMarkdown(summaryText)}</div>
+      <div id="score-result">${buildScoreStageHtml(score)}</div>
+      <div id="analysis-result">${buildAnalysisStageHtml(analysis)}</div>
     </div>
   `;
+}
+
+export function buildScoreStageHtml(score?: Stage<ExperimentalScore>): string {
+  return score?.loading
+    ? '採点中…'
+    : score?.error
+      ? `採点失敗: ${escapeMetadataText(score.error)}`
+      : score?.data
+        ? buildScoreHtml(score.data)
+        : '';
+}
+
+export function buildAnalysisStageHtml(analysis?: Stage<AdditionalAnalysis>): string {
+  return analysis?.loading
+    ? '追加分析中…'
+    : analysis?.error
+      ? `追加分析失敗: ${escapeMetadataText(analysis.error)}`
+      : analysis?.data
+        ? buildAnalysisHtml(analysis.data)
+        : '';
+}
+
+function buildAnalysisHtml(analysis: AdditionalAnalysis): string {
+  const view = (label: string, item: AnalysisView) =>
+    `<p><strong>${label}:</strong> ${escapeMetadataText(item.text)}${item.factIds.length ? `（根拠: ${item.factIds.map(escapeMetadataText).join(', ')}）` : ''}</p>`;
+  return `<section><h5>追加分析</h5>${view('解釈', analysis.interpretation)}${view('短期', analysis.shortTerm)}${view('中期', analysis.mediumTerm)}${view('長期', analysis.longTerm)}${analysis.watchPoints.map((item) => view('確認点', item)).join('')}</section>`;
+}
+
+export function buildScoreHtml(score: ExperimentalScore): string {
+  const item = (value: ScoreValue | null) => {
+    if (!value) return '未確認';
+    let pageLink = `p.${value.source.page}`;
+    try {
+      const url = new URL(value.source.url);
+      if (url.protocol === 'https:' && Number.isInteger(value.source.page) && value.source.page > 0)
+        pageLink = `<a href="${escapeMetadataText(url.href)}#page=${value.source.page}" target="_blank" rel="noopener noreferrer">p.${value.source.page}</a>`;
+    } catch {
+      /* invalid evidence URL is shown without a link */
+    }
+    return (
+      `${escapeMetadataText(String(value.value))}${escapeMetadataText(value.unit)} ` +
+      `(${escapeMetadataText(value.source.period)}・${escapeMetadataText(value.source.metric)}・` +
+      `${escapeMetadataText(value.source.basis)}・${escapeMetadataText(value.source.scope)}、` +
+      `${pageLink})「${escapeMetadataText(value.source.quote)}」`
+    );
+  };
+  const rows = score.breakdown
+    .map(
+      (part) =>
+        `<li>${escapeMetadataText(part.label)}: ` +
+        `${part.impact === 'positive' ? '好材料' : part.impact === 'negative' ? '悪材料' : '中立'}（${part.strength === 'large' ? '大' : part.strength === 'medium' ? '中' : '小'}）。${escapeMetadataText(part.comparison)}。現在 ${item(part.current)}、` +
+        `比較 ${item(part.previous)}、前々期 ${item(part.earlier)}` +
+        (part.relatedValue
+          ? `、${part.category === 'oneOff' ? '一時損益' : '規模の基準'} ${item(part.relatedValue)}`
+          : '') +
+        `${part.companyExplanation ? `。会社説明: ${escapeMetadataText(part.companyExplanation)}` : ''}</li>`
+    )
+    .join('');
+  return (
+    `<details style="margin:8px 0;padding:8px;background:#f0f7ff;border:1px solid #cbd5e1;">
+    <summary><strong>材料スコア: ${score.value === null ? '算出不能' : `${score.value}/100`}・${escapeMetadataText(score.verdict)}</strong>` +
+    ` ${escapeMetadataText([...score.positives, ...score.negatives].join(' / '))}</summary>
+    <p>確認できた事実の規模・本業との関係・継続性から推論した目安です。未確認項目を推測で補いません。</p>
+    <ul>${rows}</ul><p>検索: ${escapeMetadataText(score.searchStatus)}</p>
+    <p>未確認: ${score.unverified.length ? score.unverified.map(escapeMetadataText).join(' / ') : 'なし'}</p>
+    </details>`
+  );
 }

@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
 import { BUTTON_STYLES } from './constants/styles';
+import { ScoreBadge } from './ScoreBadge';
 
 interface RowData {
   time: string;
@@ -18,7 +19,21 @@ interface SummaryButtonProps {
 }
 
 const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }) => {
-  const { loading, result, hasCached, summarize, showCached, reset } = useSummarize({
+  const {
+    loading,
+    result,
+    score,
+    analysis,
+    scoringEnabled,
+    hasCached,
+    cacheKey,
+    summarize,
+    showCached,
+    startScore,
+    retryScore,
+    analyze,
+    reset,
+  } = useSummarize({
     pdfUrl: rowData.pdfUrl,
     title: rowData.title,
     code: rowData.code,
@@ -30,7 +45,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     [rowData.companyName, rowData.title]
   );
 
-  const { removeSummaryRow, insertSummaryRow, isSummaryRowVisible } = useSummaryRow({
+  const { removeSummaryRow, insertSummaryRow, updateStages, isSummaryRowVisible } = useSummaryRow({
     row,
     iframeDoc,
     rowData: summaryRowData,
@@ -39,6 +54,17 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   // 行挿入・削除後にisVisibleを再評価するための再レンダリングトリガー
   const [, setForceUpdate] = useState(0);
   const triggerUpdate = useCallback(() => setForceUpdate((v) => v + 1), []);
+  const priorCacheKey = useRef<string | null>(null);
+  const analyzeRef = useRef(analyze);
+  analyzeRef.current = analyze;
+
+  useEffect(() => {
+    if (priorCacheKey.current && priorCacheKey.current !== cacheKey) {
+      removeSummaryRow();
+      triggerUpdate();
+    }
+    priorCacheKey.current = cacheKey;
+  }, [cacheKey, removeSummaryRow, triggerUpdate]);
 
   const isVisible = isSummaryRowVisible();
 
@@ -57,11 +83,17 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
         () => {
           reset();
           summarize();
-        }
+        },
+        () => analyzeRef.current()
       );
       triggerUpdate();
     }
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
+
+  useEffect(() => {
+    updateStages(scoringEnabled ? score : undefined, analysis);
+    if (result?.summary && scoringEnabled) startScore();
+  }, [score, analysis, scoringEnabled, result, updateStages, startScore]);
 
   const handleClick = () => {
     if (loading) return;
@@ -86,7 +118,9 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
 
   // スタイル: キャッシュ済みかどうかで分岐
   const containerStyle =
-    hasCached && !loading ? BUTTON_STYLES.containerCached(isVisible) : BUTTON_STYLES.container(loading);
+    hasCached && !loading
+      ? BUTTON_STYLES.containerCached(isVisible)
+      : BUTTON_STYLES.container(loading);
   const buttonStyle =
     hasCached && !loading ? BUTTON_STYLES.buttonCached(isVisible) : BUTTON_STYLES.button(loading);
 
@@ -104,25 +138,33 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       : BUTTON_STYLES.buttonNormal;
 
   return (
-    <div style={containerStyle}>
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={loading}
-        style={buttonStyle}
-        onMouseEnter={(e) => {
-          if (!loading) {
-            e.currentTarget.style.background = hoverBackground;
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!loading) {
-            e.currentTarget.style.background = normalBackground;
-          }
-        }}
-      >
-        {buttonText}
-      </button>
+    <div>
+      <div style={containerStyle}>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={loading}
+          style={buttonStyle}
+          onMouseEnter={(e) => {
+            if (!loading) {
+              e.currentTarget.style.background = hoverBackground;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!loading) {
+              e.currentTarget.style.background = normalBackground;
+            }
+          }}
+        >
+          {buttonText}
+        </button>
+      </div>
+      {scoringEnabled && score.data && <ScoreBadge score={score.data} />}
+      {scoringEnabled && score.error && !score.loading && (
+        <button type="button" onClick={retryScore} style={{ fontSize: '11px', color: '#1d4ed8' }}>
+          採点を再試行
+        </button>
+      )}
     </div>
   );
 };
