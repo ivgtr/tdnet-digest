@@ -53,6 +53,22 @@ const FACT_KEYS = [
   'quote',
 ];
 const normalize = (value: string) => value.normalize('NFKC').replace(/[\s,，]/g, '');
+const normalizeNumericText = (value: string) =>
+  value
+    .normalize('NFKC')
+    .replace(/[,，]/g, '')
+    .replace(/[△▲]\s*(?=\d)/g, '-');
+const ifrsParentProfit = /親会社の所有者に帰属する(?:当期|四半期|中間)利益/;
+const splitIfrsParentProfit = (quote: string, label: string) => {
+  const profitTerm = label.match(/(?:当期|四半期|中間)利益/)?.[0];
+  return (
+    ifrsParentProfit.test(label) &&
+    !!profitTerm &&
+    quote.includes('親会社の所有者') &&
+    quote.includes('に帰属する') &&
+    quote.includes(profitTerm)
+  );
+};
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 const exactKeys = (value: Record<string, unknown>, keys: string[]) =>
@@ -136,9 +152,7 @@ export function parseFactSummary(
         (/親会社株主に帰属する.*純利益/.test(metricLabel) &&
           quote.includes('親会社株主に帰属') &&
           /四半期純利益|する当期純利益/.test(quote)) ||
-        (/親会社の所有者に帰属する当期利益/.test(metricLabel) &&
-          quote.includes('親会社の所有者に') &&
-          quote.includes('帰属する当期利益'));
+        splitIfrsParentProfit(quote, metricLabel);
       if (item.kind === 'number' && !metricFound)
         throw new Error(`${item.id}: 指標名を引用で確認できません`);
       if (item.kind === 'number') {
@@ -157,10 +171,7 @@ export function parseFactSummary(
         ) {
           throw new Error(`${item.id}: 数値項目の形式が不正です`);
         }
-        const numericQuote = (item.quote as string)
-          .normalize('NFKC')
-          .replace(/[,，]/g, '')
-          .replace(/[△▲]/g, '-');
+        const numericQuote = normalizeNumericText(item.quote as string);
         if (
           ![...numericQuote.matchAll(/-?\d+(?:\.\d+)?/g)].some(
             (match) => Number(match[0]) === item.value
@@ -188,9 +199,7 @@ export function parseFactSummary(
             (/親会社株主に帰属する.*純利益/.test(item.column) &&
               quote.includes('親会社株主に帰属') &&
               /四半期純利益|する当期純利益/.test(quote)) ||
-            (/親会社の所有者に帰属する当期利益/.test(item.column) &&
-              quote.includes('親会社の所有者に') &&
-              quote.includes('帰属する当期利益')));
+            splitIfrsParentProfit(quote, item.column));
         if (numbers.length > 1 && !columnFound && !proseBinding) {
           throw new Error(`${item.id}: 表の列との対応を確認できません`);
         }
@@ -241,7 +250,7 @@ export function parseFactSummary(
 }
 
 function numericBindingVerified(fact: VerifiedFact): boolean {
-  const quote = fact.quote.normalize('NFKC').replace(/[,，]/g, '');
+  const quote = normalizeNumericText(fact.quote);
   const label = fact.label.normalize('NFKC');
   const pos =
     quote.indexOf(label) >= 0
@@ -250,8 +259,8 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
         ? quote.indexOf('年間配当金')
         : /親会社株主に帰属する.*純利益/.test(label)
           ? quote.indexOf('親会社株主に帰属')
-          : /親会社の所有者に帰属する当期利益/.test(label)
-            ? quote.indexOf('親会社の所有者に')
+          : ifrsParentProfit.test(label)
+            ? quote.indexOf('親会社の所有者')
             : -1;
   if (pos < 0) return false;
   const line = quote.slice(pos).split('\n')[0];
@@ -278,10 +287,12 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
       ''
     );
     const values = [...row.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
-    const percentageColumns = lines
-      .slice(0, index)
-      .some((header) => /(?:千円|百万円)\s*[％%]/.test(header));
-    const slot = numericSlot(label, values.length, percentageColumns);
+    const headers = lines.slice(Math.max(0, index - 6), index);
+    const percentageColumns = headers.some((header) => /(?:千円|百万円)\s*[％%]/.test(header));
+    const standaloneIfrsProfit = headers.some((header) =>
+      /税引前利益(?:(?!親会社|帰属する).){0,30}(?:当期|四半期|中間)利益/.test(header)
+    );
+    const slot = numericSlot(label, values.length, percentageColumns, standaloneIfrsProfit);
     if (slot === null || values[slot] !== fact.value) continue;
     const near = normalize(lines.slice(Math.max(0, index - 1), index + 1).join(''));
     if (fact.valueKind === 'forecastBefore' && !/前回|従来/.test(near)) continue;
@@ -292,13 +303,20 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
   return false;
 }
 
-function numericSlot(label: string, count: number, percentageColumns: boolean): number | null {
+function numericSlot(
+  label: string,
+  count: number,
+  percentageColumns: boolean,
+  standaloneIfrsProfit: boolean
+): number | null {
   if (/期末配当金/.test(label)) return count === 2 ? 0 : null;
   if (/年間配当金|合計/.test(label)) return count === 2 ? 1 : null;
   const financial = count >= 8 && percentageColumns;
   if (/売上高|売上収益/.test(label)) return 0;
   if (/営業利益/.test(label)) return financial ? 2 : 1;
   if (/経常利益|税引前利益/.test(label)) return financial ? 4 : 2;
+  if (ifrsParentProfit.test(label))
+    return standaloneIfrsProfit ? (financial ? 8 : 4) : financial ? 6 : 3;
   if (/親会社.*(?:純利益|当期利益|四半期利益|中間利益)|四半期純利益/.test(label))
     return financial ? 6 : 3;
   if (/^当期利益$/.test(label)) return financial ? 6 : 3;
@@ -327,7 +345,7 @@ function verifyCoverage(
     )
       throw new Error('決算実績の重要指標を確認できません');
     if (
-      /業績予想/.test(source) &&
+      hasNumericEarningsForecast(pages, facts) &&
       (!has(/売上高|売上収益/, 'forecast') ||
         !has(/営業利益/, 'forecast') ||
         !has(parentProfit, 'forecast'))
@@ -354,6 +372,33 @@ function verifyCoverage(
     !facts.some((fact) => fact.kind === 'event' && normalize(fact.quote).includes('基本合意書'))
   )
     throw new Error('提携の決定事項を確認できません');
+}
+
+function hasNumericEarningsForecast(pages: ExtractedPage[], facts: VerifiedFact[]): boolean {
+  if (facts.some((fact) => fact.kind === 'number' && fact.valueKind === 'forecast')) return true;
+  return pages.some(({ text }) => {
+    const lines = text.normalize('NFKC').split('\n');
+    return lines.some((line, index) => {
+      if (!/業績予想/.test(line)) return false;
+      const section = lines.slice(index, index + 13);
+      if (!/売上高|売上収益/.test(section.join('')) || !/営業利益/.test(section.join('')))
+        return false;
+      const tableRow = section.some((row) => {
+        const stripped = row.replace(
+          /^\s*(?:20\d{2}年\d{1,2}月期(?:第[1-4]四半期|\(予想\))?|第[1-4]四半期|中間期|通期|\(予想\))\s*/,
+          ''
+        );
+        return (
+          stripped !== row && [...stripped.matchAll(/-?\d+(?:,\d{3})*(?:\.\d+)?/g)].length >= 3
+        );
+      });
+      const prose = section.join('').replace(/\s/g, '');
+      const proseValues =
+        /(?:売上高|売上収益)[^。]{0,40}?\d[\d,.]*(?:千円|百万円|億円)/.test(prose) &&
+        /営業利益[^。]{0,40}?\d[\d,.]*(?:千円|百万円|億円)/.test(prose);
+      return tableRow || proseValues;
+    });
+  });
 }
 
 function quoteIsContiguous(page: string, quote: string): boolean {

@@ -99,6 +99,129 @@ describe('事実要約の原文照合', () => {
     );
     expect(result.facts).toHaveLength(3);
   });
+  it('業績予想が未定なら実績の要約を通し、数値予想があれば必須項目を確認する', () => {
+    const actual = [
+      ['売上高', 100],
+      ['営業利益', 20],
+      ['親会社株主に帰属する当期純利益', 10],
+    ].map(([label, value], index) => ({
+      ...fact,
+      id: `f${index + 1}`,
+      label,
+      value,
+      period: '2026年3月期',
+      valueKind: 'actual',
+      column: null,
+      quote: `${label}${value}百万円`,
+    }));
+    const actualText =
+      '2026年3月期 決算短信\n売上高100百万円\n営業利益20百万円\n親会社株主に帰属する当期純利益10百万円';
+    const raw = JSON.stringify({
+      version: 2,
+      documentType: 'earnings',
+      facts: actual,
+      unverified: [],
+    });
+    expect(
+      parseFactSummary(raw, 'earnings', [
+        { pageNumber: 1, text: `${actualText}\n業績予想については未定です` },
+      ]).facts
+    ).toHaveLength(3);
+    expect(() =>
+      parseFactSummary(raw, 'earnings', [
+        {
+          pageNumber: 1,
+          text: `${actualText}\n業績予想\n売上高 営業利益 親会社株主に帰属する当期純利益\n百万円 百万円 百万円\n通期 110 25 15`,
+        },
+      ])
+    ).toThrow('通期予想の重要指標');
+    expect(() =>
+      parseFactSummary(raw, 'earnings', [
+        {
+          pageNumber: 1,
+          text: `${actualText}\n業績予想は売上高110百万円、営業利益25百万円、親会社株主に帰属する当期純利益15百万円です`,
+        },
+      ])
+    ).toThrow('通期予想の重要指標');
+  });
+  it('IFRSの表では当期利益の次の親会社帰属利益列を照合する', () => {
+    const source = [
+      {
+        pageNumber: 1,
+        text: '2027年2月期第1四半期 決算短信〔IFRS〕\n親会社の所有者\n売上収益 営業利益 税引前利益 四半期利益 に帰属する 四半期包括利益\n四半期利益\n百万円 ％ 百万円 ％ 百万円 ％ 百万円 ％ 百万円 ％ 百万円 ％\n2027年2月期第1四半期 43,277 3.5 3,378 10.8 3,221 7.7 2,359 4.2 2,217 6.2 2,603 34.4',
+      },
+    ];
+    const quote = source[0].text.split('\n').slice(1).join('\n');
+    const candidate = {
+      ...fact,
+      label: '親会社の所有者に帰属する四半期利益',
+      value: 2217,
+      period: '2027年2月期第1四半期',
+      valueKind: 'actual',
+      column: '親会社の所有者に帰属する四半期利益',
+      quote,
+    };
+    const parse = (value: number) =>
+      parseFactSummary(
+        JSON.stringify({
+          version: 2,
+          documentType: 'earnings',
+          facts: [{ ...candidate, value }],
+          unverified: [],
+        }),
+        'earnings',
+        source,
+        false
+      );
+    expect(parse(2217).facts.map((item) => item.value)).toEqual([2217]);
+    expect(parse(2359).facts).toHaveLength(0);
+    const withoutStandalone = [
+      {
+        pageNumber: 1,
+        text: '2027年2月期第1四半期 決算短信〔IFRS〕\n売上収益 営業利益 税引前利益 親会社の所有者に帰属する四半期利益\n百万円 ％ 百万円 ％ 百万円 ％ 百万円 ％\n2027年2月期第1四半期 43,277 3.5 3,378 10.8 3,221 7.7 2,217 6.2',
+      },
+    ];
+    const noExtra = parseFactSummary(
+      JSON.stringify({
+        version: 2,
+        documentType: 'earnings',
+        facts: [{ ...candidate, quote: withoutStandalone[0].text.split('\n').slice(1).join('\n') }],
+        unverified: [],
+      }),
+      'earnings',
+      withoutStandalone,
+      false
+    );
+    expect(noExtra.facts.map((item) => item.value)).toEqual([2217]);
+  });
+  it('△と▲で表した損失を負数として照合する', () => {
+    for (const sign of ['△', '▲', '△ ', '▲ ']) {
+      const source = [{ pageNumber: 1, text: `2026年3月期 決算短信\n営業利益 ${sign}2,000百万円` }];
+      const parse = (value: number) =>
+        parseFactSummary(
+          JSON.stringify({
+            version: 2,
+            documentType: 'earnings',
+            facts: [
+              {
+                ...fact,
+                value,
+                period: '2026年3月期',
+                valueKind: 'actual',
+                column: null,
+                quote: `営業利益 ${sign}2,000百万円`,
+              },
+            ],
+            unverified: [],
+          }),
+          'earnings',
+          source,
+          false
+        );
+      expect(parse(-2000).facts.map((item) => item.value)).toEqual([-2000]);
+      expect(parse(2000).facts).toHaveLength(0);
+    }
+  });
   it('通期決算表の年度を数値列と取り違えない', () => {
     const source = [
       {
