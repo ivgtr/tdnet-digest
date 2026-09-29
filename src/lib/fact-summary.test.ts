@@ -258,6 +258,75 @@ describe('事実要約の原文照合', () => {
     );
     expect(wrong.facts).toHaveLength(0);
   });
+  it('決算表の数値をその行の年度と実績・予想区分に結び付ける', () => {
+    const source = [
+      {
+        pageNumber: 1,
+        text: '2026年5月期 決算短信\n１．経営成績\n売上高 営業利益 経常利益 当期純利益\n百万円 ％ 百万円 ％ 百万円 ％ 百万円 ％\n2026年5月期 9,783 36.9 2,156 206.4 2,130 202.3 1,516 207.2\n2025年5月期 7,147 22.4 703 △41.3 704 △41.2 493 △42.3\n３．2027年5月期の業績予想\n売上高 営業利益 経常利益 当期純利益\n百万円 ％ 百万円 ％ 百万円 ％ 百万円 ％\n通期 12,080 23.5 2,506 16.2 2,504 17.6 1,701 12.2',
+      },
+    ];
+    const actualQuote = source[0].text.split('\n').slice(2, 6).join('\n');
+    const forecastQuote = source[0].text.split('\n').slice(7).join('\n');
+    const parse = (
+      label: string,
+      value: number,
+      period: string,
+      valueKind: string,
+      quote: string
+    ) =>
+      parseFactSummary(
+        JSON.stringify({
+          version: 2,
+          documentType: 'earnings',
+          facts: [
+            {
+              ...fact,
+              label,
+              value,
+              period,
+              valueKind,
+              column: label,
+              quote,
+            },
+          ],
+          unverified: [],
+        }),
+        'earnings',
+        source,
+        false
+      );
+    expect(parse('営業利益', 2156, '2026年5月期', 'actual', actualQuote).facts).toHaveLength(1);
+    expect(parse('営業利益', 703, '2025年5月期', 'actual', actualQuote).facts).toHaveLength(1);
+    expect(parse('営業利益', 703, '2026年5月期', 'actual', actualQuote).facts).toHaveLength(0);
+    expect(parse('営業利益', 2156, '2026年5月期', 'forecast', actualQuote).facts).toHaveLength(0);
+    expect(parse('営業利益', 2506, '2027年5月期', 'forecast', forecastQuote).facts).toHaveLength(1);
+    expect(parse('当期純利益', 1516, '2026年5月期', 'actual', actualQuote).facts).toHaveLength(1);
+    expect(parse('当期純利益', 2130, '2026年5月期', 'actual', actualQuote).facts).toHaveLength(0);
+  });
+  it('決算説明文の実績値を予想として採用しない', () => {
+    const source = [
+      {
+        pageNumber: 1,
+        text: '2026年5月期 決算短信\n１．経営成績\n売上高100百万円\n３．2027年5月期の業績予想\n売上高110百万円',
+      },
+    ];
+    const parse = (value: number, period: string, valueKind: string, quote: string) =>
+      parseFactSummary(
+        JSON.stringify({
+          version: 2,
+          documentType: 'earnings',
+          facts: [{ ...fact, label: '売上高', value, period, valueKind, column: null, quote }],
+          unverified: [],
+        }),
+        'earnings',
+        source,
+        false
+      );
+    expect(parse(100, '2026年5月期', 'actual', '売上高100百万円').facts).toHaveLength(1);
+    expect(parse(100, '2026年5月期', 'forecast', '売上高100百万円').facts).toHaveLength(0);
+    expect(parse(110, '2027年5月期', 'forecast', '売上高110百万円').facts).toHaveLength(1);
+    expect(parse(110, '2027年5月期', 'actual', '売上高110百万円').facts).toHaveLength(0);
+  });
   it('増減率のない通期予想表では純利益と1株利益を別の列として照合する', () => {
     const source = [
       {

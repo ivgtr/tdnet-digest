@@ -192,9 +192,13 @@ export function parseFactSummary(
         const labelPosition = numericQuote.indexOf(item.label as string);
         const afterLabel = numericQuote.slice(labelPosition + (item.label as string).length);
         const numbers = [...afterLabel.matchAll(/-?\d+(?:\.\d+)?/g)];
-        const proseBinding = quote.includes(
-          `${normalize(metricLabel)}${item.value}${normalize(item.unit)}`
+        const checkedFact = { ...item, label: metricLabel } as unknown as VerifiedFact;
+        const proseLineIndex = (item.quote as string).split('\n').findIndex((line) =>
+          normalizeNumericText(line)
+            .replace(/\s/g, '')
+            .includes(`${normalize(metricLabel)}${item.value}${normalize(checkedFact.unit!)}`)
         );
+        const proseBinding = proseLineIndex >= 0;
         const columnFound =
           typeof item.column === 'string' &&
           (quote.includes(normalize(item.column)) ||
@@ -208,11 +212,16 @@ export function parseFactSummary(
         if (item.column && !columnFound) throw new Error(`${item.id}: 列見出しが引用にありません`);
         if (documentType === 'earnings' && !['actual', 'forecast'].includes(String(item.valueKind)))
           throw new Error(`${item.id}: 決算短信の予想種別が不正です`);
-        if (
-          !proseBinding &&
-          !numericBindingVerified({ ...item, label: metricLabel } as unknown as VerifiedFact)
-        )
-          throw new Error(`${item.id}: 指標と表の値の対応を確認できません`);
+        const bindingVerified = proseBinding
+          ? documentType !== 'earnings' ||
+            earningsRowVerified(
+              checkedFact,
+              lines,
+              quoteLine + proseLineIndex,
+              lines[quoteLine + proseLineIndex] ?? ''
+            )
+          : numericBindingVerified(checkedFact, page.text, quoteLine, documentType);
+        if (!bindingVerified) throw new Error(`${item.id}: 指標と表の値の対応を確認できません`);
       } else if (
         item.value !== null ||
         item.unit !== null ||
@@ -251,9 +260,15 @@ export function parseFactSummary(
   return { version: FACT_SCHEMA_VERSION, documentType, facts, unverified };
 }
 
-function numericBindingVerified(fact: VerifiedFact): boolean {
+function numericBindingVerified(
+  fact: VerifiedFact,
+  pageText: string,
+  quoteLine: number,
+  documentType: DocumentType
+): boolean {
   const quote = normalizeNumericText(fact.quote);
   const label = fact.label.normalize('NFKC');
+  const pageLines = pageText.split('\n');
   const pos =
     quote.indexOf(label) >= 0
       ? quote.indexOf(label)
@@ -270,13 +285,18 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
     line
       .split(/(?=売上高|売上収益|営業利益|経常利益|税引前利益|当期利益|四半期純利益|調整後EBITDA)/)
       .find((part) => part.includes(label)) ?? line;
-  if (
+  const singleValue =
     [...beforeNextMetric.matchAll(/-?\d+(?:\.\d+)?/g)].filter(
       (match) => Number(match[0]) === fact.value
-    ).length === 1 &&
-    [...beforeNextMetric.matchAll(/\d+(?:\.\d+)?/g)].length === 1
-  )
-    return true;
+    ).length === 1 && [...beforeNextMetric.matchAll(/\d+(?:\.\d+)?/g)].length === 1;
+  if (singleValue) {
+    const index = quote.slice(0, pos).split('\n').length - 1;
+    if (
+      documentType !== 'earnings' ||
+      earningsRowVerified(fact, pageLines, quoteLine + index, pageLines[quoteLine + index] ?? '')
+    )
+      return true;
+  }
   const lines = quote.split('\n');
   const candidates = lines
     .map((line, index) => ({ line, index }))
@@ -293,12 +313,58 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
     );
     const slot = numericSlot(label, values.length, percentageColumns, standaloneIfrsProfit);
     if (slot === null || values[slot] !== fact.value) continue;
+    if (
+      documentType === 'earnings' &&
+      !earningsRowVerified(fact, pageLines, quoteLine + index, pageLines[quoteLine + index] ?? '')
+    )
+      continue;
     const near = normalize(lines.slice(Math.max(0, index - 1), index + 1).join(''));
     if (fact.valueKind === 'forecastBefore' && !/前回|従来/.test(near)) continue;
     if (fact.valueKind === 'forecastAfter' && /前回|従来/.test(near) && !/今回|修正/.test(near))
       continue;
     return true;
   }
+  return false;
+}
+
+function earningsRowVerified(
+  fact: VerifiedFact,
+  pageLines: string[],
+  absoluteLine: number,
+  line: string
+): boolean {
+  const period = normalize(fact.period ?? '');
+  const yearMonth = period.match(/20\d{2}年\d{1,2}月期/)?.[0];
+  if (!yearMonth) return false;
+  const prefix = normalizeNumericText(line).match(financialRowPrefix)?.[0] ?? '';
+  const rowPeriod = normalize(prefix);
+  const rowYearMonth = rowPeriod.match(/20\d{2}年\d{1,2}月期/)?.[0];
+  const rowQuarter = rowPeriod.match(/第[1-4]四半期/)?.[0];
+  if (rowYearMonth && rowYearMonth !== yearMonth) return false;
+  if (rowQuarter && rowQuarter !== period.match(/第[1-4]四半期/)?.[0]) return false;
+  if (rowPeriod.includes('中間期') && !period.includes('中間期')) return false;
+  if (rowPeriod.includes('通期') && /第[1-4]四半期|中間期/.test(period)) return false;
+  let sectionKind: 'actual' | 'forecast' | null = null;
+  let sectionPeriod: string | null = null;
+  for (let index = absoluteLine; index >= Math.max(0, absoluteLine - 25); index--) {
+    const heading = normalize(pageLines[index] ?? '');
+    if (/業績予想/.test(heading) && !/業績予想からの修正|業績予想の適切な利用/.test(heading)) {
+      sectionKind = 'forecast';
+      sectionPeriod = heading.match(/20\d{2}年\d{1,2}月期/)?.[0] ?? null;
+      break;
+    }
+    if (/経営成績|連結業績|損益計算書|決算実績/.test(heading)) {
+      sectionKind = 'actual';
+      sectionPeriod = heading.match(/20\d{2}年\d{1,2}月期/)?.[0] ?? null;
+      break;
+    }
+  }
+  if (!rowYearMonth && prefix && sectionPeriod !== yearMonth) return false;
+  if (!rowYearMonth && !prefix && sectionPeriod && sectionPeriod !== yearMonth) return false;
+  const forecastMarker = /予想|見込|見通し/.test(normalize(prefix || line));
+  if (fact.valueKind === 'actual')
+    return !forecastMarker && (sectionKind !== 'forecast' || /実績/.test(line));
+  if (fact.valueKind === 'forecast') return forecastMarker || sectionKind === 'forecast';
   return false;
 }
 
@@ -316,7 +382,9 @@ function numericSlot(
   if (/経常利益|税引前利益/.test(label)) return financial ? 4 : 2;
   if (ifrsParentProfit.test(label))
     return standaloneIfrsProfit ? (financial ? 8 : 4) : financial ? 6 : 3;
-  if (/親会社.*(?:純利益|当期利益|四半期利益|中間利益)|四半期純利益/.test(label))
+  if (
+    /親会社.*(?:純利益|当期利益|四半期利益|中間利益)|当期純利益|四半期純利益|中間純利益/.test(label)
+  )
     return financial ? 6 : 3;
   if (/^当期利益$/.test(label)) return financial ? 6 : 3;
   if (/１株当たり|1株当たり/.test(label)) return financial ? 8 : 4;
@@ -408,13 +476,11 @@ function findQuoteStart(page: string, quote: string): number {
   const target = normalize(quote);
   for (let start = 0; start < bodyLines.length; start++) {
     for (let count = 1; count <= 12 && start + count <= bodyLines.length; count++) {
-      if (
-        bodyLines
-          .slice(start, start + count)
-          .join('')
-          .includes(target)
-      )
-        return start;
+      const offset = bodyLines
+        .slice(start, start + count)
+        .join('')
+        .indexOf(target);
+      if (offset >= 0 && offset < bodyLines[start].length) return start;
     }
   }
   return -1;
