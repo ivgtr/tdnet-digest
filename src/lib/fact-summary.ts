@@ -273,9 +273,15 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
       [...line.matchAll(/-?\d+(?:\.\d+)?/g)].some((match) => Number(match[0]) === fact.value)
     );
   for (const { line, index } of candidates) {
-    const row = line.replace(/^.*?(?:第[1-4]四半期|通期|\(予想\))\s*/, '');
+    const row = line.replace(
+      /^\s*(?:20\d{2}年\d{1,2}月期(?:第[1-4]四半期|\(予想\))?|第[1-4]四半期|通期|\(予想\))\s*/,
+      ''
+    );
     const values = [...row.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
-    const slot = numericSlot(label, values.length);
+    const percentageColumns = lines
+      .slice(0, index)
+      .some((header) => /(?:千円|百万円)\s*[％%]/.test(header));
+    const slot = numericSlot(label, values.length, percentageColumns);
     if (slot === null || values[slot] !== fact.value) continue;
     const near = normalize(lines.slice(Math.max(0, index - 1), index + 1).join(''));
     if (fact.valueKind === 'forecastBefore' && !/前回|従来/.test(near)) continue;
@@ -286,14 +292,15 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
   return false;
 }
 
-function numericSlot(label: string, count: number): number | null {
+function numericSlot(label: string, count: number, percentageColumns: boolean): number | null {
   if (/期末配当金/.test(label)) return count === 2 ? 0 : null;
   if (/年間配当金|合計/.test(label)) return count === 2 ? 1 : null;
-  const financial = count >= 10;
+  const financial = count >= 8 && percentageColumns;
   if (/売上高|売上収益/.test(label)) return 0;
   if (/営業利益/.test(label)) return financial ? 2 : 1;
   if (/経常利益|税引前利益/.test(label)) return financial ? 4 : 2;
-  if (/親会社.*純利益|親会社.*当期利益|四半期純利益/.test(label)) return financial ? 6 : 4;
+  if (/親会社.*(?:純利益|当期利益|四半期利益|中間利益)|四半期純利益/.test(label))
+    return financial ? 6 : 4;
   if (/^当期利益$/.test(label)) return financial ? 6 : 3;
   if (/１株当たり|1株当たり/.test(label)) return financial ? 8 : 5;
   if (/調整後EBITDA/.test(label)) return count === 10 ? 8 : count === 11 ? 9 : null;
@@ -312,13 +319,18 @@ function verifyCoverage(
         fact.kind === 'number' && metric.test(fact.label) && (!kind || fact.valueKind === kind)
     );
   if (documentType === 'earnings' && /売上高|売上収益/.test(source) && /営業利益/.test(source)) {
-    if (!has(/売上高|売上収益/, 'actual') || !has(/営業利益/, 'actual') || !has(/純利益/, 'actual'))
+    const parentProfit = /純利益|親会社の所有者に帰属する(?:当期|四半期|中間)利益/;
+    if (
+      !has(/売上高|売上収益/, 'actual') ||
+      !has(/営業利益/, 'actual') ||
+      !has(parentProfit, 'actual')
+    )
       throw new Error('決算実績の重要指標を確認できません');
     if (
       /業績予想/.test(source) &&
       (!has(/売上高|売上収益/, 'forecast') ||
         !has(/営業利益/, 'forecast') ||
-        !has(/純利益/, 'forecast'))
+        !has(parentProfit, 'forecast'))
     )
       throw new Error('通期予想の重要指標を確認できません');
     if (/配当の状況/.test(source) && !has(/配当|期末|合計/))

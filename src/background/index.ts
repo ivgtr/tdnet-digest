@@ -88,8 +88,10 @@ async function getSettings(): Promise<Settings> {
     'experimentalScoring',
     'twoPassMode',
   ]);
-  if (result.twoPassMode !== undefined)
-    throw new Error('旧要約モード設定が残っています。設定画面で保存し直してください');
+  if (result.twoPassMode !== undefined) {
+    await chrome.storage.sync.remove('twoPassMode');
+    console.info('廃止された twoPassMode 設定を削除しました');
+  }
   const provider = result.provider ?? 'openai';
   const model = result.model ?? 'gpt-4o';
   const extractionMode = result.extractionMode ?? 'full';

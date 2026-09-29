@@ -50,7 +50,7 @@ const facts: FactSummary = {
   ],
 };
 
-async function setup(scoring: boolean, allowPastPdf = true, withDate = false) {
+async function setup(scoring: boolean, allowPastPdf = true, withDate = false, legacy = false) {
   let listener: (
     request: unknown,
     sender: unknown,
@@ -85,7 +85,9 @@ async function setup(scoring: boolean, allowPastPdf = true, withDate = false) {
           apiKey: 'test',
           extractionMode: 'full',
           experimentalScoring: scoring,
+          ...(legacy ? { twoPassMode: true } : {}),
         }),
+        remove: vi.fn(async () => {}),
       },
     },
     offscreen: { createDocument: vi.fn() },
@@ -139,6 +141,14 @@ describe('要約・採点・追加分析の分離', () => {
     expect(result.metadata.score).toBeUndefined();
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+  });
+
+  it('更新前から残る二段階要約設定を削除し、要約を続行する', async () => {
+    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    const request = await setup(false, true, false, true);
+    const result = await request({ action: 'summarize' });
+    expect(result.summary).toContain('1150百万円');
+    expect(chrome.storage.sync.remove).toHaveBeenCalledWith('twoPassMode');
   });
 
   it('TDnet以外のPDF URLを取得しない', async () => {

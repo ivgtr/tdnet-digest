@@ -67,6 +67,74 @@ describe('事実要約の原文照合', () => {
     expect(result.facts).toHaveLength(0);
     expect(result.unverified.join('')).toContain('対象年度と決算月');
   });
+  it('IFRS決算の親会社所有者帰属利益を必須の利益項目として認識する', () => {
+    const source = [
+      {
+        pageNumber: 1,
+        text: '2026年3月期 決算短信〔IFRS〕\n売上収益100百万円\n営業利益20百万円\n親会社の所有者に帰属する当期利益10百万円',
+      },
+    ];
+    const items = [
+      ['売上収益', 100],
+      ['営業利益', 20],
+      ['親会社の所有者に帰属する当期利益', 10],
+    ].map(([label, value], index) => ({
+      id: `f${index + 1}`,
+      importance: 'key',
+      kind: 'number',
+      label,
+      value,
+      unit: '百万円',
+      period: '2026年3月期',
+      valueKind: 'actual',
+      column: null,
+      statement: null,
+      page: 1,
+      quote: `${label}${value}百万円`,
+    }));
+    const result = parseFactSummary(
+      JSON.stringify({ version: 2, documentType: 'earnings', facts: items, unverified: [] }),
+      'earnings',
+      source
+    );
+    expect(result.facts).toHaveLength(3);
+  });
+  it('通期決算表の年度を数値列と取り違えない', () => {
+    const source = [
+      {
+        pageNumber: 1,
+        text: '2026年5月期 決算短信\n売上高 営業利益 経常利益 当期純利益\n百万円 ％ 百万円 ％ 百万円 ％ 百万円 ％\n2026年5月期 9,783 36.9 2,156 206.4 2,130 202.3 1,516 207.2',
+      },
+    ];
+    const quoted = source[0].text.split('\n').slice(1).join('\n');
+    const candidate = {
+      ...fact,
+      value: 2156,
+      valueKind: 'actual',
+      period: '2026年5月期',
+      column: '営業利益',
+      quote: quoted,
+    };
+    const result = parseFactSummary(
+      JSON.stringify({ version: 2, documentType: 'earnings', facts: [candidate], unverified: [] }),
+      'earnings',
+      source,
+      false
+    );
+    expect(result.facts.map((item) => item.value)).toEqual([2156]);
+    const wrong = parseFactSummary(
+      JSON.stringify({
+        version: 2,
+        documentType: 'earnings',
+        facts: [{ ...candidate, value: 9783 }],
+        unverified: [],
+      }),
+      'earnings',
+      source,
+      false
+    );
+    expect(wrong.facts).toHaveLength(0);
+  });
   it('同じ表にある別列の値を営業利益として採用しない', () => {
     expect(() => parseFactSummary(raw({ ...fact, value: 100 }), 'other', pages)).toThrow(
       '重要事実'
