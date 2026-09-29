@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TDnet Digest デモ画面</title>
+    <style>
+      :root {
+        font-family: Arial, 'Droid Sans Fallback', sans-serif;
+        color: #12243c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f1f1f1;
+        font-size: 14px;
+      }
+      .page {
+        max-width: 1280px;
+        min-height: 720px;
+        margin: auto;
+        padding: 14px 14px 38px;
+      }
+      .demo-label {
+        position: fixed;
+        right: 20px;
+        bottom: 18px;
+        z-index: 5;
+        padding: 8px 12px;
+        border-radius: 4px;
+        background: #174f83;
+        color: white;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        box-shadow: 0 2px 10px #0002;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin: 0 0 17px;
+        color: #2f78ba;
+      }
+      .toolbar strong {
+        font-size: 23px;
+        letter-spacing: 0.02em;
+      }
+      .toolbar small {
+        font-size: 13px;
+        font-weight: bold;
+      }
+      .pagination {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
+        font-size: 13px;
+      }
+      .pagination span {
+        margin-right: 8px;
+      }
+      .pagination a {
+        display: inline-flex;
+        min-width: 32px;
+        height: 32px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #2877bc;
+        background: white;
+        color: #2877bc;
+        text-decoration: none;
+        padding: 0 5px;
+      }
+      .pagination .current {
+        background: #397fb9;
+        color: white;
+      }
+      table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        table-layout: fixed;
+      }
+      th {
+        height: 43px;
+        background: #397eb9;
+        color: white;
+        border-right: 1px solid white;
+        font-size: 14px;
+        font-weight: bold;
+      }
+      th:first-child {
+        border-top-left-radius: 3px;
+      }
+      th:last-child {
+        border-top-right-radius: 3px;
+      }
+      td {
+        height: 42px;
+        padding: 5px 7px;
+        border-right: 1px solid white;
+        border-bottom: 1px solid white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      tbody tr.disclosure:nth-of-type(odd) td {
+        background: #dbe9f6;
+      }
+      tbody tr.disclosure:nth-of-type(even) td {
+        background: #f7f9fc;
+      }
+      .time {
+        width: 65px;
+        text-align: center;
+      }
+      .code {
+        width: 67px;
+        text-align: center;
+      }
+      .name {
+        width: 212px;
+      }
+      .title {
+        width: auto;
+      }
+      .xbrl {
+        width: 102px;
+        text-align: center;
+      }
+      .exchange {
+        width: 103px;
+      }
+      .history {
+        width: 149px;
+        text-align: center;
+      }
+      .ai {
+        width: 96px;
+        text-align: center;
+      }
+      a.pdf {
+        color: #0000d7;
+        text-decoration: underline;
+      }
+      .xbrl-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 78px;
+        height: 28px;
+        border-radius: 3px;
+        color: white;
+        background: linear-gradient(#69ca64, #27aa28);
+        font-size: 12px;
+        font-weight: bold;
+      }
+      .summary-button {
+        width: 60px;
+        height: 25px;
+        border: 1px solid #4a84b9;
+        border-radius: 3px;
+        color: white;
+        background: linear-gradient(#75a8d0, #4a84b9);
+        font-weight: bold;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .summary-button:hover {
+        background: linear-gradient(#577b98, #2c506f);
+      }
+      .summary-button.loading {
+        border-color: #9ca3af;
+        background: linear-gradient(#d1d5db, #9ca3af);
+      }
+      .summary-row {
+        display: none;
+      }
+      .summary-row.visible {
+        display: table-row;
+      }
+      .summary-row td {
+        height: auto;
+        padding: 13px 12px;
+        background: #f9fafb;
+        border-top: 2px solid #e5e7eb;
+        border-bottom: 2px solid #e5e7eb;
+        white-space: normal;
+        overflow: visible;
+      }
+      .summary-card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        padding: 12px;
+        overflow: hidden;
+      }
+      .summary-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 9px;
+        gap: 12px;
+      }
+      .summary-heading strong {
+        font-size: 14px;
+      }
+      .resummarize {
+        border: 1px solid #eab308;
+        border-radius: 4px;
+        background: #fef9c3;
+        color: #854d0e;
+        padding: 5px 9px;
+        font-size: 12px;
+      }
+      .metadata {
+        background: #f3f4f6;
+        border-radius: 4px;
+        color: #6b7280;
+        font-size: 11px;
+        padding: 7px 6px;
+        margin-bottom: 10px;
+      }
+      .summary-text {
+        font-size: 13px;
+        line-height: 1.55;
+        color: #374151;
+      }
+      .summary-text h3 {
+        margin: 10px 0 6px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid #e5e7eb;
+        color: #17283f;
+        font-size: 15px;
+      }
+      .summary-text p {
+        margin: 4px 0;
+      }
+      .summary-text ul {
+        margin: 4px 0 9px;
+        padding-left: 23px;
+      }
+      .summary-text li {
+        margin: 3px 0;
+      }
+      .source {
+        color: #326ca0;
+      }
+      .cursor {
+        position: fixed;
+        z-index: 10;
+        width: 24px;
+        height: 32px;
+        opacity: 0;
+        pointer-events: none;
+        filter: drop-shadow(1px 2px 1px #0007);
+      }
+      .click-ring {
+        position: fixed;
+        z-index: 9;
+        width: 24px;
+        height: 24px;
+        border: 3px solid #258dd5;
+        border-radius: 50%;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+      }
+      .footer {
+        color: #858f9a;
+        margin-top: 18px;
+        font-size: 12px;
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="toolbar">
+        <strong>2026年07月10日</strong><small>に開示された情報</small>
+        <div class="pagination">
+          <span>1〜20件 / 全38件</span><a href="#">〈前へ</a><a href="#" class="current">1</a
+          ><a href="#">2</a><a href="#">次へ〉</a>
+        </div>
+      </div>
+      <table aria-label="架空の適時開示一覧">
+        <thead>
+          <tr>
+            <th class="time">時刻</th>
+            <th class="code">コード</th>
+            <th class="name">会社名</th>
+            <th class="title">表題</th>
+            <th class="xbrl">XBRL</th>
+            <th class="exchange">上場取引所</th>
+            <th class="history">更新履歴</th>
+            <th class="ai">AI要約</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="disclosure">
+            <td class="time">16:00</td>
+            <td class="code">0000</td>
+            <td class="name">北浜サンプル</td>
+            <td class="title">
+              <a class="pdf" href="#">自己株式の取得に関するお知らせ（デモ）</a>
+            </td>
+            <td class="xbrl"></td>
+            <td class="exchange">東</td>
+            <td class="history"></td>
+            <td class="ai"><button class="summary-button" type="button">要約</button></td>
+          </tr>
+          <tr class="disclosure">
+            <td class="time">16:00</td>
+            <td class="code">0000</td>
+            <td class="name">青葉サンプル</td>
+            <td class="title"><a class="pdf" href="#">2026年3月期 第1四半期決算短信（デモ）</a></td>
+            <td class="xbrl"><span class="xbrl-pill">XBRL</span></td>
+            <td class="exchange">東</td>
+            <td class="history"></td>
+            <td class="ai">
+              <button id="demo-button" class="summary-button" type="button">要約</button>
+            </td>
+          </tr>
+          <tr id="demo-summary" class="summary-row">
+            <td colspan="8">
+              <div class="summary-card">
+                <div class="summary-heading">
+                  <strong>AI要約: 青葉サンプル - 2026年3月期 第1四半期決算短信（デモ）</strong
+                  ><button class="resummarize" type="button">再要約</button>
+                </div>
+                <div class="metadata">
+                  <b>抽出モード:</b> 全文抽出 | <b>ページ:</b> 8/8ページ | <b>分析:</b> デモ・2パス
+                </div>
+                <div class="summary-text">
+                  <h3>決算評価（経常利益ベース）</h3>
+                  <p>【実績】</p>
+                  <ul>
+                    <li>売上高は前年同期から増加 <span class="source">[p.1]</span></li>
+                    <li>経常利益も増加 <span class="source">[p.1]</span></li>
+                  </ul>
+                  <p>【通期予想】</p>
+                  <ul>
+                    <li>通期予想は据え置き <span class="source">[p.2]</span></li>
+                  </ul>
+                  <h3>全体要約</h3>
+                  <p>売上・利益とも前年同期を上回りました。今後は利益率の推移を確認します。</p>
+                  <h3>次回確認点</h3>
+                  <ul>
+                    <li>利益率の推移と通期予想への進捗 <span class="source">[p.3]</span></li>
+                  </ul>
+                </div>
+              </div>
+            </td>
+          </tr>
+          <tr class="disclosure">
+            <td class="time">15:45</td>
+            <td class="code">0000</td>
+            <td class="name">緑川サンプル</td>
+            <td class="title"><a class="pdf" href="#">剰余金の配当に関するお知らせ（デモ）</a></td>
+            <td class="xbrl"></td>
+            <td class="exchange">東</td>
+            <td class="history"></td>
+            <td class="ai"><button class="summary-button" type="button">要約</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="footer">この画面と開示内容はデモ用の架空データです。</div>
+    </div>
+    <div class="demo-label">DEMO · 架空データ</div>
+    <svg class="cursor" id="demo-cursor" viewBox="0 0 24 32">
+      <path d="M1 1v25l6-6 5 11 5-3-5-10h9z" fill="white" stroke="#21384c" stroke-width="2" />
+    </svg>
+    <div class="click-ring" id="click-ring"></div>
+    <script>
+      const button = document.querySelector('#demo-button');
+      const summary = document.querySelector('#demo-summary');
+      const cursor = document.querySelector('#demo-cursor');
+      const ring = document.querySelector('#click-ring');
+      const summaryHeading = summary.querySelector('.summary-heading strong');
+      const summaryText = summary.querySelector('.summary-text');
+      const earningsSummary = summaryText.innerHTML;
+      const otherSummaries = [
+        '<h3>自己株式取得の概要</h3><p>取得枠の設定を公表しました。<span class="source">[p.1]</span></p><h3>次回確認点</h3><ul><li>実際の取得状況 <span class="source">[p.1]</span></li></ul>',
+        earningsSummary,
+        '<h3>配当の概要</h3><p>配当予想の変更を公表しました。<span class="source">[p.1]</span></p><h3>次回確認点</h3><ul><li>次回の配当方針 <span class="source">[p.1]</span></li></ul>',
+      ];
+      let timer;
+      document.querySelectorAll('.summary-button').forEach((clickedButton, index) => {
+        clickedButton.addEventListener('click', () => {
+          clearTimeout(timer);
+          summary.classList.remove('visible');
+          document.querySelectorAll('.summary-button').forEach((item) => {
+            item.classList.remove('loading');
+            item.textContent = '要約';
+          });
+          clickedButton.classList.add('loading');
+          clickedButton.textContent = '···';
+          const row = clickedButton.closest('tr');
+          row.after(summary);
+          summaryHeading.textContent = `AI要約: ${row.querySelector('.name').textContent} - ${row.querySelector('.title').textContent}`;
+          summaryText.innerHTML = otherSummaries[index];
+          timer = setTimeout(() => {
+            clickedButton.classList.remove('loading');
+            clickedButton.textContent = '要約';
+            summary.classList.add('visible');
+          }, 1100);
+        });
+      });
+      document
+        .querySelectorAll('a[href="#"]')
+        .forEach((link) => link.addEventListener('click', (event) => event.preventDefault()));
+      const ease = (x) => {
+        const y = Math.max(0, Math.min(1, x));
+        return y * y * (3 - 2 * y);
+      };
+      window.renderDemoFrame = (t) => {
+        clearTimeout(timer);
+        const loading = t >= 3.4 && t < 4.5;
+        const visible = t >= 4.5;
+        button.classList.toggle('loading', loading);
+        button.textContent = loading ? '···' : '要約';
+        summary.classList.toggle('visible', visible);
+        if (visible) {
+          const p = ease((t - 4.5) / 0.8);
+          summary.style.opacity = p;
+          summary.querySelector('.summary-card').style.transform = `translateY(${(1 - p) * -10}px)`;
+        }
+        const target = button.getBoundingClientRect();
+        const start = { x: 590, y: 360 };
+        const progress = ease((t - 1.0) / 2.2);
+        const x = start.x + (target.left + target.width / 2 - start.x) * progress;
+        const y = start.y + (target.top + target.height / 2 - start.y) * progress;
+        cursor.style.opacity = t >= 0.8 && t < 4.7 ? '1' : '0';
+        cursor.style.left = `${x}px`;
+        cursor.style.top = `${y}px`;
+        ring.style.left = `${target.left + target.width / 2}px`;
+        ring.style.top = `${target.top + target.height / 2}px`;
+        const ripple = Math.max(0, 1 - (t - 3.4) / 0.65);
+        ring.style.opacity = t >= 3.4 ? String(ripple * 0.8) : '0';
+        ring.style.width = ring.style.height = `${24 + (1 - ripple) * 100}px`;
+      };
+    </script>
+  </body>
+</html>

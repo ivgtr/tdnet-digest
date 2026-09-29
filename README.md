@@ -8,7 +8,7 @@ TDnetの適時開示一覧で、PDFの内容をその場で要約するChrome拡
 
 ![架空の開示一覧で要約を表示するデモ](media/tdnet-digest-demo.gif)
 
-架空データを使ったイメージ映像です。[動画版（MP4）](media/tdnet-digest-demo.mp4)も見られます。
+架空データを使ったイメージ映像です。[動画版（MP4）](media/tdnet-digest-demo.mp4)も見られます。操作できる[デモページ](demo/index.html)は、ファイルをダウンロードしてブラウザで開いてください。
 
 ## インストールと使い方
 
