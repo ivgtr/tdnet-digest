@@ -2,6 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/ivgtr/tdnet-digest?label=release&style=flat-square)](https://github.com/ivgtr/tdnet-digest/releases/latest)
 [![Chrome extension](https://img.shields.io/badge/Chrome-extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](#インストール)
+[![MIT License](https://img.shields.io/badge/license-MIT-22a06b?style=flat-square)](LICENSE)
 
 TDnetの適時開示一覧で、PDFの要約をその場で読めるChrome拡張です。決算短信では、資料に記載された前年同期比や業績予想の修正も根拠ページ付きで表示します。
 
@@ -18,8 +19,12 @@ TDnetの適時開示一覧で、PDFの要約をその場で読めるChrome拡張
 1. Chromeの拡張機能メニューからTDnet Digestを開き、「設定を開く」でLLMプロバイダー、モデル、APIキーを登録します。
 2. [TDnetの開示一覧](https://www.release.tdnet.info/)で、確認したい資料の「要約」を押します。
 
-要約には自分で契約したLLMのAPIキーを使います。PDFから抽出したテキストが設定先に送信され、モデルに応じてAPI料金が発生します。[料金の目安](docs/api-cost.md)を参照してください。要約は原文と照らし合わせてください。
+要約には自分で契約したLLMのAPIキーを使います。モデルに応じてAPI料金が発生します。[料金の目安](docs/api-cost.md)を参照してください。要約は原文と照らし合わせてください。
+
+## データの扱い
+
+PDFのテキストは設定先のLLMへ送信します。APIキーはChromeの同期ストレージ、要約キャッシュは端末内に保存します。
 
 ## 開発・評価
 
-[開発ガイド](docs/development.md)と[評価ガイド](evaluation/README.md)を参照してください。
+[開発ガイド](docs/development.md)と[評価ガイド](evaluation/README.md)を参照してください。不具合や質問は[Issues](https://github.com/ivgtr/tdnet-digest/issues)へ。ライセンスは[MIT](LICENSE)です。

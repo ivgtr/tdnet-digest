@@ -110,6 +110,7 @@ jobs:
       - name: Create distribution zip
         if: steps.check-label.outputs.release-type != 'none'
         run: |
+          cp LICENSE dist/LICENSE
           cd dist
           zip -r ../tdnet-digest-v${{ steps.bump.outputs.version }}.zip .
           cd ..
