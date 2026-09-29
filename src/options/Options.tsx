@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import type { ExtractionMode, CachedSummary, SummaryCacheStore } from '@/types/summaryMetadata';
+import type { ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 import { LLM_PROVIDERS, getProvider } from '@/lib/llm-providers';
 
-const CACHE_KEY = 'summaryCache';
+const CACHE_PREFIX = 'summaryCacheV2:';
 
 const Options: React.FC = () => {
   const [provider, setProvider] = useState('openai');
@@ -11,7 +11,6 @@ const Options: React.FC = () => {
   const [customUrl, setCustomUrl] = useState('');
   const [useCustomModel, setUseCustomModel] = useState(false);
   const [extractionMode, setExtractionMode] = useState<ExtractionMode>('full');
-  const [twoPassMode, setTwoPassMode] = useState(true);
   const [experimentalScoring, setExperimentalScoring] = useState(false);
   const [saved, setSaved] = useState(false);
   const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
@@ -25,7 +24,6 @@ const Options: React.FC = () => {
     'customUrl',
     'useCustomModel',
     'extractionMode',
-    'twoPassMode',
     'experimentalScoring',
   ] as const;
 
@@ -52,7 +50,27 @@ const Options: React.FC = () => {
       reader.onload = (ev) => {
         try {
           const data = JSON.parse(ev.target?.result as string);
-          // 有効なキーのみ取り込む
+          if (
+            !data ||
+            typeof data !== 'object' ||
+            Array.isArray(data) ||
+            Object.keys(data).some(
+              (key) => !SETTINGS_KEYS.includes(key as (typeof SETTINGS_KEYS)[number])
+            ) ||
+            (data.provider !== undefined &&
+              (typeof data.provider !== 'string' || !getProvider(data.provider))) ||
+            (data.apiKey !== undefined && typeof data.apiKey !== 'string') ||
+            (data.model !== undefined && typeof data.model !== 'string') ||
+            (data.customUrl !== undefined && typeof data.customUrl !== 'string') ||
+            (data.useCustomModel !== undefined && typeof data.useCustomModel !== 'boolean') ||
+            (data.extractionMode !== undefined &&
+              !['full', 'smart'].includes(data.extractionMode)) ||
+            (data.experimentalScoring !== undefined &&
+              typeof data.experimentalScoring !== 'boolean')
+          ) {
+            alert('非対応または不正な設定項目があります。現在の形式で保存し直してください');
+            return;
+          }
           const validData: Record<string, unknown> = {};
           for (const key of SETTINGS_KEYS) {
             if (key in data) validData[key] = data[key];
@@ -61,23 +79,23 @@ const Options: React.FC = () => {
             alert('有効な設定が見つかりませんでした');
             return;
           }
-          chrome.storage.sync.set(validData, () => {
-            // UIに反映
-            if (validData.provider) setProvider(validData.provider as string);
-            if (validData.apiKey) setApiKey(validData.apiKey as string);
-            if (validData.model) setModel(validData.model as string);
-            if (validData.customUrl) setCustomUrl(validData.customUrl as string);
-            if (validData.useCustomModel !== undefined)
-              setUseCustomModel(validData.useCustomModel as boolean);
-            if (validData.extractionMode)
-              setExtractionMode(validData.extractionMode as ExtractionMode);
-            if (validData.twoPassMode !== undefined)
-              setTwoPassMode(validData.twoPassMode as boolean);
-            if (validData.experimentalScoring !== undefined)
-              setExperimentalScoring(validData.experimentalScoring as boolean);
-            setSaved(true);
-            setTimeout(() => setSaved(false), 3000);
-          });
+          chrome.storage.sync.remove('twoPassMode', () =>
+            chrome.storage.sync.set(validData, () => {
+              // UIに反映
+              if (validData.provider) setProvider(validData.provider as string);
+              if (validData.apiKey) setApiKey(validData.apiKey as string);
+              if (validData.model) setModel(validData.model as string);
+              if (validData.customUrl) setCustomUrl(validData.customUrl as string);
+              if (validData.useCustomModel !== undefined)
+                setUseCustomModel(validData.useCustomModel as boolean);
+              if (validData.extractionMode)
+                setExtractionMode(validData.extractionMode as ExtractionMode);
+              if (validData.experimentalScoring !== undefined)
+                setExperimentalScoring(validData.experimentalScoring as boolean);
+              setSaved(true);
+              setTimeout(() => setSaved(false), 3000);
+            })
+          );
         } catch {
           alert('ファイルの読み込みに失敗しました');
         }
@@ -88,23 +106,40 @@ const Options: React.FC = () => {
   };
 
   const loadCacheEntries = () => {
-    chrome.storage.local.get(CACHE_KEY, (data) => {
-      const store: SummaryCacheStore = data[CACHE_KEY] || {};
-      const entries = Object.entries(store).sort(([, a], [, b]) => b.cachedAt - a.cachedAt);
+    chrome.storage.local.get(null, (data) => {
+      const entries = Object.entries(data)
+        .filter(
+          ([key, value]) =>
+            key.startsWith(CACHE_PREFIX) && value && typeof value === 'object' && 'facts' in value
+        )
+        .map(([key, value]) => [key, value as CachedSummary] as [string, CachedSummary])
+        .sort(([, a], [, b]) => b.cachedAt - a.cachedAt);
       setCacheEntries(entries);
     });
   };
 
   const deleteCacheEntry = (key: string) => {
-    chrome.storage.local.get(CACHE_KEY, (data) => {
-      const store: SummaryCacheStore = data[CACHE_KEY] || {};
-      delete store[key];
-      chrome.storage.local.set({ [CACHE_KEY]: store }, loadCacheEntries);
-    });
+    const entry = cacheEntries.find(([entryKey]) => entryKey === key)?.[1];
+    chrome.storage.local.remove(
+      [
+        key,
+        ...(entry ? [`scoreCacheV1:${entry.resultId}`, `analysisCacheV1:${entry.resultId}`] : []),
+      ],
+      loadCacheEntries
+    );
   };
 
   const clearAllCache = () => {
-    chrome.storage.local.set({ [CACHE_KEY]: {} }, loadCacheEntries);
+    chrome.storage.local.get(null, (data) => {
+      const keys = Object.keys(data).filter(
+        (key) =>
+          key.startsWith(CACHE_PREFIX) ||
+          key.startsWith('scoreCacheV1:') ||
+          key.startsWith('analysisCacheV1:') ||
+          key === 'summaryCache'
+      );
+      chrome.storage.local.remove(keys, loadCacheEntries);
+    });
   };
 
   useEffect(() => {
@@ -116,7 +151,6 @@ const Options: React.FC = () => {
         'customUrl',
         'useCustomModel',
         'extractionMode',
-        'twoPassMode',
         'experimentalScoring',
       ],
       (result) => {
@@ -126,7 +160,6 @@ const Options: React.FC = () => {
         if (result.customUrl) setCustomUrl(result.customUrl);
         if (result.useCustomModel !== undefined) setUseCustomModel(result.useCustomModel);
         if (result.extractionMode) setExtractionMode(result.extractionMode);
-        if (result.twoPassMode !== undefined) setTwoPassMode(result.twoPassMode);
         if (result.experimentalScoring !== undefined)
           setExperimentalScoring(result.experimentalScoring);
       }
@@ -195,10 +228,10 @@ const Options: React.FC = () => {
         customUrl: provider === 'custom' ? customUrl : '',
         useCustomModel,
         extractionMode,
-        twoPassMode,
         experimentalScoring,
       },
       () => {
+        chrome.storage.sync.remove('twoPassMode');
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
       }
@@ -373,41 +406,9 @@ const Options: React.FC = () => {
             </div>
           </div>
 
-          {/* 要約モード */}
-          <div>
-            <label htmlFor="twoPassMode" className="block text-sm font-medium text-gray-700 mb-2">
-              要約モード
-            </label>
-            <select
-              id="twoPassMode"
-              value={twoPassMode ? 'twoPass' : 'onePass'}
-              onChange={(e) => setTwoPassMode(e.target.value === 'twoPass')}
-              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="twoPass">2パス要約（推奨）</option>
-              <option value="onePass">1パス要約</option>
-            </select>
-            <div className="mt-2 p-3 bg-gray-50 rounded text-xs text-gray-700">
-              {twoPassMode ? (
-                <div>
-                  <strong>2パス要約（推奨）:</strong>
-                  <ul className="mt-1 ml-4 list-disc space-y-1">
-                    <li>情報抽出→整形の2段階で安定した出力を実現</li>
-                    <li>性能の低いモデルでもフォーマットが安定</li>
-                    <li>通常はAPIを2回呼び出し、検証失敗時には追加で呼び出します</li>
-                  </ul>
-                </div>
-              ) : (
-                <div>
-                  <strong>1パス要約:</strong>
-                  <ul className="mt-1 ml-4 list-disc space-y-1">
-                    <li>1回のリクエストで要約を生成（高速・低コスト）</li>
-                    <li>モデルによっては出力フォーマットが不安定になる場合あり</li>
-                  </ul>
-                </div>
-              )}
-            </div>
-          </div>
+          <p className="text-xs text-gray-700">
+            要約はPDFの文字抽出後、事実を通常1回のAPI呼び出しで構造化して表示します。
+          </p>
 
           <div>
             <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
@@ -420,7 +421,7 @@ const Options: React.FC = () => {
               実験的スコアを表示（既定OFF）
             </label>
             <p className="mt-2 text-xs text-gray-500">
-              PDF本文で照合した数値と事実から、AIが0～100点の目安を推論します。比較できない項目は推測せず、過去資料のWeb検索や追加分析にはAPI料金が発生します。1パス・2パスの両方で表示されます。
+              要約表示後、検証済み事実とPDF本文を照合して自動採点します。必要な過去資料の検索や採点には追加のAPI料金が発生します。追加分析は要約内のボタンから別に実行します。
             </p>
           </div>
 

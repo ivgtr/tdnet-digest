@@ -7,6 +7,8 @@ import { SUMMARY_STYLES } from '../constants/styles';
 import type { SummaryMetadata } from '../types/summaryMetadata';
 import { parseMarkdown } from './markdownParser';
 import type { ExperimentalScore, ScoreValue } from '@/lib/scoring';
+import type { AdditionalAnalysis, AnalysisView } from '@/lib/additional-analysis';
+import type { Stage } from '../hooks/useSummarize';
 
 /**
  * エラー表示のHTMLを生成
@@ -14,7 +16,7 @@ import type { ExperimentalScore, ScoreValue } from '@/lib/scoring';
 export function buildErrorHtml(errorText: string): string {
   return `
     <div style="${SUMMARY_STYLES.errorContainer}">
-      <p style="${SUMMARY_STYLES.errorText}">${errorText}</p>
+      <p style="${SUMMARY_STYLES.errorText}">${escapeMetadataText(errorText)}</p>
     </div>
   `;
 }
@@ -34,11 +36,10 @@ export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
     model,
     summaryMode,
     analysisSchemaVersion,
-    experimentalScoring,
   } = metadata;
   const analysisInfo =
     provider && model && summaryMode
-      ? ` | <span style="font-weight: bold;">分析:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・${summaryMode === 'two-pass' ? '2パス' : '1パス'}・v${analysisSchemaVersion ?? '?'}${experimentalScoring ? '・実験スコアON' : ''}`
+      ? ` | <span style="font-weight: bold;">要約:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・1回・v${analysisSchemaVersion ?? '?'}`
       : '';
 
   let html = `
@@ -51,8 +52,8 @@ export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
   if (qualityWarning) {
     html += `
       <div style="${SUMMARY_STYLES.warningBox}">
-        <strong>⚠️ 品質警告:</strong> ${qualityWarning.message}<br>
-        <span style="font-size: 11px;">不足キーワード: ${qualityWarning.missingKeywords?.join(', ') || 'なし'}</span>
+        <strong>⚠️ 品質警告:</strong> ${escapeMetadataText(qualityWarning.message)}<br>
+        <span style="font-size: 11px;">不足キーワード: ${qualityWarning.missingKeywords?.map(escapeMetadataText).join(', ') || 'なし'}</span>
       </div>
     `;
   }
@@ -75,7 +76,9 @@ function escapeMetadataText(value: string): string {
 export function buildSummaryHtml(
   summaryText: string,
   metadata: SummaryMetadata | null,
-  rowData: { companyName: string; title: string }
+  rowData: { companyName: string; title: string },
+  score?: Stage<ExperimentalScore>,
+  analysis?: Stage<AdditionalAnalysis>
 ): string {
   const metadataHtml = buildMetadataHtml(metadata);
   const fullRetryButton =
@@ -87,18 +90,46 @@ export function buildSummaryHtml(
     <div style="${SUMMARY_STYLES.summaryContainer}">
       <div style="${SUMMARY_STYLES.headerRow}">
         <h4 style="${SUMMARY_STYLES.headerTitle}">
-          AI要約: ${rowData.companyName} - ${rowData.title}
+          AI要約: ${escapeMetadataText(rowData.companyName)} - ${escapeMetadataText(rowData.title)}
         </h4>
         <div style="${SUMMARY_STYLES.buttonGroup}">
           ${fullRetryButton}
           <button type="button" id="resummarize-btn" style="${SUMMARY_STYLES.resummarizeButton}">再要約</button>
+          <button type="button" id="analyze-btn" style="${SUMMARY_STYLES.resummarizeButton}">追加分析</button>
         </div>
       </div>
       ${metadataHtml}
-      ${metadata?.score ? buildScoreHtml(metadata.score) : ''}
       <div style="${SUMMARY_STYLES.summaryText}">${parseMarkdown(summaryText)}</div>
+      <div id="score-result">${buildScoreStageHtml(score)}</div>
+      <div id="analysis-result">${buildAnalysisStageHtml(analysis)}</div>
     </div>
   `;
+}
+
+export function buildScoreStageHtml(score?: Stage<ExperimentalScore>): string {
+  return score?.loading
+    ? '採点中…'
+    : score?.error
+      ? `採点失敗: ${escapeMetadataText(score.error)}`
+      : score?.data
+        ? buildScoreHtml(score.data)
+        : '';
+}
+
+export function buildAnalysisStageHtml(analysis?: Stage<AdditionalAnalysis>): string {
+  return analysis?.loading
+    ? '追加分析中…'
+    : analysis?.error
+      ? `追加分析失敗: ${escapeMetadataText(analysis.error)}`
+      : analysis?.data
+        ? buildAnalysisHtml(analysis.data)
+        : '';
+}
+
+function buildAnalysisHtml(analysis: AdditionalAnalysis): string {
+  const view = (label: string, item: AnalysisView) =>
+    `<p><strong>${label}:</strong> ${escapeMetadataText(item.text)}${item.factIds.length ? `（根拠: ${item.factIds.map(escapeMetadataText).join(', ')}）` : ''}</p>`;
+  return `<section><h5>追加分析</h5>${view('解釈', analysis.interpretation)}${view('短期', analysis.shortTerm)}${view('中期', analysis.mediumTerm)}${view('長期', analysis.longTerm)}${analysis.watchPoints.map((item) => view('確認点', item)).join('')}</section>`;
 }
 
 export function buildScoreHtml(score: ExperimentalScore): string {

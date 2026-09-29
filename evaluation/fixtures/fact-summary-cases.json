@@ -1,0 +1,199 @@
+[
+  {
+    "id": "earnings-20260813",
+    "title": "2026年９月期 第３四半期決算短信〔日本基準〕（連結）",
+    "documentType": "earnings",
+    "url": "https://finance-frontend-pc-dist.west.edge.storage-yahoo.jp/disclosure/20260813/20260812518359.pdf",
+    "expected": [
+      {
+        "label": "売上高",
+        "periodContains": "2026年9月期第3四半期",
+        "variants": [
+          {
+            "value": 3393,
+            "unit": "百万円",
+            "page": 1
+          },
+          {
+            "value": 3393604,
+            "unit": "千円",
+            "page": 4
+          },
+          {
+            "value": 3393604,
+            "unit": "千円",
+            "page": 6
+          }
+        ],
+        "valueKind": "actual"
+      },
+      {
+        "label": "営業利益",
+        "periodContains": "2026年9月期第3四半期",
+        "variants": [
+          {
+            "value": 634,
+            "unit": "百万円",
+            "page": 1
+          },
+          {
+            "value": 634398,
+            "unit": "千円",
+            "page": 4
+          },
+          {
+            "value": 634398,
+            "unit": "千円",
+            "page": 6
+          }
+        ],
+        "valueKind": "actual"
+      },
+      {
+        "label": "純利益",
+        "variants": [
+          {
+            "value": 418,
+            "unit": "百万円",
+            "page": 1
+          },
+          {
+            "value": 418414,
+            "unit": "千円",
+            "page": 4
+          },
+          {
+            "value": 418414,
+            "unit": "千円",
+            "page": 6
+          }
+        ],
+        "periodContains": "2026年9月期第3四半期",
+        "valueKind": "actual"
+      },
+      {
+        "label": "売上高",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 4500,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "valueKind": "forecast"
+      },
+      {
+        "label": "配当",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 11,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "valueKind": "forecast"
+      },
+      {
+        "label": "純利益",
+        "variants": [
+          {
+            "value": 539,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "periodContains": "2026年9月期",
+        "valueKind": "forecast"
+      }
+    ]
+  },
+  {
+    "id": "revision-20260910",
+    "title": "2026年９月期通期連結業績予想の修正及び配当予想の修正（増配）に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://finance-frontend-pc-dist.west.edge.storage-yahoo.jp/disclosure/20260910/20260909533864.pdf",
+    "expected": [
+      {
+        "label": "売上収益",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 19730,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "valueKind": "forecastBefore"
+      },
+      {
+        "label": "売上収益",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 22000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "valueKind": "forecastAfter"
+      },
+      {
+        "label": "営業利益",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 2800,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "valueKind": "forecastBefore"
+      },
+      {
+        "label": "営業利益",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 2900,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "valueKind": "forecastAfter"
+      },
+      {
+        "label": "配当",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 125,
+            "unit": "円",
+            "page": 2
+          }
+        ],
+        "valueKind": "forecastBefore"
+      },
+      {
+        "label": "配当",
+        "periodContains": "2026年9月期",
+        "variants": [
+          {
+            "value": 127,
+            "unit": "円",
+            "page": 2
+          }
+        ],
+        "valueKind": "forecastAfter"
+      }
+    ]
+  },
+  {
+    "id": "partnership-20260915",
+    "title": "ティアンドエスグループ株式会社と株式会社TMH、半導体業界向けソリューション領域における業務提携に関する基本合意書（MOU）を締結",
+    "documentType": "ma",
+    "url": "https://finance-frontend-pc-dist.west.edge.storage-yahoo.jp/disclosure/20260915/20260914536010.pdf",
+    "expectedEvents": ["基本合意書", "エンジニア", "検討"]
+  }
+]

@@ -1,51 +1,55 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildScoreHtml } from '../content/utils/summaryHtmlBuilder';
+import type { FactSummary } from '../lib/fact-summary';
 
-const { generateText } = vi.hoisted(() => ({ generateText: vi.fn() }));
-vi.mock('@/lib/llm-client', () => ({ generateText }));
+const mocked = vi.hoisted(() => ({
+  generateText: vi.fn(),
+  extractScoreInput: vi.fn(),
+  inferExperimentalScore: vi.fn(),
+}));
+interface TestResponse {
+  summary: string;
+  metadata: { analysisFingerprint: string; score?: unknown };
+  facts: FactSummary;
+  resultId: string;
+  analysis: { longTerm: { text: string } };
+  score: { value: number };
+}
+vi.mock('@/lib/llm-client', () => ({ generateText: mocked.generateText }));
+vi.mock('@/lib/score-extraction', () => ({ extractScoreInput: mocked.extractScoreInput }));
+vi.mock('@/lib/scoring', () => ({
+  assessClaim: () => '確認済み',
+  inferExperimentalScore: mocked.inferExperimentalScore,
+}));
 
-const url = 'https://www.release.tdnet.info/inbs/test.pdf';
-const pdfText =
-  '[PDF_PAGE:1]\n2026年7月14日\nテスト社 日本基準 連結\n2026年通期 営業利益予想 1000百万円 前回\n2026年通期 営業利益予想 1150百万円 今回';
-const source = (value: number, kind: 'forecastBefore' | 'forecastAfter') => ({
-  value,
-  unit: '百万円',
-  source: {
-    url,
-    page: 1,
-    quote: `2026年通期 営業利益予想 ${value}百万円 ${kind === 'forecastBefore' ? '前回' : '今回'}`,
-    period: '2026年通期',
-    fiscalYear: 2026,
-    periodKind: 'fullYear',
-    valueKind: kind,
-    metric: '営業利益予想',
-    basis: '日本基準',
-    scope: '連結',
-  },
-});
-const scoreInput = JSON.stringify({
-  claims: [
+const page = '2026年通期 営業利益 1150百万円';
+const facts: FactSummary = {
+  version: 2,
+  documentType: 'earningsRevision',
+  unverified: [],
+  facts: [
     {
-      category: 'coreForecast',
-      label: '本業予想の改善',
-      current: source(1150, 'forecastAfter'),
-      previous: source(1000, 'forecastBefore'),
-      earlier: null,
-      relatedValue: null,
-      companyExplanation: null,
+      id: 'f1',
+      importance: 'key',
+      kind: 'number',
+      label: '営業利益',
+      value: 1150,
+      unit: '百万円',
+      period: '2026年通期',
+      valueKind: 'forecastAfter',
+      column: null,
+      statement: null,
+      page: 1,
+      quote: page,
     },
   ],
-  unverified: [],
-});
-const scoreInference = JSON.stringify({
-  value: 68,
-  factors: [{ index: 0, impact: 'positive', strength: 'large' }],
-});
+};
 
-async function runSummary(twoPass = true) {
-  let listener:
-    | ((request: unknown, sender: unknown, reply: (value: unknown) => void) => boolean)
-    | undefined;
+async function setup(scoring: boolean) {
+  let listener: (
+    request: unknown,
+    sender: unknown,
+    reply: (value: TestResponse) => void
+  ) => boolean = () => false;
   vi.stubGlobal('chrome', {
     runtime: {
       onInstalled: { addListener: vi.fn() },
@@ -57,7 +61,8 @@ async function runSummary(twoPass = true) {
       getContexts: async () => [{ contextType: 'OFFSCREEN_DOCUMENT' }],
       sendMessage: async () => ({
         success: true,
-        text: pdfText,
+        text: `[PDF_PAGE:1]\n${page}`,
+        pages: [{ pageNumber: 1, text: page }],
         metadata: {
           totalPages: 1,
           extractedPages: [1],
@@ -68,14 +73,13 @@ async function runSummary(twoPass = true) {
     },
     storage: {
       sync: {
-        get: (_keys: unknown, cb: (value: unknown) => void) =>
-          cb({
-            provider: 'openai',
-            apiKey: 'test',
-            model: 'test',
-            twoPassMode: twoPass,
-            experimentalScoring: true,
-          }),
+        get: async () => ({
+          provider: 'openai',
+          model: 'test',
+          apiKey: 'test',
+          extractionMode: 'full',
+          experimentalScoring: scoring,
+        }),
       },
     },
     offscreen: { createDocument: vi.fn() },
@@ -85,77 +89,90 @@ async function runSummary(twoPass = true) {
     vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }))
   );
   await import('./index');
-  return await new Promise<{
-    summary: string;
-    metadata: { score: import('../lib/scoring').ExperimentalScore };
-  }>((resolve) =>
-    listener!(
-      {
-        action: 'summarize',
-        pdfUrl: 'test.pdf',
-        title: '通期業績予想の修正',
-        code: '1234',
-        companyName: 'テスト社',
-      },
-      null,
-      (value) =>
-        resolve(
-          value as {
-            summary: string;
-            metadata: { score: import('../lib/scoring').ExperimentalScore };
-          }
-        )
-    )
-  );
+  const request = async (body: Record<string, unknown>) =>
+    new Promise<TestResponse>((resolve) =>
+      listener(
+        {
+          pdfUrl: 'test.pdf',
+          title: '通期業績予想の修正',
+          code: '1234',
+          companyName: 'テスト社',
+          ...body,
+        },
+        null,
+        resolve
+      )
+    );
+  return request;
 }
 
-describe('要約応答から一覧・詳細へのスコア接続', () => {
+describe('要約・採点・追加分析の分離', () => {
   beforeEach(() => {
-    generateText.mockReset();
     vi.resetModules();
     vi.unstubAllGlobals();
+    mocked.generateText.mockReset();
+    mocked.extractScoreInput.mockReset();
+    mocked.inferExperimentalScore.mockReset();
   });
 
-  it('2パス要約で根拠付きの推論点数を返す', async () => {
-    generateText
-      .mockResolvedValueOnce(
-        JSON.stringify({
-          summary: '予想修正',
-          revisionItems: [],
-          reason: null,
-          dividendRevision: null,
-          investmentView: {
-            shortTerm: { stance: 'unknown', rationale: [] },
-            mediumTerm: { stance: 'unknown', rationale: [] },
-            longTerm: { stance: 'unknown', rationale: [] },
-            positives: [],
-            risks: [],
-            watchPoints: [],
-            rationale: '不明',
-          },
-          topics: [],
-        })
-      )
-      .mockResolvedValueOnce('予想を修正。')
-      .mockResolvedValueOnce(scoreInput)
-      .mockResolvedValueOnce(scoreInference);
-    const response = await runSummary();
-    const { readPublishedDate } = await import('./index');
-    expect(readPublishedDate('[PDF_PAGE:1]\n2026 年７月 14 日\n各位')).toBe('2026-07-14');
-    expect(response.metadata.score.value, JSON.stringify(response.metadata.score)).toBe(68);
-    expect(response.metadata.score.positives[0]).toContain('本業予想の改善');
-    expect(buildScoreHtml(response.metadata.score)).toContain('#page=1');
+  it('要約は1回のLLM呼び出しで採点を待たずに返す', async () => {
+    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    const request = await setup(true);
+    const result = await request({ action: 'summarize' });
+    expect(result.summary).toContain('1150百万円');
+    expect(result.metadata.score).toBeUndefined();
+    expect(mocked.generateText).toHaveBeenCalledTimes(1);
+    expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
 
-  it('2パスのJSON修復失敗後も1パス要約と点数を返す', async () => {
-    generateText
-      .mockResolvedValueOnce('不正なJSON')
-      .mockResolvedValueOnce('修復できないJSON')
-      .mockResolvedValueOnce('1パス要約')
-      .mockResolvedValueOnce(scoreInput)
-      .mockResolvedValueOnce(scoreInference);
-    const response = await runSummary();
-    expect(response.summary).toBe('1パス要約');
-    expect(response.metadata.score.value, JSON.stringify(response.metadata.score)).toBe(68);
+  it('スコアOFFでも追加分析を明示操作で実行できる', async () => {
+    mocked.generateText.mockResolvedValueOnce(JSON.stringify(facts)).mockResolvedValueOnce(
+      JSON.stringify({
+        version: 1,
+        interpretation: { text: '判断不能', factIds: [] },
+        shortTerm: { text: '判断不能', factIds: [] },
+        mediumTerm: { text: '判断不能', factIds: [] },
+        longTerm: { text: '判断不能', factIds: [] },
+        watchPoints: [],
+      })
+    );
+    const request = await setup(false);
+    const summary = await request({ action: 'summarize' });
+    const analysis = await request({
+      action: 'analyze',
+      facts: summary.facts,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    });
+    expect(analysis.analysis.longTerm.text).toBe('判断不能');
+    expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+  });
+
+  it('スコアONの採点は別要求で事実を起点にする', async () => {
+    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.extractScoreInput.mockResolvedValue({
+      claims: [{ category: 'revenue' }],
+      unverified: [],
+      searchStatus: '元PDF内',
+    });
+    mocked.inferExperimentalScore.mockResolvedValue({
+      value: 70,
+      verdict: '参考',
+      positives: [],
+      negatives: [],
+      breakdown: [],
+      unverified: [],
+      searchStatus: '元PDF内',
+    });
+    const request = await setup(true);
+    const summary = await request({ action: 'summarize' });
+    const score = await request({
+      action: 'score',
+      facts: summary.facts,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    });
+    expect(score.score.value).toBe(70);
+    expect(mocked.extractScoreInput.mock.calls[0][4]).toEqual(summary.facts);
   });
 });

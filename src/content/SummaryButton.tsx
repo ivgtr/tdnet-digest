@@ -19,20 +19,32 @@ interface SummaryButtonProps {
 }
 
 const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }) => {
-  const { loading, result, hasCached, cachedScore, cacheKey, summarize, showCached, reset } =
-    useSummarize({
-      pdfUrl: rowData.pdfUrl,
-      title: rowData.title,
-      code: rowData.code,
-      companyName: rowData.companyName,
-    });
+  const {
+    loading,
+    result,
+    score,
+    analysis,
+    scoringEnabled,
+    hasCached,
+    cacheKey,
+    summarize,
+    showCached,
+    startScore,
+    analyze,
+    reset,
+  } = useSummarize({
+    pdfUrl: rowData.pdfUrl,
+    title: rowData.title,
+    code: rowData.code,
+    companyName: rowData.companyName,
+  });
 
   const summaryRowData = useMemo(
     () => ({ companyName: rowData.companyName, title: rowData.title }),
     [rowData.companyName, rowData.title]
   );
 
-  const { removeSummaryRow, insertSummaryRow, isSummaryRowVisible } = useSummaryRow({
+  const { removeSummaryRow, insertSummaryRow, updateStages, isSummaryRowVisible } = useSummaryRow({
     row,
     iframeDoc,
     rowData: summaryRowData,
@@ -42,6 +54,8 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   const [, setForceUpdate] = useState(0);
   const triggerUpdate = useCallback(() => setForceUpdate((v) => v + 1), []);
   const priorCacheKey = useRef<string | null>(null);
+  const analyzeRef = useRef(analyze);
+  analyzeRef.current = analyze;
 
   useEffect(() => {
     if (priorCacheKey.current && priorCacheKey.current !== cacheKey) {
@@ -52,7 +66,6 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   }, [cacheKey, removeSummaryRow, triggerUpdate]);
 
   const isVisible = isSummaryRowVisible();
-  const score = result?.metadata?.score ?? cachedScore;
 
   // 要約結果が更新されたら行を挿入
   useEffect(() => {
@@ -69,11 +82,17 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
         () => {
           reset();
           summarize();
-        }
+        },
+        () => analyzeRef.current()
       );
       triggerUpdate();
     }
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
+
+  useEffect(() => {
+    updateStages(scoringEnabled ? score : undefined, analysis);
+    if (result?.summary && scoringEnabled) startScore();
+  }, [score, analysis, scoringEnabled, result, updateStages, startScore]);
 
   const handleClick = () => {
     if (loading) return;
@@ -139,7 +158,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           {buttonText}
         </button>
       </div>
-      {score && <ScoreBadge score={score} />}
+      {scoringEnabled && score.data && <ScoreBadge score={score.data} />}
     </div>
   );
 };

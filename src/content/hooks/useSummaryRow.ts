@@ -3,8 +3,16 @@
  */
 
 import { useCallback } from 'react';
-import { buildErrorHtml, buildSummaryHtml } from '../utils/summaryHtmlBuilder';
+import {
+  buildAnalysisStageHtml,
+  buildErrorHtml,
+  buildScoreStageHtml,
+  buildSummaryHtml,
+} from '../utils/summaryHtmlBuilder';
 import type { SummaryMetadata } from '../types/summaryMetadata';
+import type { Stage } from './useSummarize';
+import type { ExperimentalScore } from '@/lib/scoring';
+import type { AdditionalAnalysis } from '@/lib/additional-analysis';
 
 interface UseSummaryRowOptions {
   row: HTMLTableRowElement;
@@ -48,7 +56,10 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       errorText: string | null,
       metadata: SummaryMetadata | null,
       onRetry?: () => void,
-      onResummarize?: () => void
+      onResummarize?: () => void,
+      onAnalyze?: () => void,
+      score?: Stage<ExperimentalScore>,
+      analysis?: Stage<AdditionalAnalysis>
     ) => {
       // 要約行を作成
       const summaryRow = iframeDoc.createElement('tr');
@@ -65,7 +76,7 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       if (errorText) {
         summaryCell.innerHTML = buildErrorHtml(errorText);
       } else if (summaryText) {
-        summaryCell.innerHTML = buildSummaryHtml(summaryText, metadata, rowData);
+        summaryCell.innerHTML = buildSummaryHtml(summaryText, metadata, rowData, score, analysis);
 
         // 全文再要約ボタンのイベントリスナー（存在する場合のみ）
         if (metadata?.extractionMode === 'smart' && onRetry) {
@@ -88,6 +99,11 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
             onResummarize();
           });
         }
+        summaryCell.querySelector('#analyze-btn')?.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onAnalyze?.();
+        });
       }
 
       summaryRow.appendChild(summaryCell);
@@ -102,5 +118,17 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
     [row, iframeDoc, rowData]
   );
 
-  return { removeSummaryRow, insertSummaryRow, isSummaryRowVisible };
+  const updateStages = useCallback(
+    (score?: Stage<ExperimentalScore>, analysis?: Stage<AdditionalAnalysis>) => {
+      const summaryRow = row.nextElementSibling;
+      if (!summaryRow?.classList.contains('tdnet-digest-summary-row')) return;
+      const scoreCell = summaryRow.querySelector('#score-result');
+      const analysisCell = summaryRow.querySelector('#analysis-result');
+      if (scoreCell) scoreCell.innerHTML = buildScoreStageHtml(score);
+      if (analysisCell) analysisCell.innerHTML = buildAnalysisStageHtml(analysis);
+    },
+    [row]
+  );
+
+  return { removeSummaryRow, insertSummaryRow, updateStages, isSummaryRowVisible };
 }

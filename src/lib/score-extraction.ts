@@ -1,4 +1,5 @@
 import { generateText, type LLMConfig } from './llm-client';
+import type { FactSummary } from './fact-summary';
 import { getProviderCapabilities } from './structured-output';
 import {
   SCORE_LIMITS,
@@ -47,11 +48,12 @@ export async function extractScoreInput(
   config: LLMConfig,
   documentType: string,
   documents: ScoreDocument[],
-  searchStatus: string
+  searchStatus: string,
+  facts?: FactSummary
 ): Promise<ScoreInput> {
   const direct =
     documentType === 'dividend' ? extractDocumentedDividend(documents[0], searchStatus) : null;
-  if (direct) return direct;
+  if (direct) return facts ? restrictToFacts(direct, facts, documents[0].url) : direct;
   const schema = `{"claims":[{"category":"operatingProfit|revenue|margin|kpi|coreForecast|oneOff|shareholderReturn|capitalAction|cashFlow","label":"短い事実","current":{"value":数値,"unit":"百万円など","source":{"url":"資料URL","page":1,"quote":"同じ行に指標と数値がある連続した原文","period":"資料記載の対象期間","fiscalYear":2026,"periodKind":"fullYear|cumulativeQ1|cumulativeQ2|cumulativeQ3|standaloneQ1|standaloneQ2|standaloneQ3|standaloneQ4|month|eventDate","valueKind":"actual|forecastBefore|forecastAfter","metric":"指標名","basis":"会計基準","scope":"連結範囲・事業範囲"}},"previous":同じ形式またはnull,"earlier":同じ形式またはnull,"relatedValue":一時損益額または発行済株式数の同形式、なければnull,"companyExplanation":"資料中の会社説明"またはnull}],"unverified":["未確認項目"]}`;
   const prompt =
     'oneOffでは純利益予想の修正前後をcurrent/previous、一時損益の資料記載額をrelatedValueに入れてください。自己株取得と増資で株式数の規模を測る場合はcurrentを取得・発行株数、relatedValueを同資料の発行済株式数としてください。その他のrelatedValueはnullです。' +
@@ -60,6 +62,9 @@ export async function extractScoreInput(
     '配当の決定額と直近予想を比べるときは、periodを表中の基準日の年月日（例: 2026年8月31日）、periodKindをeventDateにし、決定額をforecastAfter、直近予想をforecastBeforeとして扱ってください。期末配当をstandaloneQ4と分類しないでください。' +
     `文書種別: ${documentType}\n以下はPDF本文です。採点用の事実だけ抽出してください。JSONのみ返してください。${schema}\n` +
     `元PDF内で現在・前年・さらに前年の数値を優先してください。実績と予想を混ぜないでください。coreForecastは同じ対象期間・事業範囲の本業予想修正前後に限ります。一時損益は資料記載の金額、同じ対象期の純利益予想修正前後を照合できる場合に限ります。配当、自己株取得、増資、M&Aは実質影響を測れる修正前後の同一指標を抽出してください。分割だけなら採点しません。quoteは数値と指標が同じ行にある連続した原文を使い、期間は同ページの見出し、単位は同じ行か近い表見出しで確認してください。対応が曖昧なら未確認としてください。資料間では発行会社、開示日、対象期、会計基準、事業範囲を一致させ、開示日が元PDFより後の資料は使わないでください。全キーを出し、省略値はnull。同じ指標・期間の重複を避け、最大12件。市場予想・株価は使わないでください。\n\n` +
+    (facts
+      ? `検証済み要約事実を採点の起点にしてください。元PDFのcurrentはこの事実ID・値・単位・ページと対応するものに限ります。過去資料の値は別資料として照合してください。\n${JSON.stringify(facts.facts)}\n`
+      : '') +
     documents.map((doc) => `【資料URL】${doc.url}\n${doc.text}`).join('\n\n');
   const scoreConfig: LLMConfig = {
     ...config,
@@ -93,7 +98,8 @@ export async function extractScoreInput(
         content: `形式: ${schema}\nエラー: ${error instanceof Error ? error.message : String(error)}\n応答: ${raw.slice(0, 20_000)}`,
       },
     ]);
-    return validateScoreInput(repaired, documents, searchStatus);
+    const repairedInput = validateScoreInput(repaired, documents, searchStatus);
+    return facts ? restrictToFacts(repairedInput, facts, documents[0].url) : repairedInput;
   }
   if (
     input.claims.length === 0 &&
@@ -108,14 +114,42 @@ export async function extractScoreInput(
         },
         { role: 'user', content: `${prompt}\n前回の検証エラー: ${input.unverified.join(' / ')}` },
       ]);
-      return validateScoreInput(retry, documents, searchStatus);
+      const retried = validateScoreInput(retry, documents, searchStatus);
+      return facts ? restrictToFacts(retried, facts, documents[0].url) : retried;
     } catch (error) {
       input.unverified.push(
         `再抽出失敗: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
-  return input;
+  return facts ? restrictToFacts(input, facts, documents[0].url) : input;
+}
+
+function restrictToFacts(input: ScoreInput, facts: FactSummary, originalUrl: string): ScoreInput {
+  const claims = input.claims.filter((claim) => {
+    const current = claim.current;
+    const unit = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+    return (
+      current.source.url === originalUrl &&
+      facts.facts.some(
+        (fact) =>
+          fact.kind === 'number' &&
+          fact.value === current.value &&
+          fact.unit !== null &&
+          (unit(fact.unit) === unit(current.unit) ||
+            (unit(fact.unit) === '円銭' && unit(current.unit) === '円')) &&
+          fact.page === current.source.page
+      )
+    );
+  });
+  return {
+    ...input,
+    claims,
+    unverified:
+      claims.length === input.claims.length
+        ? input.unverified
+        : [...input.unverified, '要約で確認した事実と対応しない採点項目を除外'],
+  };
 }
 
 function extractDocumentedDividend(

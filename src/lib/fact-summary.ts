@@ -1,0 +1,480 @@
+import type { DocumentType } from './document-type';
+import type { ExtractedPage } from '@/types/summaryMetadata';
+import { generateText, type LLMConfig } from './llm-client';
+import { getProviderCapabilities } from './structured-output';
+
+export const FACT_SCHEMA_VERSION = 2;
+
+export interface VerifiedFact {
+  id: string;
+  importance: 'key' | 'detail';
+  kind: 'number' | 'event';
+  label: string;
+  value: number | null;
+  unit: string | null;
+  period: string | null;
+  valueKind: 'actual' | 'forecast' | 'forecastBefore' | 'forecastAfter' | null;
+  column: string | null;
+  statement: string | null;
+  page: number;
+  quote: string;
+}
+
+export interface FactSummary {
+  version: number;
+  documentType: DocumentType;
+  facts: VerifiedFact[];
+  unverified: string[];
+}
+
+export class FactSummaryGenerationError extends Error {
+  constructor(
+    message: string,
+    public readonly firstResponse: string,
+    public readonly repairedResponse: string
+  ) {
+    super(message);
+  }
+}
+
+const ROOT_KEYS = ['version', 'documentType', 'facts', 'unverified'];
+const FACT_KEYS = [
+  'id',
+  'importance',
+  'kind',
+  'label',
+  'value',
+  'unit',
+  'period',
+  'valueKind',
+  'column',
+  'statement',
+  'page',
+  'quote',
+];
+const normalize = (value: string) => value.normalize('NFKC').replace(/[\s,，]/g, '');
+const record = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+const exactKeys = (value: Record<string, unknown>, keys: string[]) =>
+  Object.keys(value).length === keys.length && keys.every((key) => key in value);
+
+export function factPrompt(
+  documentType: DocumentType,
+  text: string
+): { system: string; user: string } {
+  const fields =
+    '{"version":2,"documentType":"文書種別","facts":[{"id":"f1","importance":"key|detail","kind":"number|event","label":"原文の指標名または事項名","value":数値またはnull,"unit":"原文の単位"またはnull,"period":"原文の対象期間"またはnull,"valueKind":"actual|forecast|forecastBefore|forecastAfter"またはnull,"column":"表の列見出し"またはnull,"statement":"原文から抜いた出来事"またはnull,"page":PDF物理ページ番号,"quote":"同一ページ内で連続する原文"}],"unverified":["確認できない重要事項"]}';
+  const maxFacts = documentType === 'ma' ? 8 : 12;
+  return {
+    system:
+      'TDnet開示の事実抽出器です。JSONオブジェクトだけを返してください。コードフェンスは禁止です。全項目を省略せず、不要な値はnullにしてください。投資評価、星、解釈、株価推測を含めないでください。PDF_PAGEは物理ページ番号です。quoteは該当ページから連続する原文をそのままコピーし、離れたセルや行を省略して連結しないでください。表の数値では、指標名のある見出し行、単位行、対象の行をすべて含む連続した引用にしてください。見出しが複数行に分かれた表では列順を復元してください。親会社株主に帰属する純利益と、末尾の調整後EBITDAを混同しないでください。数値の説明文が同じページにあれば表よりその連続した文を優先してください。columnには値の属する列または行見出しを原文どおり書いてください。valueKind=forecastは現在公表されている通常予想、forecastBefore/forecastAfterは同じ開示内の修正前後の値だけです。eventのstatementはquoteからそのまま抜いた短い連続文字列にしてください。原文で確かめられない項目はfactsに入れずunverifiedへ記入してください。',
+    user: `文書種別: ${documentType}\n形式: ${fields}\n数値の例: {"id":"f1","importance":"key","kind":"number","label":"売上高","value":3393,"unit":"百万円","period":"2026年9月期第3四半期","valueKind":"actual","column":"売上高","statement":null,"page":1,"quote":"売上高 営業利益\\n百万円 百万円\\n2026年9月期第3四半期 3,393 634"}。これは形式例であり、実資料の引用だけを使ってください。eventではvalue/unit/period/valueKind/columnをnullにしてください。決算は実績の売上・営業利益・純利益、通期予想の同3指標、配当を必ず優先してください。業績修正は売上・営業利益・配当の修正前後を優先してください。提携は締結済み事項と検討事項を区別してください。重複を避け、要点を先に最大${maxFacts}件。\n\n${text}`,
+  };
+}
+
+export function parseFactSummary(
+  raw: string,
+  documentType: DocumentType,
+  pages: ExtractedPage[],
+  requireCoverage = true
+): FactSummary {
+  const parsed: unknown = JSON.parse(raw.trim());
+  if (
+    !record(parsed) ||
+    !exactKeys(parsed, ROOT_KEYS) ||
+    parsed.version !== FACT_SCHEMA_VERSION ||
+    parsed.documentType !== documentType ||
+    !Array.isArray(parsed.facts) ||
+    parsed.facts.length > 20 ||
+    !Array.isArray(parsed.unverified) ||
+    !parsed.unverified.every((item) => typeof item === 'string' && item.length <= 200)
+  ) {
+    throw new Error('事実要約の形式が不正です');
+  }
+  const ids = new Set<string>();
+  const facts: VerifiedFact[] = [];
+  const unverified = [...parsed.unverified] as string[];
+  for (const item of parsed.facts) {
+    if (
+      !record(item) ||
+      !exactKeys(item, FACT_KEYS) ||
+      typeof item.id !== 'string' ||
+      !/^f[1-9]\d*$/.test(item.id) ||
+      ids.has(item.id) ||
+      !['key', 'detail'].includes(String(item.importance)) ||
+      !['number', 'event'].includes(String(item.kind)) ||
+      typeof item.label !== 'string' ||
+      !item.label.trim() ||
+      !Number.isInteger(item.page) ||
+      typeof item.quote !== 'string' ||
+      !item.quote.trim()
+    ) {
+      throw new Error('事実項目の形式が不正です');
+    }
+    ids.add(item.id);
+    try {
+      const page = pages.find((p) => p.pageNumber === item.page);
+      if (!page || !quoteIsContiguous(page.text, item.quote))
+        throw new Error(`${item.id}: 物理ページの連続引用を確認できません`);
+      const quote = normalize(item.quote);
+      const baseLabel =
+        item.kind === 'number'
+          ? (item.label as string).replace(/（予想）$/, '')
+          : (item.label as string);
+      const metricLabel =
+        /期末配当|期末$/.test(normalize(baseLabel)) ||
+        (baseLabel === '年間配当金' &&
+          typeof item.column === 'string' &&
+          normalize(item.column).includes('期末'))
+          ? '期末配当金'
+          : baseLabel === '年間配当金合計'
+            ? '年間配当金'
+            : baseLabel;
+      const metricFound =
+        quote.includes(normalize(metricLabel)) ||
+        (/期末配当金/.test(metricLabel) && quote.includes('期末') && quote.includes('配当金')) ||
+        (/親会社株主に帰属する.*純利益/.test(metricLabel) &&
+          quote.includes('親会社株主に帰属') &&
+          /四半期純利益|する当期純利益/.test(quote)) ||
+        (/親会社の所有者に帰属する当期利益/.test(metricLabel) &&
+          quote.includes('親会社の所有者に') &&
+          quote.includes('帰属する当期利益'));
+      if (item.kind === 'number' && !metricFound)
+        throw new Error(`${item.id}: 指標名を引用で確認できません`);
+      if (item.kind === 'number') {
+        if (
+          typeof item.value !== 'number' ||
+          !Number.isFinite(item.value) ||
+          typeof item.unit !== 'string' ||
+          !item.unit ||
+          typeof item.period !== 'string' ||
+          !item.period ||
+          !['actual', 'forecast', 'forecastBefore', 'forecastAfter'].includes(
+            String(item.valueKind)
+          ) ||
+          !(item.column === null || typeof item.column === 'string') ||
+          item.statement !== null
+        ) {
+          throw new Error(`${item.id}: 数値項目の形式が不正です`);
+        }
+        const numericQuote = (item.quote as string)
+          .normalize('NFKC')
+          .replace(/[,，]/g, '')
+          .replace(/[△▲]/g, '-');
+        if (
+          ![...numericQuote.matchAll(/-?\d+(?:\.\d+)?/g)].some(
+            (match) => Number(match[0]) === item.value
+          ) ||
+          !periodVerified(page.text, item.period)
+        ) {
+          throw new Error(`${item.id}: 値または対象期間を原文で確認できません`);
+        }
+        const lines = page.text.split('\n');
+        const quoteLine = findQuoteStart(page.text, item.quote as string);
+        const context = normalize(lines.slice(Math.max(0, quoteLine - 8), quoteLine + 13).join(''));
+        if (quoteLine < 0 || !context.includes(normalize(item.unit)))
+          throw new Error(`${item.id}: 単位を原文で確認できません`);
+        const labelPosition = numericQuote.indexOf(item.label as string);
+        const afterLabel = numericQuote.slice(labelPosition + (item.label as string).length);
+        const numbers = [...afterLabel.matchAll(/-?\d+(?:\.\d+)?/g)];
+        const proseBinding = quote.includes(
+          `${normalize(metricLabel)}${item.value}${normalize(item.unit)}`
+        );
+        const columnFound =
+          typeof item.column === 'string' &&
+          (quote.includes(normalize(item.column)) ||
+            (/親会社株主に帰属する.*純利益/.test(item.column) &&
+              quote.includes('親会社株主に帰属') &&
+              /四半期純利益|する当期純利益/.test(quote)) ||
+            (/親会社の所有者に帰属する当期利益/.test(item.column) &&
+              quote.includes('親会社の所有者に') &&
+              quote.includes('帰属する当期利益')));
+        if (numbers.length > 1 && !columnFound && !proseBinding) {
+          throw new Error(`${item.id}: 表の列との対応を確認できません`);
+        }
+        if (item.column && !columnFound) throw new Error(`${item.id}: 列見出しが引用にありません`);
+        if (documentType === 'earnings' && !['actual', 'forecast'].includes(String(item.valueKind)))
+          throw new Error(`${item.id}: 決算短信の予想種別が不正です`);
+        if (
+          !proseBinding &&
+          !numericBindingVerified({ ...item, label: metricLabel } as unknown as VerifiedFact)
+        )
+          throw new Error(`${item.id}: 指標と表の値の対応を確認できません`);
+      } else if (
+        item.value !== null ||
+        item.unit !== null ||
+        (item.period !== null &&
+          (typeof item.period !== 'string' ||
+            !normalize(page.text).includes(normalize(item.period)))) ||
+        item.valueKind !== null ||
+        item.column !== null ||
+        typeof item.statement !== 'string' ||
+        !item.statement ||
+        !quote.includes(normalize(item.statement))
+      ) {
+        throw new Error(`${item.id}: 出来事を原文で確認できません`);
+      }
+      facts.push({
+        ...item,
+        label: item.kind === 'event' ? item.statement : metricLabel,
+      } as unknown as VerifiedFact);
+    } catch (error) {
+      unverified.push(
+        `${item.id} ${item.label}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  if (requireCoverage) {
+    if (!facts.some((fact) => fact.importance === 'key'))
+      throw new Error(`重要事実を検証できません: ${unverified.slice(0, 3).join(' / ')}`);
+    try {
+      verifyCoverage(documentType, pages, facts);
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}: ${unverified.slice(0, 8).join(' / ')}`
+      );
+    }
+  }
+  return { version: FACT_SCHEMA_VERSION, documentType, facts, unverified };
+}
+
+function numericBindingVerified(fact: VerifiedFact): boolean {
+  const quote = fact.quote.normalize('NFKC').replace(/[,，]/g, '');
+  const label = fact.label.normalize('NFKC');
+  const pos =
+    quote.indexOf(label) >= 0
+      ? quote.indexOf(label)
+      : /期末配当金/.test(label)
+        ? quote.indexOf('年間配当金')
+        : /親会社株主に帰属する.*純利益/.test(label)
+          ? quote.indexOf('親会社株主に帰属')
+          : /親会社の所有者に帰属する当期利益/.test(label)
+            ? quote.indexOf('親会社の所有者に')
+            : -1;
+  if (pos < 0) return false;
+  const line = quote.slice(pos).split('\n')[0];
+  const beforeNextMetric =
+    line
+      .split(/(?=売上高|売上収益|営業利益|経常利益|税引前利益|当期利益|四半期純利益|調整後EBITDA)/)
+      .find((part) => part.includes(label)) ?? line;
+  if (
+    [...beforeNextMetric.matchAll(/-?\d+(?:\.\d+)?/g)].filter(
+      (match) => Number(match[0]) === fact.value
+    ).length === 1 &&
+    [...beforeNextMetric.matchAll(/\d+(?:\.\d+)?/g)].length === 1
+  )
+    return true;
+  const lines = quote.split('\n');
+  const candidates = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) =>
+      [...line.matchAll(/-?\d+(?:\.\d+)?/g)].some((match) => Number(match[0]) === fact.value)
+    );
+  for (const { line, index } of candidates) {
+    const row = line.replace(/^.*?(?:第[1-4]四半期|通期|\(予想\))\s*/, '');
+    const values = [...row.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+    const slot = numericSlot(label, values.length);
+    if (slot === null || values[slot] !== fact.value) continue;
+    const near = normalize(lines.slice(Math.max(0, index - 1), index + 1).join(''));
+    if (fact.valueKind === 'forecastBefore' && !/前回|従来/.test(near)) continue;
+    if (fact.valueKind === 'forecastAfter' && /前回|従来/.test(near) && !/今回|修正/.test(near))
+      continue;
+    return true;
+  }
+  return false;
+}
+
+function numericSlot(label: string, count: number): number | null {
+  if (/期末配当金/.test(label)) return count === 2 ? 0 : null;
+  if (/年間配当金|合計/.test(label)) return count === 2 ? 1 : null;
+  const financial = count >= 10;
+  if (/売上高|売上収益/.test(label)) return 0;
+  if (/営業利益/.test(label)) return financial ? 2 : 1;
+  if (/経常利益|税引前利益/.test(label)) return financial ? 4 : 2;
+  if (/親会社.*純利益|親会社.*当期利益|四半期純利益/.test(label)) return financial ? 6 : 4;
+  if (/^当期利益$/.test(label)) return financial ? 6 : 3;
+  if (/１株当たり|1株当たり/.test(label)) return financial ? 8 : 5;
+  if (/調整後EBITDA/.test(label)) return count === 10 ? 8 : count === 11 ? 9 : null;
+  return null;
+}
+
+function verifyCoverage(
+  documentType: DocumentType,
+  pages: ExtractedPage[],
+  facts: VerifiedFact[]
+): void {
+  const source = normalize(pages.map((page) => page.text).join(''));
+  const has = (metric: RegExp, kind?: VerifiedFact['valueKind']) =>
+    facts.some(
+      (fact) =>
+        fact.kind === 'number' && metric.test(fact.label) && (!kind || fact.valueKind === kind)
+    );
+  if (documentType === 'earnings' && /売上高|売上収益/.test(source) && /営業利益/.test(source)) {
+    if (!has(/売上高|売上収益/, 'actual') || !has(/営業利益/, 'actual') || !has(/純利益/, 'actual'))
+      throw new Error('決算実績の重要指標を確認できません');
+    if (
+      /業績予想/.test(source) &&
+      (!has(/売上高|売上収益/, 'forecast') ||
+        !has(/営業利益/, 'forecast') ||
+        !has(/純利益/, 'forecast'))
+    )
+      throw new Error('通期予想の重要指標を確認できません');
+    if (/配当の状況/.test(source) && !has(/配当|期末|合計/))
+      throw new Error('配当の重要事実を確認できません');
+  }
+  if (
+    documentType === 'earningsRevision' &&
+    /前回|修正前/.test(source) &&
+    /今回|修正後/.test(source)
+  ) {
+    for (const kind of ['forecastBefore', 'forecastAfter'] as const) {
+      if (!has(/売上高|売上収益/, kind) || !has(/営業利益/, kind))
+        throw new Error('予想修正の前後を確認できません');
+      if (/配当予想/.test(source) && !has(/配当|期末|合計/, kind))
+        throw new Error('配当予想の前後を確認できません');
+    }
+  }
+  if (
+    documentType === 'ma' &&
+    /基本合意書/.test(source) &&
+    !facts.some((fact) => fact.kind === 'event' && normalize(fact.quote).includes('基本合意書'))
+  )
+    throw new Error('提携の決定事項を確認できません');
+}
+
+function quoteIsContiguous(page: string, quote: string): boolean {
+  return findQuoteStart(page, quote) >= 0;
+}
+
+function findQuoteStart(page: string, quote: string): number {
+  const bodyLines = page.split('\n').map(normalize);
+  const quoteLines = quote.split('\n').map(normalize).filter(Boolean);
+  if (!quoteLines.length || quoteLines.length > 12) return -1;
+  const target = normalize(quote);
+  for (let start = 0; start < bodyLines.length; start++) {
+    for (let count = 1; count <= 12 && start + count <= bodyLines.length; count++) {
+      if (
+        bodyLines
+          .slice(start, start + count)
+          .join('')
+          .includes(target)
+      )
+        return start;
+    }
+  }
+  return -1;
+}
+
+function periodVerified(page: string, period: string): boolean {
+  const body = normalize(page);
+  const target = normalize(period);
+  if (body.includes(target)) return true;
+  const yearMonth = target.match(/20\d{2}年\d{1,2}月期/);
+  if (!yearMonth || !body.includes(yearMonth[0])) return false;
+  const quarter = target.match(/第?[1-4]四半期/);
+  if (quarter && !body.includes(quarter[0])) return false;
+  for (const marker of ['通期', '累計', '連結']) {
+    if (target.includes(marker) && !body.includes(marker)) return false;
+  }
+  return true;
+}
+
+export async function generateVerifiedFactSummary(
+  config: LLMConfig,
+  documentType: DocumentType,
+  text: string,
+  pages: ExtractedPage[]
+): Promise<{ facts: FactSummary; repairAttempted: boolean }> {
+  const prompt = factPrompt(documentType, text);
+  const llmConfig = {
+    ...config,
+    temperature: 0,
+    ...(getProviderCapabilities(config.provider).jsonObject
+      ? { responseFormat: 'json_object' as const }
+      : {}),
+  };
+  const raw = await generateText(llmConfig, [
+    { role: 'system', content: prompt.system },
+    { role: 'user', content: prompt.user },
+  ]);
+  try {
+    return { facts: parseFactSummary(raw, documentType, pages), repairAttempted: false };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    let initial: FactSummary | null = null;
+    try {
+      initial = parseFactSummary(raw, documentType, pages, false);
+    } catch {
+      /* 形式自体が不正なら修復応答だけを評価 */
+    }
+    const revised = await generateText(llmConfig, [
+      {
+        role: 'system',
+        content:
+          prompt.system +
+          ' 前回の応答の誤りだけを直し、同じJSON形式ですべての事実を返してください。引用・数値・期間・単位を原文から厳密にコピーしてください。確認できない項目は除き、unverifiedに理由を記載してください。',
+      },
+      {
+        role: 'user',
+        content: `${prompt.user}\n\n前回の検証エラー: ${reason}\n前回の応答: ${raw}`,
+      },
+    ]);
+    try {
+      const repaired = parseFactSummary(revised, documentType, pages, false);
+      const merged = new Map(initial?.facts.map((fact) => [fact.id, fact]) ?? []);
+      for (const fact of repaired.facts) {
+        const existing = merged.get(fact.id);
+        if (
+          existing &&
+          (existing.value !== fact.value ||
+            existing.unit !== fact.unit ||
+            existing.valueKind !== fact.valueKind ||
+            existing.label !== fact.label)
+        ) {
+          throw new Error(`${fact.id}: 修復前後の検証済み事実が矛盾します`);
+        }
+        if (!existing) merged.set(fact.id, fact);
+      }
+      const ids = new Set(merged.keys());
+      const unverified = [
+        ...new Set([...(initial?.unverified ?? []), ...repaired.unverified]),
+      ].filter((item) => !/^f\d+\b/.test(item) || !ids.has(item.split(' ')[0]));
+      const candidate = {
+        version: FACT_SCHEMA_VERSION,
+        documentType,
+        facts: [...merged.values()],
+        unverified,
+      };
+      return {
+        facts: parseFactSummary(JSON.stringify(candidate), documentType, pages),
+        repairAttempted: true,
+      };
+    } catch (failure) {
+      throw new FactSummaryGenerationError(
+        failure instanceof Error ? failure.message : String(failure),
+        raw,
+        revised
+      );
+    }
+  }
+}
+
+export function renderFacts(summary: FactSummary): string {
+  const sorted = [...summary.facts].sort((a, b) =>
+    a.importance === b.importance ? 0 : a.importance === 'key' ? -1 : 1
+  );
+  const lines = sorted.map((fact) =>
+    fact.kind === 'number'
+      ? `- ${escapeText(fact.label)}: ${fact.value}${escapeText(normalize(fact.unit!) === '円銭' ? '円' : fact.unit!)}（${escapeText(fact.period!)}、${fact.valueKind === 'actual' ? '実績' : fact.valueKind === 'forecast' ? '予想' : fact.valueKind === 'forecastBefore' ? '修正前予想' : '修正後予想'}、PDF p.${fact.page}）`
+      : `- ${escapeText(fact.statement!)}（PDF p.${fact.page}）`
+  );
+  return `## 確認できた事実\n${lines.join('\n')}${summary.unverified.length ? `\n\n## 未確認\n${summary.unverified.map((item) => `- ${escapeText(item)}`).join('\n')}` : ''}`;
+}
+
+function escapeText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, ' ');
+}
