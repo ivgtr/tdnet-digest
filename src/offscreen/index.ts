@@ -190,7 +190,7 @@ function groupTextItemsByY(items: Array<TextItem | TextMarkedContent>): string[]
   }
 
   const Y_TOLERANCE = 2; // Y座標の許容誤差（ピクセル）
-  const lines: Map<number, string[]> = new Map();
+  const lines: Map<number, Array<{ x: number; text: string }>> = new Map();
 
   for (const item of items) {
     if (!('str' in item) || !item.str) {
@@ -199,6 +199,7 @@ function groupTextItemsByY(items: Array<TextItem | TextMarkedContent>): string[]
 
     // Y座標を取得（transform[5]がY座標）
     const y = item.transform?.[5] ?? 0;
+    const x = item.transform?.[4] ?? 0;
 
     // 既存の行の中から、Y座標が近い行を探す
     let matchedY: number | null = null;
@@ -211,16 +212,22 @@ function groupTextItemsByY(items: Array<TextItem | TextMarkedContent>): string[]
 
     if (matchedY !== null) {
       // 既存の行に追加
-      lines.get(matchedY)!.push(item.str);
+      lines.get(matchedY)!.push({ x, text: item.str });
     } else {
       // 新しい行を作成
-      lines.set(y, [item.str]);
+      lines.set(y, [{ x, text: item.str }]);
     }
   }
 
   // Y座標でソート（上から下へ）して、各行のテキストを結合
   const sortedYs = Array.from(lines.keys()).sort((a, b) => b - a); // 降順（PDFは下が小さい値）
-  return sortedYs.map((y) => lines.get(y)!.join(' '));
+  return sortedYs.map((y) =>
+    lines
+      .get(y)!
+      .sort((a, b) => a.x - b.x)
+      .map((item) => item.text)
+      .join(' ')
+  );
 }
 
 /**

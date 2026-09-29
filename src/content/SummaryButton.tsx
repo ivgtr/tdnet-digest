@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
 import { BUTTON_STYLES } from './constants/styles';
+import { ScoreBadge } from './ScoreBadge';
 
 interface RowData {
   time: string;
@@ -18,12 +19,13 @@ interface SummaryButtonProps {
 }
 
 const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }) => {
-  const { loading, result, hasCached, summarize, showCached, reset } = useSummarize({
-    pdfUrl: rowData.pdfUrl,
-    title: rowData.title,
-    code: rowData.code,
-    companyName: rowData.companyName,
-  });
+  const { loading, result, hasCached, cachedScore, cacheKey, summarize, showCached, reset } =
+    useSummarize({
+      pdfUrl: rowData.pdfUrl,
+      title: rowData.title,
+      code: rowData.code,
+      companyName: rowData.companyName,
+    });
 
   const summaryRowData = useMemo(
     () => ({ companyName: rowData.companyName, title: rowData.title }),
@@ -39,8 +41,18 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   // 行挿入・削除後にisVisibleを再評価するための再レンダリングトリガー
   const [, setForceUpdate] = useState(0);
   const triggerUpdate = useCallback(() => setForceUpdate((v) => v + 1), []);
+  const priorCacheKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (priorCacheKey.current && priorCacheKey.current !== cacheKey) {
+      removeSummaryRow();
+      triggerUpdate();
+    }
+    priorCacheKey.current = cacheKey;
+  }, [cacheKey, removeSummaryRow, triggerUpdate]);
 
   const isVisible = isSummaryRowVisible();
+  const score = result?.metadata?.score ?? cachedScore;
 
   // 要約結果が更新されたら行を挿入
   useEffect(() => {
@@ -86,7 +98,9 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
 
   // スタイル: キャッシュ済みかどうかで分岐
   const containerStyle =
-    hasCached && !loading ? BUTTON_STYLES.containerCached(isVisible) : BUTTON_STYLES.container(loading);
+    hasCached && !loading
+      ? BUTTON_STYLES.containerCached(isVisible)
+      : BUTTON_STYLES.container(loading);
   const buttonStyle =
     hasCached && !loading ? BUTTON_STYLES.buttonCached(isVisible) : BUTTON_STYLES.button(loading);
 
@@ -104,25 +118,28 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       : BUTTON_STYLES.buttonNormal;
 
   return (
-    <div style={containerStyle}>
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={loading}
-        style={buttonStyle}
-        onMouseEnter={(e) => {
-          if (!loading) {
-            e.currentTarget.style.background = hoverBackground;
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!loading) {
-            e.currentTarget.style.background = normalBackground;
-          }
-        }}
-      >
-        {buttonText}
-      </button>
+    <div>
+      <div style={containerStyle}>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={loading}
+          style={buttonStyle}
+          onMouseEnter={(e) => {
+            if (!loading) {
+              e.currentTarget.style.background = hoverBackground;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!loading) {
+              e.currentTarget.style.background = normalBackground;
+            }
+          }}
+        >
+          {buttonText}
+        </button>
+      </div>
+      {score && <ScoreBadge score={score} />}
     </div>
   );
 };

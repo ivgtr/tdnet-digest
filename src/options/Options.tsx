@@ -414,14 +414,13 @@ const Options: React.FC = () => {
               <input
                 type="checkbox"
                 checked={experimentalScoring}
-                disabled={!twoPassMode}
                 onChange={(e) => setExperimentalScoring(e.target.checked)}
                 className="h-4 w-4"
               />
               実験的スコアを表示（既定OFF）
             </label>
             <p className="mt-2 text-xs text-gray-500">
-              検証済みの短期・中期・長期の方向性を固定換算します。投資判断や将来収益を保証する点数ではなく、2パス要約でのみ表示されます。
+              PDF本文で照合した数値と事実から、AIが0～100点の目安を推論します。比較できない項目は推測せず、過去資料のWeb検索や追加分析にはAPI料金が発生します。1パス・2パスの両方で表示されます。
             </p>
           </div>
 

@@ -1,4 +1,5 @@
 import type { DocumentType } from '../lib/document-type';
+import type { ExperimentalScore } from '../lib/scoring';
 
 export type ExtractionMode = 'smart' | 'full';
 
@@ -31,6 +32,7 @@ export interface SummaryMetadata {
   summaryMode?: 'one-pass' | 'two-pass';
   analysisFingerprint?: string;
   experimentalScoring?: boolean;
+  score?: ExperimentalScore;
 }
 
 export interface PdfExtractionResult {

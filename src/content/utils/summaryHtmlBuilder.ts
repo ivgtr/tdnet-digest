@@ -6,6 +6,7 @@
 import { SUMMARY_STYLES } from '../constants/styles';
 import type { SummaryMetadata } from '../types/summaryMetadata';
 import { parseMarkdown } from './markdownParser';
+import type { ExperimentalScore, ScoreValue } from '@/lib/scoring';
 
 /**
  * エラー表示のHTMLを生成
@@ -94,7 +95,49 @@ export function buildSummaryHtml(
         </div>
       </div>
       ${metadataHtml}
+      ${metadata?.score ? buildScoreHtml(metadata.score) : ''}
       <div style="${SUMMARY_STYLES.summaryText}">${parseMarkdown(summaryText)}</div>
     </div>
   `;
+}
+
+export function buildScoreHtml(score: ExperimentalScore): string {
+  const item = (value: ScoreValue | null) => {
+    if (!value) return '未確認';
+    let pageLink = `p.${value.source.page}`;
+    try {
+      const url = new URL(value.source.url);
+      if (url.protocol === 'https:' && Number.isInteger(value.source.page) && value.source.page > 0)
+        pageLink = `<a href="${escapeMetadataText(url.href)}#page=${value.source.page}" target="_blank" rel="noopener noreferrer">p.${value.source.page}</a>`;
+    } catch {
+      /* invalid evidence URL is shown without a link */
+    }
+    return (
+      `${escapeMetadataText(String(value.value))}${escapeMetadataText(value.unit)} ` +
+      `(${escapeMetadataText(value.source.period)}・${escapeMetadataText(value.source.metric)}・` +
+      `${escapeMetadataText(value.source.basis)}・${escapeMetadataText(value.source.scope)}、` +
+      `${pageLink})「${escapeMetadataText(value.source.quote)}」`
+    );
+  };
+  const rows = score.breakdown
+    .map(
+      (part) =>
+        `<li>${escapeMetadataText(part.label)}: ` +
+        `${part.impact === 'positive' ? '好材料' : part.impact === 'negative' ? '悪材料' : '中立'}（${part.strength === 'large' ? '大' : part.strength === 'medium' ? '中' : '小'}）。${escapeMetadataText(part.comparison)}。現在 ${item(part.current)}、` +
+        `比較 ${item(part.previous)}、前々期 ${item(part.earlier)}` +
+        (part.relatedValue
+          ? `、${part.category === 'oneOff' ? '一時損益' : '規模の基準'} ${item(part.relatedValue)}`
+          : '') +
+        `${part.companyExplanation ? `。会社説明: ${escapeMetadataText(part.companyExplanation)}` : ''}</li>`
+    )
+    .join('');
+  return (
+    `<details style="margin:8px 0;padding:8px;background:#f0f7ff;border:1px solid #cbd5e1;">
+    <summary><strong>材料スコア: ${score.value === null ? '算出不能' : `${score.value}/100`}・${escapeMetadataText(score.verdict)}</strong>` +
+    ` ${escapeMetadataText([...score.positives, ...score.negatives].join(' / '))}</summary>
+    <p>確認できた事実の規模・本業との関係・継続性から推論した目安です。未確認項目を推測で補いません。</p>
+    <ul>${rows}</ul><p>検索: ${escapeMetadataText(score.searchStatus)}</p>
+    <p>未確認: ${score.unverified.length ? score.unverified.map(escapeMetadataText).join(' / ') : 'なし'}</p>
+    </details>`
+  );
 }

@@ -2,7 +2,7 @@
  * 要約処理とAPI通信を管理するカスタムフック
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
 import type {
   SummaryMetadata,
@@ -10,6 +10,7 @@ import type {
   CachedSummary,
   SummaryCacheStore,
 } from '../types/summaryMetadata';
+import type { ExperimentalScore } from '@/lib/scoring';
 
 interface UseSummarizeOptions {
   pdfUrl: string;
@@ -30,32 +31,51 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SummarizeResult | null>(null);
   const [hasCached, setHasCached] = useState(false);
+  const [cachedScore, setCachedScore] = useState<ExperimentalScore | null>(null);
   const [cacheKey, setCacheKey] = useState<string | null>(null);
+  const cacheKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    chrome.storage.sync.get(
-      ['provider', 'model', 'extractionMode', 'twoPassMode', 'experimentalScoring'],
-      (settings) => {
+    let active = true;
+    const keys = ['provider', 'model', 'extractionMode', 'twoPassMode', 'experimentalScoring'];
+    const refresh = () =>
+      chrome.storage.sync.get(keys, (settings) => {
+        if (!active) return;
         const fingerprint = buildAnalysisFingerprint({
           provider: settings.provider || 'openai',
           model: settings.model || 'gpt-4o',
           extractionMode: settings.extractionMode || 'full',
           twoPassMode: settings.twoPassMode !== undefined ? settings.twoPassMode : true,
-          experimentalScoring:
-            (settings.twoPassMode !== undefined ? settings.twoPassMode : true) &&
-            settings.experimentalScoring === true,
+          experimentalScoring: settings.experimentalScoring === true,
         });
-        setCacheKey(buildSummaryCacheKey(pdfUrl, fingerprint));
-      }
-    );
+        const next = buildSummaryCacheKey(pdfUrl, fingerprint);
+        if (next !== cacheKeyRef.current) {
+          cacheKeyRef.current = next;
+          setResult(null);
+          setHasCached(false);
+          setCachedScore(null);
+          setCacheKey(next);
+        }
+      });
+    refresh();
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'sync' && keys.some((key) => key in changes)) refresh();
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      active = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
   }, [pdfUrl]);
 
   // マウント時にキャッシュの存在チェック
   useEffect(() => {
     if (!cacheKey) return;
     chrome.storage.local.get(CACHE_KEY, (data) => {
+      if (cacheKey !== cacheKeyRef.current) return;
       const store: SummaryCacheStore = data[CACHE_KEY] || {};
       setHasCached(cacheKey in store);
+      setCachedScore(store[cacheKey]?.metadata.score ?? null);
     });
   }, [cacheKey]);
 
@@ -66,7 +86,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
     (summary: string, metadata: SummaryMetadata) => {
       const entryKey = metadata.analysisFingerprint
         ? buildSummaryCacheKey(pdfUrl, metadata.analysisFingerprint)
-        : cacheKey;
+        : cacheKeyRef.current;
       if (!entryKey) return;
 
       chrome.storage.local.get(CACHE_KEY, (data) => {
@@ -81,11 +101,14 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
         };
         store[entryKey] = entry;
         chrome.storage.local.set({ [CACHE_KEY]: store }, () => {
-          setHasCached(entryKey === cacheKey);
+          if (entryKey === cacheKeyRef.current) {
+            setHasCached(true);
+            setCachedScore(metadata.score ?? null);
+          }
         });
       });
     },
-    [cacheKey, companyName, title, code, pdfUrl]
+    [companyName, title, code, pdfUrl]
   );
 
   /**
@@ -94,6 +117,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
   const showCached = useCallback(() => {
     if (!cacheKey) return;
     chrome.storage.local.get(CACHE_KEY, (data) => {
+      if (cacheKey !== cacheKeyRef.current) return;
       const store: SummaryCacheStore = data[CACHE_KEY] || {};
       const cached = store[cacheKey];
       if (cached) {
@@ -123,6 +147,8 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
           action: 'summarize' as const,
           pdfUrl: cleanPdfUrl,
           title: cleanTitle,
+          code,
+          companyName,
           ...(forceExtractionMode && { forceExtractionMode }),
         });
 
@@ -130,7 +156,11 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
           console.error('[Content] 要約エラー:', response.error);
           setResult({ summary: null, error: response.error, metadata: null });
         } else {
-          setResult({ summary: response.summary, error: null, metadata: response.metadata });
+          const responseKey = response.metadata?.analysisFingerprint
+            ? buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint)
+            : null;
+          if (responseKey === cacheKeyRef.current)
+            setResult({ summary: response.summary, error: null, metadata: response.metadata });
           saveToCache(response.summary, response.metadata);
         }
       } catch (err) {
@@ -141,7 +171,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
         setLoading(false);
       }
     },
-    [pdfUrl, title, saveToCache]
+    [pdfUrl, title, code, companyName, saveToCache]
   );
 
   /**
@@ -151,5 +181,5 @@ export function useSummarize({ pdfUrl, title, code, companyName }: UseSummarizeO
     setResult(null);
   }, []);
 
-  return { loading, result, hasCached, summarize, showCached, reset };
+  return { loading, result, hasCached, cachedScore, cacheKey, summarize, showCached, reset };
 }

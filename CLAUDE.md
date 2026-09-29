@@ -68,7 +68,9 @@ src/
 │   ├── section-detector.ts      # セクション検出・ページスコアリング・品質ゲート
 │   ├── structured-output.ts     # JSON検証・プロバイダー能力・1回修復指示
 │   ├── analysis-version.ts      # 分析仕様バージョン・キャッシュ指紋
-│   ├── scoring.ts               # 既定OFFの実験的スコア固定換算
+│   ├── scoring.ts               # 既定OFFの検算済み事実による実験的スコア推論
+│   ├── score-extraction.ts      # 採点入力の抽出とPDFページ照合
+│   ├── disclosure-search.ts     # 過去開示PDF候補のWeb検索と取得
 │   └── summary-schema.ts        # 2パス要約の情報抽出用JSONスキーマ
 ├── types/
 │   └── summaryMetadata.ts       # 共通型定義（ExtractionMode, SummaryMetadata等）
@@ -175,8 +177,12 @@ src/
 - **`analysis-version.ts`**: 分析仕様バージョンとキャッシュ指紋
   - プロンプト仕様や利用モデルが異なる結果を別キャッシュとして管理
 - **`scoring.ts`**: 実験的スコア
-  - 検証済みの短期・中期・長期スタンスを文書タイプ別の固定重みで換算
-  - LLMに点数を生成させず、既存の評価理由を根拠として表示。既定OFF
+  - ページ本文で照合した数値と事実に限り、規模・本業への影響・継続性を踏まえた点数の目安を推論。比較不能な項目を推測で補わない
+  - 一覧に点数・判定・主な理由を出し、展開詳細に内訳と根拠を出す。既定OFF
+- **`score-extraction.ts` / `disclosure-search.ts`**: 採点入力と比較資料
+  - 通常のPDFを先に確認し、不足時のみ設定中のAPIのWeb検索で過去PDF候補を探す
+  - 検索結果だけでは採点せず、取得したPDF本文・対象期間・指標・根拠ページを照合する
+  - 配当の決定額と直近予想が本文の増減説明および表で検算できる場合は直接抽出する
 - **`section-detector.ts`**: PDF抽出の知的フィルタリング
   - セクション検出（5種類の見出しパターン）
   - ページスコアリング（キーワード出現回数ベース）
@@ -209,7 +215,7 @@ src/
   - モデル選択（プロバイダー別プリセット or カスタム入力）
   - 抽出モード選択（デフォルトはfullモード、smartモードも選択可能）
   - 要約モード選択（デフォルトは2パス、1パスも選択可能）
-  - 実験的スコア（デフォルトOFF、2パスのみ）
+  - 実験的スコア（デフォルトOFF、1パス・2パスの両方）
   - カスタムプロバイダーのURL入力
   - 保存済みモデルがリストにない場合の自動カスタムモード切り替え通知
   - 設定をJSONファイルでエクスポート/インポート
@@ -250,7 +256,7 @@ src/
   - `GlobalWorkerOptions.workerSrc`の設定は必須（設定しないとエラーになる）
   - Chrome拡張機能では`chrome.runtime.getURL()`で相対パスを絶対URLに変換
 
-- **セキュリティ**: この拡張機能は`https://www.release.tdnet.info/*`ドメインでのみ動作するように制限されている。他のドメインでの動作は不要。
+- **セキュリティ**: Content Scriptの注入先は`https://www.release.tdnet.info/*`のみ。実験的スコアの過去資料PDF取得にはHTTPSサイトへのhost permissionを使う。検索候補はPDF形式・サイズ・発行会社を確認し、JPXの閲覧サービスを過去資料の自動取得先にしない。
 
 - **LLM出力のHTML化**:
   - `markdownParser.ts`のカスタムレンダラーを経由し、Content Script向けのインラインスタイルを付与する

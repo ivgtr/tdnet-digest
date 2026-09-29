@@ -6,7 +6,9 @@ import { getFormatPrompt } from '@/lib/format-prompts';
 import { getJsonSchema } from '@/lib/summary-schema';
 import type { EarningsExtraction } from '@/lib/summary-schema';
 import { refineEarningsExtraction } from '@/lib/earnings-refinement';
-import { calculateExperimentalScore, formatExperimentalScore } from '@/lib/scoring';
+import { assessClaim, inferExperimentalScore } from '@/lib/scoring';
+import { extractScoreInput, type ScoreDocument } from '@/lib/score-extraction';
+import { fetchCandidatePdf, searchDisclosureCandidates } from '@/lib/disclosure-search';
 import {
   buildJsonRepairMessages,
   getProviderCapabilities,
@@ -18,6 +20,8 @@ interface SummarizeRequest {
   action: 'summarize';
   pdfUrl: string;
   title: string; // 文書タイプ判別用
+  code: string;
+  companyName: string;
   forceExtractionMode?: ExtractionMode; // 全文再要約ボタン用
 }
 
@@ -76,7 +80,13 @@ chrome.runtime.onMessage.addListener((request: SummarizeRequest, _sender, sendRe
       forceExtractionMode: request.forceExtractionMode,
     });
 
-    handleSummarize(request.pdfUrl, request.title, request.forceExtractionMode)
+    handleSummarize(
+      request.pdfUrl,
+      request.title,
+      request.code,
+      request.companyName,
+      request.forceExtractionMode
+    )
       .then((result) => {
         console.log('[Background DEBUG] Summarize completed');
         sendResponse({ summary: result.summary, metadata: result.metadata });
@@ -92,6 +102,8 @@ chrome.runtime.onMessage.addListener((request: SummarizeRequest, _sender, sendRe
 async function handleSummarize(
   pdfUrl: string,
   title: string,
+  code: string,
+  companyName: string,
   forceExtractionMode?: ExtractionMode
 ): Promise<{ summary: string; metadata: SummaryMetadata }> {
   try {
@@ -120,7 +132,16 @@ async function handleSummarize(
     const pdfData = await fetchPDF(pdfUrl);
 
     // LLMで要約
-    const result = await summarizeWithLLM(pdfData, settings, documentType, extractionMode, title);
+    const result = await summarizeWithLLM(
+      pdfData,
+      settings,
+      documentType,
+      extractionMode,
+      title,
+      `https://www.release.tdnet.info/inbs/${pdfUrl}`,
+      code,
+      companyName
+    );
 
     return result;
   } catch (error) {
@@ -176,7 +197,10 @@ async function summarizeWithLLM(
   settings: Settings,
   documentType: DocumentType,
   extractionMode: ExtractionMode,
-  title: string
+  title: string,
+  pdfUrl: string,
+  code: string,
+  companyName: string
 ): Promise<{ summary: string; metadata: SummaryMetadata }> {
   try {
     // 設定の検証
@@ -224,7 +248,7 @@ async function summarizeWithLLM(
     metadata.provider = settings.provider;
     metadata.model = settings.model;
     metadata.summaryMode = useTwoPass ? 'two-pass' : 'one-pass';
-    metadata.experimentalScoring = useTwoPass && settings.experimentalScoring === true;
+    metadata.experimentalScoring = settings.experimentalScoring === true;
     metadata.analysisFingerprint = buildAnalysisFingerprint({
       provider: settings.provider,
       model: settings.model,
@@ -233,19 +257,40 @@ async function summarizeWithLLM(
       experimentalScoring: metadata.experimentalScoring,
     });
 
+    let summaryResult;
     if (useTwoPass) {
-      return await summarizeTwoPass(
+      summaryResult = await summarizeTwoPass(
         llmConfig,
         documentType,
         pdfText,
         earningsContext,
         title,
-        metadata,
-        settings.experimentalScoring === true
+        metadata
       );
     } else {
-      return await summarizeOnePass(llmConfig, documentType, pdfText, earningsContext, metadata);
+      summaryResult = await summarizeOnePass(
+        llmConfig,
+        documentType,
+        pdfText,
+        earningsContext,
+        metadata
+      );
     }
+    if (settings.experimentalScoring === true) {
+      await attachScore(
+        llmConfig,
+        documentType,
+        title,
+        pdfUrl,
+        code,
+        companyName,
+        pdfData,
+        extractionMode,
+        extractionResult,
+        metadata
+      );
+    }
+    return summaryResult;
   } catch (error) {
     console.error('[Background] LLM要約エラー:', error);
     throw error;
@@ -280,8 +325,7 @@ async function summarizeTwoPass(
   pdfText: string,
   earningsContext: ReturnType<typeof detectEarningsContext> | undefined,
   documentTitle: string,
-  metadata: SummaryMetadata,
-  experimentalScoring: boolean
+  metadata: SummaryMetadata
 ): Promise<{ summary: string; metadata: SummaryMetadata }> {
   // パス1: 情報抽出（JSON）
   console.log('[Background] 2パス要約: パス1（情報抽出）開始');
@@ -331,18 +375,161 @@ async function summarizeTwoPass(
   // パス2: フォーマット整形（低temperature）
   const formatConfig: LLMConfig = { ...llmConfig, temperature: 0.3 };
   const { system: s2, user: u2 } = getFormatPrompt(documentType, extractionData, earningsContext);
-  let formatted = await generateText(formatConfig, [
+  const formatted = await generateText(formatConfig, [
     { role: 'system', content: s2 },
     { role: 'user', content: u2 },
   ]);
 
-  if (experimentalScoring) {
-    const score = calculateExperimentalScore(documentType, extractionData);
-    if (score) formatted += formatExperimentalScore(score);
-  }
-
   console.log('[Background] 2パス要約: パス2完了');
   return { summary: formatted, metadata };
+}
+
+async function attachScore(
+  config: LLMConfig,
+  documentType: DocumentType,
+  title: string,
+  pdfUrl: string,
+  code: string,
+  companyName: string,
+  pdfData: ArrayBuffer,
+  extractionMode: ExtractionMode,
+  extractionResult: { text: string; metadata: SummaryMetadata },
+  metadata: SummaryMetadata
+): Promise<void> {
+  let searchStatus = '元PDF内を確認';
+  try {
+    const scoringText =
+      extractionMode === 'smart'
+        ? (await extractTextFromPDF(pdfData, documentType, 'full')).text
+        : extractionResult.text;
+    const original: ScoreDocument = {
+      url: pdfUrl,
+      text: scoringText,
+      issuer: companyName,
+      code,
+      publishedDate: readPublishedDate(scoringText),
+    };
+    const documents = [original];
+    let input = await extractScoreInput(config, documentType, documents, searchStatus);
+    const needsPast =
+      !input.claims.some((claim) => assessClaim(claim) !== null) ||
+      (input.claims.some((claim) => claim.category === 'oneOff') &&
+        !input.claims.some((claim) =>
+          ['operatingProfit', 'revenue', 'margin', 'kpi', 'coreForecast'].includes(claim.category)
+        )) ||
+      input.claims.some(
+        (claim) => ['operatingProfit', 'revenue', 'kpi'].includes(claim.category) && !claim.earlier
+      );
+    if (needsPast && companyName && code) {
+      const search = await searchDisclosureCandidates(config, companyName, code, title);
+      searchStatus = `${search.status}（API要求${search.apiRequests}回、実検索${search.requests === null ? '不明' : search.requests + '回'}、候補${search.urls.length}件）。${search.costStatus}`;
+      for (const url of search.urls) {
+        try {
+          const data = await fetchCandidatePdf(url);
+          const result = await extractTextFromPDF(data, documentType, 'full');
+          const candidate: ScoreDocument = {
+            url,
+            text: result.text,
+            issuer: companyName,
+            code,
+            publishedDate: readPublishedDate(result.text),
+          };
+          if (
+            !original.publishedDate ||
+            !candidate.publishedDate ||
+            candidate.publishedDate > original.publishedDate
+          )
+            throw new Error('開示日の前後を照合できません');
+          if (
+            !candidate.text
+              .normalize('NFKC')
+              .replace(/\s/g, '')
+              .includes(companyName.normalize('NFKC').replace(/\s/g, '')) &&
+            !candidate.text.includes(code.slice(0, 4))
+          )
+            throw new Error('発行会社を照合できません');
+          const next = await extractScoreInput(
+            config,
+            documentType,
+            [original, candidate],
+            searchStatus
+          );
+          const candidateClaims = next.claims.filter(
+            (claim) =>
+              assessClaim(claim) !== null &&
+              [claim.current, claim.previous, claim.earlier, claim.relatedValue].some(
+                (value) => value?.source.url === candidate.url
+              )
+          );
+          if (candidateClaims.length) {
+            const key = (claim: (typeof input.claims)[number]) =>
+              [
+                claim.category,
+                claim.current.source.metric,
+                claim.current.source.period,
+                claim.current.source.scope,
+              ].join('|');
+            const merged = new Map(input.claims.map((claim) => [key(claim), claim]));
+            for (const claim of candidateClaims) {
+              const existing = merged.get(key(claim));
+              if (
+                !existing ||
+                assessClaim(existing) === null ||
+                (!existing.earlier && claim.earlier)
+              )
+                merged.set(key(claim), claim);
+            }
+            input = {
+              claims: [...merged.values()],
+              unverified: [...new Set([...input.unverified, ...next.unverified])],
+              searchStatus,
+            };
+            documents.push(candidate);
+          } else {
+            searchStatus += ' / 候補の比較条件が不一致';
+          }
+        } catch (error) {
+          searchStatus += ` / 候補不採用: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    }
+    if (needsPast && (!companyName || !code))
+      searchStatus = '会社名または証券コードを確認できず過去資料を検索できません';
+    input.searchStatus = searchStatus;
+    metadata.score = await inferExperimentalScore(config, documentType, input);
+  } catch (error) {
+    metadata.score = {
+      value: null,
+      verdict: '算出不能',
+      positives: [],
+      negatives: [],
+      breakdown: [],
+      unverified: [
+        `採点根拠を検証できません: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+      searchStatus,
+    };
+  }
+}
+
+export function readPublishedDate(text: string): string | null {
+  const firstPage = text.match(/\[PDF_PAGE:1\]([\s\S]*?)(?=\[PDF_PAGE:|$)/)?.[1];
+  if (!firstPage) return null;
+  for (const line of firstPage.normalize('NFKC').split('\n').slice(0, 12)) {
+    const match = line.replace(/\s/g, '').match(/^(20\d{2})[年/.-](\d{1,2})[月/.-](\d{1,2})日?$/);
+    if (!match) continue;
+    const year = Number(match[1]),
+      month = Number(match[2]),
+      day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    )
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  return null;
 }
 
 /**
@@ -381,5 +568,3 @@ async function extractTextFromPDF(
     throw new Error('PDFからテキストを抽出できませんでした。');
   }
 }
-
-export {};
