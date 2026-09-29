@@ -1,5 +1,8 @@
 # TDnet Digest
 
+[![Release](https://img.shields.io/github/v/release/ivgtr/tdnet-digest?label=release&style=flat-square)](https://github.com/ivgtr/tdnet-digest/releases/latest)
+[![Chrome extension](https://img.shields.io/badge/Chrome-extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)](#インストール)
+
 TDnetの適時開示一覧で、PDFの要約をその場で読めるChrome拡張です。決算短信では、資料に記載された前年同期比や業績予想の修正も根拠ページ付きで表示します。
 
 ![適時開示一覧から決算短信の要約を表示する操作イメージ](media/tdnet-digest-demo.gif)
