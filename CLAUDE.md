@@ -257,7 +257,7 @@ src/
   - `GlobalWorkerOptions.workerSrc`の設定は必須（設定しないとエラーになる）
   - Chrome拡張機能では`chrome.runtime.getURL()`で相対パスを絶対URLに変換
 
-- **セキュリティ**: Content Scriptの注入先は`https://www.release.tdnet.info/*`のみ。実験的スコアの過去資料PDF取得にはHTTPSサイトへのhost permissionを使う。検索候補はPDF形式・サイズ・発行会社を確認し、JPXの閲覧サービスを過去資料の自動取得先にしない。
+- **セキュリティ**: Content Scriptの注入先は`https://www.release.tdnet.info/*`のみ。必須ホスト権限はTDnetと標準のLLM APIに限定する。カスタムAPIは対象ホスト、実験的スコアの過去資料はHTTPSサイトへの任意権限を設定時に求める。検索候補はPDF形式・サイズ・発行会社を確認し、JPXの閲覧サービスを過去資料の自動取得先にしない。
 
 - **LLM出力のHTML化**:
   - `markdownParser.ts`のカスタムレンダラーを経由し、Content Script向けのインラインスタイルを付与する

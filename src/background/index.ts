@@ -13,6 +13,7 @@ import { assessClaim, inferExperimentalScore, type ExperimentalScore } from '@/l
 import { extractScoreInput, type ScoreDocument } from '@/lib/score-extraction';
 import { fetchCandidatePdf, searchDisclosureCandidates } from '@/lib/disclosure-search';
 import { getProvider } from '@/lib/llm-providers';
+import { customApiPermission, SCORING_PDF_PERMISSION } from '@/lib/host-permissions';
 import type { SummaryMetadata, ExtractionMode, PdfExtractionResult } from '@/types/summaryMetadata';
 
 interface BaseRequest {
@@ -94,6 +95,11 @@ async function getSettings(): Promise<Settings> {
   const customUrl = result.customUrl ?? '';
   if (typeof customUrl !== 'string' || (provider === 'custom' && !customUrl))
     throw new Error('API URLが不正です');
+  if (provider === 'custom') {
+    const origin = customApiPermission(customUrl);
+    if (!(await chrome.permissions.contains({ origins: [origin] })))
+      throw new Error('カスタムAPIホストへのアクセス権がありません。設定画面で保存してください');
+  }
   return {
     provider,
     apiKey: result.apiKey,
@@ -112,7 +118,16 @@ function configOf(settings: Settings): LLMConfig {
   };
 }
 function fullUrl(url: string): string {
-  return new URL(url, 'https://www.release.tdnet.info/inbs/').href;
+  const parsed = new URL(url, 'https://www.release.tdnet.info/inbs/');
+  if (
+    parsed.origin !== 'https://www.release.tdnet.info' ||
+    parsed.username ||
+    parsed.password ||
+    !parsed.pathname.startsWith('/inbs/') ||
+    !/\.pdf$/i.test(parsed.pathname)
+  )
+    throw new Error('TDnetのPDF URLではありません');
+  return parsed.href;
 }
 async function fetchPDF(url: string): Promise<ArrayBuffer> {
   const response = await fetch(fullUrl(url));
@@ -228,7 +243,9 @@ async function attachScore(
       input.claims.some(
         (claim) => ['operatingProfit', 'revenue', 'kpi'].includes(claim.category) && !claim.earlier
       );
-    if (needsPast && companyName && code) {
+    if (needsPast && !(await chrome.permissions.contains({ origins: [SCORING_PDF_PERMISSION] }))) {
+      searchStatus = '過去資料へのアクセス権がありません。設定画面で実験的スコアを保存してください';
+    } else if (needsPast && companyName && code) {
       const search = await searchDisclosureCandidates(config, companyName, code, title);
       searchStatus = `${search.status}（API要求${search.apiRequests}回、実検索${search.requests === null ? '不明' : search.requests + '回'}、候補${search.urls.length}件）。${search.costStatus}`;
       for (const url of search.urls) {

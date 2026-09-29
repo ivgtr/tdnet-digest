@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 import { LLM_PROVIDERS, getProvider } from '@/lib/llm-providers';
+import { customApiPermission, SCORING_PDF_PERMISSION } from '@/lib/host-permissions';
 
 const CACHE_PREFIX = 'summaryCacheV2:';
 
@@ -16,6 +17,7 @@ const Options: React.FC = () => {
   const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
   const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
   const [cacheEntries, setCacheEntries] = useState<[string, CachedSummary][]>([]);
+  const [permissionMessage, setPermissionMessage] = useState('');
 
   const SETTINGS_KEYS = [
     'provider',
@@ -92,6 +94,11 @@ const Options: React.FC = () => {
                 setExtractionMode(validData.extractionMode as ExtractionMode);
               if (validData.experimentalScoring !== undefined)
                 setExperimentalScoring(validData.experimentalScoring as boolean);
+              if (validData.experimentalScoring === true || validData.provider === 'custom') {
+                setPermissionMessage(
+                  '追加のホスト権限が必要です。設定を保存して権限を確認してください'
+                );
+              }
               setSaved(true);
               setTimeout(() => setSaved(false), 3000);
             })
@@ -162,6 +169,28 @@ const Options: React.FC = () => {
         if (result.extractionMode) setExtractionMode(result.extractionMode);
         if (result.experimentalScoring !== undefined)
           setExperimentalScoring(result.experimentalScoring);
+        if (result.experimentalScoring === true) {
+          chrome.permissions.contains({ origins: [SCORING_PDF_PERMISSION] }, (granted) => {
+            if (!granted)
+              setPermissionMessage(
+                '過去資料を自動取得する権限がありません。設定を保存して許可してください'
+              );
+          });
+        } else if (result.provider === 'custom' && typeof result.customUrl === 'string') {
+          try {
+            chrome.permissions.contains(
+              { origins: [customApiPermission(result.customUrl)] },
+              (granted) => {
+                if (!granted)
+                  setPermissionMessage(
+                    'カスタムAPIホストへのアクセス権がありません。設定を保存して許可してください'
+                  );
+              }
+            );
+          } catch (error) {
+            setPermissionMessage(error instanceof Error ? error.message : String(error));
+          }
+        }
       }
     );
     loadCacheEntries();
@@ -220,22 +249,45 @@ const Options: React.FC = () => {
   };
 
   const handleSave = () => {
-    chrome.storage.sync.set(
-      {
-        provider,
-        apiKey,
-        model,
-        customUrl: provider === 'custom' ? customUrl : '',
-        useCustomModel,
-        extractionMode,
-        experimentalScoring,
-      },
-      () => {
-        chrome.storage.sync.remove('twoPassMode');
-        setSaved(true);
-        setTimeout(() => setSaved(false), 3000);
+    setPermissionMessage('');
+    let origins: string[] = [];
+    try {
+      const customOrigin = provider === 'custom' ? customApiPermission(customUrl) : null;
+      if (experimentalScoring) origins = [SCORING_PDF_PERMISSION];
+      else if (customOrigin) origins = [customOrigin];
+    } catch (error) {
+      setPermissionMessage(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    const save = () => {
+      chrome.storage.sync.set(
+        {
+          provider,
+          apiKey,
+          model,
+          customUrl: provider === 'custom' ? customUrl : '',
+          useCustomModel,
+          extractionMode,
+          experimentalScoring,
+        },
+        () => {
+          chrome.storage.sync.remove('twoPassMode');
+          setSaved(true);
+          setTimeout(() => setSaved(false), 3000);
+        }
+      );
+    };
+    if (!origins.length) {
+      save();
+      return;
+    }
+    chrome.permissions.request({ origins }, (granted) => {
+      if (!granted || chrome.runtime.lastError) {
+        setPermissionMessage('ホストへのアクセスが許可されなかったため、設定を保存していません');
+        return;
       }
-    );
+      save();
+    });
   };
 
   // 現在のプロバイダー情報を取得
@@ -285,6 +337,9 @@ const Options: React.FC = () => {
               />
               <p className="mt-1 text-xs text-gray-500">
                 OpenAI互換のチャットAPI エンドポイントを指定してください
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                保存時に、このAPIホストへのアクセス権を確認します。
               </p>
             </div>
           )}
@@ -423,6 +478,9 @@ const Options: React.FC = () => {
             <p className="mt-2 text-xs text-gray-500">
               要約表示後、検証済み事実とPDF本文を照合して自動採点します。必要な過去資料の検索や採点には追加のAPI料金が発生します。追加分析は要約内のボタンから別に実行します。
             </p>
+            <p className="mt-1 text-xs text-gray-500">
+              過去資料の発行会社サイトは事前に特定できないため、ONで保存するとHTTPSサイトへの追加アクセス権を確認します。
+            </p>
           </div>
 
           <div className="flex items-center gap-4">
@@ -434,6 +492,11 @@ const Options: React.FC = () => {
             </button>
             {saved && <span className="text-sm text-green-600 font-medium">✓ 保存しました</span>}
           </div>
+          {permissionMessage && (
+            <p role="alert" className="text-sm text-red-700">
+              {permissionMessage}
+            </p>
+          )}
         </div>
 
         {/* 設定のエクスポート/インポート */}

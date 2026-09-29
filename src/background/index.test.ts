@@ -7,6 +7,7 @@ const mocked = vi.hoisted(() => ({
   inferExperimentalScore: vi.fn(),
 }));
 interface TestResponse {
+  error?: string;
   summary: string;
   metadata: { analysisFingerprint: string; score?: unknown };
   facts: FactSummary;
@@ -44,7 +45,7 @@ const facts: FactSummary = {
   ],
 };
 
-async function setup(scoring: boolean) {
+async function setup(scoring: boolean, allowPastPdf = true) {
   let listener: (
     request: unknown,
     sender: unknown,
@@ -83,6 +84,7 @@ async function setup(scoring: boolean) {
       },
     },
     offscreen: { createDocument: vi.fn() },
+    permissions: { contains: async () => allowPastPdf },
   });
   vi.stubGlobal(
     'fetch',
@@ -123,6 +125,13 @@ describe('要約・採点・追加分析の分離', () => {
     expect(result.metadata.score).toBeUndefined();
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+  });
+
+  it('TDnet以外のPDF URLを取得しない', async () => {
+    const request = await setup(false);
+    const result = await request({ action: 'summarize', pdfUrl: 'https://example.com/report.pdf' });
+    expect(result.error).toContain('TDnetのPDF URLではありません');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('スコアOFFでも追加分析を明示操作で実行できる', async () => {
@@ -174,5 +183,35 @@ describe('要約・採点・追加分析の分離', () => {
     });
     expect(score.score.value).toBe(70);
     expect(mocked.extractScoreInput.mock.calls[0][4]).toEqual(summary.facts);
+  });
+
+  it('過去資料の任意権限がない場合は別サイトを取得しない', async () => {
+    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.extractScoreInput.mockResolvedValue({
+      claims: [{ category: 'revenue' }],
+      unverified: [],
+      searchStatus: '元PDF内',
+    });
+    mocked.inferExperimentalScore.mockResolvedValue({
+      value: null,
+      verdict: '算出不能',
+      positives: [],
+      negatives: [],
+      breakdown: [],
+      unverified: [],
+      searchStatus: '',
+    });
+    const request = await setup(true, false);
+    const summary = await request({ action: 'summarize' });
+    await request({
+      action: 'score',
+      facts: summary.facts,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    });
+    expect(mocked.inferExperimentalScore.mock.calls[0][2].searchStatus).toContain(
+      '過去資料へのアクセス権がありません'
+    );
+    expect(mocked.generateText).toHaveBeenCalledTimes(1);
   });
 });
