@@ -14,9 +14,12 @@ for (const item of manifest) {
   let data;
   try {
     data = new Uint8Array(await readFile(filePath));
-  } catch {
-    results.push({ id: item.id, status: 'missing', filePath });
-    continue;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      results.push({ id: item.id, status: 'missing', filePath });
+      continue;
+    }
+    throw error;
   }
 
   const document = await getDocument({ data, disableWorker: true }).promise;
@@ -59,4 +62,4 @@ console.table(results);
 console.log(
   `PDF extraction: ${passed.length}/${checked.length} passed; missing files: ${results.length - checked.length}`
 );
-if (checked.length === 0 || passed.length !== checked.length) process.exitCode = 1;
+if (checked.length !== manifest.length || passed.length !== manifest.length) process.exitCode = 1;

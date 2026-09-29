@@ -1,48 +1,37 @@
-# 分析精度評価フィクスチャ
+# 評価ガイド
 
-このディレクトリは、分析精度のベースラインと回帰評価データを管理します。
+`evaluation/` には、文書分類の回帰テスト用データ、公開 TDnet PDF の参照情報、実 PDF を使うローカル評価スクリプトを置いています。
 
-## データの区分
+## データと評価範囲
 
-- `fixtures/classification-cases.json`: 文書タイトル分類と決算コンテキストの合成フィクスチャ
-- `fixtures/real-pdf-cases.json`: TDnet公式PDFの出典、期待分類、抽出必須語
-- `expected/`: 公開PDFから人手で作成する期待値JSON（今後追加）
-- `results/`: モデル、設定、実行日時を含む評価結果（APIキーは保存しない）
-- `scripts/check-real-pdfs.mjs`: ローカルに取得したPDFのページ抽出・境界・必須語チェック
+| ファイル                             | 内容                                                          |
+| ------------------------------------ | ------------------------------------------------------------- |
+| `fixtures/classification-cases.json` | 合成タイトル36件の期待分類と、一部の決算コンテキスト          |
+| `fixtures/real-pdf-cases.json`       | 公開 PDF 18件の公式 URL、期待分類、抽出確認語                 |
+| `scripts/check-real-pdfs.mjs`        | ローカル PDF のページ抽出、空ページ、確認語のチェック         |
+| `scripts/run-real-llm.ts`            | 指定した1件を2パスで要約し、JSON 検証結果と出力をローカル保存 |
 
-`classification-cases.json`の`baselineType`はPhase 0時点の実装結果、`targetType`は分類拡張後の期待値です。Phase 2で分類を拡張した後も、旧挙動との差分を追跡できるよう両方を残します。
+通常の `npm test` はタイトル分類などの回帰テストです。PDF 本文の読解精度や投資判断の有用性を測るものではありません。実 PDF のスクリプトも空ページと指定語の有無を確認するもので、要約の正確性を自動採点しません。人手の正解データはまだありません。
 
-## 評価上の原則
+## 実 PDF の確認
 
-- PDF本文にない情報を正解データへ補わない
-- 数値、単位、比較期間、根拠ページをセットで記録する
-- 市場コンセンサス、現在株価、バリュエーションを評価対象にしない
-- 同じ抽出本文、モデル、設定で変更前後を比較する
-- APIキー、非公開資料、個人情報をコミットしない
+`fixtures/real-pdf-cases.json` の URL から PDF を取得し、各ファイルを `<ID>.pdf` という名前で同じディレクトリに保存します。PDF 自体と抽出テキストは Git 管理しません。
 
-## 実PDFコーパス
+```bash
+npm run test:real-pdf -- /path/to/pdf-directory
+```
 
-合成フィクスチャは分類・計算・スキーマの回帰確認に使用します。LLMの読み取り精度を評価する実PDFコーパスは、公開TDnet資料36件以上を目標に登録します。PDFを直接コミットできない場合は、出典URL、取得日、タイトル、ページ単位抽出テキスト、期待値JSONを保存します。
+成功時は `/path/to/pdf-directory/text/` にページ境界付きテキストが生成されます。PDF が欠けている場合は結果表に `missing` と表示され、コマンドは失敗します。
 
-## ローカルLLM評価
+## LLM によるローカル評価
 
-この機能は評価用CLIだけで使用し、Chrome拡張の実行環境には影響しません。
+LLM API を呼び出すため、利用するサービスの料金が発生します。`.env.example` を `.env` にコピーし、プロバイダー、モデル、API キー、対象ケース ID、PDF ディレクトリを設定します。
 
 ```bash
 cp .env.example .env
-# .envへAPIキー、プロバイダー、モデル、対象ケースIDを設定
-
-# 取得済みPDFからページ境界付きテキストを生成
-npm run test:real-pdf -- /tmp/tdnet-real-eval
-
-# 既存のパス1抽出→検証→必要時1回修復→パス2整形を実行
 npm run test:real-llm
 ```
 
-APIキーは`TDNET_DIGEST_API_KEY`を優先する。未設定の場合は、選択したプロバイダーに応じて`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENROUTER_API_KEY`、`GOOGLE_API_KEY`も利用できる。
+対象は1回につき1件です。`TDNET_DIGEST_API_KEY` の代わりに、選択したプロバイダーに対応する `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`OPENROUTER_API_KEY`、`GOOGLE_API_KEY` も使用できます。実行結果は Git 管理外の `evaluation/results/local/` に保存されます。API キー、非公開資料、個人情報をコミットしないでください。
 
-- `.env`はGit管理外
-- `VITE_`接頭辞は使用せず、拡張機能のバンドルへ公開しない
-- 評価対象は誤課金を避けるため1回につき1件
-- 結果はGit管理外の`evaluation/results/local/`へ保存
-- APIキーの値はログ・結果ファイルへ出力しない
+結果を比較する際は、同じ抽出テキスト、モデル、設定を使い、数値・単位・比較期間・根拠ページを原文と照合してください。PDF にない市場コンセンサスや現在株価を正解として補わないでください。

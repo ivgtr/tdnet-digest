@@ -23,6 +23,7 @@ build/
 
 # Local LLM evaluation outputs
 evaluation/results/local/
+evaluation/fixtures/real-pdfs/
 
 # Logs
 npm-debug.log*

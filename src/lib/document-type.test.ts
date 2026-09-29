@@ -5,7 +5,6 @@ import { detectDocumentType, detectEarningsContext } from './document-type';
 interface ClassificationFixture {
   id: string;
   title: string;
-  baselineType: ReturnType<typeof detectDocumentType>;
   targetType: string;
   expectedContext?: ReturnType<typeof detectEarningsContext>;
 }
@@ -23,9 +22,4 @@ describe('文書分類', () => {
       expect(detectEarningsContext(title)).toEqual(expectedContext);
     }
   );
-
-  it('Phase 0から再分類した対象を記録している', () => {
-    const pending = cases.filter(({ baselineType, targetType }) => baselineType !== targetType);
-    expect(pending.length).toBeGreaterThan(0);
-  });
 });
