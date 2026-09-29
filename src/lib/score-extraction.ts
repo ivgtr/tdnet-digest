@@ -54,6 +54,11 @@ export async function extractScoreInput(
   const direct =
     documentType === 'dividend' ? extractDocumentedDividend(documents[0], searchStatus) : null;
   if (direct) return facts ? restrictToFacts(direct, facts, documents[0].url) : direct;
+  const quarterly =
+    documentType === 'earnings' && facts && documents.length > 1
+      ? extractQuarterlyEarnings(documents, facts, searchStatus)
+      : null;
+  if (quarterly?.claims.length) return quarterly;
   const schema = `{"claims":[{"category":"operatingProfit|revenue|margin|kpi|coreForecast|oneOff|shareholderReturn|capitalAction|cashFlow","label":"短い事実","current":{"value":数値,"unit":"百万円など","source":{"url":"資料URL","page":1,"quote":"同じ行に指標と数値がある連続した原文","period":"資料記載の対象期間","fiscalYear":2026,"periodKind":"fullYear|cumulativeQ1|cumulativeQ2|cumulativeQ3|standaloneQ1|standaloneQ2|standaloneQ3|standaloneQ4|month|eventDate","valueKind":"actual|forecastBefore|forecastAfter","metric":"指標名","basis":"会計基準","scope":"連結範囲・事業範囲"}},"previous":同じ形式またはnull,"earlier":同じ形式またはnull,"relatedValue":一時損益額または発行済株式数の同形式、なければnull,"companyExplanation":"資料中の会社説明"またはnull}],"unverified":["未確認項目"]}`;
   const prompt =
     'oneOffでは純利益予想の修正前後をcurrent/previous、一時損益の資料記載額をrelatedValueに入れてください。自己株取得と増資で株式数の規模を測る場合はcurrentを取得・発行株数、relatedValueを同資料の発行済株式数としてください。その他のrelatedValueはnullです。' +
@@ -123,6 +128,133 @@ export async function extractScoreInput(
     }
   }
   return facts ? restrictToFacts(input, facts, documents[0].url) : input;
+}
+
+function extractQuarterlyEarnings(
+  documents: ScoreDocument[],
+  facts: FactSummary,
+  searchStatus: string
+): ScoreInput | null {
+  const [current, previous] = documents;
+  const metrics = [
+    { label: '売上高', category: 'revenue', pattern: /売上高\s*([\d,]+)千円/ },
+    { label: '営業利益', category: 'operatingProfit', pattern: /営業\s*利益\s*([\d,]+)千円/ },
+  ] as const;
+  const matchedFacts = facts.facts.filter(
+    (fact) =>
+      fact.kind === 'number' &&
+      fact.valueKind === 'actual' &&
+      fact.unit === '千円' &&
+      metrics.some((metric) => metric.label === fact.label)
+  );
+  if (
+    !matchedFacts.length ||
+    !previous?.publishedDate ||
+    !current.publishedDate ||
+    previous.publishedDate >= current.publishedDate
+  )
+    return null;
+  const headline = (document: ScoreDocument) =>
+    pageBody(document, 1)?.normalize('NFKC').split('\n').slice(0, 4).join('') ?? '';
+  const currentHeadline = headline(current);
+  const previousHeadline = headline(previous);
+  const basis = ['日本基準', 'IFRS'].find(
+    (item) => currentHeadline.includes(item) && previousHeadline.includes(item)
+  );
+  const scope = ['非連結', '連結'].find(
+    (item) =>
+      new RegExp(`決算短信[^\\n]*\\(${item}\\)`).test(currentHeadline) &&
+      new RegExp(`決算短信[^\\n]*\\(${item}\\)`).test(previousHeadline)
+  );
+  const reportWindow = (document: ScoreDocument) =>
+    compact(pageBody(document, 1) ?? '').match(
+      /(?:連結|非連結)業績\((20\d{2})年(\d{1,2})月(\d{1,2})日[～〜~](20\d{2})年(\d{1,2})月(\d{1,2})日\)/
+    );
+  const currentWindow = reportWindow(current);
+  const previousWindow = reportWindow(previous);
+  if (!basis || !scope || !currentWindow || !previousWindow) return null;
+  if (
+    Number(currentWindow[1]) !== Number(previousWindow[1]) + 1 ||
+    Number(currentWindow[4]) !== Number(previousWindow[4]) + 1 ||
+    [2, 3, 5, 6].some((index) => Number(currentWindow[index]) !== Number(previousWindow[index]))
+  )
+    return null;
+  const claims = [];
+  for (const fact of matchedFacts) {
+    const period = fact.period?.normalize('NFKC').replace(/\s/g, '');
+    const match = period?.match(/^(20\d{2})年(\d{1,2})月期第([1-3])四半期$/);
+    const metric = metrics.find((item) => item.label === fact.label);
+    if (!period || !match || !metric || typeof fact.value !== 'number' || !fact.page) continue;
+    const year = Number(match[1]);
+    const previousPeriod = `${year - 1}年${Number(match[2])}月期第${match[3]}四半期`;
+    const currentPage = pageBody(current, fact.page);
+    const previousPage = [
+      ...previous.text.matchAll(/\[PDF_PAGE:(\d+)\]([\s\S]*?)(?=\[PDF_PAGE:|$)/g),
+    ].find(
+      (page) =>
+        compact(page[2]).includes(previousPeriod) &&
+        /この結果、当第[\s\S]{0,100}経営成績は/.test(page[2])
+    );
+    if (!currentPage || !previousPage) continue;
+    const passage = (text: string) =>
+      text.match(
+        /この結果、当第[\s\S]{0,100}経営成績は、売上高[\s\S]{0,180}営業\s*利益[\s\S]{0,50}千円/
+      )?.[0];
+    const currentQuote = passage(currentPage)?.match(metric.pattern);
+    const previousQuote = passage(previousPage[2])?.match(metric.pattern);
+    if (!currentQuote || !previousQuote) continue;
+    const currentValue = Number(currentQuote[1].replace(/,/g, ''));
+    const previousValue = Number(previousQuote[1].replace(/,/g, ''));
+    if (currentValue !== fact.value) continue;
+    const source = (
+      document: ScoreDocument,
+      page: number,
+      quote: string,
+      fiscalYear: number,
+      sourcePeriod: string
+    ) => ({
+      url: document.url,
+      page,
+      quote,
+      period: sourcePeriod,
+      fiscalYear,
+      periodKind: `cumulativeQ${match[3]}`,
+      valueKind: 'actual',
+      metric: metric.label,
+      basis,
+      scope,
+    });
+    claims.push({
+      category: metric.category,
+      label: metric.label,
+      current: {
+        value: currentValue,
+        unit: '千円',
+        source: source(current, fact.page, currentQuote[0], year, period),
+      },
+      previous: {
+        value: previousValue,
+        unit: '千円',
+        source: source(
+          previous,
+          Number(previousPage[1]),
+          previousQuote[0],
+          year - 1,
+          previousPeriod
+        ),
+      },
+      earlier: null,
+      relatedValue: null,
+      companyExplanation: null,
+    });
+  }
+  if (!claims.length) return null;
+  const checked = validateScoreInput(
+    JSON.stringify({ claims, unverified: [] }),
+    documents,
+    searchStatus
+  );
+  return checked.claims.length ? restrictToFacts(checked, facts, current.url) : null;
 }
 
 function restrictToFacts(input: ScoreInput, facts: FactSummary, originalUrl: string): ScoreInput {
@@ -333,7 +465,7 @@ function verifyPairBinding(
   documents: ScoreDocument[]
 ): boolean {
   const count = (value: ScoreValue) => {
-    const quote = compact(value.source.quote);
+    const quote = compact(value.source.quote).replace(/[,，]/g, '');
     const metricIndex = quote.indexOf(compact(value.source.metric));
     return [
       ...quote
@@ -450,17 +582,23 @@ function validateSource(value: unknown, documents: ScoreDocument[]): ScoreSource
   const document = documents.find((item) => item.url === value.url);
   if (!document) throw new Error('根拠資料がありません');
   const period = compact(value.period as string);
-  if (
-    !period.includes(String(value.fiscalYear)) ||
-    !validPeriodKind(period, value.periodKind as string)
-  )
-    throw new Error(
-      `対象年度と通期・累計・単独の形を確認できません: ${value.period} / ${value.fiscalYear} / ${value.periodKind}`
-    );
   const pageText = pageBody(document, value.page as number);
   if (!pageText || !compact(pageText).includes(compact(value.quote as string))) {
     throw new Error(`資料本文 p.${value.page} に根拠引用を確認できません`);
   }
+  if (
+    !period.includes(String(value.fiscalYear)) ||
+    (!validPeriodKind(period, value.periodKind as string) &&
+      !quarterlyCumulativeContext(
+        period,
+        value.periodKind as string,
+        pageText,
+        value.quote as string
+      ))
+  )
+    throw new Error(
+      `対象年度と通期・累計・単独の形を確認できません: ${value.period} / ${value.fiscalYear} / ${value.periodKind}`
+    );
   if (!compact(pageText).includes(period))
     throw new Error(`資料本文 p.${value.page} に対象期間を確認できません`);
   const original = documents[0];
@@ -512,6 +650,20 @@ function validPeriodKind(period: string, kind: string): boolean {
       ? /累計|上期|中間期/.test(period) || (quarter === '1' && !/単独/.test(period))
       : /単独/.test(period))
   );
+}
+function quarterlyCumulativeContext(
+  period: string,
+  kind: string,
+  pageText: string,
+  quote: string
+): boolean {
+  const quarter = kind.match(/^cumulativeQ([2-3])$/)?.[1];
+  if (!quarter || !new RegExp(`第${quarter}四半期`).test(period)) return false;
+  const page = compact(pageText);
+  const position = page.indexOf(compact(quote));
+  if (position < 0) return false;
+  const preceding = page.slice(Math.max(0, position - 250), position);
+  return new RegExp(`当第${quarter}四半期(?:連結)?累計期間の経営成績は`).test(preceding);
 }
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);

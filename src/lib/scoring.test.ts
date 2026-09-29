@@ -8,6 +8,7 @@ import {
   type ScoreValue,
 } from './scoring';
 import { extractScoreInput, validateScoreInput, type ScoreDocument } from './score-extraction';
+import type { FactSummary } from './fact-summary';
 import { buildScoreHtml } from '../content/utils/summaryHtmlBuilder';
 import { ScoreBadge } from '../content/ScoreBadge';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -69,6 +70,77 @@ function answer(value: number, impacts: Array<'positive' | 'negative' | 'neutral
 beforeEach(() => generateText.mockReset());
 
 describe('検算済み事実からの推論スコア', () => {
+  it('前年同期の決算短信を要約事実に照合し、桁区切りを含む比較値を検証する', async () => {
+    const makeDocument = (year: number, sales: string, profit: string): ScoreDocument => ({
+      url: `https://www2.jpx.co.jp/disc/40550/${year}.pdf`,
+      publishedDate: `${year}-08-14`,
+      issuer: '会社',
+      code: '4055',
+      text:
+        `[PDF_PAGE:1]\n${year}年9月期 第3四半期決算短信〔日本基準〕（連結）\n会社 4055\n` +
+        `１．${year}年9月期第3四半期の連結業績（${year - 1}年10月1日～${year}年6月30日）\n` +
+        `[PDF_PAGE:4]\n会社 4055\n${year}年9月期 第3四半期決算短信\n` +
+        `この結果、当第3四半期連結累計期間の経営成績は、売上高${sales}千円（前年同四半期比11.9％増）、営業\n利益${profit}千円（前年同四半期比18.9％増）となりました。`,
+    });
+    const documents = [
+      makeDocument(2026, '3,393,604', '634,398'),
+      makeDocument(2025, '3,033,776', '533,539'),
+    ];
+    const facts: FactSummary = {
+      version: 2,
+      documentType: 'earnings',
+      unverified: [],
+      facts: [
+        { id: 'f1', label: '売上高', value: 3393604 },
+        { id: 'f2', label: '営業利益', value: 634398 },
+      ].map((fact) => ({
+        ...fact,
+        importance: 'key' as const,
+        kind: 'number' as const,
+        unit: '千円',
+        period: '2026年9月期第3四半期',
+        valueKind: 'actual' as const,
+        column: null,
+        statement: null,
+        page: 4,
+        quote: `${fact.label}${fact.value}千円`,
+      })),
+    };
+    const extracted = await extractScoreInput(
+      config,
+      'earnings',
+      documents,
+      '過去資料候補を取得',
+      facts
+    );
+    expect(extracted.claims.map((item) => item.category)).toEqual(['revenue', 'operatingProfit']);
+    expect(extracted.claims.map((item) => [item.current.value, item.previous?.value])).toEqual([
+      [3393604, 3033776],
+      [634398, 533539],
+    ]);
+    expect(
+      extracted.claims.every(
+        (item) => item.current.source.page === 4 && item.previous?.source.page === 4
+      )
+    ).toBe(true);
+    expect(generateText).not.toHaveBeenCalled();
+
+    generateText.mockResolvedValueOnce(JSON.stringify({ claims: [], unverified: [] }));
+    const shifted = {
+      ...documents[1],
+      text: documents[1].text.replace('2024年10月1日', '2024年11月1日'),
+    };
+    const rejected = await extractScoreInput(
+      config,
+      'earnings',
+      [documents[0], shifted],
+      '過去資料候補を取得',
+      facts
+    );
+    expect(rejected.claims).toHaveLength(0);
+    expect(generateText).toHaveBeenCalledOnce();
+  });
+
   it('通期と四半期、開示年度の順序を誤比較しない', () => {
     const current = value(145, 2026);
     const previous = value(130, 2025);
