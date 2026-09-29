@@ -358,7 +358,7 @@ const Options: React.FC = () => {
                   <strong>スマート抽出:</strong>
                   <ul className="mt-1 ml-4 list-disc space-y-1">
                     <li>重要なセクションやページのみを抽出</li>
-                    <li>トークン使用量が少ない（全文抽出の約1/4）</li>
+                    <li>入力テキスト量を抑えられます</li>
                   </ul>
                 </div>
               ) : (
@@ -366,7 +366,7 @@ const Options: React.FC = () => {
                   <strong>全文抽出（推奨）:</strong>
                   <ul className="mt-1 ml-4 list-disc space-y-1">
                     <li>PDF全体を抽出して要約（より正確な結果）</li>
-                    <li>Gemini 2.5 Flash Lite なら1回あたり約¥1以下（100回で約¥90）</li>
+                    <li>API料金はモデルとPDFの抽出量によって変わります</li>
                   </ul>
                 </div>
               )}
@@ -394,7 +394,7 @@ const Options: React.FC = () => {
                   <ul className="mt-1 ml-4 list-disc space-y-1">
                     <li>情報抽出→整形の2段階で安定した出力を実現</li>
                     <li>性能の低いモデルでもフォーマットが安定</li>
-                    <li>APIリクエストが2回になるためコスト・時間は約2倍</li>
+                    <li>通常はAPIを2回呼び出し、検証失敗時には追加で呼び出します</li>
                   </ul>
                 </div>
               ) : (
