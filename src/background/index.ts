@@ -218,6 +218,8 @@ async function handleFollowup(
     extraction,
     facts
   );
+  if (score.value === null)
+    throw new RetryableScoringError(score.unverified.join(' / ') || '採点の根拠を確認できません');
   return { score };
 }
 

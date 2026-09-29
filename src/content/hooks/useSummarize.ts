@@ -119,9 +119,14 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const restoreStages = useCallback(async (id: string) => {
     const data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
     if (idRef.current !== id) return;
+    const cachedScore = data[SCORE_PREFIX + id] as ExperimentalScore | undefined;
+    if (cachedScore?.value === null) {
+      await chrome.storage.local.remove(SCORE_PREFIX + id);
+      if (idRef.current !== id) return;
+    }
     setScore(
-      data[SCORE_PREFIX + id]
-        ? { loading: false, data: data[SCORE_PREFIX + id], error: null }
+      cachedScore && cachedScore.value !== null
+        ? { loading: false, data: cachedScore, error: null }
         : emptyStage()
     );
     setAnalysis(
@@ -244,6 +249,8 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (response.error) throw new Error(response.error);
         const data = action === 'score' ? response.score : response.analysis;
         if (!data) throw new Error(`${action} の結果がありません`);
+        if (action === 'score' && data.value === null)
+          throw new Error(data.unverified?.join(' / ') || '採点の根拠を確認できません');
         set({ loading: false, data, error: null });
         await chrome.storage.local.set({ [cache]: data });
       } catch (error) {

@@ -58,6 +58,8 @@ const normalizeNumericText = (value: string) =>
     .normalize('NFKC')
     .replace(/[,，]/g, '')
     .replace(/[△▲]\s*(?=\d)/g, '-');
+const financialRowPrefix =
+  /^\s*(?:20\d{2}年\d{1,2}月期(?:\s*(?:第[1-4]四半期|\(予想\)))?|第[1-4]四半期|中間期|通期|\(予想\))\s*/;
 const ifrsParentProfit = /親会社の所有者に帰属する(?:当期|四半期|中間)利益/;
 const splitIfrsParentProfit = (quote: string, label: string) => {
   const profitTerm = label.match(/(?:当期|四半期|中間)利益/)?.[0];
@@ -282,10 +284,7 @@ function numericBindingVerified(fact: VerifiedFact): boolean {
       [...line.matchAll(/-?\d+(?:\.\d+)?/g)].some((match) => Number(match[0]) === fact.value)
     );
   for (const { line, index } of candidates) {
-    const row = line.replace(
-      /^\s*(?:20\d{2}年\d{1,2}月期(?:第[1-4]四半期|\(予想\))?|第[1-4]四半期|通期|\(予想\))\s*/,
-      ''
-    );
+    const row = line.replace(financialRowPrefix, '');
     const values = [...row.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
     const headers = lines.slice(Math.max(0, index - 6), index);
     const percentageColumns = headers.some((header) => /(?:千円|百万円)\s*[％%]/.test(header));
@@ -384,10 +383,7 @@ function hasNumericEarningsForecast(pages: ExtractedPage[], facts: VerifiedFact[
       if (!/売上高|売上収益/.test(section.join('')) || !/営業利益/.test(section.join('')))
         return false;
       const tableRow = section.some((row) => {
-        const stripped = row.replace(
-          /^\s*(?:20\d{2}年\d{1,2}月期(?:第[1-4]四半期|\(予想\))?|第[1-4]四半期|中間期|通期|\(予想\))\s*/,
-          ''
-        );
+        const stripped = row.replace(financialRowPrefix, '');
         return (
           stripped !== row && [...stripped.matchAll(/-?\d+(?:,\d{3})*(?:\.\d+)?/g)].length >= 3
         );

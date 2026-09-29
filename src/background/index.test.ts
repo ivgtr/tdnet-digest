@@ -222,17 +222,18 @@ describe('要約・採点・追加分析の分離', () => {
       positives: [],
       negatives: [],
       breakdown: [],
-      unverified: [],
+      unverified: ['採点の根拠を検証できません'],
       searchStatus: '',
     });
     const request = await setup(true, false, true);
     const summary = await request({ action: 'summarize' });
-    await request({
+    const score = await request({
       action: 'score',
       facts: summary.facts,
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     });
+    expect(score.error).toContain('採点の根拠を検証できません');
     expect(mocked.inferExperimentalScore.mock.calls[0][2].searchStatus).toContain(
       '過去資料へのアクセス権がありません'
     );
