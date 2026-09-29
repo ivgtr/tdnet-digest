@@ -30,6 +30,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     summarize,
     showCached,
     startScore,
+    retryScore,
     analyze,
     reset,
   } = useSummarize({
@@ -159,6 +160,11 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
         </button>
       </div>
       {scoringEnabled && score.data && <ScoreBadge score={score.data} />}
+      {scoringEnabled && score.error && !score.loading && (
+        <button type="button" onClick={retryScore} style={{ fontSize: '11px', color: '#1d4ed8' }}>
+          採点を再試行
+        </button>
+      )}
     </div>
   );
 };

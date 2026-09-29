@@ -10,20 +10,20 @@
 | `fixtures/real-pdf-cases.json`       | 公開 PDF 18件の公式 URL、期待分類、抽出確認語                 |
 | `scripts/check-real-pdfs.mjs`        | ローカル PDF のページ抽出、空ページ、確認語のチェック         |
 | `scripts/run-real-llm.ts`            | 指定した1件を2パスで要約し、JSON 検証結果と出力をローカル保存 |
-| `fixtures/fact-summary-cases.json` | 決算・業績修正・提携の事実要約に必要な値と物理ページ |
-| `scripts/run-fact-summary.ts` | 現行の1回構造化要約と原文照合を実PDFで評価 |
+| `fixtures/fact-summary-cases.json`   | 決算・業績修正・提携の事実要約に必要な値と物理ページ          |
+| `scripts/run-fact-summary.ts`        | 現行の1回構造化要約と原文照合を実PDFで評価                    |
 
 通常の `npm test` はタイトル分類や原文照合などの回帰テストです。投資判断の有用性は測りません。従来の実 PDF スクリプトは空ページと指定語の有無を確認します。事実要約の3件については、主要数値・単位・期間・物理ページの期待値を別のfixtureに記録しています。
 
 ## 実 PDF の確認
 
-`fixtures/real-pdf-cases.json` の URL から PDF を取得し、各ファイルを `<ID>.pdf` という名前で同じディレクトリに保存します。PDF 自体と抽出テキストは Git 管理しません。
+`fixtures/real-pdf-cases.json` は31日で公開終了するTDnet閲覧URLではなく、JPX・名証の過去開示PDFを参照します。初回は `--fetch` を付けると、欠けている公開PDFだけを順に取得して検証します。PDF 自体と抽出テキストは Git 管理しません。
 
 ```bash
-npm run test:real-pdf -- /path/to/pdf-directory
+npm run test:real-pdf -- --fetch
 ```
 
-成功時は `/path/to/pdf-directory/text/` にページ境界付きテキストが生成されます。PDF が欠けている場合は結果表に `missing` と表示され、コマンドは失敗します。
+成功時は `evaluation/fixtures/real-pdfs/text/` にページ境界付きテキストが生成されます。PDF が欠けている場合は結果表に `missing` と表示され、コマンドは失敗します。
 
 ## LLM によるローカル評価
 

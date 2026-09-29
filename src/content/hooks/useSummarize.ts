@@ -26,7 +26,7 @@ export interface Stage<T> {
 }
 const emptyStage = <T>(): Stage<T> => ({ loading: false, data: null, error: null });
 const SUMMARY_PREFIX = 'summaryCacheV2:';
-const SCORE_PREFIX = 'scoreCacheV2:';
+const SCORE_PREFIX = 'scoreCacheV3:';
 const ANALYSIS_PREFIX = 'analysisCacheV1:';
 function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is CachedSummary {
   if (!value || typeof value !== 'object') return false;
@@ -254,6 +254,11 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     scoreStarted.current = result.resultId;
     void requestStage('score', result);
   }, [scoringEnabled, stagesReady, result, score, requestStage]);
+  const retryScore = useCallback(() => {
+    if (!scoringEnabled || !result?.resultId || score.loading || !score.error) return;
+    scoreStarted.current = result.resultId;
+    void requestStage('score', result);
+  }, [scoringEnabled, result, score.loading, score.error, requestStage]);
   const analyze = useCallback(() => {
     if (result && !analysis.loading) void requestStage('analyze', result);
   }, [result, analysis.loading, requestStage]);
@@ -276,6 +281,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     summarize,
     showCached,
     startScore,
+    retryScore,
     analyze,
     reset,
   };

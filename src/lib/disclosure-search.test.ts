@@ -13,7 +13,8 @@ describe('過去開示候補の検索', () => {
       { ...common, provider: 'custom' },
       '会社',
       '1234',
-      '決算'
+      '決算',
+      '2026-08-13'
     );
     expect(result).toMatchObject({ urls: [], requests: 0, apiRequests: 0 });
     expect(result.status).toContain('利用できません');
@@ -40,13 +41,16 @@ describe('過去開示候補の検索', () => {
       { ...common, provider: 'openrouter' },
       '会社',
       '1234',
-      '決算'
+      '決算',
+      '2026-08-13'
     );
     expect(result.urls).toEqual(['https://www2.jpx.co.jp/disc/12340/140120250509536933.pdf']);
     expect(result.requests).toBe(1);
     expect(result.apiRequests).toBe(1);
     expect(fetcher).toHaveBeenCalledOnce();
     expect(fetcher.mock.calls[0]?.[1]?.body).toContain('ssl4.eir-parts.net');
+    expect(fetcher.mock.calls[0]?.[1]?.body).toContain('2026-08-13');
+    expect(fetcher.mock.calls[0]?.[1]?.body).toContain('allowed_domains');
     vi.unstubAllGlobals();
   });
 
@@ -99,9 +103,43 @@ describe('過去開示候補の検索', () => {
       { ...common, provider },
       '会社',
       '1234',
-      '決算'
+      '決算',
+      '2026-08-13'
     );
     expect(result.urls).toEqual(['https://www2.jpx.co.jp/disc/12340/140120250509536933.pdf']);
+    vi.unstubAllGlobals();
+  });
+
+  it('検索APIの429を失敗として返し、候補を作らない', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 429 }))
+    );
+    const result = await searchDisclosureCandidates(
+      { ...common, provider: 'openrouter' },
+      '会社',
+      '1234',
+      '決算',
+      '2026-08-13'
+    );
+    expect(result).toMatchObject({ urls: [], error: 'HTTP 429' });
+    vi.unstubAllGlobals();
+  });
+
+  it('前年同期の資料を検索語に入れる', async () => {
+    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '' } }] }),
+    }));
+    vi.stubGlobal('fetch', fetcher);
+    await searchDisclosureCandidates(
+      { ...common, provider: 'openrouter' },
+      '会社',
+      '1234',
+      '2026年９月期 第３四半期決算短信',
+      '2026-08-13'
+    );
+    expect(fetcher.mock.calls[0]?.[1]?.body).toContain('2025年9月期');
     vi.unstubAllGlobals();
   });
 

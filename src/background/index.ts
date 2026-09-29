@@ -41,6 +41,7 @@ interface Settings {
   extractionMode: ExtractionMode;
   experimentalScoring: boolean;
 }
+class RetryableScoringError extends Error {}
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason !== 'update') return;
@@ -256,8 +257,15 @@ async function attachScore(
       );
     if (needsPast && !(await chrome.permissions.contains({ origins: SCORING_PDF_PERMISSIONS }))) {
       searchStatus = '過去資料へのアクセス権がありません。設定画面で実験的スコアを保存してください';
-    } else if (needsPast && companyName && code) {
-      const search = await searchDisclosureCandidates(config, companyName, code, title);
+    } else if (needsPast && companyName && code && original.publishedDate) {
+      const search = await searchDisclosureCandidates(
+        config,
+        companyName,
+        code,
+        title,
+        original.publishedDate
+      );
+      if (search.error) throw new RetryableScoringError(`過去資料の検索に失敗: ${search.error}`);
       searchStatus = `${search.status}（API要求${search.apiRequests}回、実検索${search.requests === null ? '不明' : search.requests + '回'}、候補${search.urls.length}件）。${search.costStatus}`;
       for (const url of search.urls) {
         try {
@@ -273,7 +281,7 @@ async function attachScore(
           if (
             !original.publishedDate ||
             !candidate.publishedDate ||
-            candidate.publishedDate > original.publishedDate
+            candidate.publishedDate >= original.publishedDate
           )
             throw new Error('開示日の前後を照合できません');
           if (
@@ -330,11 +338,16 @@ async function attachScore(
         }
       }
     }
-    if (needsPast && (!companyName || !code))
-      searchStatus = '会社名または証券コードを確認できず過去資料を検索できません';
+    if (needsPast && (!companyName || !code || !original.publishedDate))
+      searchStatus = '会社名、証券コード、または元PDFの開示日を確認できず過去資料を検索できません';
+    if (!input.claims.some((claim) => assessClaim(claim) !== null))
+      throw new RetryableScoringError(
+        `採点に必要な比較値を原文で確認できませんでした。${searchStatus}`
+      );
     input.searchStatus = searchStatus;
     return await inferExperimentalScore(config, documentType, input);
   } catch (error) {
+    if (error instanceof RetryableScoringError) throw error;
     return {
       value: null,
       verdict: '算出不能',

@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   generateText: vi.fn(),
   extractScoreInput: vi.fn(),
   inferExperimentalScore: vi.fn(),
+  searchDisclosureCandidates: vi.fn(),
 }));
 interface TestResponse {
   error?: string;
@@ -20,6 +21,10 @@ vi.mock('@/lib/score-extraction', () => ({ extractScoreInput: mocked.extractScor
 vi.mock('@/lib/scoring', () => ({
   assessClaim: () => '確認済み',
   inferExperimentalScore: mocked.inferExperimentalScore,
+}));
+vi.mock('@/lib/disclosure-search', () => ({
+  searchDisclosureCandidates: mocked.searchDisclosureCandidates,
+  fetchCandidatePdf: vi.fn(),
 }));
 
 const page = '2026年通期 営業利益 1150百万円';
@@ -45,7 +50,7 @@ const facts: FactSummary = {
   ],
 };
 
-async function setup(scoring: boolean, allowPastPdf = true) {
+async function setup(scoring: boolean, allowPastPdf = true, withDate = false) {
   let listener: (
     request: unknown,
     sender: unknown,
@@ -62,7 +67,7 @@ async function setup(scoring: boolean, allowPastPdf = true) {
       getContexts: async () => [{ contextType: 'OFFSCREEN_DOCUMENT' }],
       sendMessage: async () => ({
         success: true,
-        text: `[PDF_PAGE:1]\n${page}`,
+        text: `[PDF_PAGE:1]\n${withDate ? '2026年8月13日\n' : ''}${page}`,
         pages: [{ pageNumber: 1, text: page }],
         metadata: {
           totalPages: 1,
@@ -115,6 +120,15 @@ describe('要約・採点・追加分析の分離', () => {
     mocked.generateText.mockReset();
     mocked.extractScoreInput.mockReset();
     mocked.inferExperimentalScore.mockReset();
+    mocked.searchDisclosureCandidates.mockReset();
+    mocked.searchDisclosureCandidates.mockResolvedValue({
+      urls: [],
+      status: '比較用PDF候補なし',
+      error: null,
+      requests: 1,
+      apiRequests: 1,
+      costStatus: '料金不明',
+    });
   });
 
   it('要約は1回のLLM呼び出しで採点を待たずに返す', async () => {
@@ -201,7 +215,7 @@ describe('要約・採点・追加分析の分離', () => {
       unverified: [],
       searchStatus: '',
     });
-    const request = await setup(true, false);
+    const request = await setup(true, false, true);
     const summary = await request({ action: 'summarize' });
     await request({
       action: 'score',
@@ -220,5 +234,49 @@ describe('要約・採点・追加分析の分離', () => {
       ],
     });
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it('検索API失敗は採点エラーとして返し、表示済み要約を保持する', async () => {
+    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.extractScoreInput.mockResolvedValue({ claims: [], unverified: [], searchStatus: '' });
+    mocked.searchDisclosureCandidates.mockResolvedValue({
+      urls: [],
+      status: 'Web検索失敗: HTTP 429',
+      error: 'HTTP 429',
+      requests: null,
+      apiRequests: 1,
+      costStatus: '料金不明',
+    });
+    const request = await setup(true, true, true);
+    const summary = await request({ action: 'summarize' });
+    const score = await request({
+      action: 'score',
+      facts: summary.facts,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    });
+    expect(summary.summary).toContain('1150百万円');
+    expect(score.error).toContain('HTTP 429');
+    expect(mocked.inferExperimentalScore).not.toHaveBeenCalled();
+  });
+
+  it('検索後も比較値を検証できなければ採点結果を作らない', async () => {
+    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.extractScoreInput.mockResolvedValue({
+      claims: [],
+      unverified: ['引用を確認できません'],
+      searchStatus: '',
+    });
+    const request = await setup(true, true, true);
+    const summary = await request({ action: 'summarize' });
+    const score = await request({
+      action: 'score',
+      facts: summary.facts,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    });
+    expect(summary.summary).toContain('1150百万円');
+    expect(score.error).toContain('比較値を原文で確認できません');
+    expect(mocked.inferExperimentalScore).not.toHaveBeenCalled();
   });
 });
