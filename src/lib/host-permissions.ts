@@ -1,4 +1,8 @@
-export const SCORING_PDF_PERMISSION = 'https://*/*';
+export const SCORING_PDF_PERMISSIONS = [
+  'https://www2.jpx.co.jp/*',
+  'https://ssl4.eir-parts.net/*',
+  'https://pdf.irpocket.com/*',
+];
 
 export function customApiPermission(rawUrl: string): string {
   let url: URL;

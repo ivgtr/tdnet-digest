@@ -16,6 +16,7 @@ export default defineManifest({
     'https://generativelanguage.googleapis.com/*',
     'https://openrouter.ai/*',
   ],
+  // 任意のカスタムAPI URLに個別権限を求めるための宣言。採点用には固定3ホストだけを要求する。
   optional_host_permissions: ['https://*/*'],
   action: {
     default_popup: 'popup.html',

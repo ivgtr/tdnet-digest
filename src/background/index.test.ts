@@ -84,7 +84,7 @@ async function setup(scoring: boolean, allowPastPdf = true) {
       },
     },
     offscreen: { createDocument: vi.fn() },
-    permissions: { contains: async () => allowPastPdf },
+    permissions: { contains: vi.fn(async () => allowPastPdf) },
   });
   vi.stubGlobal(
     'fetch',
@@ -212,6 +212,13 @@ describe('要約・採点・追加分析の分離', () => {
     expect(mocked.inferExperimentalScore.mock.calls[0][2].searchStatus).toContain(
       '過去資料へのアクセス権がありません'
     );
+    expect(chrome.permissions.contains).toHaveBeenCalledWith({
+      origins: [
+        'https://www2.jpx.co.jp/*',
+        'https://ssl4.eir-parts.net/*',
+        'https://pdf.irpocket.com/*',
+      ],
+    });
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
   });
 });

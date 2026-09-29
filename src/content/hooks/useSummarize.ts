@@ -26,7 +26,7 @@ export interface Stage<T> {
 }
 const emptyStage = <T>(): Stage<T> => ({ loading: false, data: null, error: null });
 const SUMMARY_PREFIX = 'summaryCacheV2:';
-const SCORE_PREFIX = 'scoreCacheV1:';
+const SCORE_PREFIX = 'scoreCacheV2:';
 const ANALYSIS_PREFIX = 'analysisCacheV1:';
 function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is CachedSummary {
   if (!value || typeof value !== 'object') return false;

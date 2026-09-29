@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 import { LLM_PROVIDERS, getProvider } from '@/lib/llm-providers';
-import { customApiPermission, SCORING_PDF_PERMISSION } from '@/lib/host-permissions';
+import { customApiPermission, SCORING_PDF_PERMISSIONS } from '@/lib/host-permissions';
 
 const CACHE_PREFIX = 'summaryCacheV2:';
 
@@ -130,7 +130,13 @@ const Options: React.FC = () => {
     chrome.storage.local.remove(
       [
         key,
-        ...(entry ? [`scoreCacheV1:${entry.resultId}`, `analysisCacheV1:${entry.resultId}`] : []),
+        ...(entry
+          ? [
+              `scoreCacheV1:${entry.resultId}`,
+              `scoreCacheV2:${entry.resultId}`,
+              `analysisCacheV1:${entry.resultId}`,
+            ]
+          : []),
       ],
       loadCacheEntries
     );
@@ -142,6 +148,7 @@ const Options: React.FC = () => {
         (key) =>
           key.startsWith(CACHE_PREFIX) ||
           key.startsWith('scoreCacheV1:') ||
+          key.startsWith('scoreCacheV2:') ||
           key.startsWith('analysisCacheV1:') ||
           key === 'summaryCache'
       );
@@ -170,13 +177,14 @@ const Options: React.FC = () => {
         if (result.experimentalScoring !== undefined)
           setExperimentalScoring(result.experimentalScoring);
         if (result.experimentalScoring === true) {
-          chrome.permissions.contains({ origins: [SCORING_PDF_PERMISSION] }, (granted) => {
+          chrome.permissions.contains({ origins: SCORING_PDF_PERMISSIONS }, (granted) => {
             if (!granted)
               setPermissionMessage(
                 '過去資料を自動取得する権限がありません。設定を保存して許可してください'
               );
           });
-        } else if (result.provider === 'custom' && typeof result.customUrl === 'string') {
+        }
+        if (result.provider === 'custom' && typeof result.customUrl === 'string') {
           try {
             chrome.permissions.contains(
               { origins: [customApiPermission(result.customUrl)] },
@@ -253,8 +261,8 @@ const Options: React.FC = () => {
     let origins: string[] = [];
     try {
       const customOrigin = provider === 'custom' ? customApiPermission(customUrl) : null;
-      if (experimentalScoring) origins = [SCORING_PDF_PERMISSION];
-      else if (customOrigin) origins = [customOrigin];
+      if (experimentalScoring) origins = [...SCORING_PDF_PERMISSIONS];
+      if (customOrigin) origins.push(customOrigin);
     } catch (error) {
       setPermissionMessage(error instanceof Error ? error.message : String(error));
       return;
@@ -479,7 +487,8 @@ const Options: React.FC = () => {
               要約表示後、検証済み事実とPDF本文を照合して自動採点します。必要な過去資料の検索や採点には追加のAPI料金が発生します。追加分析は要約内のボタンから別に実行します。
             </p>
             <p className="mt-1 text-xs text-gray-500">
-              過去資料の発行会社サイトは事前に特定できないため、ONで保存するとHTTPSサイトへの追加アクセス権を確認します。
+              過去資料の取得先はJPX、EIR、IR
+              Pocketに限定します。ONで保存すると各サイトへのアクセス権を確認します。
             </p>
           </div>
 

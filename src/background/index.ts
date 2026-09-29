@@ -13,7 +13,7 @@ import { assessClaim, inferExperimentalScore, type ExperimentalScore } from '@/l
 import { extractScoreInput, type ScoreDocument } from '@/lib/score-extraction';
 import { fetchCandidatePdf, searchDisclosureCandidates } from '@/lib/disclosure-search';
 import { getProvider } from '@/lib/llm-providers';
-import { customApiPermission, SCORING_PDF_PERMISSION } from '@/lib/host-permissions';
+import { customApiPermission, SCORING_PDF_PERMISSIONS } from '@/lib/host-permissions';
 import type { SummaryMetadata, ExtractionMode, PdfExtractionResult } from '@/types/summaryMetadata';
 
 interface BaseRequest {
@@ -42,7 +42,18 @@ interface Settings {
   experimentalScoring: boolean;
 }
 
-chrome.runtime.onInstalled.addListener(() => {});
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason !== 'update') return;
+  void chrome.permissions
+    .getAll()
+    .then(async ({ origins }) => {
+      if (origins?.includes('https://*/*')) {
+        const removed = await chrome.permissions.remove({ origins: ['https://*/*'] });
+        if (!removed) throw new Error('旧HTTPS全域権限を削除できませんでした');
+      }
+    })
+    .catch((error) => console.error('旧ホスト権限の削除に失敗:', error));
+});
 chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
   if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
   const task = request.action === 'summarize' ? handleSummarize(request) : handleFollowup(request);
@@ -243,14 +254,14 @@ async function attachScore(
       input.claims.some(
         (claim) => ['operatingProfit', 'revenue', 'kpi'].includes(claim.category) && !claim.earlier
       );
-    if (needsPast && !(await chrome.permissions.contains({ origins: [SCORING_PDF_PERMISSION] }))) {
+    if (needsPast && !(await chrome.permissions.contains({ origins: SCORING_PDF_PERMISSIONS }))) {
       searchStatus = '過去資料へのアクセス権がありません。設定画面で実験的スコアを保存してください';
     } else if (needsPast && companyName && code) {
       const search = await searchDisclosureCandidates(config, companyName, code, title);
       searchStatus = `${search.status}（API要求${search.apiRequests}回、実検索${search.requests === null ? '不明' : search.requests + '回'}、候補${search.urls.length}件）。${search.costStatus}`;
       for (const url of search.urls) {
         try {
-          const data = await fetchCandidatePdf(url);
+          const data = await fetchCandidatePdf(url, code);
           const result = await extractTextFromPDF(data, documentType, 'full');
           const candidate: ScoreDocument = {
             url,
