@@ -77,6 +77,23 @@
         background: #397fb9;
         color: white;
       }
+      .pagination .previous::before,
+      .pagination .next::after {
+        content: '';
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-top: 1.5px solid currentColor;
+        border-right: 1.5px solid currentColor;
+      }
+      .pagination .previous::before {
+        margin-right: 3px;
+        transform: rotate(-135deg);
+      }
+      .pagination .next::after {
+        margin-left: 3px;
+        transform: rotate(45deg);
+      }
       table {
         width: 100%;
         border-collapse: separate;
@@ -283,8 +300,8 @@
       <div class="toolbar">
         <strong>2026年08月10日</strong><small>に開示された情報</small>
         <div class="pagination">
-          <span>1〜20件 / 全38件</span><a href="#">〈前へ</a><a href="#" class="current">1</a
-          ><a href="#">2</a><a href="#">次へ〉</a>
+          <span>1〜20件 / 全38件</span><a href="#" class="previous">前へ</a
+          ><a href="#" class="current">1</a><a href="#">2</a><a href="#" class="next">次へ</a>
         </div>
       </div>
       <table aria-label="適時開示一覧">
@@ -339,18 +356,21 @@
                   <h3>決算評価（経常利益ベース）</h3>
                   <p>【実績】</p>
                   <ul>
-                    <li>売上高は前年同期から増加 <span class="source">[p.1]</span></li>
-                    <li>経常利益も増加 <span class="source">[p.1]</span></li>
+                    <li>売上高120億円（前年同期比+20.0%） <span class="source">[p.1]</span></li>
+                    <li>経常利益18億円（前年同期比+50.0%） <span class="source">[p.1]</span></li>
                   </ul>
                   <p>【通期予想】</p>
                   <ul>
-                    <li>通期予想は据え置き <span class="source">[p.2]</span></li>
+                    <li>
+                      経常利益予想を60億円から72億円へ上方修正（従来予想比+20.0%）
+                      <span class="source">[p.2]</span>
+                    </li>
                   </ul>
                   <h3>全体要約</h3>
-                  <p>売上・利益とも前年同期を上回りました。今後は利益率の推移を確認します。</p>
+                  <p>売上・利益とも前年同期を上回り、通期の経常利益予想も引き上げました。</p>
                   <h3>次回確認点</h3>
                   <ul>
-                    <li>利益率の推移と通期予想への進捗 <span class="source">[p.3]</span></li>
+                    <li>上方修正後の通期予想への進捗 <span class="source">[p.3]</span></li>
                   </ul>
                 </div>
               </div>
@@ -369,7 +389,7 @@
         </tbody>
       </table>
       <div class="feature-note">
-        「要約」を押すと、開示資料の要点と根拠ページを一覧内で確認できます。
+        「要約」を押すと、前年同期比・業績予想の修正・根拠ページを一覧内で確認できます。
       </div>
     </div>
     <div class="demo-label">DEMO</div>
