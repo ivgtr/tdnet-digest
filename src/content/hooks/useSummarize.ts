@@ -57,6 +57,12 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const [stagesReady, setStagesReady] = useState(false);
   const [cacheKey, setCacheKey] = useState<string | null>(null);
   const keyRef = useRef<string | null>(null);
+  const configuredKeyRef = useRef<string | null>(null);
+  const settingsRef = useRef<{
+    provider: string;
+    model: string;
+    extractionMode: ExtractionMode;
+  } | null>(null);
   const idRef = useRef<string | null>(null);
   const scoreStarted = useRef<string | null>(null);
   const runRef = useRef(0);
@@ -68,15 +74,15 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       chrome.storage.sync.get(keys, (settings) => {
         if (!active) return;
         const mode = settings.extractionMode ?? 'full';
-        const next = buildSummaryCacheKey(
-          pdfUrl,
-          buildAnalysisFingerprint({
-            provider: settings.provider ?? 'openai',
-            model: settings.model ?? 'gpt-4o',
-            extractionMode: mode,
-          })
-        );
-        if (next !== keyRef.current) {
+        const currentSettings = {
+          provider: settings.provider ?? 'openai',
+          model: settings.model ?? 'gpt-4o',
+          extractionMode: mode as ExtractionMode,
+        };
+        const next = buildSummaryCacheKey(pdfUrl, buildAnalysisFingerprint(currentSettings));
+        settingsRef.current = currentSettings;
+        if (next !== configuredKeyRef.current) {
+          configuredKeyRef.current = next;
           keyRef.current = next;
           idRef.current = null;
           scoreStarted.current = null;
@@ -156,6 +162,15 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       scoreStarted.current = null;
       idRef.current = null;
       try {
+        const settings = settingsRef.current;
+        if (!settings) throw new Error('設定の読み込みが完了していません');
+        const expectedKey = buildSummaryCacheKey(
+          pdfUrl,
+          buildAnalysisFingerprint({
+            ...settings,
+            extractionMode: forceExtractionMode ?? settings.extractionMode,
+          })
+        );
         const response = await chrome.runtime.sendMessage({
           action: 'summarize',
           pdfUrl,
@@ -167,7 +182,9 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (run !== runRef.current) return;
         if (response.error) throw new Error(response.error);
         const key = buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint);
-        if (key !== keyRef.current) return;
+        if (key !== expectedKey) throw new Error('要約結果の設定が一致しません');
+        keyRef.current = key;
+        setCacheKey(key);
         idRef.current = response.resultId;
         setResult({
           summary: response.summary,

@@ -135,6 +135,38 @@ describe('事実要約の原文照合', () => {
     );
     expect(wrong.facts).toHaveLength(0);
   });
+  it('増減率のない通期予想表では純利益と1株利益を別の列として照合する', () => {
+    const source = [
+      {
+        pageNumber: 1,
+        text: '2027年5月期 業績予想\n売上高 営業利益 経常利益 親会社株主に帰属する当期純利益 1株当たり当期純利益\n百万円 百万円 百万円 百万円 円\n2027年5月期(予想) 11,000 2,300 2,200 1,600 10.5',
+      },
+    ];
+    const quote = source[0].text.split('\n').slice(1).join('\n');
+    const candidate = {
+      ...fact,
+      label: '親会社株主に帰属する当期純利益',
+      value: 1600,
+      period: '2027年5月期',
+      valueKind: 'forecast',
+      column: '親会社株主に帰属する当期純利益',
+      quote,
+    };
+    const parse = (value: number) =>
+      parseFactSummary(
+        JSON.stringify({
+          version: 2,
+          documentType: 'earnings',
+          facts: [{ ...candidate, value }],
+          unverified: [],
+        }),
+        'earnings',
+        source,
+        false
+      );
+    expect(parse(1600).facts.map((item) => item.value)).toEqual([1600]);
+    expect(parse(10.5).facts).toHaveLength(0);
+  });
   it('同じ表にある別列の値を営業利益として採用しない', () => {
     expect(() => parseFactSummary(raw({ ...fact, value: 100 }), 'other', pages)).toThrow(
       '重要事実'

@@ -300,9 +300,9 @@ function numericSlot(label: string, count: number, percentageColumns: boolean): 
   if (/営業利益/.test(label)) return financial ? 2 : 1;
   if (/経常利益|税引前利益/.test(label)) return financial ? 4 : 2;
   if (/親会社.*(?:純利益|当期利益|四半期利益|中間利益)|四半期純利益/.test(label))
-    return financial ? 6 : 4;
+    return financial ? 6 : 3;
   if (/^当期利益$/.test(label)) return financial ? 6 : 3;
-  if (/１株当たり|1株当たり/.test(label)) return financial ? 8 : 5;
+  if (/１株当たり|1株当たり/.test(label)) return financial ? 8 : 4;
   if (/調整後EBITDA/.test(label)) return count === 10 ? 8 : count === 11 ? 9 : null;
   return null;
 }
