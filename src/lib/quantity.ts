@@ -1,4 +1,4 @@
-/** 単位は原文の文字列で照合する。通貨・株式等の指標別リストには依存しない。 */
+/** 単位候補の文字種だけを検査する。語を単位と認定してPDF断片を結合する判断には使わない。 */
 export function isUnitToken(text: string): boolean {
   return (
     text.length > 0 && text.length <= 32 && /^(?:[\p{L}\p{Sc}%/·]+|[A-Za-z%/·]+\d+)$/u.test(text)

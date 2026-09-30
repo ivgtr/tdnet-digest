@@ -5,6 +5,8 @@ import { serializePagesForAnalysis } from './page-text';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
 import type { ScoreSource } from './scoring';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { extractPageLayout } from './pdf-layout';
 
 const span = (id: string, text: string, x: number, y: number, width = 40): PdfSpan => ({
   id,
@@ -233,51 +235,74 @@ it('助詞のある決算文章でも対象行の実績・予想区分を検証�
   expect(parse('forecast').facts).toHaveLength(0);
 });
 
-it.each(['店舗', '人', '件'])('非財務の%s単位を要約と採点で共有する', (unit) => {
-  const page: ExtractedPage = {
-    pageNumber: 1,
-    text: `会社 全社\n2026年7月14日\n稼働数量 120${unit}`,
-    spans: [
-      span('period', '2026年7月14日', 180, 0, 80),
-      span('metric', '稼働数量', 0, 40, 100),
-      span('value', `120${unit}`, 205, 40, 40),
-    ],
-  };
-  const rawSource = {
-    ...source('2026年7月14日', 'eventDate'),
-    metric: '稼働数量',
-    basis: '非財務',
-    scope: '全社',
-    evidence: {
-      valueId: 'value',
-      metricIds: ['metric'],
-      periodIds: ['period'],
-      unitIds: ['value'],
-      contextIds: [],
-    },
-  };
-  const fact: VerifiedFact = {
-    id: 'f1',
-    importance: 'key',
-    kind: 'number',
-    label: rawSource.metric,
-    value: 120,
-    unit,
-    period: rawSource.period,
-    valueKind: 'actual',
-    column: null,
-    statement: null,
-    page: 1,
-    quote: '',
-    evidence: rawSource.evidence,
-  };
-  const facts = parseFactSummary(
-    JSON.stringify({ version: 3, documentType: 'businessUpdate', facts: [fact], unverified: [] }),
-    'businessUpdate',
-    [page]
-  );
-  const score = validateScoreInput(input(rawSource, 120, unit), [document(page)], '');
-  expect(facts.facts).toHaveLength(1);
-  expect(score.claims).toHaveLength(1);
-  expect(score.unverified).toEqual([]);
-});
+it.each([
+  ['店舗', false],
+  ['店舗', true],
+  ['人', false],
+  ['人', true],
+  ['件', false],
+  ['件', true],
+] as const)(
+  '非財務の%s単位をPDF抽出から要約と採点で共有する（別アイテム=%s）',
+  (unit, separate) => {
+    const item = (text: string, x: number, y: number, width: number): TextItem => ({
+      str: text,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, 100 - y],
+      width,
+      height: 10,
+      fontName: 'test',
+      hasEOL: false,
+    });
+    const page = extractPageLayout(
+      [
+        item('会社 全社', 0, -20, 100),
+        item('2026年7月14日', 180, 0, 80),
+        item('稼働数量', 0, 40, 100),
+        item(separate ? '120' : `120${unit}`, 205, 40, separate ? 20 : 40),
+        ...(separate ? [item(unit, 228, 40, 20)] : []),
+        item('合計', 260, 40, 40),
+      ],
+      1
+    );
+    const id = (text: string) => page.spans.find((s) => s.text === text)!.id;
+    expect(page.spans.some((s) => s.text === '合計')).toBe(true);
+    const rawSource = {
+      ...source('2026年7月14日', 'eventDate'),
+      metric: '稼働数量',
+      basis: '非財務',
+      scope: '全社',
+      evidence: {
+        valueId: id(separate ? '120' : `120${unit}`),
+        metricIds: [id('稼働数量')],
+        periodIds: [id('2026年7月14日')],
+        unitIds: [id(separate ? unit : `120${unit}`)],
+        contextIds: [],
+      },
+    };
+    const fact: VerifiedFact = {
+      id: 'f1',
+      importance: 'key',
+      kind: 'number',
+      label: rawSource.metric,
+      value: 120,
+      unit,
+      period: rawSource.period,
+      valueKind: 'actual',
+      column: null,
+      statement: null,
+      page: 1,
+      quote: '',
+      evidence: rawSource.evidence,
+    };
+    const facts = parseFactSummary(
+      JSON.stringify({ version: 3, documentType: 'businessUpdate', facts: [fact], unverified: [] }),
+      'businessUpdate',
+      [page]
+    );
+    const score = validateScoreInput(input(rawSource, 120, unit), [document(page)], '');
+    expect(facts.facts).toHaveLength(1);
+    expect(score.claims).toHaveLength(1);
+    expect(score.unverified).toEqual([]);
+  }
+);

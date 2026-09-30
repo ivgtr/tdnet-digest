@@ -30,6 +30,14 @@ export function extractPageLayout(
     const previous = spans[spans.length - 1];
     if (
       previous &&
+      (!parseQuantity(previous.text) ||
+        parseQuantity(previous.text + item.str)?.unit === null ||
+        /^-?\d+円\d{2}銭$/.test(
+          (previous.text + item.str)
+            .normalize('NFKC')
+            .replace(/[\s,，]/g, '')
+            .replace(/^[△▲]/, '-')
+        )) &&
       Math.abs(previous.y - y) <= 1 &&
       x - previous.x - previous.width >= -0.5 &&
       x - previous.x - previous.width <= Math.min(item.height, previous.height) * 0.2
@@ -40,18 +48,19 @@ export function extractPageLayout(
       spans.push({ id: '', text: item.str.trim(), x, y, width: item.width, height: item.height });
     }
   }
-  // PDF内で数値・単位・円銭が別アイテムでも、隣接する数量セルとして保持する。
+  // 円銭は数値表記の構文から結合できる。一般の後続語は単位か見出しかを
+  // 抽出時に決めず、別IDを保って根拠参照の検証へ渡す。
   for (let i = 0; i < spans.length; i++) {
     let text = spans[i].text;
-    const initial = parseQuantity(text);
-    if (initial?.unit && (initial.unit !== '円' || /銭$/.test(text))) continue;
-    let yen = initial?.unit === '円';
+    if (!/^[△▲-]?\d+(?:円(?:\d{2})?)?$/.test(text.normalize('NFKC').replace(/[\s,，]/g, '')))
+      continue;
     let end = i;
     for (let j = i + 1; j < Math.min(i + 4, spans.length); j++) {
       const previous = spans[j - 1],
         next = spans[j];
       if (
         Math.abs(next.y - spans[i].y) > 1 ||
+        next.x - previous.x - previous.width < -0.5 ||
         next.x - previous.x - previous.width > next.height * 0.6
       )
         break;
@@ -60,13 +69,11 @@ export function extractPageLayout(
         .normalize('NFKC')
         .replace(/[\s,，]/g, '')
         .replace(/^[△▲]/, '-');
-      if (yen && !/^-?\d+円(?:\d{2}(?:銭)?)?$/.test(normalized)) break;
-      const quantity = parseQuantity(text);
-      if (quantity?.unit) {
+      if (/^-?\d+円\d{2}銭$/.test(normalized)) {
         end = j;
-        if (quantity.unit !== '円' || /銭$/.test(normalized)) break;
-        yen = true;
+        break;
       }
+      if (!/^-?\d+円(?:\d{2})?$/.test(normalized)) break;
     }
     if (end > i) {
       const last = spans[end];

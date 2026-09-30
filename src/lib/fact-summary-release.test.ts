@@ -58,7 +58,7 @@ const financial = [
   ...forecastMetrics.map((m, i) => make(2, 35 + i * 2, m, [34], [11 + i * 2], [1])),
 ].map((f, i) => ({ ...f, id: `f${i + 1}` }));
 const dividend = {
-  ...make(1, 133, [110, 115], [129], [120], [109]),
+  ...make(1, 137, [114, 119], [133], [124], [113]),
   id: 'f11',
   label: '年間配当金',
   period: '2027年5月期',
@@ -123,19 +123,19 @@ it.each([
   {
     index: 1,
     period: '2027年2月期第1四半期',
-    context: [40, 41],
-    row: 64,
+    context: [42, 43, 44],
+    row: [67, 68],
     cases: [
-      { value: 65, metric: [45], unit: 52, expected: 43277 },
-      { value: 67, metric: [46], unit: 54, expected: 3378 },
-      { value: 73, metric: [43, 49, 51], unit: 60, expected: 2217 },
+      { value: 69, metric: [48], unit: 55, expected: 43277 },
+      { value: 72, metric: [49], unit: 57, expected: 3378 },
+      { value: 81, metric: [46, 52, 54], unit: 63, expected: 2217 },
     ],
   },
   {
     index: 2,
     period: '2026年5月期',
     context: [32, 33],
-    row: 47,
+    row: [47],
     cases: [
       { value: 48, metric: [35], unit: 39, expected: 9783 },
       { value: 50, metric: [36], unit: 41, expected: 2156 },
@@ -146,7 +146,7 @@ it.each([
     index: 3,
     period: '2026年11月期中間期',
     context: [32, 33],
-    row: 48,
+    row: [48],
     cases: [
       { value: 49, metric: [36], unit: 40, expected: 1033 },
       { value: 51, metric: [37], unit: 42, expected: -6 },
@@ -168,7 +168,7 @@ it.each([
         valueId: `p1s${c.value}`,
         metricIds: ids(1, c.metric),
         unitIds: ids(1, [c.unit]),
-        periodIds: ids(1, [row]),
+        periodIds: ids(1, row),
         contextIds: ids(1, context),
       },
     })

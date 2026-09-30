@@ -82,11 +82,34 @@ export function verifyTableEvidence(
       .replace(/\)$/, '')
       .replace(/^円銭$/, '円');
   if (unitText !== expectedUnit) fail('単位');
+  const orderedUnits = [...units].sort((a, b) => a.x - b.x);
+  const adjacentUnit =
+    !inlineUnit &&
+    parseQuantity(value.text)?.unit === null &&
+    orderedUnits.every((s, i) => {
+      const previous = i ? orderedUnits[i - 1] : value;
+      const gap = s.x - previous.x - previous.width;
+      return (
+        sameRow(s, value) &&
+        gap >= -0.5 &&
+        gap <= Math.min(s.height, previous.height) * 0.6 &&
+        !page.spans.some(
+          (other) =>
+            other.id !== s.id &&
+            other.id !== previous.id &&
+            sameRow(other, value) &&
+            other.x >= previous.x + previous.width &&
+            other.x < s.x
+        )
+      );
+    });
 
   const rowNumbers = page.spans.filter(
     (s) =>
       sameRow(s, value) &&
-      ![...metrics, ...periods, ...contexts].some((ref) => ref.id === s.id) &&
+      ![...metrics, ...periods, ...contexts, ...units.filter((u) => u.id !== value.id)].some(
+        (ref) => ref.id === s.id
+      ) &&
       (numeric(s.text) !== null || /^[－―—–-]$/.test(compact(s.text)))
   );
   const metricOnRow = metrics.every((s) => sameRow(s, value) && s.x + s.width <= value.x);
@@ -101,7 +124,7 @@ export function verifyTableEvidence(
   let anchors: PdfSpan[];
   let metricBand: [number, number];
   let unitY: number;
-  if (inlineUnit) {
+  if (inlineUnit || adjacentUnit) {
     anchors = rowNumbers;
     const band = bandFor(value, anchors, singleValueRow);
     metricBand = [band.left, band.right];
@@ -201,7 +224,9 @@ export function verifyTableEvidence(
     fail('期間の行・列');
   if (
     !units.every(
-      (s) => (inlineUnit ? s.id === value.id : s.y < value.y) && value.y - s.y < value.height * 24
+      (s) =>
+        (inlineUnit ? s.id === value.id : adjacentUnit || s.y < value.y) &&
+        value.y - s.y < value.height * 24
     )
   )
     fail('単位の適用範囲');

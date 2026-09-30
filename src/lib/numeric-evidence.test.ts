@@ -124,7 +124,7 @@ describe('非財務単位を持つ表', () => {
       );
     }
   });
-  it('隣接した数値と非財務単位のPDFアイテムを結合し、後続の項目は含めない', () => {
+  it('隣接した数値と語のPDFアイテムを別IDで保持し、円銭だけを数量として結合する', () => {
     const item = (str: string, x: number, width: number): TextItem => ({
       str,
       dir: 'ltr',
@@ -138,10 +138,49 @@ describe('非財務単位を持つ表', () => {
       [item('120', 0, 20), item('店舗', 23, 20), item('合計', 46, 20)],
       1
     );
-    expect(result.spans.map((s) => s.text)).toEqual(['120店舗', '合計']);
+    expect(result.spans.map((s) => s.text)).toEqual(['120', '店舗', '合計']);
+    for (const gap of [0, 1, 3, 6]) {
+      for (const label of ['合計', '営 業利益', '(合計)', '1店舗当たり売上', '対象事業']) {
+        const split = extractPageLayout([item('120', 0, 20), item(label, 20 + gap, 40)], 1);
+        expect(split.spans.map((s) => s.text)).toEqual(['120', label]);
+        expect(new Set(split.spans.map((s) => s.id)).size).toBe(2);
+      }
+    }
     expect(
       extractPageLayout([item('15円00', 0, 30), item('銭', 33, 10)], 1).spans.map((s) => s.text)
     ).toEqual(['15円00銭']);
+  });
+  it.each(['店舗', '人', '件', 'kWh', '㎡'])('別IDの隣接%s単位を照合する', (unit) => {
+    const source = {
+      ...page,
+      spans: spans
+        .filter((s) => s.id !== 'u2')
+        .map((s) => (s.id === 'v2' ? { ...s, text: '120' } : s))
+        .concat(span('adjacentUnit', unit, 338, 60, 20)),
+    };
+    const refs = { ...evidence, unitIds: ['adjacentUnit'] };
+    expect(
+      verifyTableEvidence(source, refs, { ...claim, value: 120, unit }).evidence.unitIds
+    ).toEqual(['adjacentUnit']);
+    for (const change of [{ x: 350 }, { y: 80 }]) {
+      const invalid = {
+        ...source,
+        spans: source.spans.map((s) => (s.id === 'adjacentUnit' ? { ...s, ...change } : s)),
+      };
+      expect(() => verifyTableEvidence(invalid, refs, { ...claim, value: 120, unit })).toThrow();
+    }
+  });
+  it('複数IDの隣接単位を照合し、参照間の別セルを跨がない', () => {
+    const source = {
+      ...page,
+      spans: spans
+        .filter((s) => s.id !== 'u2')
+        .concat(span('unit1', '百', 338, 60, 10), span('unit2', '万円', 351, 60, 20)),
+    };
+    const refs = { ...evidence, unitIds: ['unit1', 'unit2'] };
+    expect(verifyTableEvidence(source, refs, claim).evidence.unitIds).toEqual(['unit1', 'unit2']);
+    const invalid = { ...source, spans: source.spans.concat(span('other', '注', 349, 60, 1)) };
+    expect(() => verifyTableEvidence(invalid, refs, claim)).toThrow();
   });
   it('複数の数量を含む文字列や欠損を数値として採用しない', () => {
     for (const text of ['120店舗500人', '－', '不明']) {

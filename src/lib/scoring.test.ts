@@ -238,13 +238,14 @@ describe('検算済み事実からの推論スコア', () => {
         url: issuerUrl,
         page: 1,
         evidence: {
-          valueId: kind === 'forecastAfter' ? 'p1s58' : 'p1s59',
-          metricIds: ['p1s57'],
-          periodIds: (kind === 'forecastAfter' ? [37, 38, 39, 48, 49, 50] : [35, 51, 52, 53]).map(
-            (n) => `p1s${n}`
-          ),
-          unitIds: [kind === 'forecastAfter' ? 'p1s58' : 'p1s59'],
-          contextIds: ['p1s34'],
+          valueId: kind === 'forecastAfter' ? 'p1s67' : 'p1s68',
+          metricIds: ['p1s66'],
+          periodIds: (kind === 'forecastAfter'
+            ? [42, 43, 44, 54, 55, 56, 57]
+            : [40, 58, 59, 60, 61]
+          ).map((n) => `p1s${n}`),
+          unitIds: [kind === 'forecastAfter' ? 'p1s67' : 'p1s68'],
+          contextIds: ['p1s39'],
         },
         quote: '',
         period: '2026年8月31日',
