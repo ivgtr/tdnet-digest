@@ -20,9 +20,11 @@ export function standardMetric(fact: VerifiedFact): string | null {
 }
 export function verifyCoverage(
   type: DocumentType,
-  pages: ExtractedPage[],
+  allPages: ExtractedPage[],
   facts: VerifiedFact[]
 ): void {
+  // 原文の整合性・根拠関係は全ページで検証し、必須判定はモデルの本文入力に揃える。
+  const pages = allPages.filter((page) => page.selection === 'selected');
   const missing: string[] = [];
   const source = compact(pages.map((p) => p.text).join('\n'));
   if (type === 'earnings') {

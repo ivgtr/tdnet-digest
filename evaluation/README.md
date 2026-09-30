@@ -190,3 +190,7 @@ npm run test:fact-summary -- bluememe-20260930 --browser --fixed-api --fixture-s
 ### PR作成時の統合（2026-10-01）
 
 利用者の新規PR作成指示に基づき、main `c2c5fd6`（配布版0.7.1）から `feat/ir-semantic-contract-pr` を作成した。mainには旧ブランチの変更がsquashで取り込まれているため、実装済み `feat/ir-semantic-contract` の `194404c` との内容差分を載せ、package.json/package-lock.jsonの版はmainの0.7.1を保持した。元ブランチ・既存差分保存・実装/評価のコミットは保持している。製品コードと評価資材は `194404c` と同一で、上記の実API証拠をこのPR版で再生成したとは扱わない。PR版でも `npm run build` が成功した。新規PRのためのpushは今回の指示によるもので、マージ・リリースは含まない。
+
+### PR #24レビューの回帰（2026-10-01）
+
+smartの必須判定について、保存したBlueMeme原文字を使い、p.18をomittedにすると同ページの損失予定なしで要約が通り、selectedにすると不足を拒否する対を追加した。omittedの抽出失敗・原文改変は引き続き拒否する。`npx vitest run src/lib/ir-semantic-regression.test.ts src/lib/fact-summary-release.test.ts` は32件成功。固定候補による回帰であり、smartでの実LLM生成を再実行した証拠ではない。

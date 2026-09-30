@@ -3,7 +3,7 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import corpus from './fixtures/ir-semantic-corpus.json';
 import expectations from './fixtures/ir-semantic-expectations.json';
-import { extractPageLayout } from './pdf-layout';
+import { extractPageLayout, serializeLayout } from './pdf-layout';
 import { parseFactSummary, renderFacts } from './fact-summary';
 import { toValue, validateScoreInput } from './score-extraction';
 import { assessClaim, type ScoreClaim } from './scoring';
@@ -83,6 +83,32 @@ describe('実PDFの意味を保った利用経路', () => {
     const missingBasis = structuredClone(expectations[0].facts);
     missingBasis[10].semantics.basis = null;
     expect(() => parse(0, missingBasis, true)).toThrow('計上予定');
+  });
+  it('smartの未選択ページを必須とせず、選択すると損失予定の欠落を拒否する', () => {
+    const pages = structuredClone(sources[0]);
+    const plan = fact(0, 10);
+    const planPage = pages.find((page) => page.pageNumber === plan.page)!;
+    planPage.selection = 'omitted';
+    const raw = JSON.stringify({
+      version: 4,
+      documentType: 'earnings',
+      facts: expectations[0].facts.filter((f) => f.page !== plan.page),
+      unverified: [],
+    });
+    expect(serializeLayout(pages)).not.toContain(`[PDF_PAGE:${plan.page}]`);
+    const summary = parseFactSummary(raw, 'earnings', pages);
+    expect(summary.unverified).toEqual([]);
+    expect(renderFacts(summary)).toContain('-400百万円');
+    expect(renderFacts(summary)).not.toContain('翌連結会計年度');
+
+    planPage.selection = 'selected';
+    expect(() => parseFactSummary(raw, 'earnings', pages)).toThrow('計上予定');
+    planPage.selection = 'omitted';
+    planPage.status = 'failed';
+    expect(() => parseFactSummary(raw, 'earnings', pages)).toThrow('抽出失敗');
+    planPage.status = 'ok';
+    planPage.spans[0].text = '偽の原文';
+    expect(() => parseFactSummary(raw, 'earnings', pages)).toThrow('SOURCE:');
   });
   it('構造候補から主要数値の根拠を選べても、意味の照合なしには確定しない', () => {
     const page = sources[0][0],
