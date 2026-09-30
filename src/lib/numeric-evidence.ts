@@ -35,9 +35,10 @@ const fail = (reason: string): never => {
 // 後続の注記でセル全体が単位候補でなくなっても、単位として読める接頭部分は残る。
 // 注記を除去して単位を採用するためではなく、参照の省略を拒否するための検査。
 function couldContinueUnit(unit: string, suffix: string): boolean {
-  // セル全体が「注＋参照番号」の場合は独立した注記参照。
+  // セル全体が「注＋参照番号＋末尾区切り」の場合は独立した注記参照。
+  // 末尾は閉じ括弧・閉じ引用符・句点の2文字まで。% / ·等の単位記号は含めない。
   // 単位を含む「万円注1」や、参照番号のない曖昧な「注」には適用しない。
-  if (/^注\d+$/.test(suffix)) return false;
+  if (/^注\d+[\p{Pe}\p{Pf}.。]{0,2}$/u.test(suffix)) return false;
   let candidate = unit;
   for (const character of suffix) {
     candidate += character;

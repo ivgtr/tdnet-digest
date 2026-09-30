@@ -265,6 +265,13 @@ describe('非財務単位を持つ表', () => {
       ['百', '万円注1', '百万円'],
       ['百', '注', '百万円'],
       ['百', '注1万円', '百万円'],
+      ['百', '万円注1）', '百万円'],
+      ['百', '注1）万円', '百万円'],
+      ['百', '注1.5', '百万円'],
+      ['百', '注1...', '百万円'],
+      ['百', '注1%', '百万円'],
+      ['百', '注1/', '百万円'],
+      ['百', '注1·', '百万円'],
       ['m', '2※', 'm2'],
     ].flatMap(([prefix, suffix, unit]) =>
       (['inline', 'adjacent'] as const).map((kind) => ({ kind, prefix, suffix, unit }))
@@ -294,8 +301,8 @@ describe('非財務単位を持つ表', () => {
     }
   });
   it.each(
-    ['注1', '注12', '注１２'].flatMap((note) =>
-      (['inline', 'adjacent'] as const).map((kind) => ({ note, kind }))
+    ['注1', '注12', '注１２', '注1）', '注1.', '注１．', '注1）。', '注1.)', '注1’'].flatMap(
+      (note) => (['inline', 'adjacent'] as const).map((kind) => ({ note, kind }))
     )
   )('$kind単位の後の独立した注記参照$noteを単位に含めない', ({ note, kind }) => {
     for (const unit of ['百', 'kWh', 'm2']) {

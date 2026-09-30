@@ -242,9 +242,18 @@ it.each([
   { suffix: '万円*1', continuation: true },
   { suffix: '万円¹', continuation: true },
   { suffix: '万円注1', continuation: true },
+  { suffix: '万円注1）', continuation: true },
+  { suffix: '注1）万円', continuation: true },
+  { suffix: '注1.5', continuation: true },
+  { suffix: '注1...', continuation: true },
+  { suffix: '注1%', continuation: true },
   { suffix: '注1', continuation: false },
   { suffix: '注12', continuation: false },
   { suffix: '注１２', continuation: false },
+  { suffix: '注1）', continuation: false },
+  { suffix: '注1.', continuation: false },
+  { suffix: '注１．', continuation: false },
+  { suffix: '注1）。', continuation: false },
 ])('後続セル$suffixの単位・注記の区分を要約・採点で共有する', ({ suffix, continuation }) => {
   const page: ExtractedPage = {
     pageNumber: 1,
