@@ -262,6 +262,9 @@ describe('非財務単位を持つ表', () => {
       ['百', '万円(注1)', '百万円'],
       ['百', '万円*1', '百万円'],
       ['百', '万円¹', '百万円'],
+      ['百', '万円注1', '百万円'],
+      ['百', '注', '百万円'],
+      ['百', '注1万円', '百万円'],
       ['m', '2※', 'm2'],
     ].flatMap(([prefix, suffix, unit]) =>
       (['inline', 'adjacent'] as const).map((kind) => ({ kind, prefix, suffix, unit }))
@@ -288,6 +291,37 @@ describe('非財務単位を持つ表', () => {
       );
     } else {
       expect(() => verifyTableEvidence(source, fullRefs, { ...claim, unit })).toThrow('単位');
+    }
+  });
+  it.each(
+    ['注1', '注12', '注１２'].flatMap((note) =>
+      (['inline', 'adjacent'] as const).map((kind) => ({ note, kind }))
+    )
+  )('$kind単位の後の独立した注記参照$noteを単位に含めない', ({ note, kind }) => {
+    for (const unit of ['百', 'kWh', 'm2']) {
+      const source = {
+        ...page,
+        spans: spans
+          .filter((s) => s.id !== 'u2')
+          .map((s) =>
+            s.id === 'v2' ? { ...s, text: kind === 'inline' ? `200${unit}` : '200' } : s
+          )
+          .concat(
+            ...(kind === 'adjacent' ? [span('unit', unit, 338, 60, 10)] : []),
+            span('note', note, kind === 'inline' ? 338 : 351, 60, 20)
+          ),
+      };
+      const refs = { ...evidence, unitIds: [kind === 'inline' ? 'v2' : 'unit'] };
+      expect(verifyTableEvidence(source, refs, { ...claim, unit }).evidence.unitIds).toEqual(
+        refs.unitIds
+      );
+      expect(() =>
+        verifyTableEvidence(
+          source,
+          { ...refs, unitIds: [...refs.unitIds, 'note'] },
+          { ...claim, unit }
+        )
+      ).toThrow('単位');
     }
   });
   it('注記だけのセルや別行・離れたセルを単位の続きとみなさない', () => {
