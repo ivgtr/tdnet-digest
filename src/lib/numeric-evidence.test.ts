@@ -244,6 +244,53 @@ describe('非財務単位を持つ表', () => {
     );
     expect(() => verifyTableEvidence(source, { ...refs, unitIds: ['u1'] }, claim)).toThrow('単位');
   });
+  it.each(['百', '百万円'])('値セル内の%s単位を列見出しだけで代用できない', (unit) => {
+    const source = {
+      ...page,
+      spans: spans
+        .map((s) =>
+          s.id === 'u2' ? { ...s, text: unit } : s.id === 'v2' ? { ...s, text: `200${unit}` } : s
+        )
+        .concat(...(unit === '百' ? [span('suffix', '万円', 338, 60, 20)] : [])),
+    };
+    expect(() => verifyTableEvidence(source, evidence, { ...claim, unit })).toThrow('単位');
+  });
+  it.each(['inline', 'adjacent'] as const)('%s単位の未参照の続きから桁を落とせない', (kind) => {
+    const source = {
+      ...page,
+      spans: spans
+        .filter((s) => s.id !== 'u2')
+        .map((s) => (s.id === 'v2' ? { ...s, text: kind === 'inline' ? '200百' : '200' } : s))
+        .concat(
+          ...(kind === 'adjacent' ? [span('prefix', '百', 338, 60, 10)] : []),
+          span('suffix', '万円', kind === 'inline' ? 338 : 351, 60, 20)
+        ),
+    };
+    const refs = { ...evidence, unitIds: [kind === 'inline' ? 'v2' : 'prefix'] };
+    expect(() => verifyTableEvidence(source, refs, { ...claim, unit: '百' })).toThrow('未参照');
+    expect(
+      verifyTableEvidence(source, { ...refs, unitIds: [...refs.unitIds, 'suffix'] }, claim).evidence
+        .unitIds
+    ).toContain('suffix');
+  });
+  it('単位にも見出しにも読める未参照の隣接語を推測しない', () => {
+    const source = {
+      ...page,
+      spans: spans
+        .filter((s) => s.id !== 'u2')
+        .map((s) => (s.id === 'v2' ? { ...s, text: '200店舗' } : s))
+        .concat(span('label', '合計', 338, 60, 20)),
+    };
+    const refs = { ...evidence, unitIds: ['v2'] };
+    expect(() => verifyTableEvidence(source, refs, { ...claim, unit: '店舗' })).toThrow('未参照');
+    const separated = {
+      ...source,
+      spans: source.spans.map((s) => (s.id === 'label' ? { ...s, x: 345 } : s)),
+    };
+    expect(verifyTableEvidence(separated, refs, { ...claim, unit: '店舗' }).evidence.valueId).toBe(
+      'v2'
+    );
+  });
   it('複数の数量を含む文字列や欠損を数値として採用しない', () => {
     for (const text of ['120店舗500人', '－', '不明']) {
       const source = { ...page, spans: spans.map((s) => (s.id === 'v2' ? { ...s, text } : s)) };

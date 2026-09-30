@@ -77,7 +77,7 @@ export function verifyTableEvidence(
   const unitIncludesValue = units.some((s) => s.id === value.id);
   const orderedUnits = units.filter((s) => s.id !== value.id).sort((a, b) => a.x - b.x);
   if (unitIncludesValue && !parsedValue.unit) fail('単位');
-  if (parsedValue.unit && !unitIncludesValue && parsedValue.unit !== expectedUnit) fail('単位');
+  if (parsedValue.unit && !unitIncludesValue) fail('値セル内の単位が未参照');
   const inlineUnit = unitIncludesValue && orderedUnits.length === 0 ? parsedValue.unit : null;
   // 値セルに含まれる単位断片も参照を必須とし、隣接セルの断片と原文順に照合する。
   const unitText = (
@@ -108,6 +108,20 @@ export function verifyTableEvidence(
         )
       );
     });
+  if (inlineUnit || adjacentUnit) {
+    const last = orderedUnits[orderedUnits.length - 1] ?? value;
+    const omittedSuffix = page.spans.some((s) => {
+      const gap = s.x - last.x - last.width;
+      return (
+        !units.some((ref) => ref.id === s.id) &&
+        sameRow(s, value) &&
+        gap >= -0.5 &&
+        gap <= Math.min(s.height, last.height) * 0.6 &&
+        isUnitToken(unitText + compact(s.text))
+      );
+    });
+    if (omittedSuffix) fail('単位の続きになり得る隣接セルが未参照');
+  }
 
   const rowNumbers = page.spans.filter(
     (s) =>
