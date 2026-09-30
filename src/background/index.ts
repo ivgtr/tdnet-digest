@@ -12,6 +12,7 @@ import { serializePagesForAnalysis } from '@/lib/page-text';
 import { canonicalJSON } from '@/lib/fact-contract';
 import { validatePages } from '@/lib/fact-validation';
 import { buildAnalysisFingerprint } from '@/lib/analysis-version';
+import { normalizeTdnetPdfUrl as fullUrl } from '@/lib/tdnet-url';
 import { assessClaim, inferExperimentalScore, type ExperimentalScore } from '@/lib/scoring';
 import { extractScoreInput, type ScoreDocument } from '@/lib/score-extraction';
 import { fetchCandidatePdf, searchDisclosureCandidates } from '@/lib/disclosure-search';
@@ -139,18 +140,6 @@ function configOf(settings: Settings): LLMConfig {
     baseUrl: settings.customUrl || undefined,
   };
 }
-function fullUrl(url: string): string {
-  const parsed = new URL(url, 'https://www.release.tdnet.info/inbs/');
-  if (
-    parsed.origin !== 'https://www.release.tdnet.info' ||
-    parsed.username ||
-    parsed.password ||
-    !parsed.pathname.startsWith('/inbs/') ||
-    !/\.pdf$/i.test(parsed.pathname)
-  )
-    throw new Error('TDnetのPDF URLではありません');
-  return parsed.href;
-}
 async function fetchPDF(url: string): Promise<ArrayBuffer> {
   const response = await fetch(fullUrl(url));
   if (!response.ok)
@@ -219,7 +208,14 @@ async function handleFollowup(
   const data = await fetchPDF(request.pdfUrl);
   await setupOffscreenDocument();
   const extraction = await extractTextFromPDF(data, documentType, 'full');
-  const facts = parseFactSummary(JSON.stringify(request.facts), documentType, extraction.pages);
+  // 必須判定は初回の選択範囲で実施済み。全文再取得では元事実の意味を再照合する。
+  // 再照合で事実が変われば、PDFハッシュを含むresultIdの一致検査で拒否する。
+  const facts = parseFactSummary(
+    JSON.stringify(request.facts),
+    documentType,
+    extraction.pages,
+    false
+  );
   if (
     (await resultId(request.pdfUrl, request.fingerprint, facts, await hashPdf(data))) !==
     request.resultId

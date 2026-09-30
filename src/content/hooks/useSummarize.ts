@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { normalizeTdnetPdfUrl } from '@/lib/tdnet-url';
 import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
 import { FACT_SCHEMA_VERSION, renderFacts } from '@/lib/fact-summary';
 import { validateSavedFacts, validateSavedScore } from '@/lib/fact-cache';
@@ -131,7 +132,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       }
       try {
         if (cachedScore && cachedScore.value !== null) {
-          validateSavedScore(cachedScore, facts, pdfUrl);
+          validateSavedScore(cachedScore, facts, normalizeTdnetPdfUrl(pdfUrl));
           setScore({ loading: false, data: cachedScore, error: null });
         } else setScore(emptyStage());
       } catch {

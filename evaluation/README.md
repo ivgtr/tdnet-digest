@@ -198,3 +198,9 @@ smartの必須判定について、保存したBlueMeme原文字を使い、p.18
 Anthropicは実クライアントから事実v4の原文照合/表示まで、固定Messages API応答を通して確認した。BlueMemeの初回6件＋不足分修復は双方max_tokens=32,768で、−400百万円・1.4％・翌期の損失予定を保持した。Sonnet 3.5の8,192・明示予算16,384、空/不正本文、不正予算、max_tokens/model_context_window_exceededの拒否と停止理由/利用量の記録も検証した。応答に置いたusage.output_tokens=6,000は固定試験データであり、実モデルのトークン測定ではない。打ち切り応答を部分採用したり同じ上限の修復へ送ったりしない。
 
 最終検証は `npm test` が23ファイル387件成功、`npm run type-check`、`npm run lint`、`npm run build` も成功。分析指紋v30の実Anthropic生成・smart実LLM/拡張の追試は未実施で、上記の実API比較採点・7月TDnet実経路などの未達条件も残る。抽出/対応形式は変えていないため、成功済みの公開PDF18件・保存原文字の照合は再実行していない。
+
+### PR #24再レビューの回帰（2026-10-01）
+
+Backgroundの実メッセージハンドラーを通し、保存BlueMeme原文字のp.1/p.5を選択・p.18を未選択とした初回要約から、全文再抽出を経て追加分析/採点へ進める回帰を追加した。確定事実を採点へそのまま渡し、事実値の改変、PDFバイト変更、全文再取得時のp.18抽出失敗は拒否した。PDF取得/抽出応答とモデル/採点応答は固定した試験であり、実ブラウザー・実APIの成功ではない。
+
+Contentのキャッシュ復元で `example.pdf` / `./example.pdf` / `/inbs/example.pdf` を、Backgroundと同じ絶対URLの保存スコアに照合して復元する回帰を追加した。別PDFの保存URLは拒否し、いずれも要約を保持してAPIを呼ばない。`npx vitest run src/content/hooks/useSummarize.test.ts src/background/index.test.ts` は17件成功。

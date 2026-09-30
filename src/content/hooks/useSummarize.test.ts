@@ -3,6 +3,8 @@ import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-v
 import { textPage, numberCandidate } from '@/lib/fixtures/v4-test-source';
 import { parseFactSummary, renderFacts } from '@/lib/fact-summary';
 import { useSummarize } from './useSummarize';
+import { toValue } from '@/lib/score-extraction';
+import { assessClaim, scoreVerdict, type ExperimentalScore, type ScoreClaim } from '@/lib/scoring';
 
 const stateSetters = vi.hoisted(() => [] as Array<ReturnType<typeof vi.fn>>);
 const stateOverrides = vi.hoisted(() => new Map<number, unknown>());
@@ -200,4 +202,135 @@ describe('要約モード別の表示とキャッシュ', () => {
     expect(stateSetters[2]).toHaveBeenLastCalledWith({ loading: false, data: null, error: null });
     expect(stateSetters[6]).toHaveBeenLastCalledWith(true);
   });
+
+  it.each([
+    {
+      pdfUrl: 'example.pdf',
+      storedUrl: 'https://www.release.tdnet.info/inbs/example.pdf',
+      valid: true,
+    },
+    {
+      pdfUrl: './example.pdf',
+      storedUrl: 'https://www.release.tdnet.info/inbs/example.pdf',
+      valid: true,
+    },
+    {
+      pdfUrl: '/inbs/example.pdf',
+      storedUrl: 'https://www.release.tdnet.info/inbs/example.pdf',
+      valid: true,
+    },
+    {
+      pdfUrl: 'example.pdf',
+      storedUrl: 'https://www.release.tdnet.info/inbs/another.pdf',
+      valid: false,
+    },
+  ])(
+    'リンク $pdfUrl の採点を保存URL $storedUrl と照合して復元する',
+    async ({ pdfUrl, storedUrl, valid }) => {
+      const current = textPage(
+        '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
+      );
+      const previous = textPage(
+        '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2025年3月期 連結経営成績\n営業利益は80百万円です。',
+        2
+      );
+      const facts = parseFactSummary(
+        JSON.stringify({
+          version: 4,
+          documentType: 'other',
+          facts: [
+            numberCandidate(current),
+            { ...numberCandidate(previous, '営業利益', 80, '2025年3月期'), id: 'f2' },
+          ],
+          unverified: [],
+        }),
+        'other',
+        [current, previous]
+      );
+      const document = {
+        url: storedUrl,
+        pages: [current, previous],
+        text: current.text + '\n' + previous.text,
+        issuer: '株式会社テスト',
+        code: '1234',
+        publishedDate: null,
+      };
+      const claim: ScoreClaim = {
+        category: 'operatingProfit',
+        label: '営業利益',
+        current: toValue(facts.facts[0], document),
+        previous: toValue(facts.facts[1], document),
+        earlier: null,
+        relatedValue: null,
+        companyExplanation: null,
+      };
+      const score: ExperimentalScore = {
+        value: 70,
+        verdict: scoreVerdict(70),
+        positives: [],
+        negatives: [],
+        unverified: [],
+        searchStatus: '固定回帰',
+        breakdown: [
+          { ...claim, impact: 'positive', strength: 'small', comparison: assessClaim(claim)! },
+        ],
+      };
+      const fingerprint = buildAnalysisFingerprint({
+        provider: 'openai',
+        model: 'gpt-4o',
+        extractionMode: 'full',
+      });
+      const summaryKey = `summaryCacheV2:${buildSummaryCacheKey(pdfUrl, fingerprint)}`;
+      const id = 'a'.repeat(64);
+      const sendMessage = vi.fn();
+      vi.stubGlobal('chrome', {
+        storage: {
+          sync: {
+            get: (_keys: string[], callback: (settings: unknown) => void) =>
+              callback({ provider: 'openai', model: 'gpt-4o', extractionMode: 'full' }),
+          },
+          local: {
+            get: vi.fn(async (key: string | string[]) =>
+              typeof key === 'string'
+                ? {
+                    [summaryKey]: {
+                      summary: renderFacts(facts),
+                      facts,
+                      resultId: id,
+                      metadata: {
+                        analysisFingerprint: fingerprint,
+                        analysisSchemaVersion: 4,
+                        documentHash: 'c'.repeat(64),
+                      },
+                    },
+                  }
+                : { [`scoreCacheV4:${id}`]: score }
+            ),
+          },
+          onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+        },
+        runtime: { sendMessage },
+      });
+      const hook = useSummarize({
+        pdfUrl,
+        title: '開示',
+        code: '1234',
+        companyName: '株式会社テスト',
+      });
+      await hook.showCached();
+      expect(stateSetters[1]).toHaveBeenLastCalledWith(
+        expect.objectContaining({ summary: renderFacts(facts), error: null })
+      );
+      expect(stateSetters[2]).toHaveBeenLastCalledWith(
+        valid
+          ? { loading: false, data: score, error: null }
+          : {
+              loading: false,
+              data: null,
+              error: '保存された採点の形式・確定事実との対応が不正です',
+            }
+      );
+      expect(sendMessage).not.toHaveBeenCalled();
+    }
+  );
 });
