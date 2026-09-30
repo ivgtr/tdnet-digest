@@ -1,9 +1,8 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import type { TextItem, TextMarkedContent } from 'pdfjs-dist/types/src/display/api';
-import { groupTextItemsByY } from '../../src/lib/pdf-lines';
-import { cleanPageText, serializePagesForAnalysis } from '../../src/lib/page-text';
+import { extractPageLayout } from '../../src/lib/pdf-layout';
+import { serializePagesForAnalysis } from '../../src/lib/page-text';
 import {
   FactSummaryGenerationError,
   generateVerifiedFactSummary,
@@ -45,13 +44,7 @@ for (const item of selected) {
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push({
-      pageNumber,
-      text: cleanPageText(
-        groupTextItemsByY(content.items as Array<TextItem | TextMarkedContent>).join('\n'),
-        pageNumber
-      ),
-    });
+    pages.push(extractPageLayout(content.items, pageNumber));
     page.cleanup();
   }
   const started = performance.now();

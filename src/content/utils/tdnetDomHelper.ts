@@ -59,7 +59,7 @@ export function addHeaderColumn(iframeDoc: Document): void {
   headerCell.className = 'header-R tdnet-digest-header';
   headerCell.setAttribute('nowrap', '');
   headerCell.setAttribute('align', 'center');
-  headerCell.style.width = '180px';
-  headerCell.textContent = 'AI要約・材料スコア';
+  headerCell.style.width = '80px';
+  headerCell.textContent = 'AI要約';
   headerRow.appendChild(headerCell);
 }

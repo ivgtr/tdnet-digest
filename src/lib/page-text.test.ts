@@ -8,9 +8,9 @@ import {
 } from './page-text';
 
 const pages = [
-  { pageNumber: 1, text: '売上高 100百万円' },
-  { pageNumber: 2, text: '営業利益 20百万円' },
-  { pageNumber: 3, text: '通期予想 30百万円' },
+  { spans: [], pageNumber: 1, text: '売上高 100百万円' },
+  { spans: [], pageNumber: 2, text: '営業利益 20百万円' },
+  { spans: [], pageNumber: 3, text: '通期予想 30百万円' },
 ];
 
 describe('page text', () => {

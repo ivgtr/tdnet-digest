@@ -232,18 +232,20 @@ async function attachScore(
   companyName: string,
   pdfData: ArrayBuffer,
   extractionMode: ExtractionMode,
-  extractionResult: { text: string; metadata: SummaryMetadata },
+  extractionResult: PdfExtractionResult,
   facts: FactSummary
 ): Promise<ExperimentalScore> {
   let searchStatus = '元PDF内を確認';
   try {
-    const scoringText =
+    const scoringExtraction =
       extractionMode === 'smart'
-        ? (await extractTextFromPDF(pdfData, documentType, 'full')).text
-        : extractionResult.text;
+        ? await extractTextFromPDF(pdfData, documentType, 'full')
+        : extractionResult;
+    const scoringText = scoringExtraction.text;
     const original: ScoreDocument = {
       url: pdfUrl,
       text: scoringText,
+      pages: scoringExtraction.pages,
       issuer: companyName,
       code,
       publishedDate: readPublishedDate(scoringText),
@@ -278,6 +280,7 @@ async function attachScore(
           const candidate: ScoreDocument = {
             url,
             text: result.text,
+            pages: result.pages,
             issuer: companyName,
             code,
             publishedDate: readPublishedDate(result.text),

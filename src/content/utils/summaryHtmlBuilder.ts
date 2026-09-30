@@ -110,7 +110,7 @@ export function buildScoreStageHtml(score?: Stage<ExperimentalScore>): string {
   return score?.loading
     ? '採点中…'
     : score?.error
-      ? `採点失敗: ${escapeMetadataText(score.error)}`
+      ? `採点失敗: ${escapeMetadataText(score.error)} <button type="button" id="retry-score-btn" style="${SUMMARY_STYLES.retryButton}">採点を再試行</button>`
       : score?.data
         ? buildScoreHtml(score.data)
         : '';
