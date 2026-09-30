@@ -2,7 +2,6 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
 import { BUTTON_STYLES } from './constants/styles';
-import { ScoreBadge } from './ScoreBadge';
 
 interface RowData {
   time: string;
@@ -57,6 +56,8 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   const priorCacheKey = useRef<string | null>(null);
   const analyzeRef = useRef(analyze);
   analyzeRef.current = analyze;
+  const retryScoreRef = useRef(retryScore);
+  retryScoreRef.current = retryScore;
 
   useEffect(() => {
     if (priorCacheKey.current && priorCacheKey.current !== cacheKey) {
@@ -84,7 +85,8 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           reset();
           summarize();
         },
-        () => analyzeRef.current()
+        () => analyzeRef.current(),
+        () => retryScoreRef.current()
       );
       triggerUpdate();
     }
@@ -159,12 +161,6 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           {buttonText}
         </button>
       </div>
-      {scoringEnabled && score.data && <ScoreBadge score={score.data} />}
-      {scoringEnabled && score.error && !score.loading && (
-        <button type="button" onClick={retryScore} style={{ fontSize: '11px', color: '#1d4ed8' }}>
-          採点を再試行
-        </button>
-      )}
     </div>
   );
 };

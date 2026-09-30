@@ -1,3 +1,4 @@
+import type { TableEvidence } from './numeric-evidence';
 import type { DocumentType } from './document-type';
 import { generateText, type LLMConfig } from './llm-client';
 import { getProviderCapabilities } from './structured-output';
@@ -28,6 +29,7 @@ export interface ScoreSource {
   url: string;
   page: number;
   quote: string;
+  evidence: TableEvidence | null;
   period: string;
   fiscalYear: number;
   periodKind: PeriodKind;

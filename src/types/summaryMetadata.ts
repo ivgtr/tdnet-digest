@@ -1,3 +1,4 @@
+import type { PdfSpan } from '../lib/pdf-layout';
 import type { DocumentType } from '../lib/document-type';
 import type { FactSummary } from '../lib/fact-summary';
 
@@ -6,6 +7,7 @@ export type ExtractionMode = 'smart' | 'full';
 export interface ExtractedPage {
   pageNumber: number;
   text: string;
+  spans: PdfSpan[];
 }
 
 export interface EvidenceFact {

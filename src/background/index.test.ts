@@ -29,7 +29,7 @@ vi.mock('@/lib/disclosure-search', () => ({
 
 const page = '2026年通期 営業利益 1150百万円';
 const facts: FactSummary = {
-  version: 2,
+  version: 3,
   documentType: 'earningsRevision',
   unverified: [],
   facts: [
@@ -45,6 +45,7 @@ const facts: FactSummary = {
       column: null,
       statement: null,
       page: 1,
+      evidence: null,
       quote: page,
     },
   ],
@@ -68,7 +69,7 @@ async function setup(scoring: boolean, allowPastPdf = true, withDate = false, le
       sendMessage: async () => ({
         success: true,
         text: `[PDF_PAGE:1]\n${withDate ? '2026年8月13日\n' : ''}${page}`,
-        pages: [{ pageNumber: 1, text: page }],
+        pages: [{ pageNumber: 1, text: page, spans: [] }],
         metadata: {
           totalPages: 1,
           extractedPages: [1],

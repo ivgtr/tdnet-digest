@@ -61,7 +61,7 @@ function injectSummaryButtons() {
     buttonCell.className = `${cellClass} tdnet-digest-button-cell`;
     buttonCell.setAttribute('nowrap', '');
     buttonCell.setAttribute('align', 'center');
-    buttonCell.style.width = '180px';
+    buttonCell.style.width = '80px';
 
     // Reactコンポーネントをレンダリング
     const container = iframeDoc.createElement('div');

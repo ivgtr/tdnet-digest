@@ -17,9 +17,8 @@ import {
   checkExtractionQuality,
   type QualityCheckResult,
 } from '@/lib/section-detector';
-import { groupTextItemsByY } from '@/lib/pdf-lines';
+import { extractPageLayout } from '@/lib/pdf-layout';
 import {
-  cleanPageText,
   selectExtractedPages,
   serializePagesForAnalysis,
   serializePagesForDetection,
@@ -231,13 +230,7 @@ async function extractTextFromPDF(
         const page = await pdf.getPage(pageNum);
         const textContent = await page.getTextContent();
 
-        // Y座標で行をグループ化して改行を復元
-        const lines = groupTextItemsByY(textContent.items);
-
-        pages.push({
-          pageNumber: pageNum,
-          text: cleanPageText(lines.join('\n'), pageNum),
-        });
+        pages.push(extractPageLayout(textContent.items, pageNum));
 
         // メモリ解放
         page.cleanup();
@@ -245,6 +238,7 @@ async function extractTextFromPDF(
         console.error(`[Offscreen] ページ ${pageNum} の抽出エラー:`, pageError);
         pages.push({
           pageNumber: pageNum,
+          spans: [],
           text: `[ページ ${pageNum} の抽出に失敗しました]`,
         });
       }

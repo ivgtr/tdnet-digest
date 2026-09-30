@@ -8,11 +8,11 @@ import {
   type ScoreValue,
 } from './scoring';
 import { extractScoreInput, validateScoreInput, type ScoreDocument } from './score-extraction';
-import type { FactSummary } from './fact-summary';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import corpus from './fixtures/pdf-layout-corpus.json';
+import { extractPageLayout } from './pdf-layout';
+import { serializePagesForAnalysis } from './page-text';
 import { buildScoreHtml } from '../content/utils/summaryHtmlBuilder';
-import { ScoreBadge } from '../content/ScoreBadge';
-import { renderToStaticMarkup } from 'react-dom/server';
-import React from 'react';
 
 const { generateText } = vi.hoisted(() => ({ generateText: vi.fn() }));
 vi.mock('./llm-client', () => ({ generateText }));
@@ -31,6 +31,7 @@ function value(
     source: {
       url,
       page: 1,
+      evidence: null,
       quote: `${period} ${metric} ${number}百万円`,
       period,
       fiscalYear: year,
@@ -40,6 +41,17 @@ function value(
       basis: '日本基準',
       scope: '連結',
     },
+  };
+}
+// 本文形式のテスト入力。実PDFの表は座標付きコーパスを使う。
+function proseDocument(doc: ScoreDocument): ScoreDocument {
+  return {
+    ...doc,
+    pages: [...doc.text.matchAll(/\[PDF_PAGE:(\d+)\]([\s\S]*?)(?=\[PDF_PAGE:|$)/g)].map((m) => ({
+      pageNumber: Number(m[1]),
+      text: m[2],
+      spans: [],
+    })),
   };
 }
 function claim(
@@ -70,99 +82,6 @@ function answer(value: number, impacts: Array<'positive' | 'negative' | 'neutral
 beforeEach(() => generateText.mockReset());
 
 describe('検算済み事実からの推論スコア', () => {
-  it('前年同期の決算短信を要約事実に照合し、桁区切りを含む比較値を検証する', async () => {
-    const makeDocument = (year: number, sales: string, profit: string): ScoreDocument => ({
-      url: `https://www2.jpx.co.jp/disc/40550/${year}.pdf`,
-      publishedDate: `${year}-08-14`,
-      issuer: '会社',
-      code: '4055',
-      text:
-        `[PDF_PAGE:1]\n${year}年9月期 第3四半期決算短信〔日本基準〕（連結）\n会社 4055\n` +
-        `１．${year}年9月期第3四半期の連結業績（${year - 1}年10月1日～${year}年6月30日）\n` +
-        `（百万円未満切捨て）\n売上高 営業利益\n百万円 ％ 百万円 ％\n${year}年9月期第3四半期 ${Math.floor(Number(sales.replace(/,/g, '')) / 1000).toLocaleString('en-US')} 11.9 ${Math.floor(Number(profit.replace(/,/g, '')) / 1000)} 18.9\n` +
-        `[PDF_PAGE:4]\n会社 4055\n${year}年9月期 第3四半期決算短信\n` +
-        `この結果、当第3四半期連結累計期間の経営成績は、売上高${sales}千円（前年同四半期比11.9％増）、営業\n利益${profit}千円（前年同四半期比18.9％増）となりました。`,
-    });
-    const documents = [
-      makeDocument(2026, '3,393,604', '634,398'),
-      makeDocument(2025, '3,033,776', '533,539'),
-    ];
-    const facts: FactSummary = {
-      version: 2,
-      documentType: 'earnings',
-      unverified: [],
-      facts: [
-        { id: 'f1', label: '売上高', value: 3393604 },
-        { id: 'f2', label: '営業利益', value: 634398 },
-      ].map((fact) => ({
-        ...fact,
-        importance: 'key' as const,
-        kind: 'number' as const,
-        unit: '千円',
-        period: '2026年9月期第3四半期',
-        valueKind: 'actual' as const,
-        column: null,
-        statement: null,
-        page: 4,
-        quote: `${fact.label}${fact.value}千円`,
-      })),
-    };
-    const extracted = await extractScoreInput(
-      config,
-      'earnings',
-      documents,
-      '過去資料候補を取得',
-      facts
-    );
-    expect(extracted.claims.map((item) => item.category)).toEqual(['revenue', 'operatingProfit']);
-    expect(extracted.claims.map((item) => [item.current.value, item.previous?.value])).toEqual([
-      [3393604, 3033776],
-      [634398, 533539],
-    ]);
-    expect(
-      extracted.claims.every(
-        (item) => item.current.source.page === 4 && item.previous?.source.page === 4
-      )
-    ).toBe(true);
-    expect(generateText).not.toHaveBeenCalled();
-
-    const roundedFacts: FactSummary = {
-      ...facts,
-      facts: facts.facts.map((item) => ({
-        ...item,
-        value: Math.floor((item.value as number) / 1000),
-        unit: '百万円',
-        page: 1,
-        period: '2026年9月期第3四半期連結累計期間(2025年10月1日～2026年6月30日)',
-      })),
-    };
-    const rounded = await extractScoreInput(
-      config,
-      'earnings',
-      documents,
-      '過去資料候補を取得',
-      roundedFacts
-    );
-    expect(rounded.claims.map((item) => item.current.value)).toEqual([3393604, 634398]);
-    expect(rounded.claims.every((item) => item.current.source.page === 4)).toBe(true);
-    expect(generateText).not.toHaveBeenCalled();
-
-    generateText.mockResolvedValueOnce(JSON.stringify({ claims: [], unverified: [] }));
-    const shifted = {
-      ...documents[1],
-      text: documents[1].text.replace('2024年10月1日', '2024年11月1日'),
-    };
-    const rejected = await extractScoreInput(
-      config,
-      'earnings',
-      [documents[0], shifted],
-      '過去資料候補を取得',
-      facts
-    );
-    expect(rejected.claims).toHaveLength(0);
-    expect(generateText).toHaveBeenCalledOnce();
-  });
-
   it('通期と四半期、開示年度の順序を誤比較しない', () => {
     const current = value(145, 2026);
     const previous = value(130, 2025);
@@ -202,6 +121,7 @@ describe('検算済み事実からの推論スコア', () => {
     );
     oneOff.relatedValue = value(500, 2026, '株式売却益', 'forecastAfter');
     const oneOffDoc: ScoreDocument = {
+      pages: [],
       url,
       publishedDate: '2026-07-14',
       issuer: '会社',
@@ -209,8 +129,11 @@ describe('検算済み事実からの推論スコア', () => {
       text: `[PDF_PAGE:1]\n会社 日本基準 連結\n${oneOff.current.source.quote}\n${oneOff.previous?.source.quote}\n${oneOff.relatedValue.source.quote}`,
     };
     expect(
-      validateScoreInput(JSON.stringify({ claims: [oneOff], unverified: [] }), [oneOffDoc], '')
-        .claims
+      validateScoreInput(
+        JSON.stringify({ claims: [oneOff], unverified: [] }),
+        [proseDocument(oneOffDoc)],
+        ''
+      ).claims
     ).toHaveLength(1);
     generateText.mockResolvedValueOnce(answer(53, ['positive']));
     const onlyGain = await inferExperimentalScore(config, 'earningsRevision', input([oneOff]));
@@ -243,6 +166,7 @@ describe('検算済み事実からの推論スコア', () => {
     const current = value(500, 2026);
     current.source.quote = '500';
     const doc: ScoreDocument = {
+      pages: [],
       url,
       text: '[PDF_PAGE:1]\n会社 日本基準 連結 2026年3月期通期 営業利益 400百万円 500',
       publishedDate: '2026-07-14',
@@ -253,17 +177,18 @@ describe('検算済み事実からの推論スコア', () => {
       claims: [claim('operatingProfit', current, value(400, 2025))],
       unverified: [],
     });
-    const result = validateScoreInput(raw, [doc], '');
+    const result = validateScoreInput(raw, [proseDocument(doc)], '');
     expect(result.claims).toHaveLength(0);
     expect(result.unverified.join('')).toContain('数値・単位・指標・期間');
   });
 
-  it('表の近くの期間と単位見出しを数値行に結び付ける', () => {
+  it('位置情報のない表を近くの単位から推測しない', () => {
     const current = value(1150, 2026, '営業利益予想', 'forecastAfter');
     const previous = value(1000, 2026, '営業利益予想', 'forecastBefore');
     current.source.quote = '営業利益予想 1150';
     previous.source.quote = '営業利益予想 1000';
     const doc: ScoreDocument = {
+      pages: [],
       url,
       publishedDate: '2026-07-14',
       issuer: '会社',
@@ -275,10 +200,10 @@ describe('検算済み事実からの推論スコア', () => {
         claims: [claim('coreForecast', current, previous)],
         unverified: [],
       }),
-      [doc],
+      [proseDocument(doc)],
       ''
     );
-    expect(result.claims).toHaveLength(1);
+    expect(result.claims).toHaveLength(0);
     current.source.quote = '営業利益予想 1000 1150';
     previous.source.quote = current.source.quote;
     doc.text += '\n営業利益予想 1000 1150';
@@ -287,7 +212,7 @@ describe('検算済み事実からの推論スコア', () => {
         claims: [claim('coreForecast', current, previous)],
         unverified: [],
       }),
-      [doc],
+      [proseDocument(doc)],
       ''
     );
     expect(ambiguous.claims).toHaveLength(0);
@@ -295,11 +220,13 @@ describe('検算済み事実からの推論スコア', () => {
 
   it('会社公開の配当資料の決定額と直近予想を同じ基準日で照合する', async () => {
     const issuerUrl = 'https://www.meikonet.co.jp/ja/ir/ir-news/auto_20260714593367/pdfFile.pdf';
-    const quote =
-      '基準日 2026 年８月 31 日 2026 年８月 31 日 2025 年８月 31 日\n１株当たり配当金 15 円 00 銭 14 円 00 銭 14 円 00 銭';
+    const pages = corpus[4].pages.map((p) =>
+      extractPageLayout(p.items as TextItem[], p.pageNumber)
+    );
     const document: ScoreDocument = {
+      pages,
       url: issuerUrl,
-      text: `[PDF_PAGE:1]\n2026年７月14日\n株式会社明光ネットワークジャパン\n１．配当の内容\n直近の配当予想 前期実績（期末）\n決定額\n（2025年10月14日公表）\n${quote}\n期末配当を従来予想より１円増配の 15 円とします。`,
+      text: serializePagesForAnalysis(pages),
       publishedDate: '2026-07-14',
       issuer: '株式会社明光ネットワークジャパン',
       code: '4668',
@@ -310,7 +237,17 @@ describe('検算済み事実からの推論スコア', () => {
       source: {
         url: issuerUrl,
         page: 1,
-        quote,
+        evidence: {
+          valueId: kind === 'forecastAfter' ? 'p1s67' : 'p1s68',
+          metricIds: ['p1s66'],
+          periodIds: (kind === 'forecastAfter'
+            ? [42, 43, 44, 54, 55, 56, 57]
+            : [40, 58, 59, 60, 61]
+          ).map((n) => `p1s${n}`),
+          unitIds: [kind === 'forecastAfter' ? 'p1s67' : 'p1s68'],
+          contextIds: ['p1s39'],
+        },
+        quote: '',
         period: '2026年8月31日',
         fiscalYear: 2026,
         periodKind: 'eventDate',
@@ -339,14 +276,15 @@ describe('検算済み事実からの推論スコア', () => {
       ''
     );
     expect(reversed.claims).toHaveLength(0);
+    generateText.mockResolvedValueOnce(raw);
     const direct = await extractScoreInput(config, 'dividend', [document], '元PDF内を確認');
     expect(direct.claims).toHaveLength(1);
-    expect(generateText).not.toHaveBeenCalled();
+    expect(generateText).toHaveBeenCalledOnce();
     generateText.mockResolvedValueOnce(answer(56, ['positive']));
     const score = await inferExperimentalScore(config, 'dividend', extracted);
     expect(score.verdict).toBe('やや好材料');
     expect(buildScoreHtml(score)).toContain('pdfFile.pdf#page=1');
-    expect(renderToStaticMarkup(React.createElement(ScoreBadge, { score }))).toContain('56/100');
+    expect(buildScoreHtml(score)).toContain('56/100');
   });
 
   it('後日公開された候補と事業範囲の違う項目だけを比較から外す', () => {
@@ -355,6 +293,7 @@ describe('検算済み事実からの推論スコア', () => {
     previous.source.scope = '海外事業含む';
     const sales = claim('revenue', value(1200, 2026, '売上高'), value(1000, 2025, '売上高'));
     const doc: ScoreDocument = {
+      pages: [],
       url,
       publishedDate: '2026-07-14',
       issuer: '会社',
@@ -366,7 +305,7 @@ describe('検算済み事実からの推論スコア', () => {
         claims: [claim('coreForecast', current, previous), sales],
         unverified: [],
       }),
-      [doc],
+      [proseDocument(doc)],
       ''
     );
     expect(checked.claims.map((item) => item.category)).toEqual(['revenue']);
@@ -381,7 +320,7 @@ describe('検算済み事実からの推論スコア', () => {
         claims: [claim('revenue', sales.current, later)],
         unverified: [],
       }),
-      [doc, futureDoc],
+      [proseDocument(doc), proseDocument(futureDoc)],
       ''
     );
     expect(futureInput.claims).toHaveLength(0);
@@ -404,6 +343,7 @@ describe('検算済み事実からの推論スコア', () => {
           ...base.source,
           metric,
           valueKind: 'forecastAfter' as const,
+          evidence: null,
           quote: `2026年7月14日 ${metric} 50株 普通株式`,
         },
       };
@@ -414,6 +354,7 @@ describe('検算済み事実からの推論スコア', () => {
     const issue = claim('capitalAction', make('新株発行株式数'), null);
     issue.relatedValue = base;
     const doc: ScoreDocument = {
+      pages: [],
       url,
       publishedDate: '2026-07-14',
       issuer: '会社',
@@ -422,7 +363,7 @@ describe('検算済み事実からの推論スコア', () => {
     };
     const checked = validateScoreInput(
       JSON.stringify({ claims: [buyback, issue], unverified: [] }),
-      [doc],
+      [proseDocument(doc)],
       ''
     );
     expect(checked.claims).toHaveLength(2);

@@ -42,7 +42,7 @@ describe('要約モード別の表示とキャッシュ', () => {
     const responseFor = (mode: 'smart' | 'full') => ({
       error: null,
       summary: `${mode}の要約`,
-      facts: { version: 2, documentType: 'other', facts: [], unverified: [] },
+      facts: { version: 3, documentType: 'other', facts: [], unverified: [] },
       resultId: (mode === 'full' ? 'a' : 'b').repeat(64),
       metadata: {
         analysisFingerprint: buildAnalysisFingerprint({
@@ -99,7 +99,7 @@ describe('要約モード別の表示とキャッシュ', () => {
       model: 'gpt-4o',
       extractionMode: 'full',
     });
-    const facts = { version: 2, documentType: 'other', facts: [], unverified: [] };
+    const facts = { version: 3, documentType: 'other', facts: [], unverified: [] };
     stateOverrides.set(1, {
       summary: '検証済み要約',
       error: null,
@@ -149,7 +149,7 @@ describe('要約モード別の表示とキャッシュ', () => {
       model: 'gpt-4o',
       extractionMode: 'full',
     });
-    const facts = { version: 2, documentType: 'other' as const, facts: [], unverified: [] };
+    const facts = { version: 3, documentType: 'other' as const, facts: [], unverified: [] };
     const summaryKey = `summaryCacheV2:${buildSummaryCacheKey(pdfUrl, fingerprint)}`;
     const remove = vi.fn(async () => {});
     vi.stubGlobal('chrome', {
@@ -166,7 +166,7 @@ describe('要約モード別の表示とキャッシュ', () => {
                     summary: renderFacts(facts),
                     facts,
                     resultId: id,
-                    metadata: { analysisFingerprint: fingerprint, analysisSchemaVersion: 2 },
+                    metadata: { analysisFingerprint: fingerprint, analysisSchemaVersion: 3 },
                   },
                 }
               : { [`scoreCacheV3:${id}`]: { value: null, unverified: ['過去の失敗'] } }

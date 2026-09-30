@@ -58,6 +58,7 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       onRetry?: () => void,
       onResummarize?: () => void,
       onAnalyze?: () => void,
+      onRetryScore?: () => void,
       score?: Stage<ExperimentalScore>,
       analysis?: Stage<AdditionalAnalysis>
     ) => {
@@ -99,6 +100,13 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
             onResummarize();
           });
         }
+        summaryCell.querySelector('#score-result')?.addEventListener('click', (e) => {
+          const target = e.target as Element | null;
+          if (!target?.closest('#retry-score-btn')) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onRetryScore?.();
+        });
         summaryCell.querySelector('#analyze-btn')?.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
