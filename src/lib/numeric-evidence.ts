@@ -58,7 +58,8 @@ export function verifyTableEvidence(
     fail('参照の項目');
   if (!Array.isArray(page.spans) || !page.spans.length) fail('PDFの位置情報がありません');
   const value = page.spans.find((s) => s.id === object.valueId) ?? fail('値の参照先');
-  if (numeric(value.text) !== claim.value) fail('値・符号');
+  const parsedValue = parseQuantity(value.text) ?? fail('値・符号');
+  if (parsedValue.value !== claim.value) fail('値・符号');
   const metrics = refs(object.metricIds, page.spans, '指標');
   const periods = refs(object.periodIds, page.spans, '期間');
   const units = refs(object.unitIds, page.spans, '単位');
@@ -73,19 +74,23 @@ export function verifyTableEvidence(
     (label === '期末配当金' && metricText === '年間配当金期末');
   if (metricText !== label && !dividend) fail('指標名');
   const expectedUnit = compact(claim.unit).replace(/^円銭$/, '円');
-  const inlineUnit =
-    units.length === 1 && units[0].id === value.id ? parseQuantity(value.text)?.unit : null;
-  const unitText =
-    inlineUnit ??
-    joined(units)
-      .replace(/^\(?単位[:：]?/, '')
-      .replace(/\)$/, '')
-      .replace(/^円銭$/, '円');
-  if (unitText !== expectedUnit) fail('単位');
-  const orderedUnits = [...units].sort((a, b) => a.x - b.x);
+  const unitIncludesValue = units.some((s) => s.id === value.id);
+  const orderedUnits = units.filter((s) => s.id !== value.id).sort((a, b) => a.x - b.x);
+  if (unitIncludesValue && !parsedValue.unit) fail('単位');
+  if (parsedValue.unit && !unitIncludesValue && parsedValue.unit !== expectedUnit) fail('単位');
+  const inlineUnit = unitIncludesValue && orderedUnits.length === 0 ? parsedValue.unit : null;
+  // 値セルに含まれる単位断片も参照を必須とし、隣接セルの断片と原文順に照合する。
+  const unitText = (
+    unitIncludesValue
+      ? parsedValue.unit + orderedUnits.map((s) => compact(s.text)).join('')
+      : joined(units)
+          .replace(/^\(?単位[:：]?/, '')
+          .replace(/\)$/, '')
+  ).replace(/^円銭$/, '円');
+  if (unitText !== expectedUnit || (unitIncludesValue && !isUnitToken(unitText))) fail('単位');
   const adjacentUnit =
-    !inlineUnit &&
-    parseQuantity(value.text)?.unit === null &&
+    orderedUnits.length > 0 &&
+    (parsedValue.unit === null || unitIncludesValue) &&
     orderedUnits.every((s, i) => {
       const previous = i ? orderedUnits[i - 1] : value;
       const gap = s.x - previous.x - previous.width;

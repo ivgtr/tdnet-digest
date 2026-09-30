@@ -182,6 +182,68 @@ describe('非財務単位を持つ表', () => {
     const invalid = { ...source, spans: source.spans.concat(span('other', '注', 349, 60, 1)) };
     expect(() => verifyTableEvidence(invalid, refs, claim)).toThrow();
   });
+  it.each([
+    ['百', '万円', '百万円'],
+    ['k', 'Wh', 'kWh'],
+    ['m', '2', '㎡'],
+  ] as const)('値セル内の%sと隣接%sを単位として照合する', (prefix, suffix, unit) => {
+    const source = {
+      ...page,
+      spans: spans
+        .filter((s) => s.id !== 'u2')
+        .map((s) => (s.id === 'v2' ? { ...s, text: `120${prefix}` } : s))
+        .concat(span('unitSuffix', suffix, 338, 60, 20)),
+    };
+    const refs = { ...evidence, unitIds: ['unitSuffix', 'v2'] };
+    const candidate = { ...claim, value: 120, unit };
+    expect(verifyTableEvidence(source, refs, candidate).evidence.unitIds).toEqual([
+      'unitSuffix',
+      'v2',
+    ]);
+    for (const unitIds of [['v2'], ['unitSuffix']]) {
+      expect(() => verifyTableEvidence(source, { ...refs, unitIds }, candidate)).toThrow('単位');
+    }
+    for (const change of [{ x: 350 }, { x: 300 }, { y: 80 }, { y: 40 }]) {
+      const invalid = {
+        ...source,
+        spans: source.spans.map((s) => (s.id === 'unitSuffix' ? { ...s, ...change } : s)),
+      };
+      expect(() => verifyTableEvidence(invalid, refs, candidate)).toThrow();
+    }
+    const otherNumber = {
+      ...source,
+      spans: source.spans.map((s) => (s.id === 'unitSuffix' ? { ...s, text: '500人' } : s)),
+    };
+    expect(() =>
+      verifyTableEvidence(otherNumber, refs, { ...candidate, unit: `${prefix}500人` })
+    ).toThrow('単位');
+    expect(() =>
+      verifyTableEvidence(
+        { ...source, spans: source.spans.concat(span('other', '注', 336, 60, 1)) },
+        refs,
+        candidate
+      )
+    ).toThrow();
+  });
+  it('値セル内の単位と複数の隣接断片を原文順に照合する', () => {
+    const source = {
+      ...page,
+      spans: spans
+        .filter((s) => s.id !== 'u2')
+        .map((s) => (s.id === 'v2' ? { ...s, text: '200百' } : s))
+        .concat(span('unit1', '万', 338, 60, 10), span('unit2', '円', 351, 60, 10)),
+    };
+    const refs = { ...evidence, unitIds: ['unit2', 'v2', 'unit1'] };
+    expect(verifyTableEvidence(source, refs, claim).evidence.unitIds).toEqual([
+      'unit1',
+      'unit2',
+      'v2',
+    ]);
+    expect(() => verifyTableEvidence(source, { ...refs, unitIds: ['v2', 'unit1'] }, claim)).toThrow(
+      '単位'
+    );
+    expect(() => verifyTableEvidence(source, { ...refs, unitIds: ['u1'] }, claim)).toThrow('単位');
+  });
   it('複数の数量を含む文字列や欠損を数値として採用しない', () => {
     for (const text of ['120店舗500人', '－', '不明']) {
       const source = { ...page, spans: spans.map((s) => (s.id === 'v2' ? { ...s, text } : s)) };

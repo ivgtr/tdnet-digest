@@ -236,15 +236,19 @@ it('助詞のある決算文章でも対象行の実績・予想区分を検証�
 });
 
 it.each([
-  ['店舗', false],
-  ['店舗', true],
-  ['人', false],
-  ['人', true],
-  ['件', false],
-  ['件', true],
+  ['店舗', '120店舗', null],
+  ['店舗', '120', '店舗'],
+  ['人', '120人', null],
+  ['人', '120', '人'],
+  ['件', '120件', null],
+  ['件', '120', '件'],
+  ['百万円', '120百', '万円'],
+  ['kWh', '120k', 'Wh'],
+  ['㎡', '120m', '2'],
 ] as const)(
-  '非財務の%s単位をPDF抽出から要約と採点で共有する（別アイテム=%s）',
-  (unit, separate) => {
+  '%s単位をPDF抽出から要約と採点で共有する（値セル=%s、単位断片=%s）',
+  (unit, valueText, unitSuffix) => {
+    const separate = unitSuffix !== null;
     const item = (text: string, x: number, y: number, width: number): TextItem => ({
       str: text,
       dir: 'ltr',
@@ -259,8 +263,8 @@ it.each([
         item('会社 全社', 0, -20, 100),
         item('2026年7月14日', 180, 0, 80),
         item('稼働数量', 0, 40, 100),
-        item(separate ? '120' : `120${unit}`, 205, 40, separate ? 20 : 40),
-        ...(separate ? [item(unit, 228, 40, 20)] : []),
+        item(valueText, 205, 40, separate ? 20 : 40),
+        ...(separate ? [item(unitSuffix, 228, 40, 20)] : []),
         item('合計', 260, 40, 40),
       ],
       1
@@ -273,10 +277,12 @@ it.each([
       basis: '非財務',
       scope: '全社',
       evidence: {
-        valueId: id(separate ? '120' : `120${unit}`),
+        valueId: id(valueText),
         metricIds: [id('稼働数量')],
         periodIds: [id('2026年7月14日')],
-        unitIds: [id(separate ? unit : `120${unit}`)],
+        unitIds: separate
+          ? [...(valueText === '120' ? [] : [id(valueText)]), id(unitSuffix)]
+          : [id(valueText)],
         contextIds: [],
       },
     };
