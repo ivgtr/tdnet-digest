@@ -162,3 +162,122 @@ it.each(['inline', 'column'] as const)('単一数量表の%s単位を要約と�
   expect(score.claims).toHaveLength(1);
   expect(score.claims[0].current.source.evidence).toEqual(facts.facts[0].evidence);
 });
+
+it.each(['は', '：'])('通常の文章の「%s」を要約と採点で同じように照合する', (bridge) => {
+  const quote = `2026年7月14日の取得価額の総額${bridge}10億円です。`;
+  const page: ExtractedPage = { pageNumber: 1, text: `会社 連結\n${quote}`, spans: [] };
+  const rawSource = {
+    ...source('2026年7月14日', 'eventDate'),
+    metric: '取得価額の総額',
+    basis: '非財務',
+    quote,
+    evidence: null,
+  };
+  const fact: VerifiedFact = {
+    id: 'f1',
+    importance: 'key',
+    kind: 'number',
+    label: rawSource.metric,
+    value: 10,
+    unit: '億円',
+    period: rawSource.period,
+    valueKind: 'actual',
+    column: null,
+    statement: null,
+    page: 1,
+    quote,
+    evidence: null,
+  };
+  const facts = parseFactSummary(
+    JSON.stringify({ version: 3, documentType: 'other', facts: [fact], unverified: [] }),
+    'other',
+    [page]
+  );
+  const score = validateScoreInput(input(rawSource, 10, '億円'), [document(page)], '');
+  expect(facts.facts).toHaveLength(1);
+  expect(score.unverified).toEqual([]);
+  expect(score.claims).toHaveLength(1);
+});
+
+it('助詞のある決算文章でも対象行の実績・予想区分を検証する', () => {
+  const quote = '営業利益は20百万円です。';
+  const page: ExtractedPage = { pageNumber: 1, text: `2026年3月期 決算短信\n${quote}`, spans: [] };
+  const fact: VerifiedFact = {
+    id: 'f1',
+    importance: 'key',
+    kind: 'number',
+    label: '営業利益',
+    value: 20,
+    unit: '百万円',
+    period: '2026年3月期',
+    valueKind: 'actual',
+    column: null,
+    statement: null,
+    page: 1,
+    quote,
+    evidence: null,
+  };
+  const parse = (valueKind: VerifiedFact['valueKind']) =>
+    parseFactSummary(
+      JSON.stringify({
+        version: 3,
+        documentType: 'earnings',
+        facts: [{ ...fact, valueKind }],
+        unverified: [],
+      }),
+      'earnings',
+      [page],
+      false
+    );
+  expect(parse('actual').facts).toHaveLength(1);
+  expect(parse('forecast').facts).toHaveLength(0);
+});
+
+it.each(['店舗', '人', '件'])('非財務の%s単位を要約と採点で共有する', (unit) => {
+  const page: ExtractedPage = {
+    pageNumber: 1,
+    text: `会社 全社\n2026年7月14日\n稼働数量 120${unit}`,
+    spans: [
+      span('period', '2026年7月14日', 180, 0, 80),
+      span('metric', '稼働数量', 0, 40, 100),
+      span('value', `120${unit}`, 205, 40, 40),
+    ],
+  };
+  const rawSource = {
+    ...source('2026年7月14日', 'eventDate'),
+    metric: '稼働数量',
+    basis: '非財務',
+    scope: '全社',
+    evidence: {
+      valueId: 'value',
+      metricIds: ['metric'],
+      periodIds: ['period'],
+      unitIds: ['value'],
+      contextIds: [],
+    },
+  };
+  const fact: VerifiedFact = {
+    id: 'f1',
+    importance: 'key',
+    kind: 'number',
+    label: rawSource.metric,
+    value: 120,
+    unit,
+    period: rawSource.period,
+    valueKind: 'actual',
+    column: null,
+    statement: null,
+    page: 1,
+    quote: '',
+    evidence: rawSource.evidence,
+  };
+  const facts = parseFactSummary(
+    JSON.stringify({ version: 3, documentType: 'businessUpdate', facts: [fact], unverified: [] }),
+    'businessUpdate',
+    [page]
+  );
+  const score = validateScoreInput(input(rawSource, 120, unit), [document(page)], '');
+  expect(facts.facts).toHaveLength(1);
+  expect(score.claims).toHaveLength(1);
+  expect(score.unverified).toEqual([]);
+});

@@ -1,5 +1,6 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
+import { parseQuantity, isUnitToken } from './quantity';
 
 export interface TableEvidence {
   valueId: string;
@@ -19,20 +20,7 @@ export const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，
 const center = (s: PdfSpan) => s.x + s.width / 2;
 const sameRow = (a: PdfSpan, b: PdfSpan) =>
   Math.abs(a.y - b.y) <= Math.min(a.height, b.height) * 0.3;
-const quantity = (text: string): { value: number; unit: string | null } | null => {
-  const normalized = compact(text).replace(/^[△▲]/, '-');
-  const match = normalized.match(
-    /^(-?\d+(?:\.\d+)?)(千円|百万円|億円|円|%|株|千株|百株|倍)?(?:(\d{2})銭)?$/
-  );
-  if (!match || (match[3] && match[2] !== '円')) return null;
-  const base = Number(match[1]);
-  return {
-    value: base + ((base < 0 ? -1 : 1) * Number(match[3] ?? 0)) / 100,
-    unit: match[2] ?? null,
-  };
-};
-const numeric = (text: string) => quantity(text)?.value ?? null;
-const unitPattern = /^(?:千円|百万円|億円|円(?:銭)?|%|株|千株|百株|倍)$/;
+const numeric = (text: string) => parseQuantity(text)?.value ?? null;
 const joined = (spans: PdfSpan[]) =>
   compact(
     [...spans]
@@ -86,7 +74,7 @@ export function verifyTableEvidence(
   if (metricText !== label && !dividend) fail('指標名');
   const expectedUnit = compact(claim.unit).replace(/^円銭$/, '円');
   const inlineUnit =
-    units.length === 1 && units[0].id === value.id ? quantity(value.text)?.unit : null;
+    units.length === 1 && units[0].id === value.id ? parseQuantity(value.text)?.unit : null;
   const unitText =
     inlineUnit ??
     joined(units)
@@ -96,13 +84,20 @@ export function verifyTableEvidence(
   if (unitText !== expectedUnit) fail('単位');
 
   const rowNumbers = page.spans.filter(
-    (s) => sameRow(s, value) && (numeric(s.text) !== null || /^[－―—–-]$/.test(compact(s.text)))
+    (s) =>
+      sameRow(s, value) &&
+      ![...metrics, ...periods, ...contexts].some((ref) => ref.id === s.id) &&
+      (numeric(s.text) !== null || /^[－―—–-]$/.test(compact(s.text)))
   );
   const metricOnRow = metrics.every((s) => sameRow(s, value) && s.x + s.width <= value.x);
   const singleValueRow = metricOnRow && rowNumbers.length === 1;
-  const allUnits = page.spans.filter((s) => unitPattern.test(compact(s.text)) && s.y < value.y);
-  const localUnit =
-    units.length === 1 && unitPattern.test(compact(units[0].text)) ? units[0] : null;
+  const allUnits = page.spans.filter(
+    (s) =>
+      isUnitToken(compact(s.text)) &&
+      s.y < value.y &&
+      ![...metrics, ...periods, ...contexts].some((ref) => ref.id === s.id)
+  );
+  const localUnit = units.length === 1 && isUnitToken(compact(units[0].text)) ? units[0] : null;
   let anchors: PdfSpan[];
   let metricBand: [number, number];
   let unitY: number;
@@ -161,8 +156,9 @@ export function verifyTableEvidence(
     const numericRowsAbove = page.spans.filter(
       (s) =>
         s.y < unitY &&
-        numeric(s.text) !== null &&
-        page.spans.filter((other) => sameRow(s, other) && numeric(other.text) !== null).length >= 2
+        parseQuantity(s.text)?.unit === null &&
+        page.spans.filter((other) => sameRow(s, other) && parseQuantity(other.text)?.unit === null)
+          .length >= 2
     );
     const sectionHeadings = page.spans.filter(
       (s) =>
@@ -181,7 +177,8 @@ export function verifyTableEvidence(
         inBand(s) &&
         s.width < metricBand[1] - metricBand[0] &&
         !selected.some((ref) => ref.id === s.id) &&
-        !unitPattern.test(compact(s.text)) &&
+        !units.some((unit) => unit.id === s.id) &&
+        compact(s.text) !== expectedUnit &&
         !/経営成績|業績|配当の状況|決算短信|増減率/.test(s.text)
     );
     if (omitted.length) fail('指標見出しの一部が未参照');
@@ -217,8 +214,17 @@ export function verifyTableEvidence(
   const nearest = headings.sort((a, b) => b.y - a.y)[0];
   if (
     contexts.some((context) =>
-      page.spans.some(
-        (s) => s.y > context.y && s.y < firstHeaderY && unitPattern.test(compact(s.text))
+      allUnits.some(
+        (unit) =>
+          unit.y > context.y &&
+          unit.y < firstHeaderY &&
+          page.spans.some(
+            (cell) =>
+              cell.y > unit.y &&
+              cell.y < firstHeaderY &&
+              numeric(cell.text) !== null &&
+              Math.abs(center(cell) - center(unit)) <= unit.width / 2
+          )
       )
     )
   )
@@ -304,12 +310,24 @@ function verifyPeriodAndKind(claim: NumericClaim, axis: string, context: string,
 }
 
 /** 表と本文は別の根拠形式。本文でも指標・数値・単位の直接対応だけを採用する。 */
-export function verifyProseEvidence(page: ExtractedPage, quote: string, claim: NumericClaim): void {
-  const normalized = compact(quote).replace(/[△▲](?=\d)/g, '-');
-  if (
-    !compact(page.text).includes(compact(quote)) ||
-    !normalized.includes(`${compact(claim.label)}${claim.value}${compact(claim.unit)}`)
-  )
+export function verifyProseEvidence(
+  page: ExtractedPage,
+  quote: string,
+  claim: NumericClaim
+): number {
+  const escape = (text: string) => compact(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 助詞と句読点だけを最大6文字許容し、他の指標・数量・文を跨がない。
+  const binding = new RegExp(
+    `${escape(claim.label)}[はがをにでと、:()]{0,6}(-?\\d+(?:\\.\\d+)?)${escape(claim.unit)}(?![\\d.%/])`,
+    'u'
+  );
+  const lineIndex = quote.split('\n').findIndex((line) => {
+    const normalized = compact(line).replace(/[△▲](?=\d)/g, '-');
+    return [...normalized.matchAll(new RegExp(binding, 'gu'))].some(
+      (match) => Number(match[1]) === claim.value
+    );
+  });
+  if (!compact(page.text).includes(compact(quote)) || lineIndex < 0)
     throw new Error('引用で数値・単位・指標・期間の対応を確認できません');
   // 数量セルの並ぶ行を説明文として選んで、セル参照の検証を迂回させない。
   const cells = page.spans.filter((s) => numeric(s.text) === claim.value);
@@ -321,4 +339,5 @@ export function verifyProseEvidence(page: ExtractedPage, quote: string, claim: N
     )
   )
     throw new Error('表の数値には根拠セルIDが必要です');
+  return lineIndex;
 }

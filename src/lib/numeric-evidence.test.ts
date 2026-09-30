@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { verifyTableEvidence, type NumericClaim, type TableEvidence } from './numeric-evidence';
+import {
+  verifyTableEvidence,
+  verifyProseEvidence,
+  type NumericClaim,
+  type TableEvidence,
+} from './numeric-evidence';
+import { extractPageLayout } from './pdf-layout';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 
@@ -11,6 +18,7 @@ const span = (id: string, text: string, x: number, y: number, width = 40): PdfSp
   width,
   height: 10,
 });
+
 const spans = [
   span('context', '2027年5月期 業績予想', 0, 0, 280),
   span('m1', '独自KPI', 200, 20),
@@ -40,6 +48,117 @@ const claim: NumericClaim = {
   valueKind: 'forecast',
 };
 
+describe('本文の指標と数量の対応', () => {
+  const proseClaim = { ...claim, label: '取得価額の総額', value: 10, unit: '億円' };
+  it.each(['', 'は', 'は、', 'が', '：', '（'])('指標と数量の間の「%s」を照合する', (bridge) => {
+    const quote = `取得価額の総額${bridge}10億円です。`;
+    expect(verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, proseClaim)).toBe(
+      0
+    );
+  });
+  it.each([
+    '取得価額の総額は営業利益が10億円です。',
+    '取得価額の総額は5億円、営業利益は10億円です。',
+    '取得価額の総額。10億円です。',
+    '取得価額の総額は\n10億円です。',
+    '取得価額の総額ははははははは10億円です。',
+    '取得価額の総額は110億円です。',
+    '取得価額の総額は10.1億円です。',
+    '取得価額の総額は10百万円です。',
+  ])('別指標・別数値・非連続な対応を拒否する: %s', (quote) => {
+    expect(() =>
+      verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, proseClaim)
+    ).toThrow();
+  });
+});
+
+describe('非財務単位を持つ表', () => {
+  it.each([
+    ['店舗', 120],
+    ['人', 500],
+    ['件', 30],
+    ['kWh', 50],
+    ['㎡', 120],
+  ] as const)('%s単位を値と一体でも列見出しでも照合する', (unit, value) => {
+    for (const inline of [true, false]) {
+      const source = {
+        ...page,
+        spans: spans.map((s) =>
+          s.id === 'u2'
+            ? { ...s, text: unit }
+            : s.id === 'v2'
+              ? { ...s, text: `${value}${inline ? unit : ''}` }
+              : s
+        ),
+      };
+      const refs = { ...evidence, unitIds: [inline ? 'v2' : 'u2'] };
+      expect(verifyTableEvidence(source, refs, { ...claim, value, unit }).evidence.valueId).toBe(
+        'v2'
+      );
+      expect(() => verifyTableEvidence(source, refs, { ...claim, value, unit: '株' })).toThrow(
+        '単位'
+      );
+      expect(() => verifyTableEvidence(source, refs, { ...claim, value: value + 1, unit })).toThrow(
+        '値'
+      );
+    }
+  });
+  it('隣接した数値と非財務単位のPDFアイテムを結合し、後続の項目は含めない', () => {
+    const item = (str: string, x: number, width: number): TextItem => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, 100],
+      width,
+      height: 10,
+      fontName: 'test',
+      hasEOL: false,
+    });
+    const result = extractPageLayout(
+      [item('120', 0, 20), item('店舗', 23, 20), item('合計', 46, 20)],
+      1
+    );
+    expect(result.spans.map((s) => s.text)).toEqual(['120店舗', '合計']);
+    expect(
+      extractPageLayout([item('15円00', 0, 30), item('銭', 33, 10)], 1).spans.map((s) => s.text)
+    ).toEqual(['15円00銭']);
+  });
+  it('複数の数量を含む文字列や欠損を数値として採用しない', () => {
+    for (const text of ['120店舗500人', '－', '不明']) {
+      const source = { ...page, spans: spans.map((s) => (s.id === 'v2' ? { ...s, text } : s)) };
+      expect(() =>
+        verifyTableEvidence(
+          source,
+          { ...evidence, unitIds: ['v2'] },
+          { ...claim, value: 120, unit: '店舗' }
+        )
+      ).toThrow('値');
+    }
+  });
+  it('数字で始まる指標見出しを表の数値行と誤認して限定語を落とせない', () => {
+    const source = {
+      ...page,
+      spans: spans
+        .map((s) =>
+          s.id === 'm1'
+            ? { ...s, text: '1人当たり件数' }
+            : s.id === 'm2'
+              ? { ...s, text: '1店舗当たり売上' }
+              : s
+        )
+        .concat(span('qualifier', '全事業', 300, 10)),
+    };
+    expect(() =>
+      verifyTableEvidence(source, evidence, { ...claim, label: '1店舗当たり売上' })
+    ).toThrow('未参照');
+    expect(
+      verifyTableEvidence(
+        source,
+        { ...evidence, metricIds: ['qualifier', 'm2'] },
+        { ...claim, label: '全事業1店舗当たり売上' }
+      ).evidence.valueId
+    ).toBe('v2');
+  });
+});
 describe('指標名と列順序に依存しない根拠検証', () => {
   it('未知の指標名でも根拠の対応を検証する', () => {
     expect(

@@ -2,6 +2,7 @@ import type { TextItem, TextMarkedContent } from 'pdfjs-dist/types/src/display/a
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { groupTextItemsByY } from './pdf-lines';
 import { cleanPageText } from './page-text';
+import { parseQuantity } from './quantity';
 
 export interface PdfSpan {
   id: string;
@@ -42,6 +43,9 @@ export function extractPageLayout(
   // PDF内で数値・単位・円銭が別アイテムでも、隣接する数量セルとして保持する。
   for (let i = 0; i < spans.length; i++) {
     let text = spans[i].text;
+    const initial = parseQuantity(text);
+    if (initial?.unit && (initial.unit !== '円' || /銭$/.test(text))) continue;
+    let yen = initial?.unit === '円';
     let end = i;
     for (let j = i + 1; j < Math.min(i + 4, spans.length); j++) {
       const previous = spans[j - 1],
@@ -52,12 +56,17 @@ export function extractPageLayout(
       )
         break;
       text += next.text;
-      if (
-        /^[△▲-]?\d[\d,.]*(?:千円|百万円|億円|円(?:\d{2}銭)?|%|株|千株|倍)$/.test(
-          text.normalize('NFKC').replace(/\s/g, '')
-        )
-      )
+      const normalized = text
+        .normalize('NFKC')
+        .replace(/[\s,，]/g, '')
+        .replace(/^[△▲]/, '-');
+      if (yen && !/^-?\d+円(?:\d{2}(?:銭)?)?$/.test(normalized)) break;
+      const quantity = parseQuantity(text);
+      if (quantity?.unit) {
         end = j;
+        if (quantity.unit !== '円' || /銭$/.test(normalized)) break;
+        yen = true;
+      }
     }
     if (end > i) {
       const last = spans[end];

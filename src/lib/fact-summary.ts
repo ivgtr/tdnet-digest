@@ -161,7 +161,7 @@ export function parseFactSummary(
           item.evidence = verified.evidence;
         } else {
           // 説明文は指標・数値・単位の直接対応のみ。表の列を推測する経路は持たない。
-          verifyProseEvidence(page, item.quote, {
+          const proseIndex = verifyProseEvidence(page, item.quote, {
             label: item.label,
             value: item.value,
             unit: item.unit,
@@ -169,14 +169,7 @@ export function parseFactSummary(
             valueKind: String(item.valueKind),
           });
           const quoteLine = findQuoteStart(page.text, item.quote);
-          const proseIndex = item.quote.split('\n').findIndex((line) =>
-            normalizeNumericText(line)
-              .replace(/\s/g, '')
-              .includes(
-                `${normalize(item.label as string)}${item.value}${normalize(item.unit as string)}`
-              )
-          );
-          if (proseIndex < 0 || !periodVerified(page.text, item.period))
+          if (!periodVerified(page.text, item.period))
             throw new Error(`${item.id}: 説明文の指標・数値・単位・期間を確認できません`);
           const lines = page.text.split('\n');
           if (
