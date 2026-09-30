@@ -47,7 +47,7 @@ export interface ScoreSource {
   valueKind: ValueKind;
   metric: string;
   basis: string | null;
-  scope: string;
+  scope: string | null;
 }
 export interface ScoreValue {
   value: number;
@@ -101,10 +101,22 @@ export const SCORE_LIMITS: Record<ScoreCategory, number> = {
   capitalAction: 10,
   cashFlow: 5,
 };
+export function hasComparableScope(
+  scope: unknown,
+  metric: string,
+  metricKind: FactSemantics['metricKind']
+): boolean {
+  return (
+    (typeof scope === 'string' && !!scope.trim()) ||
+    (scope === null && metricKind === 'perShare' && /配当/.test(metric))
+  );
+}
 export function compatible(a: ScoreValue, b: ScoreValue, forecast = false): boolean {
   const x = a.source,
     y = b.source;
   return (
+    hasComparableScope(x.scope, x.metric, x.semantics.metricKind) &&
+    hasComparableScope(y.scope, y.metric, y.semantics.metricKind) &&
     a.unit === b.unit &&
     x.semantics.polarity === y.semantics.polarity &&
     JSON.stringify(x.semantics.qualifiers) === JSON.stringify(y.semantics.qualifiers) &&
@@ -202,6 +214,8 @@ function ownershipRatio(claim: ScoreClaim): number | null {
     a.source.fiscalYear !== b.source.fiscalYear ||
     a.source.period !== b.source.period ||
     a.source.periodKind !== b.source.periodKind ||
+    !hasComparableScope(a.source.scope, a.source.metric, a.source.semantics.metricKind) ||
+    !hasComparableScope(b.source.scope, b.source.metric, b.source.semantics.metricKind) ||
     a.source.scope !== b.source.scope
   )
     return null;

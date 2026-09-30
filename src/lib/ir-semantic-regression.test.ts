@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import corpus from './fixtures/ir-semantic-corpus.json';
@@ -6,7 +6,8 @@ import expectations from './fixtures/ir-semantic-expectations.json';
 import { extractPageLayout, serializeLayout } from './pdf-layout';
 import { parseFactSummary, renderFacts } from './fact-summary';
 import { toValue, validateScoreInput } from './score-extraction';
-import { assessClaim, type ScoreClaim } from './scoring';
+import { assessClaim, inferExperimentalScore, type ScoreClaim } from './scoring';
+import { buildScoreHtml } from '../content/utils/summaryHtmlBuilder';
 import type { VerifiedFact } from './fact-contract';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { validateSavedFacts, validateSavedScore } from './fact-cache';
@@ -147,6 +148,128 @@ describe('実PDFの意味を保った利用経路', () => {
       code: '9313',
     };
     expect(toValue(count, document).source.basis).toBeNull();
+  });
+  it('原文で確定した範囲nullの配当修正を比較・採点・表示・保存復元へ渡す', async () => {
+    const facts = parse(4, expectations[4].facts, true);
+    const dividends = facts.facts.filter((f) => /配当/.test(f.label));
+    const current = dividends.find((f) => f.valueKind === 'forecastAfter')!;
+    const previous = dividends.find((f) => f.valueKind === 'forecastBefore')!;
+    const document = {
+      url: corpus[4].url,
+      pages: sources[4],
+      text: sources[4].map((p) => p.text).join('\n'),
+      publishedDate: '2026-09-10',
+      issuer: current.semantics.subject!,
+      code: '4051',
+    };
+    const raw = JSON.stringify({
+      version: 4,
+      claims: [
+        {
+          category: 'shareholderReturn',
+          label: '配当予想の修正',
+          current: current.id,
+          previous: previous.id,
+          earlier: null,
+          relatedValue: null,
+          companyExplanation: null,
+        },
+      ],
+      unverified: [],
+    });
+    const input = validateScoreInput(raw, [{ document, facts }], '元PDF内');
+    expect(input.unverified).toEqual([]);
+    expect(input.claims).toHaveLength(1);
+    expect(input.claims[0].current).toMatchObject({
+      value: 127,
+      unit: '円',
+      source: { scope: null, basis: null, semantics: current.semantics },
+    });
+    expect(input.claims[0].previous).toMatchObject({
+      value: 125,
+      source: { scope: null, basis: null },
+    });
+    expect(assessClaim(input.claims[0])).toContain('125→127円');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                finish_reason: 'stop',
+                message: {
+                  content: JSON.stringify({
+                    value: 50,
+                    factors: [{ index: 0, impact: 'neutral', strength: 'small' }],
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 }
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const score = await inferExperimentalScore(
+        { provider: 'openai', model: 'fixture', apiKey: 'fixture' },
+        'dividend',
+        input
+      );
+      expect(score.value).toBe(50);
+      expect(buildScoreHtml(score)).toContain('範囲の指定なし');
+      expect(buildScoreHtml(score)).toContain('125→127円');
+      expect(buildScoreHtml(score)).not.toContain('連結');
+      validateSavedScore(JSON.parse(JSON.stringify(score)), facts, document.url);
+      const altered = structuredClone(score);
+      altered.breakdown[0].current.source.scope = '連結';
+      altered.breakdown[0].current.source.semantics.scope = '連結';
+      expect(() => validateSavedScore(altered, facts, document.url)).toThrow('不一致');
+      const mismatched = structuredClone(score);
+      mismatched.breakdown[0].previous!.source.scope = '普通株式';
+      mismatched.breakdown[0].previous!.source.semantics.scope = '普通株式';
+      expect(assessClaim(mismatched.breakdown[0])).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it('配当のnull許容を財務金額・利益率・EPSの範囲欠落へ広げない', () => {
+    const facts = parse(0, expectations[0].facts, true);
+    const document = {
+      url: corpus[0].url,
+      pages: sources[0],
+      text: '',
+      publishedDate: null,
+      issuer: '株式会社BlueMeme',
+      code: '4069',
+    };
+    for (const index of [0, 6, 7]) {
+      const fact = structuredClone(facts.facts[index]);
+      fact.semantics.scope = null;
+      expect(() => toValue(fact, document)).toThrow('範囲');
+    }
+    const dividend = facts.facts[8];
+    const before = toValue(dividend, document);
+    before.source.valueKind = 'forecastBefore';
+    before.source.semantics = { ...before.source.semantics, state: 'forecastBefore' };
+    before.source.scope = before.source.semantics.scope = null;
+    const after = structuredClone(before);
+    after.source.valueKind = 'forecastAfter';
+    after.source.semantics.state = 'forecastAfter';
+    after.source.metric = before.source.metric = '営業利益';
+    after.source.semantics.metricKind = before.source.semantics.metricKind = 'amount';
+    expect(
+      assessClaim({
+        category: 'coreForecast',
+        label: '欠損範囲',
+        current: after,
+        previous: before,
+        earlier: null,
+        relatedValue: null,
+        companyExplanation: null,
+      })
+    ).toBeNull();
   });
   it('会社名を部分名に切り詰めて会社の必須判定を通せない', () => {
     for (const subject of ['株式会社', '株式会社Blue', 'BlueMeme']) {

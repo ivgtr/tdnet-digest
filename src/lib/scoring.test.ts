@@ -144,6 +144,10 @@ describe('共通事実の比較とスコア推論', () => {
     expect(directionOf(c)).toBe('negative');
     shares.source.period = '2026年2月28日時点';
     expect(assessClaim(c)).toBeNull();
+    shares.source.period = current.source.period;
+    current.source.scope = shares.source.scope = null;
+    current.source.semantics.scope = shares.source.semantics.scope = null;
+    expect(assessClaim(c)).toBeNull();
   });
   it('実績と予想、上限、条件の違いを同比較に入れない', () => {
     const a = value(100, 2026),

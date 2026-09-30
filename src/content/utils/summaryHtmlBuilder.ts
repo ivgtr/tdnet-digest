@@ -147,7 +147,7 @@ export function buildScoreHtml(score: ExperimentalScore): string {
     return (
       `${escapeMetadataText(value.source.semantics.qualifiers.join('・'))} ${escapeMetadataText(stateLabels[value.source.semantics.state])} ${escapeMetadataText(String(value.value))}${escapeMetadataText(value.unit)} ` +
       `(${escapeMetadataText(value.source.period)}・${escapeMetadataText(value.source.metric)}・` +
-      `${escapeMetadataText(value.source.basis === null ? '会計基準の指定なし' : value.source.basis)}・${escapeMetadataText(value.source.scope)}、` +
+      `${escapeMetadataText(value.source.basis === null ? '会計基準の指定なし' : value.source.basis)}・${escapeMetadataText(value.source.scope === null ? '範囲の指定なし' : value.source.scope)}、` +
       `${pageLink})「${escapeMetadataText(value.source.quote)}」`
     );
   };

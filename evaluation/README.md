@@ -204,3 +204,7 @@ Anthropicは実クライアントから事実v4の原文照合/表示まで、�
 Backgroundの実メッセージハンドラーを通し、保存BlueMeme原文字のp.1/p.5を選択・p.18を未選択とした初回要約から、全文再抽出を経て追加分析/採点へ進める回帰を追加した。確定事実を採点へそのまま渡し、事実値の改変、PDFバイト変更、全文再取得時のp.18抽出失敗は拒否した。PDF取得/抽出応答とモデル/採点応答は固定した試験であり、実ブラウザー・実APIの成功ではない。
 
 Contentのキャッシュ復元で `example.pdf` / `./example.pdf` / `/inbs/example.pdf` を、Backgroundと同じ絶対URLの保存スコアに照合して復元する回帰を追加した。別PDFの保存URLは拒否し、いずれも要約を保持してAPIを呼ばない。`npx vitest run src/content/hooks/useSummarize.test.ts src/background/index.test.ts` は17件成功。
+
+公開PDFの保存原文字で検証した配当修正125→127円を、確定事実IDの選択→比較→固定APIでの推論→表示→保存スコアv4の復元まで通した。scope/basis=nullと完全な指標名・主体・対象期・修正前後を保持し、範囲の改変/不一致は拒否した。財務金額/利益率/EPSのscope欠落を採点へ入れず、株数比率でも範囲nullを拒否する。固定推論の50点とAPI usageは実モデルの妥当性や成功率の証拠ではない。
+
+最終の `npm test` は23ファイル395件成功、`npm run type-check`、`npm run lint`、`npm run build` も成功。分析指紋はv31へ更新した。今回の3修正を通す実LLM/ブラウザーの追試は未実施で、先に記録した実API比較採点・7月TDnet実経路・未知形式などの未達条件は残る。

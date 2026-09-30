@@ -6,6 +6,7 @@ import { record, exact } from './fact-contract';
 import { standardMetric } from './fact-coverage';
 import {
   compatible,
+  hasComparableScope,
   SCORE_LIMITS,
   type ScoreClaim,
   type ScoreInput,
@@ -31,7 +32,7 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
     !fact.unit ||
     !fact.period ||
     !fact.quantity ||
-    !fact.semantics.scope ||
+    !hasComparableScope(fact.semantics.scope, fact.label, fact.semantics.metricKind) ||
     !fact.semantics.subject ||
     fact.semantics.polarity !== 'affirmative' ||
     fact.semantics.state === 'unspecified' ||

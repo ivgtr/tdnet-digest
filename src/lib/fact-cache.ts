@@ -11,6 +11,7 @@ import { quantityNumber, parseExactQuantity, parseExactRange } from './quantity'
 import { toValue } from './score-extraction';
 import {
   assessClaim,
+  hasComparableScope,
   SCORE_LIMITS,
   scoreVerdict,
   type ExperimentalScore,
@@ -219,9 +220,8 @@ export function validateSavedScore(
     const s = v.source;
     checkSemantics(s.semantics);
     if (
-      !['url', 'quote', 'period', 'metric', 'scope', 'factId'].every(
-        (k) => typeof s[k] === 'string'
-      ) ||
+      !['url', 'quote', 'period', 'metric', 'factId'].every((k) => typeof s[k] === 'string') ||
+      !hasComparableScope(s.scope, String(s.metric), s.semantics.metricKind) ||
       !/^fact-[a-f0-9]{16}$/.test(String(s.factId)) ||
       !Number.isInteger(s.page) ||
       Number(s.page) < 1 ||

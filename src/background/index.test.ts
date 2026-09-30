@@ -287,9 +287,14 @@ describe('要約・採点・追加分析の分離', () => {
         expect(result.score.value).toBe(70);
         expect(mocked.extractScoreInput.mock.calls[0][4]).toEqual(summary.facts);
       }
-      expect(
-        vi.mocked(chrome.runtime.sendMessage).mock.calls.map(([r]) => r.extractionMode)
-      ).toEqual(['smart', 'full']);
+      expect(chrome.runtime.sendMessage).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ extractionMode: 'smart' })
+      );
+      expect(chrome.runtime.sendMessage).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ extractionMode: 'full' })
+      );
 
       const changed = structuredClone(summary.facts);
       changed.facts[0].value = 1;
