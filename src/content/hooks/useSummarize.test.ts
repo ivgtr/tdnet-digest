@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
-import { renderFacts } from '@/lib/fact-summary';
+import { textPage, numberCandidate } from '@/lib/fixtures/v4-test-source';
+import { parseFactSummary, renderFacts } from '@/lib/fact-summary';
 import { useSummarize } from './useSummarize';
 
 const stateSetters = vi.hoisted(() => [] as Array<ReturnType<typeof vi.fn>>);
@@ -42,7 +43,7 @@ describe('要約モード別の表示とキャッシュ', () => {
     const responseFor = (mode: 'smart' | 'full') => ({
       error: null,
       summary: `${mode}の要約`,
-      facts: { version: 3, documentType: 'other', facts: [], unverified: [] },
+      facts: { version: 4, documentType: 'other', facts: [], unverified: [] },
       resultId: (mode === 'full' ? 'a' : 'b').repeat(64),
       metadata: {
         analysisFingerprint: buildAnalysisFingerprint({
@@ -99,7 +100,7 @@ describe('要約モード別の表示とキャッシュ', () => {
       model: 'gpt-4o',
       extractionMode: 'full',
     });
-    const facts = { version: 3, documentType: 'other', facts: [], unverified: [] };
+    const facts = { version: 4, documentType: 'other', facts: [], unverified: [] };
     stateOverrides.set(1, {
       summary: '検証済み要約',
       error: null,
@@ -149,7 +150,19 @@ describe('要約モード別の表示とキャッシュ', () => {
       model: 'gpt-4o',
       extractionMode: 'full',
     });
-    const facts = { version: 3, documentType: 'other' as const, facts: [], unverified: [] };
+    const source = textPage(
+      '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
+    );
+    const facts = parseFactSummary(
+      JSON.stringify({
+        version: 4,
+        documentType: 'other',
+        facts: [numberCandidate(source)],
+        unverified: [],
+      }),
+      'other',
+      [source]
+    );
     const summaryKey = `summaryCacheV2:${buildSummaryCacheKey(pdfUrl, fingerprint)}`;
     const remove = vi.fn(async () => {});
     vi.stubGlobal('chrome', {
@@ -166,10 +179,14 @@ describe('要約モード別の表示とキャッシュ', () => {
                     summary: renderFacts(facts),
                     facts,
                     resultId: id,
-                    metadata: { analysisFingerprint: fingerprint, analysisSchemaVersion: 3 },
+                    metadata: {
+                      analysisFingerprint: fingerprint,
+                      analysisSchemaVersion: 4,
+                      documentHash: 'c'.repeat(64),
+                    },
                   },
                 }
-              : { [`scoreCacheV3:${id}`]: { value: null, unverified: ['過去の失敗'] } }
+              : { [`scoreCacheV4:${id}`]: { value: null, unverified: ['過去の失敗'] } }
           ),
           remove,
         },
@@ -179,7 +196,7 @@ describe('要約モード別の表示とキャッシュ', () => {
 
     const hook = useSummarize({ pdfUrl, title: '開示', code: '1234', companyName: '会社' });
     await hook.showCached();
-    expect(remove).toHaveBeenCalledWith(`scoreCacheV3:${id}`);
+    expect(remove).toHaveBeenCalledWith(`scoreCacheV4:${id}`);
     expect(stateSetters[2]).toHaveBeenLastCalledWith({ loading: false, data: null, error: null });
     expect(stateSetters[6]).toHaveBeenLastCalledWith(true);
   });

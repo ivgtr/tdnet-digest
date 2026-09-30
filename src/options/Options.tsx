@@ -135,7 +135,9 @@ const Options: React.FC = () => {
               `scoreCacheV1:${entry.resultId}`,
               `scoreCacheV2:${entry.resultId}`,
               `scoreCacheV3:${entry.resultId}`,
+              `scoreCacheV4:${entry.resultId}`,
               `analysisCacheV1:${entry.resultId}`,
+              `analysisCacheV2:${entry.resultId}`,
             ]
           : []),
       ],
@@ -151,7 +153,9 @@ const Options: React.FC = () => {
           key.startsWith('scoreCacheV1:') ||
           key.startsWith('scoreCacheV2:') ||
           key.startsWith('scoreCacheV3:') ||
+          key.startsWith('scoreCacheV4:') ||
           key.startsWith('analysisCacheV1:') ||
+          key.startsWith('analysisCacheV2:') ||
           key === 'summaryCache'
       );
       chrome.storage.local.remove(keys, loadCacheEntries);

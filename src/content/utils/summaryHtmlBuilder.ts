@@ -1,3 +1,4 @@
+import { stateLabels } from '@/lib/fact-summary';
 /**
  * 要約表示のHTML生成ユーティリティ
  * innerHTML で管理外DOMに挿入するためのテンプレート生成
@@ -144,9 +145,9 @@ export function buildScoreHtml(score: ExperimentalScore): string {
       /* invalid evidence URL is shown without a link */
     }
     return (
-      `${escapeMetadataText(String(value.value))}${escapeMetadataText(value.unit)} ` +
+      `${escapeMetadataText(value.source.semantics.qualifiers.join('・'))} ${escapeMetadataText(stateLabels[value.source.semantics.state])} ${escapeMetadataText(String(value.value))}${escapeMetadataText(value.unit)} ` +
       `(${escapeMetadataText(value.source.period)}・${escapeMetadataText(value.source.metric)}・` +
-      `${escapeMetadataText(value.source.basis)}・${escapeMetadataText(value.source.scope)}、` +
+      `${escapeMetadataText(value.source.basis === null ? '会計基準の指定なし' : value.source.basis)}・${escapeMetadataText(value.source.scope)}、` +
       `${pageLink})「${escapeMetadataText(value.source.quote)}」`
     );
   };

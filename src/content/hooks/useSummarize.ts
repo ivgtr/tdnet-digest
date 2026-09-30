@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
 import { FACT_SCHEMA_VERSION, renderFacts } from '@/lib/fact-summary';
+import { validateSavedFacts, validateSavedScore } from '@/lib/fact-cache';
 import type { FactSummary } from '@/lib/fact-summary';
-import type { AdditionalAnalysis } from '@/lib/additional-analysis';
+import { parseAnalysis, type AdditionalAnalysis } from '@/lib/additional-analysis';
 import type { ExperimentalScore } from '@/lib/scoring';
 import type { SummaryMetadata, ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 
@@ -26,18 +27,21 @@ export interface Stage<T> {
 }
 const emptyStage = <T>(): Stage<T> => ({ loading: false, data: null, error: null });
 const SUMMARY_PREFIX = 'summaryCacheV2:';
-const SCORE_PREFIX = 'scoreCacheV3:';
-const ANALYSIS_PREFIX = 'analysisCacheV1:';
+const SCORE_PREFIX = 'scoreCacheV4:';
+const ANALYSIS_PREFIX = 'analysisCacheV2:';
 function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is CachedSummary {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<CachedSummary>;
   try {
+    validateSavedFacts(item.facts);
     return (
       typeof item.summary === 'string' &&
       typeof item.resultId === 'string' &&
       /^[a-f0-9]{64}$/.test(item.resultId) &&
       item.facts?.version === FACT_SCHEMA_VERSION &&
       item.metadata?.analysisSchemaVersion === FACT_SCHEMA_VERSION &&
+      typeof item.metadata.documentHash === 'string' &&
+      /^[a-f0-9]{64}$/.test(item.metadata.documentHash) &&
       item.metadata?.analysisFingerprint !== undefined &&
       buildSummaryCacheKey(pdfUrl, item.metadata.analysisFingerprint) === key &&
       renderFacts(item.facts) === item.summary
@@ -116,26 +120,45 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     });
   }, [cacheKey, pdfUrl]);
 
-  const restoreStages = useCallback(async (id: string) => {
-    const data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
-    if (idRef.current !== id) return;
-    const cachedScore = data[SCORE_PREFIX + id] as ExperimentalScore | undefined;
-    if (cachedScore?.value === null) {
-      await chrome.storage.local.remove(SCORE_PREFIX + id);
+  const restoreStages = useCallback(
+    async (id: string, facts: FactSummary) => {
+      const data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
       if (idRef.current !== id) return;
-    }
-    setScore(
-      cachedScore && cachedScore.value !== null
-        ? { loading: false, data: cachedScore, error: null }
-        : emptyStage()
-    );
-    setAnalysis(
-      data[ANALYSIS_PREFIX + id]
-        ? { loading: false, data: data[ANALYSIS_PREFIX + id], error: null }
-        : emptyStage()
-    );
-    setStagesReady(true);
-  }, []);
+      const cachedScore = data[SCORE_PREFIX + id] as ExperimentalScore | undefined;
+      if (cachedScore?.value === null) {
+        await chrome.storage.local.remove(SCORE_PREFIX + id);
+        if (idRef.current !== id) return;
+      }
+      try {
+        if (cachedScore && cachedScore.value !== null) {
+          validateSavedScore(cachedScore, facts, pdfUrl);
+          setScore({ loading: false, data: cachedScore, error: null });
+        } else setScore(emptyStage());
+      } catch {
+        setScore({
+          loading: false,
+          data: null,
+          error: '保存された採点の形式・確定事実との対応が不正です',
+        });
+      }
+      try {
+        const entry = data[ANALYSIS_PREFIX + id];
+        setAnalysis(
+          entry
+            ? { loading: false, data: parseAnalysis(JSON.stringify(entry), facts), error: null }
+            : emptyStage()
+        );
+      } catch {
+        setAnalysis({
+          loading: false,
+          data: null,
+          error: '保存された追加分析の形式・根拠が不正です',
+        });
+      }
+      setStagesReady(true);
+    },
+    [pdfUrl]
+  );
 
   const showCached = useCallback(async () => {
     const key = keyRef.current;
@@ -144,7 +167,17 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     const data = await chrome.storage.local.get(SUMMARY_PREFIX + key);
     if (key !== keyRef.current) return;
     const entry = data[SUMMARY_PREFIX + key] as CachedSummary | undefined;
-    if (!isCachedSummary(entry, key, pdfUrl)) return;
+    if (!isCachedSummary(entry, key, pdfUrl)) {
+      if (entry !== undefined)
+        setResult({
+          summary: null,
+          metadata: null,
+          facts: null,
+          resultId: null,
+          error: '保存された現行要約の形式・原数量・設定が不正です。再要約してください。',
+        });
+      return;
+    }
     idRef.current = entry.resultId;
     setResult({
       summary: entry.summary,
@@ -153,7 +186,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       resultId: entry.resultId,
       error: null,
     });
-    await restoreStages(entry.resultId);
+    await restoreStages(entry.resultId, entry.facts);
   }, [restoreStages, pdfUrl]);
 
   const summarize = useCallback(

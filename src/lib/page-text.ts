@@ -27,21 +27,25 @@ export function cleanPageText(text: string, pageNumber: number): string {
 }
 
 /** LLMへ渡すページ番号付きテキストを生成する。 */
-export function serializePagesForAnalysis(pages: ExtractedPage[]): string {
+export function serializePagesForAnalysis(
+  pages: Array<Pick<ExtractedPage, 'pageNumber' | 'text'>>
+): string {
   return pages
     .map(({ pageNumber, text }) => `[${ANALYSIS_PAGE_MARKER}:${pageNumber}]\n${text}`)
     .join('\n\n');
 }
 
 /** 既存のセクション検出・ページスコアリング向け形式へ変換する。 */
-export function serializePagesForDetection(pages: ExtractedPage[]): string {
+export function serializePagesForDetection(
+  pages: Array<Pick<ExtractedPage, 'pageNumber' | 'text'>>
+): string {
   return pages.map(({ pageNumber, text }) => `${pageNumber}\n${text}`).join('\n\n');
 }
 
-export function selectExtractedPages(
-  pages: ExtractedPage[],
+export function selectExtractedPages<T extends Pick<ExtractedPage, 'pageNumber' | 'text'>>(
+  pages: T[],
   selectedPageNumbers: number[]
-): ExtractedPage[] {
+): T[] {
   const selected = new Set(selectedPageNumbers);
   return pages.filter(({ pageNumber }) => selected.has(pageNumber));
 }

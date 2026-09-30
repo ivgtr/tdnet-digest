@@ -18,6 +18,8 @@ import {
   type QualityCheckResult,
 } from '@/lib/section-detector';
 import { extractPageLayout } from '@/lib/pdf-layout';
+import { validatePages } from '@/lib/fact-validation';
+import { tableContinuations, noteLinks } from '@/lib/document-links';
 import {
   selectExtractedPages,
   serializePagesForAnalysis,
@@ -110,7 +112,21 @@ async function extractSmartMode(
       sectionsUsed = [`topK=${params.topK} (スコアリング)`];
     }
 
-    extractedPageData = selectExtractedPages(allPages, extractedPages);
+    const closure = new Set(extractedPages);
+    closure.add(1);
+    let changed = true;
+    while (changed) {
+      const size = closure.size;
+      for (const link of tableContinuations(allPages))
+        if (closure.has(link.fromPage) || closure.has(link.toPage)) {
+          closure.add(link.fromPage);
+          closure.add(link.toPage);
+        }
+      for (const link of noteLinks(allPages))
+        if (closure.has(link.fromPage)) closure.add(Number(link.noteId.match(/^p(\d+)/)![1]));
+      changed = closure.size !== size;
+    }
+    extractedPageData = selectExtractedPages(allPages, [...closure]);
     extractedPages = extractedPageData.map(({ pageNumber }) => pageNumber);
     const qualityText = extractedPageData.map(({ text }) => text).join('\n\n');
 
@@ -148,9 +164,18 @@ async function extractSmartMode(
   };
 
   // 品質警告を追加（最終状態の qualityCheck を使用）
-  if (!qualityCheck.passed) {
+  if (
+    !qualityCheck.passed ||
+    extractedPages.length < totalPages ||
+    allPages.some((p) => p.status === 'empty')
+  ) {
     metadata.qualityWarning = {
-      message: '一部の重要情報が抽出できなかった可能性があります。全文抽出を推奨します。',
+      message: `選択ページ ${extractedPages.length}/${totalPages}。文字を取得できないページ ${
+        allPages
+          .filter((p) => p.status === 'empty')
+          .map((p) => p.pageNumber)
+          .join(', ') || 'なし'
+      }。キーワード一致は意味・網羅性の保証ではありません。全文抽出を推奨します。`,
       missingKeywords: qualityCheck.missingKeywords,
       matchRate: qualityCheck.matchRate,
     };
@@ -158,7 +183,10 @@ async function extractSmartMode(
 
   return {
     text: analysisText,
-    pages: extractedPageData,
+    pages: allPages.map((page) => ({
+      ...page,
+      selection: extractedPages.includes(page.pageNumber) ? 'selected' : 'omitted',
+    })),
     metadata,
   };
 }
@@ -239,11 +267,18 @@ async function extractTextFromPDF(
         pages.push({
           pageNumber: pageNum,
           spans: [],
-          text: `[ページ ${pageNum} の抽出に失敗しました]`,
+          sourceItems: [],
+          blocks: [],
+          quantities: [],
+          status: 'failed',
+          selection: 'selected',
+          text: '',
         });
       }
     }
 
+    await pdf.destroy();
+    validatePages(pages);
     if (!pages.some(({ text }) => text.trim())) {
       throw new Error('PDFからテキストを抽出できませんでした。画像PDFの可能性があります。');
     }
@@ -263,6 +298,18 @@ async function extractTextFromPDF(
           sectionsUsed: ['全ページ'],
           extractionMode: 'full',
           documentType,
+          ...(pages.some((p) => p.status === 'empty')
+            ? {
+                qualityWarning: {
+                  message: `文字を取得できないページ: ${pages
+                    .filter((p) => p.status === 'empty')
+                    .map((p) => p.pageNumber)
+                    .join(', ')}。画像・回転表等は未対応です。`,
+                  missingKeywords: [],
+                  matchRate: 0,
+                },
+              }
+            : {}),
         },
       };
     } else {

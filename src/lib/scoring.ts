@@ -1,3 +1,4 @@
+import type { FactSemantics } from './fact-contract';
 import type { TableEvidence } from './numeric-evidence';
 import type { DocumentType } from './document-type';
 import { generateText, type LLMConfig } from './llm-client';
@@ -24,8 +25,18 @@ export type PeriodKind =
   | 'standaloneQ4'
   | 'month'
   | 'eventDate';
-export type ValueKind = 'actual' | 'forecastBefore' | 'forecastAfter';
+export type ValueKind =
+  | 'actual'
+  | 'forecast'
+  | 'forecastBefore'
+  | 'forecastAfter'
+  | 'planned'
+  | 'decided'
+  | 'contracted'
+  | 'completed';
 export interface ScoreSource {
+  factId: string;
+  semantics: FactSemantics;
   url: string;
   page: number;
   quote: string;
@@ -35,7 +46,7 @@ export interface ScoreSource {
   periodKind: PeriodKind;
   valueKind: ValueKind;
   metric: string;
-  basis: string;
+  basis: string | null;
   scope: string;
 }
 export interface ScoreValue {
@@ -95,6 +106,10 @@ export function compatible(a: ScoreValue, b: ScoreValue, forecast = false): bool
     y = b.source;
   return (
     a.unit === b.unit &&
+    x.semantics.polarity === y.semantics.polarity &&
+    JSON.stringify(x.semantics.qualifiers) === JSON.stringify(y.semantics.qualifiers) &&
+    JSON.stringify(x.semantics.conditions) === JSON.stringify(y.semantics.conditions) &&
+    x.semantics.subject === y.semantics.subject &&
     x.metric === y.metric &&
     x.basis === y.basis &&
     x.scope === y.scope &&

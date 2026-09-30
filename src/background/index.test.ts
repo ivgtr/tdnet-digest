@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { textPage, numberCandidate } from '../lib/fixtures/v4-test-source';
+import { parseFactSummary } from '../lib/fact-summary';
 import type { FactSummary } from '../lib/fact-summary';
 
 const mocked = vi.hoisted(() => ({
@@ -27,31 +29,26 @@ vi.mock('@/lib/disclosure-search', () => ({
   fetchCandidatePdf: vi.fn(),
 }));
 
-const page = '2026年通期 営業利益 1150百万円';
-const facts: FactSummary = {
-  version: 3,
-  documentType: 'earningsRevision',
-  unverified: [],
-  facts: [
-    {
-      id: 'f1',
-      importance: 'key',
-      kind: 'number',
-      label: '営業利益',
-      value: 1150,
-      unit: '百万円',
-      period: '2026年通期',
-      valueKind: 'forecastAfter',
-      column: null,
-      statement: null,
-      page: 1,
-      evidence: null,
-      quote: page,
-    },
-  ],
-};
+const nativePage = textPage(
+  '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 今回予想\n営業利益は1150百万円です。'
+);
+const page = nativePage.text;
+const candidate = numberCandidate(nativePage, '営業利益', 1150);
+candidate.valueKind = 'forecastAfter';
+candidate.semantics.state = 'forecastAfter';
+const facts: FactSummary = parseFactSummary(
+  JSON.stringify({
+    version: 4,
+    documentType: 'earningsRevision',
+    facts: [candidate],
+    unverified: [],
+  }),
+  'earningsRevision',
+  [nativePage]
+);
 
 async function setup(scoring: boolean, allowPastPdf = true, withDate = false, legacy = false) {
+  const extractionPage = withDate ? textPage(page + '\n2026年8月13日') : nativePage;
   let listener: (
     request: unknown,
     sender: unknown,
@@ -68,8 +65,8 @@ async function setup(scoring: boolean, allowPastPdf = true, withDate = false, le
       getContexts: async () => [{ contextType: 'OFFSCREEN_DOCUMENT' }],
       sendMessage: async () => ({
         success: true,
-        text: `[PDF_PAGE:1]\n${withDate ? '2026年8月13日\n' : ''}${page}`,
-        pages: [{ pageNumber: 1, text: page, spans: [] }],
+        text: `[PDF_PAGE:1]\n${extractionPage.text}`,
+        pages: [extractionPage],
         metadata: {
           totalPages: 1,
           extractedPages: [1],
@@ -162,7 +159,7 @@ describe('要約・採点・追加分析の分離', () => {
   it('スコアOFFでも追加分析を明示操作で実行できる', async () => {
     mocked.generateText.mockResolvedValueOnce(JSON.stringify(facts)).mockResolvedValueOnce(
       JSON.stringify({
-        version: 1,
+        version: 2,
         interpretation: { text: '判断不能', factIds: [] },
         shortTerm: { text: '判断不能', factIds: [] },
         mediumTerm: { text: '判断不能', factIds: [] },
