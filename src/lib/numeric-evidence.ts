@@ -316,15 +316,16 @@ export function verifyProseEvidence(
   claim: NumericClaim
 ): number {
   const escape = (text: string) => compact(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // 助詞と句読点だけを最大6文字許容し、他の指標・数量・文を跨がない。
+  // 複合助詞は語単位で認める。任意のひらがなは許さず、否定・概数の語を跨がない。
+  const bridge = '((?:について|に関して|に対して|において|として|[はがをにでと、:()]){0,6})';
   const binding = new RegExp(
-    `${escape(claim.label)}[はがをにでと、:()]{0,6}(-?\\d+(?:\\.\\d+)?)${escape(claim.unit)}(?![\\d.%/])`,
+    `${escape(claim.label)}${bridge}(-?\\d+(?:\\.\\d+)?)${escape(claim.unit)}(?![\\d.%/])`,
     'u'
   );
   const lineIndex = quote.split('\n').findIndex((line) => {
     const normalized = compact(line).replace(/[△▲](?=\d)/g, '-');
     return [...normalized.matchAll(new RegExp(binding, 'gu'))].some(
-      (match) => Number(match[1]) === claim.value
+      (match) => match[1].length <= 6 && Number(match[2]) === claim.value
     );
   });
   if (!compact(page.text).includes(compact(quote)) || lineIndex < 0)

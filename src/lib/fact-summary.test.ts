@@ -35,6 +35,43 @@ describe('事実要約の原文照合', () => {
     expect(renderFacts(checked)).toContain('1150百万円（2026年通期');
     expect(renderFacts(checked)).toContain('PDF p.1');
   });
+  it.each([
+    ['営業利益', 'については', 20, '百万円'],
+    ['取得価額の総額', 'として', 10, '億円'],
+  ] as const)(
+    '複合助詞を含む%sの本文を照合し、対象行の実績区分を確認する',
+    (label, bridge, value, unit) => {
+      const quote = `2026年3月期 決算短信\n${label}${bridge}${value}${unit}です。`;
+      const source = [{ pageNumber: 1, spans: [], text: quote }];
+      const candidate = {
+        ...fact,
+        label,
+        value,
+        unit,
+        period: '2026年3月期',
+        valueKind: 'actual',
+        quote,
+      };
+      const parse = (valueKind: string) =>
+        parseFactSummary(
+          JSON.stringify({
+            version: 3,
+            documentType: 'earnings',
+            facts: [{ ...candidate, valueKind }],
+            unverified: [],
+          }),
+          'earnings',
+          source,
+          false
+        );
+      const checked = parse('actual');
+      expect(checked.facts).toHaveLength(1);
+      expect(checked.unverified).toEqual([]);
+      expect(renderFacts(checked)).toContain(`${value}${unit}`);
+      expect(parse('forecast').facts).toHaveLength(0);
+      expect(parse('forecast').unverified.join('')).toContain('実績・予想区分');
+    }
+  );
   it('離れた行の擬似引用を拒否する', () => {
     expect(() =>
       parseFactSummary(raw({ ...fact, quote: '2026年通期\n営業利益 100 1150' }), 'other', pages)
