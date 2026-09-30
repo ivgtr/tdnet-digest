@@ -295,6 +295,15 @@ function validateValue(value: unknown, documents: ScoreDocument[]): ScoreValue {
       throw new Error('根拠参照と引用が一致しません');
     source.quote = checked.quote;
     source.evidence = checked.evidence;
+    const periodIds = [...checked.evidence.periodIds, ...checked.evidence.contextIds];
+    const periodScope = compact(
+      page.spans
+        .filter((span) => periodIds.includes(span.id))
+        .map((span) => span.text)
+        .join('')
+    );
+    if (!validPeriodKind(compact(source.period), source.periodKind, periodScope))
+      throw new Error('参照した根拠で通期・累計・単独の形を確認できません');
   } else {
     const document = documents.find((d) => d.url === source.url)!;
     const page = document.pages.find((p) => p.pageNumber === source.page);
@@ -353,7 +362,8 @@ function validateSource(value: unknown, documents: ScoreDocument[]): ScoreSource
   }
   if (
     !period.includes(String(value.fiscalYear)) ||
-    (!validPeriodKind(period, value.periodKind as string) &&
+    (value.evidence === null &&
+      !validPeriodKind(period, value.periodKind as string) &&
       !quarterlyCumulativeContext(
         period,
         value.periodKind as string,
@@ -396,7 +406,7 @@ function pageBody(document: ScoreDocument, page: number): string | null {
 function compact(value: string): string {
   return value.replace(/\s/g, '').normalize('NFKC');
 }
-function validPeriodKind(period: string, kind: string): boolean {
+function validPeriodKind(period: string, kind: string, scope = period): boolean {
   if (kind === 'fullYear')
     return (
       !/四半期|[1-4]Q|中間期/.test(period) && /通期|年度|決算期|\d{4}年\d{1,2}月期/.test(period)
@@ -409,8 +419,8 @@ function validPeriodKind(period: string, kind: string): boolean {
   return (
     new RegExp(`第?${quarter}四半期|${quarter}Q`).test(period) &&
     (match[1] === 'cumulative'
-      ? /累計|上期|中間期/.test(period) || (quarter === '1' && !/単独/.test(period))
-      : /単独/.test(period))
+      ? !/単独/.test(scope) && (/累計|上期|中間期/.test(scope) || quarter === '1')
+      : /単独/.test(scope) && !/累計|上期|中間期/.test(scope))
   );
 }
 function quarterlyCumulativeContext(

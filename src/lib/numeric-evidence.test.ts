@@ -159,3 +159,61 @@ describe('指標名と列順序に依存しない根拠検証', () => {
     }
   });
 });
+
+describe('数量が1つだけの表', () => {
+  const singlePage = (unit: 'inline' | 'column' | 'shared'): ExtractedPage => ({
+    pageNumber: 1,
+    text: '',
+    spans: [
+      span('period', '2026年7月14日', 180, 0, 80),
+      span('metric', '任意の数量', 0, 40, 100),
+      span('value', unit === 'inline' ? '100株' : '100', 205, 40, 40),
+      ...(unit === 'inline'
+        ? []
+        : [span('unit', unit === 'column' ? '株' : '(単位:株)', 205, 20, 40)]),
+    ],
+  });
+  const singleEvidence = (unit: 'inline' | 'column' | 'shared'): TableEvidence => ({
+    valueId: 'value',
+    metricIds: ['metric'],
+    periodIds: ['period'],
+    unitIds: [unit === 'inline' ? 'value' : 'unit'],
+    contextIds: [],
+  });
+  const singleClaim: NumericClaim = {
+    label: '任意の数量',
+    value: 100,
+    unit: '株',
+    period: '2026年7月14日',
+    valueKind: 'actual',
+  };
+  it.each(['inline', 'column', 'shared'] as const)(
+    '%s単位で、指標が同じ行にあり期間が値の上にある表を照合する',
+    (unit) => {
+      expect(
+        verifyTableEvidence(singlePage(unit), singleEvidence(unit), singleClaim).evidence
+      ).toEqual(singleEvidence(unit));
+    }
+  );
+  it('期間が別の列にある根拠を拒否する', () => {
+    const source = singlePage('inline');
+    source.spans.find((s) => s.id === 'period')!.x = 300;
+    expect(() => verifyTableEvidence(source, singleEvidence('inline'), singleClaim)).toThrow(
+      '期間の行・列'
+    );
+  });
+  it('単位が値の列から離れている根拠を拒否する', () => {
+    const source = singlePage('column');
+    source.spans.find((s) => s.id === 'unit')!.x = 300;
+    expect(() => verifyTableEvidence(source, singleEvidence('column'), singleClaim)).toThrow(
+      '単位の列'
+    );
+  });
+  it('指標が値と同じ行にない曖昧な単一数量表を拒否する', () => {
+    const source = singlePage('inline');
+    source.spans.find((s) => s.id === 'metric')!.y = 20;
+    expect(() => verifyTableEvidence(source, singleEvidence('inline'), singleClaim)).toThrow(
+      '表の行構造が曖昧'
+    );
+  });
+});

@@ -99,6 +99,7 @@ export function verifyTableEvidence(
     (s) => sameRow(s, value) && (numeric(s.text) !== null || /^[－―—–-]$/.test(compact(s.text)))
   );
   const metricOnRow = metrics.every((s) => sameRow(s, value) && s.x + s.width <= value.x);
+  const singleValueRow = metricOnRow && rowNumbers.length === 1;
   const allUnits = page.spans.filter((s) => unitPattern.test(compact(s.text)) && s.y < value.y);
   const localUnit =
     units.length === 1 && unitPattern.test(compact(units[0].text)) ? units[0] : null;
@@ -107,7 +108,7 @@ export function verifyTableEvidence(
   let unitY: number;
   if (inlineUnit) {
     anchors = rowNumbers;
-    const band = bandFor(value, anchors);
+    const band = bandFor(value, anchors, singleValueRow);
     metricBand = [band.left, band.right];
     unitY = value.y;
   } else if (localUnit) {
@@ -115,8 +116,13 @@ export function verifyTableEvidence(
       .filter((s) => sameRow(s, localUnit))
       .sort((a, b) => center(a) - center(b));
     anchors = peers.length >= 2 ? peers : rowNumbers;
-    const slot = bandFor(value, anchors);
-    if (peers.length >= 2 && anchors[slot.index].id !== localUnit.id) fail('単位の列');
+    const slot = bandFor(value, anchors, singleValueRow);
+    if (
+      peers.length >= 2
+        ? anchors[slot.index].id !== localUnit.id
+        : center(localUnit) <= slot.left || center(localUnit) >= slot.right
+    )
+      fail('単位の列');
     // 金額と増減率は別セル。共通の指標見出しが両者にまたがることは許す。
     const next = anchors[slot.index + 1];
     metricBand = [
@@ -138,7 +144,7 @@ export function verifyTableEvidence(
       fail('別の表の単位');
   } else {
     anchors = rowNumbers;
-    const band = bandFor(value, anchors);
+    const band = bandFor(value, anchors, singleValueRow);
     metricBand = [band.left, band.right];
     unitY = Math.max(...units.map((s) => s.y));
     if (!/^\(?単位[:：]/.test(joined(units))) fail('共通単位の見出し');
@@ -234,7 +240,20 @@ export function verifyTableEvidence(
   };
 }
 
-function bandFor(value: PdfSpan, peers: PdfSpan[]): { index: number; left: number; right: number } {
+function bandFor(
+  value: PdfSpan,
+  peers: PdfSpan[],
+  singleValueRow = false
+): { index: number; left: number; right: number } {
+  // 指標と数量が同じ行にある単一数量表は、値の幅で列を限定する。
+  // 他列から境界を推定せず、期間・単位の中央がこの領域内にあることを後段で確認する。
+  if (peers.length === 1 && singleValueRow && value.width > 0) {
+    return {
+      index: 0,
+      left: value.x - value.height / 2,
+      right: value.x + value.width + value.height / 2,
+    };
+  }
   if (peers.length < 2) fail('表の行構造が曖昧');
   const ordered = [...peers].sort((a, b) => center(a) - center(b));
   const distances = ordered.map((s) => Math.abs(center(s) - center(value)));
