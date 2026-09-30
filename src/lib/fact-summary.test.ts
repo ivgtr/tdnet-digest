@@ -3,6 +3,7 @@ import { generateText } from './llm-client';
 import { parseFactSummary, generateVerifiedFactSummary, renderFacts } from './fact-summary';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import type { VerifiedFact } from './fact-contract';
+import { serializeLayout } from './pdf-layout';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const page = textPage(
   '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
@@ -50,6 +51,75 @@ describe('v4の原文と意味の照合', () => {
     ));
   it('原文字の欠損を旧形式のページで補わない', () =>
     expect(() => parse(fact, [{ ...page, sourceItems: undefined } as never])).toThrow('原文字'));
+  it('smartで未選択の見出し本文・IDを入力せず、同ページの事実や根拠参照を拒否する', async () => {
+    const omitted = textPage(
+      '会社名 株式会社テスト\n2026年3月期 業績予想\n取得の方法は翌月の市場買付です。',
+      2
+    );
+    omitted.selection = 'omitted';
+    const sources = [page, omitted];
+    const text = serializeLayout(sources);
+    expect(text).not.toContain('取得の方法は翌月の市場買付です。');
+    expect(text).not.toContain('p2b');
+    expect(text).not.toContain('p2s');
+    const event: VerifiedFact = {
+      ...fact,
+      id: 'f2',
+      kind: 'event',
+      label: '取得の方法',
+      value: null,
+      unit: null,
+      period: null,
+      valueKind: null,
+      statement: omitted.blocks[2].text,
+      quote: omitted.blocks[2].text,
+      page: 2,
+      evidence: {
+        kind: 'prose',
+        blockId: omitted.blocks[2].id,
+        contextIds: [],
+        scopeIds: [],
+        qualifierIds: [],
+      },
+      semantics: {
+        subject: null,
+        scope: null,
+        basis: null,
+        periodKind: 'none',
+        metricKind: 'none',
+        state: 'unspecified',
+        polarity: 'affirmative',
+        qualifiers: [],
+        conditions: [],
+      },
+      quantity: null,
+      dateRoles: null,
+    };
+    expect(parseFactSummary(raw([event]), 'other', sources, false).unverified.join(' ')).toContain(
+      '未選択ページ'
+    );
+    const wrongReference = structuredClone(fact);
+    wrongReference.evidence.scopeIds = [omitted.blocks[0].id];
+    expect(
+      parseFactSummary(raw([wrongReference]), 'other', sources, false).unverified.join(' ')
+    ).toContain('未選択ページの根拠');
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(raw([fact, event]));
+    const result = await generateVerifiedFactSummary(
+      { provider: 'openai', model: 'test', apiKey: 'test' },
+      'other',
+      page.text,
+      sources
+    );
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.facts.unverified.join(' ')).toContain('未選択ページ');
+    expect(vi.mocked(generateText).mock.calls[0][1][1].content).not.toContain(
+      '取得の方法は翌月の市場買付です。'
+    );
+    omitted.status = 'failed';
+    expect(() => parseFactSummary(raw([fact]), 'other', sources)).toThrow('抽出失敗');
+  });
   it('月次の他月割当を拒否し、正しい暦月を採用する', () => {
     const monthly = textPage(
       '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年7月実績\n店舗数は120店舗です。\n2026年8月実績\n店舗数は130店舗です。'

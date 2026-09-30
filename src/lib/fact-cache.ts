@@ -9,6 +9,7 @@ import {
 import { FACT_KEYS } from './fact-validation';
 import { quantityNumber, parseExactQuantity, parseExactRange } from './quantity';
 import { toValue } from './score-extraction';
+import { classifyMetric } from './metric-semantics';
 import {
   assessClaim,
   hasComparableScope,
@@ -221,7 +222,8 @@ export function validateSavedScore(
     checkSemantics(s.semantics);
     if (
       !['url', 'quote', 'period', 'metric', 'factId'].every((k) => typeof s[k] === 'string') ||
-      !hasComparableScope(s.scope, String(s.metric), s.semantics.metricKind) ||
+      !hasComparableScope(s.scope, String(s.metric), s.semantics.metricKind, v.unit) ||
+      s.semantics.metricKind !== classifyMetric(String(s.metric), v.unit) ||
       !/^fact-[a-f0-9]{16}$/.test(String(s.factId)) ||
       !Number.isInteger(s.page) ||
       Number(s.page) < 1 ||

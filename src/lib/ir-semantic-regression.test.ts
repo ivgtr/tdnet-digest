@@ -14,6 +14,7 @@ import { validateSavedFacts, validateSavedScore } from './fact-cache';
 import { validatePages } from './fact-validation';
 import { quantityNumber, parseExactRange } from './quantity';
 import { tableReferenceHints } from './document-structure';
+import { verifyCoverage } from './fact-coverage';
 const sources = corpus.map((entry) =>
   entry.pages.map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber))
 );
@@ -149,6 +150,48 @@ describe('実PDFの意味を保った利用経路', () => {
     };
     expect(toValue(count, document).source.basis).toBeNull();
   });
+  it.each([
+    { valueId: 'p1s233', period: '2025年3月期' },
+    { valueId: 'p1s246', period: '2026年3月期' },
+  ])(
+    '原文に正しい$period実績配当だけでは2027年3月期予想の必須判定を満たさない',
+    ({ valueId, period }) => {
+      const dividend = fact(0, 8);
+      if (dividend.evidence.kind !== 'table') throw new Error('table expected');
+      const hint = tableReferenceHints(sources[0][0]).find((h) => h.valueId === valueId)!;
+      Object.assign(dividend.evidence, hint);
+      dividend.label = sources[0][0].spans
+        .filter((s) => hint.metricIds.includes(s.id))
+        .map((s) => s.text)
+        .join('');
+      dividend.period = period;
+      dividend.valueKind = dividend.semantics.state = 'actual';
+      expect(parse(0, [dividend]).unverified).toEqual([]);
+      const candidates = expectations[0].facts.map((f, index) => (index === 8 ? dividend : f));
+      expect(() => parse(0, candidates, true)).toThrow(
+        '配当の重要事実 対象期=2027年3月期 区分=forecast'
+      );
+      expect(parse(0, expectations[0].facts, true).unverified).toEqual([]);
+    }
+  );
+  it('配当の対象会社・状態・指標を必須判定で照合し、EPSを配当の代用にしない', () => {
+    const summary = parse(0, expectations[0].facts, true);
+    for (const alter of [
+      (f: VerifiedFact) => {
+        f.semantics.subject = '株式会社テスト';
+      },
+      (f: VerifiedFact) => {
+        f.valueKind = f.semantics.state = 'actual';
+      },
+      (f: VerifiedFact) => {
+        f.label = '期末1株当たり当期純利益';
+      },
+    ]) {
+      const changed = structuredClone(summary.facts);
+      alter(changed[8]);
+      expect(() => verifyCoverage('earnings', sources[0], changed)).toThrow('配当の重要事実');
+    }
+  });
   it('原文で確定した範囲nullの配当修正を比較・採点・表示・保存復元へ渡す', async () => {
     const facts = parse(4, expectations[4].facts, true);
     const dividends = facts.facts.filter((f) => /配当/.test(f.label));
@@ -190,26 +233,24 @@ describe('実PDFの意味を保った利用経路', () => {
       source: { scope: null, basis: null },
     });
     expect(assessClaim(input.claims[0])).toContain('125→127円');
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                finish_reason: 'stop',
-                message: {
-                  content: JSON.stringify({
-                    value: 50,
-                    factors: [{ index: 0, impact: 'neutral', strength: 'small' }],
-                  }),
-                },
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: JSON.stringify({
+                  value: 50,
+                  factors: [{ index: 0, impact: 'neutral', strength: 'small' }],
+                }),
               },
-            ],
-          }),
-          { status: 200 }
-        )
-      );
+            },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
     vi.stubGlobal('fetch', fetchMock);
     try {
       const score = await inferExperimentalScore(

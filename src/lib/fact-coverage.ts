@@ -3,6 +3,26 @@ import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
 import { tableContinuations, noteLinks } from './document-links';
 import { compact } from './numeric-evidence';
+import { tableReferenceHints } from './document-structure';
+import { isPerShareDividend } from './metric-semantics';
+
+function reportedDividends(pages: ExtractedPage[]) {
+  return pages.flatMap((page) => {
+    const text = (ids: string[]) =>
+      ids.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
+    return tableReferenceHints(page).flatMap((hint) => {
+      if (!/配当の状況/.test(compact(text(hint.contextIds)))) return [];
+      const unitText = compact(text(hint.unitIds));
+      const unit = unitText === '円銭' ? '円' : unitText;
+      if (!isPerShareDividend(text(hint.metricIds), unit)) return [];
+      const axis = compact(text(hint.periodIds));
+      const period = axis.match(/20\d{2}年\d{1,2}月期/)?.[0];
+      return period
+        ? [{ period, state: /予想|見込/.test(axis) ? ('forecast' as const) : ('actual' as const) }]
+        : [];
+    });
+  });
+}
 export function standardMetric(fact: VerifiedFact): string | null {
   if (!['number', 'range'].includes(fact.kind) || fact.semantics.metricKind !== 'amount')
     return null;
@@ -102,16 +122,33 @@ export function verifyCoverage(
       )
     )
       missing.push('COVERAGE:通期予想の1株当たり利益');
-    if (
-      /配当の状況/.test(source) &&
-      !facts.some(
-        (f) =>
-          f.kind === 'number' &&
-          /配当金|期末/.test(f.label) &&
-          f.semantics.metricKind === 'perShare'
-      )
-    )
-      missing.push('COVERAGE:配当の重要事実');
+    if (/配当の状況/.test(source)) {
+      const reported = reportedDividends(pages);
+      const relevant = reported.filter((d) => d.period === period || d.period === forecast?.[1]);
+      const forecasts = relevant.filter((d) => d.state === 'forecast');
+      const targets = forecasts.length
+        ? forecasts
+        : relevant.filter((d) => d.period === period && d.state === 'actual');
+      if (!targets.length) missing.push('COVERAGE:配当の報告対象期・区分を確認できません');
+      for (const target of new Map(targets.map((d) => [d.period + d.state, d])).values())
+        if (
+          !facts.some(
+            (f) =>
+              f.kind === 'number' &&
+              isPerShareDividend(f.label, f.unit) &&
+              f.semantics.metricKind === 'perShare' &&
+              f.semantics.periodKind === 'fullYear' &&
+              compact(f.period ?? '').match(
+                /^(20\d{2}年\d{1,2}月期)(?:通期)?(?:\(予想\))?$/
+              )?.[1] === target.period &&
+              f.valueKind === target.state &&
+              f.semantics.state === target.state &&
+              !!f.semantics.subject &&
+              (!issuer || compact(issuer).includes(compact(f.semantics.subject)))
+          )
+        )
+          missing.push(`COVERAGE:配当の重要事実 対象期=${target.period} 区分=${target.state}`);
+    }
     if (
       /今後の見通し/.test(source) &&
       /純損失/.test(source) &&
@@ -170,7 +207,7 @@ export function verifyCoverage(
           !candidates.some(
             (f) =>
               f.kind === 'number' &&
-              /配当金|期末配当/.test(compact(f.label)) &&
+              isPerShareDividend(f.label, f.unit) &&
               f.semantics.metricKind === 'perShare' &&
               f.valueKind === kind
           )

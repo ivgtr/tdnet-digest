@@ -4,6 +4,7 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import { getProviderCapabilities } from './structured-output';
 import { record, exact } from './fact-contract';
 import { standardMetric } from './fact-coverage';
+import { classifyMetric } from './metric-semantics';
 import {
   compatible,
   hasComparableScope,
@@ -32,13 +33,15 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
     !fact.unit ||
     !fact.period ||
     !fact.quantity ||
-    !hasComparableScope(fact.semantics.scope, fact.label, fact.semantics.metricKind) ||
+    !hasComparableScope(fact.semantics.scope, fact.label, fact.semantics.metricKind, fact.unit) ||
     !fact.semantics.subject ||
     fact.semantics.polarity !== 'affirmative' ||
     fact.semantics.state === 'unspecified' ||
     ['interval', 'relativeYear', 'none'].includes(fact.semantics.periodKind)
   )
     throw new Error('比較可能な数値・期間・主体・範囲がありません');
+  if (fact.semantics.metricKind !== classifyMetric(fact.label, fact.unit))
+    throw new Error('採点の指標区分と原文指標・単位が一致しません');
   const fiscalYear = Number(fact.period.normalize('NFKC').match(/(20\d{2})年/)?.[1]);
   if (!Number.isInteger(fiscalYear)) throw new Error('対象年がありません');
   if (fact.semantics.basis === null && fact.semantics.metricKind === 'amount')

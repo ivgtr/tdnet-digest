@@ -7,6 +7,8 @@ import {
   verifyPeriodAndKind,
 } from './numeric-evidence';
 import { normalized, quantityCells, buildBlocks } from './document-structure';
+import { classifyMetric as metricKind } from './metric-semantics';
+export { classifyMetric as metricKind } from './metric-semantics';
 import {
   continuationFor,
   continuationSpans,
@@ -158,8 +160,9 @@ function referenceText(pages: ExtractedPage[], refs: string[]): string {
     .map((id) => {
       for (const p of pages) {
         const s = p.spans.find((s) => s.id === id);
-        if (s) return s.text;
         const b = p.blocks.find((b) => b.id === id);
+        if ((s || b) && p.selection !== 'selected') fail(`REFERENCE:未選択ページの根拠 ${id}`);
+        if (s) return s.text;
         if (b) return b.text;
       }
       return fail(`REFERENCE:参照先 ${id}`);
@@ -188,17 +191,6 @@ function declaredSubjects(pages: ExtractedPage[], refs: string[]): string[] {
       )
     ),
   ].filter(Boolean);
-}
-export function metricKind(
-  label: string,
-  unit: string | null
-): VerifiedFact['semantics']['metricKind'] {
-  const text = compact(label);
-  if (/1株|一株|株当たり|EPS|配当金/i.test(text)) return 'perShare';
-  if (/率|比率|前年比|前年同期比/.test(text) || (unit && /[%％]/.test(unit))) return 'rate';
-  if (unit && /円|ドル|USD|EUR/.test(unit)) return 'amount';
-  if (unit && /^(株|人|件|店舗|社|個)$/.test(compact(unit))) return 'count';
-  return unit ? 'other' : 'none';
 }
 export function periodKind(
   period: string | null,
@@ -342,6 +334,7 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
   }
   const page =
     pages.find((p) => p.pageNumber === fact.page) ?? fail('REFERENCE:物理ページがありません');
+  if (page.selection !== 'selected') fail('REFERENCE:未選択ページの事実は採用できません');
   if (!record(fact.evidence)) fail('SCHEMA:根拠の形式');
   const ev = fact.evidence;
   const expected =

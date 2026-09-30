@@ -135,7 +135,8 @@ export function extractPageLayout(
 }
 
 export function serializeLayout(pages: ExtractedPage[]): string {
-  const headings = pages.flatMap((p) =>
+  const selected = pages.filter((page) => page.selection === 'selected');
+  const headings = selected.flatMap((p) =>
     p.blocks
       .filter(
         (b) =>
@@ -149,9 +150,8 @@ export function serializeLayout(pages: ExtractedPage[]): string {
       .map((b) => [b.id, b.text])
   );
   return (
-    `[会社・範囲の見出し候補: 会社名が明記された数量はsubjectと会社見出しのscopeIdsが必須]\n${JSON.stringify(headings)}\n[検証可能な表継続関係]\n${JSON.stringify(tableContinuations(pages))}\n[検証可能な系列注記関係]\n${JSON.stringify(noteLinks(pages))}\n[同じ節の本文注記: 数量はnoteIdをqualifierIdsで参照]\n${JSON.stringify(paragraphNoteLinks(pages))}\n` +
-    pages
-      .filter((p) => p.selection === 'selected')
+    `[会社・範囲の見出し候補: 会社名が明記された数量はsubjectと会社見出しのscopeIdsが必須]\n${JSON.stringify(headings)}\n[検証可能な表継続関係]\n${JSON.stringify(tableContinuations(selected))}\n[検証可能な系列注記関係]\n${JSON.stringify(noteLinks(selected))}\n[同じ節の本文注記: 数量はnoteIdをqualifierIdsで参照]\n${JSON.stringify(paragraphNoteLinks(selected))}\n` +
+    selected
       .map(
         (page) =>
           `[PDF_PAGE:${page.pageNumber}] 状態=${page.status}\n[表参照の構造候補: 確定事実ではありません。値に対応する行区分/列指標/単位/見出しを原文と検証してください]\n${JSON.stringify(tableReferenceHints(page))}\n[段落/行: blockId,種類,構成spanIds,全文]\n${page.blocks.map((b) => JSON.stringify(b.kind === 'row' ? [b.id, b.kind, b.spanIds] : [b.id, b.kind, b.spanIds, b.text])).join('\n')}\n[複数spanの数量: valueId,全spanIds,原数量。単独数量は根拠セルのIDを使う]\n${page.quantities
