@@ -255,23 +255,61 @@ describe('非財務単位を持つ表', () => {
     };
     expect(() => verifyTableEvidence(source, evidence, { ...claim, unit })).toThrow('単位');
   });
-  it.each(['inline', 'adjacent'] as const)('%s単位の未参照の続きから桁を落とせない', (kind) => {
+  it.each(
+    [
+      ['百', '万円', '百万円'],
+      ['百', '万円※', '百万円'],
+      ['百', '万円(注1)', '百万円'],
+      ['百', '万円*1', '百万円'],
+      ['百', '万円¹', '百万円'],
+      ['m', '2※', 'm2'],
+    ].flatMap(([prefix, suffix, unit]) =>
+      (['inline', 'adjacent'] as const).map((kind) => ({ kind, prefix, suffix, unit }))
+    )
+  )('$kind単位$prefixの未参照の続き$suffixを省けない', ({ kind, prefix, suffix, unit }) => {
     const source = {
       ...page,
       spans: spans
         .filter((s) => s.id !== 'u2')
-        .map((s) => (s.id === 'v2' ? { ...s, text: kind === 'inline' ? '200百' : '200' } : s))
+        .map((s) =>
+          s.id === 'v2' ? { ...s, text: kind === 'inline' ? `200${prefix}` : '200' } : s
+        )
         .concat(
-          ...(kind === 'adjacent' ? [span('prefix', '百', 338, 60, 10)] : []),
-          span('suffix', '万円', kind === 'inline' ? 338 : 351, 60, 20)
+          ...(kind === 'adjacent' ? [span('prefix', prefix, 338, 60, 10)] : []),
+          span('suffix', suffix, kind === 'inline' ? 338 : 351, 60, 20)
         ),
     };
     const refs = { ...evidence, unitIds: [kind === 'inline' ? 'v2' : 'prefix'] };
-    expect(() => verifyTableEvidence(source, refs, { ...claim, unit: '百' })).toThrow('未参照');
-    expect(
-      verifyTableEvidence(source, { ...refs, unitIds: [...refs.unitIds, 'suffix'] }, claim).evidence
-        .unitIds
-    ).toContain('suffix');
+    expect(() => verifyTableEvidence(source, refs, { ...claim, unit: prefix })).toThrow('未参照');
+    const fullRefs = { ...refs, unitIds: [...refs.unitIds, 'suffix'] };
+    if (suffix === '万円') {
+      expect(verifyTableEvidence(source, fullRefs, { ...claim, unit }).evidence.unitIds).toContain(
+        'suffix'
+      );
+    } else {
+      expect(() => verifyTableEvidence(source, fullRefs, { ...claim, unit })).toThrow('単位');
+    }
+  });
+  it('注記だけのセルや別行・離れたセルを単位の続きとみなさない', () => {
+    for (const [suffix, x, y] of [
+      ['※', 338, 60],
+      ['(注1)', 338, 60],
+      ['*1', 338, 60],
+      ['万円※', 345, 60],
+      ['万円※', 338, 80],
+    ] as const) {
+      const source = {
+        ...page,
+        spans: spans
+          .filter((s) => s.id !== 'u2')
+          .map((s) => (s.id === 'v2' ? { ...s, text: '200百' } : s))
+          .concat(span('suffix', suffix, x, y, 20)),
+      };
+      expect(
+        verifyTableEvidence(source, { ...evidence, unitIds: ['v2'] }, { ...claim, unit: '百' })
+          .evidence.valueId
+      ).toBe('v2');
+    }
   });
   it('単位にも見出しにも読める未参照の隣接語を推測しない', () => {
     const source = {

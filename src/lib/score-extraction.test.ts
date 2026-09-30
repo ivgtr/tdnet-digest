@@ -235,75 +235,85 @@ it('助詞のある決算文章でも対象行の実績・予想区分を検証�
   expect(parse('forecast').facts).toHaveLength(0);
 });
 
-it('値セルの単位を見出しで代用したり続きを省いたりして要約・採点の桁を変えられない', () => {
-  const page: ExtractedPage = {
-    pageNumber: 1,
-    text: '会社 全社\n2026年7月14日\n百\n稼働数量 120百 万円',
-    spans: [
-      span('period', '2026年7月14日', 180, 0, 80),
-      span('header', '百', 205, 20, 30),
-      span('metric', '稼働数量', 0, 40, 100),
-      span('value', '120百', 205, 40, 20),
-      span('suffix', '万円', 228, 40, 20),
-    ],
-  };
-  const check = (unit: string, unitIds: string[]) => {
-    const rawSource = {
-      ...source('2026年7月14日', 'eventDate'),
-      metric: '稼働数量',
-      basis: '非財務',
-      scope: '全社',
-      evidence: {
-        valueId: 'value',
-        metricIds: ['metric'],
-        periodIds: ['period'],
-        unitIds,
-        contextIds: [],
-      },
+it.each(['万円', '万円※', '万円(注1)', '万円*1', '万円¹'])(
+  '値セルの単位を見出しで代用したり続き%sを省いたりして要約・採点の桁を変えられない',
+  (suffix) => {
+    const page: ExtractedPage = {
+      pageNumber: 1,
+      text: `会社 全社\n2026年7月14日\n百\n稼働数量 120百 ${suffix}`,
+      spans: [
+        span('period', '2026年7月14日', 180, 0, 80),
+        span('header', '百', 205, 20, 30),
+        span('metric', '稼働数量', 0, 40, 100),
+        span('value', '120百', 205, 40, 20),
+        span('suffix', suffix, 228, 40, 20),
+      ],
     };
-    const fact: VerifiedFact = {
-      id: 'f1',
-      importance: 'key',
-      kind: 'number',
-      label: rawSource.metric,
-      value: 120,
-      unit,
-      period: rawSource.period,
-      valueKind: 'actual',
-      column: null,
-      statement: null,
-      page: 1,
-      quote: '',
-      evidence: rawSource.evidence,
+    const check = (unit: string, unitIds: string[]) => {
+      const rawSource = {
+        ...source('2026年7月14日', 'eventDate'),
+        metric: '稼働数量',
+        basis: '非財務',
+        scope: '全社',
+        evidence: {
+          valueId: 'value',
+          metricIds: ['metric'],
+          periodIds: ['period'],
+          unitIds,
+          contextIds: [],
+        },
+      };
+      const fact: VerifiedFact = {
+        id: 'f1',
+        importance: 'key',
+        kind: 'number',
+        label: rawSource.metric,
+        value: 120,
+        unit,
+        period: rawSource.period,
+        valueKind: 'actual',
+        column: null,
+        statement: null,
+        page: 1,
+        quote: '',
+        evidence: rawSource.evidence,
+      };
+      return {
+        facts: parseFactSummary(
+          JSON.stringify({
+            version: 3,
+            documentType: 'businessUpdate',
+            facts: [fact],
+            unverified: [],
+          }),
+          'businessUpdate',
+          [page],
+          false
+        ),
+        score: validateScoreInput(input(rawSource, 120, unit), [document(page)], ''),
+      };
     };
-    return {
-      facts: parseFactSummary(
-        JSON.stringify({
-          version: 3,
-          documentType: 'businessUpdate',
-          facts: [fact],
-          unverified: [],
-        }),
-        'businessUpdate',
-        [page],
-        false
-      ),
-      score: validateScoreInput(input(rawSource, 120, unit), [document(page)], ''),
-    };
-  };
-  for (const unitIds of [['header'], ['value']]) {
-    const invalid = check('百', unitIds);
-    expect(invalid.facts.facts).toHaveLength(0);
-    expect(invalid.score.claims).toHaveLength(0);
-    expect(invalid.facts.unverified.join('')).toContain('未参照');
-    expect(invalid.score.unverified.join('')).toContain('未参照');
+    for (const unitIds of [['header'], ['value']]) {
+      const invalid = check('百', unitIds);
+      expect(invalid.facts.facts).toHaveLength(0);
+      expect(invalid.score.claims).toHaveLength(0);
+      expect(invalid.facts.unverified.join('')).toContain('未参照');
+      expect(invalid.score.unverified.join('')).toContain('未参照');
+    }
+    const full = check('百万円', ['value', 'suffix']);
+    if (suffix === '万円') {
+      expect(full.facts.facts).toHaveLength(1);
+      expect(full.score.claims).toHaveLength(1);
+      expect(full.facts.unverified).toEqual([]);
+      expect(full.score.unverified).toEqual([]);
+    } else {
+      expect(full.facts.facts).toHaveLength(0);
+      expect(full.score.claims).toHaveLength(0);
+      expect(full.facts.unverified.join('')).toContain('単位');
+      expect(full.score.unverified.join('')).toContain('単位');
+    }
   }
-  const valid = check('百万円', ['value', 'suffix']);
-  expect(valid.facts.facts).toHaveLength(1);
-  expect(valid.score.claims).toHaveLength(1);
-  expect(valid.facts.unverified).toEqual([]);
-  expect(valid.score.unverified).toEqual([]);
-});
+);
 
 it.each([
   ['店舗', '120店舗', null],

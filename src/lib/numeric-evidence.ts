@@ -32,6 +32,17 @@ const fail = (reason: string): never => {
   throw new Error(`表の根拠を確認できません: ${reason}`);
 };
 
+// 後続の注記でセル全体が単位候補でなくなっても、単位として読める接頭部分は残る。
+// 注記を除去して単位を採用するためではなく、参照の省略を拒否するための検査。
+function couldContinueUnit(unit: string, suffix: string): boolean {
+  let candidate = unit;
+  for (const character of suffix) {
+    candidate += character;
+    if (isUnitToken(candidate)) return true;
+  }
+  return false;
+}
+
 function refs(value: unknown, spans: PdfSpan[], name: string, empty = false): PdfSpan[] {
   if (
     !Array.isArray(value) ||
@@ -117,7 +128,7 @@ export function verifyTableEvidence(
         sameRow(s, value) &&
         gap >= -0.5 &&
         gap <= Math.min(s.height, last.height) * 0.6 &&
-        isUnitToken(unitText + compact(s.text))
+        couldContinueUnit(unitText, compact(s.text))
       );
     });
     if (omittedSuffix) fail('単位の続きになり得る隣接セルが未参照');
