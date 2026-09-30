@@ -336,3 +336,7 @@ smartは省略した根拠がないという保証を単語品質ゲートへ持
 ### PR #24のレビュー対応（2026-10-01）
 
 未選択ページの本文を必須判定が走査する指摘を採用した。Offscreenが返す全ページは原文・構造・根拠関係の検証に保持し、`verifyCoverage` の本文と継続表/系列注記の必須判定だけをselection=selectedへ揃えた。smartで省略したページの事実を要求せず、選択したページの不足は従来どおり拒否する。smartの品質警告と全文再要約の経路は維持する。
+
+Anthropicの4,096固定と打ち切り未検出の指摘も採用した。事実v4の生成/修復は通常32,768の出力予算を渡し、設定に残るSonnet 3.5の既知上限は8,192、明示予算はその値を保持する。未知モデル/上限のAPIエラーを別モデルや認証で補わない。一般のクライアント呼出しでは、予算の仕様上の省略値4,096を維持するが、不正な指定値は送信前に拒否する。`max_tokens` と `model_context_window_exceeded` は本文のJSONが有効でも採用せず、停止理由と利用量を記録する。モデル能力は[Anthropicのモデル仕様](https://platform.claude.com/docs/fr/models/sonnet-4-5/overview)、打ち切り判定は[公式の停止理由](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)、Sonnet 3.5の上限は[リリースノート](https://platform.claude.com/docs/ja/release-notes/overview)を確認した。
+
+評価スクリプトも同じ出力予算関数を使って設定を記録する。生成条件と必須判定の変更を反映し、現在の分析指紋はv30。上記のv28生成/v29再判定の実API証拠をv30の新規生成成功へ読み替えない。事実スキーマv4・採点v4・追加分析v2は変更していない。

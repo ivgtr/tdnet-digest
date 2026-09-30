@@ -194,3 +194,7 @@ npm run test:fact-summary -- bluememe-20260930 --browser --fixed-api --fixture-s
 ### PR #24レビューの回帰（2026-10-01）
 
 smartの必須判定について、保存したBlueMeme原文字を使い、p.18をomittedにすると同ページの損失予定なしで要約が通り、selectedにすると不足を拒否する対を追加した。omittedの抽出失敗・原文改変は引き続き拒否する。`npx vitest run src/lib/ir-semantic-regression.test.ts src/lib/fact-summary-release.test.ts` は32件成功。固定候補による回帰であり、smartでの実LLM生成を再実行した証拠ではない。
+
+Anthropicは実クライアントから事実v4の原文照合/表示まで、固定Messages API応答を通して確認した。BlueMemeの初回6件＋不足分修復は双方max_tokens=32,768で、−400百万円・1.4％・翌期の損失予定を保持した。Sonnet 3.5の8,192・明示予算16,384、空/不正本文、不正予算、max_tokens/model_context_window_exceededの拒否と停止理由/利用量の記録も検証した。応答に置いたusage.output_tokens=6,000は固定試験データであり、実モデルのトークン測定ではない。打ち切り応答を部分採用したり同じ上限の修復へ送ったりしない。
+
+最終検証は `npm test` が23ファイル387件成功、`npm run type-check`、`npm run lint`、`npm run build` も成功。分析指紋v30の実Anthropic生成・smart実LLM/拡張の追試は未実施で、上記の実API比較採点・7月TDnet実経路などの未達条件も残る。抽出/対応形式は変えていないため、成功済みの公開PDF18件・保存原文字の照合は再実行していない。

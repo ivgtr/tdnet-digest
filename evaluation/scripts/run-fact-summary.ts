@@ -8,6 +8,7 @@ import { serializePagesForAnalysis } from '../../src/lib/page-text';
 import {
   FactSummaryGenerationError,
   generateVerifiedFactSummary,
+  factSummaryRequestLimits,
   renderFacts,
 } from '../../src/lib/fact-summary';
 import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
@@ -102,8 +103,7 @@ for (const item of selected) {
     schemaVersion: 4,
     analysisFingerprint: buildAnalysisFingerprint({ provider, model, extractionMode: 'full' }),
     implementationDigest,
-    requestLimits:
-      provider === 'openrouter' ? { maxOutputTokens: 32768, reasoningEffort: 'low' } : null,
+    requestLimits: factSummaryRequestLimits({ provider, model }),
     sourceHash,
     inputHash: createHash('sha256').update(serializeLayout(pages)).digest('hex'),
     inputChars: serializeLayout(pages).length,

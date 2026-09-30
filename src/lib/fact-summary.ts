@@ -23,6 +23,22 @@ export class FactSummaryGenerationError extends Error {
     super(message);
   }
 }
+export function factSummaryRequestLimits(
+  config: Pick<LLMConfig, 'provider' | 'model' | 'maxOutputTokens'>
+): Pick<LLMConfig, 'maxOutputTokens' | 'reasoningEffort'> {
+  if (config.provider === 'openrouter') return { maxOutputTokens: 32768, reasoningEffort: 'low' };
+  if (config.provider === 'anthropic')
+    return {
+      maxOutputTokens:
+        config.maxOutputTokens === undefined
+          ? // 設定に残るSonnet 3.5のモデル上限。未知モデルのAPIエラーを別モデルで補わない。
+            config.model === 'claude-3-5-sonnet-20241022'
+            ? 8192
+            : 32768
+          : config.maxOutputTokens,
+    };
+  return {};
+}
 export function factPrompt(
   documentType: DocumentType,
   text: string
@@ -111,9 +127,7 @@ export async function generateVerifiedFactSummary(
   const prompt = factPrompt(documentType, serializeLayout(pages));
   const options = {
     ...config,
-    ...(config.provider === 'openrouter'
-      ? { maxOutputTokens: 32768, reasoningEffort: 'low' as const }
-      : {}),
+    ...factSummaryRequestLimits(config),
     temperature: 0,
     ...(getProviderCapabilities(config.provider).jsonObject
       ? { responseFormat: 'json_object' as const }

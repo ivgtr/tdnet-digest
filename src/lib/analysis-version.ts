@@ -1,6 +1,6 @@
 import type { ExtractionMode } from '@/types/summaryMetadata';
 
-export const ANALYSIS_SCHEMA_VERSION = 29;
+export const ANALYSIS_SCHEMA_VERSION = 30;
 
 export interface AnalysisFingerprintSettings {
   provider: string;
