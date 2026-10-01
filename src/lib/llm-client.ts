@@ -8,7 +8,16 @@ export interface LLMConfig {
   apiKey: string;
   model: string;
   baseUrl?: string; // カスタムプロバイダー用
+  maxOutputTokens?: number;
+  reasoningEffort?: 'low' | 'high';
   temperature?: number; // 生成温度（0-2、低いほど安定した出力）
+  onUsage?: (usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    elapsedMs: number;
+    finishReason?: string | null;
+    reasoningTokens?: number | null;
+  }) => void;
   responseFormat?: 'json_object';
 }
 
@@ -35,6 +44,11 @@ export class ApiError extends Error {
  * LLM APIを呼び出して応答を取得
  */
 export async function generateText(config: LLMConfig, messages: ChatMessage[]): Promise<string> {
+  if (
+    config.maxOutputTokens !== undefined &&
+    (!Number.isInteger(config.maxOutputTokens) || config.maxOutputTokens <= 0)
+  )
+    throw new Error('APIの出力上限は正の整数で指定してください');
   // プロバイダーに応じて適切なAPIを呼び出す
   switch (config.provider) {
     case 'anthropic':
@@ -57,6 +71,7 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
   // カスタムプロバイダーの場合はbaseUrlを使用、それ以外は既定のbaseUrlを使用
   const baseUrl = config.baseUrl || getDefaultBaseUrl(config.provider);
 
+  const started = performance.now();
   const response = await fetch(baseUrl, {
     method: 'POST',
     headers: {
@@ -69,6 +84,9 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
         role: msg.role,
         content: msg.content,
       })),
+      ...(config.maxOutputTokens !== undefined && { max_tokens: config.maxOutputTokens }),
+      ...(config.provider === 'openrouter' &&
+        config.reasoningEffort && { reasoning: { effort: config.reasoningEffort } }),
       ...(config.temperature !== undefined && { temperature: config.temperature }),
       ...(config.responseFormat === 'json_object' && {
         response_format: { type: 'json_object' },
@@ -78,17 +96,38 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
 
   if (!response.ok) {
     const errorText = await response.text();
-    const apiError = buildApiError(response.status, response.statusText, errorText);
+    const apiError = buildApiError(
+      response.status,
+      response.statusText,
+      errorText.split(config.apiKey).join('[redacted]')
+    );
     if (apiError.isServerError) {
-      console.error('[LLM Client] API呼び出しエラー:', response.status, errorText);
+      console.error('[LLM Client] API呼び出しエラー:', response.status);
     }
     throw apiError;
   }
 
   const data = await response.json();
+  config.onUsage?.({
+    inputTokens: Number.isFinite(data.usage?.prompt_tokens) ? data.usage.prompt_tokens : null,
+    outputTokens: Number.isFinite(data.usage?.completion_tokens)
+      ? data.usage.completion_tokens
+      : null,
+    elapsedMs: Math.round(performance.now() - started),
+    finishReason:
+      typeof data.choices?.[0]?.finish_reason === 'string' ? data.choices[0].finish_reason : null,
+    reasoningTokens: Number.isFinite(data.usage?.completion_tokens_details?.reasoning_tokens)
+      ? data.usage.completion_tokens_details.reasoning_tokens
+      : null,
+  });
 
-  if (!data.choices?.[0]?.message?.content) {
-    console.error('[LLM Client] 不正なレスポンス形式:', data);
+  if (data.choices?.[0]?.finish_reason === 'length')
+    throw new Error('APIの推論・出力上限に達しました。応答は採用できません');
+  if (
+    typeof data.choices?.[0]?.message?.content !== 'string' ||
+    !data.choices[0].message.content.trim()
+  ) {
+    console.error('[LLM Client] 不正なレスポンス形式');
     throw new Error('APIレスポンスの形式が不正です');
   }
 
@@ -106,6 +145,7 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
   const systemMessage = messages.find((msg) => msg.role === 'system');
   const conversationMessages = messages.filter((msg) => msg.role !== 'system');
 
+  const started = performance.now();
   const response = await fetch(baseUrl, {
     method: 'POST',
     headers: {
@@ -115,7 +155,7 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 4096,
+      max_tokens: config.maxOutputTokens === undefined ? 4096 : config.maxOutputTokens,
       system: systemMessage?.content,
       messages: conversationMessages.map((msg) => ({
         role: msg.role === 'assistant' ? 'assistant' : 'user',
@@ -127,20 +167,31 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
 
   if (!response.ok) {
     const errorText = await response.text();
-    const apiError = buildApiError(response.status, response.statusText, errorText);
+    const apiError = buildApiError(
+      response.status,
+      response.statusText,
+      errorText.split(config.apiKey).join('[redacted]')
+    );
     if (apiError.isServerError) {
-      console.error('[LLM Client] Anthropic API呼び出しエラー:', response.status, errorText);
+      console.error('[LLM Client] Anthropic API呼び出しエラー:', response.status);
     }
     throw apiError;
   }
 
   const data = await response.json();
 
-  if (!data.content?.[0]?.text) {
-    console.error('[LLM Client] 不正なレスポンス形式:', data);
+  config.onUsage?.({
+    inputTokens: Number.isFinite(data.usage?.input_tokens) ? data.usage.input_tokens : null,
+    outputTokens: Number.isFinite(data.usage?.output_tokens) ? data.usage.output_tokens : null,
+    elapsedMs: Math.round(performance.now() - started),
+    finishReason: typeof data.stop_reason === 'string' ? data.stop_reason : null,
+  });
+  if (['max_tokens', 'model_context_window_exceeded'].includes(data.stop_reason))
+    throw new Error('APIの推論・出力上限に達しました。応答は採用できません');
+  if (typeof data.content?.[0]?.text !== 'string' || !data.content[0].text.trim()) {
+    console.error('[LLM Client] 不正なレスポンス形式');
     throw new Error('APIレスポンスの形式が不正です');
   }
-
   return data.content[0].text;
 }
 

@@ -8,13 +8,22 @@ import {
   type FactSummary,
 } from '@/lib/fact-summary';
 import { analyzeFacts, type AdditionalAnalysis } from '@/lib/additional-analysis';
+import { serializePagesForAnalysis } from '@/lib/page-text';
+import { canonicalJSON } from '@/lib/fact-contract';
+import { validatePages } from '@/lib/fact-validation';
 import { buildAnalysisFingerprint } from '@/lib/analysis-version';
+import { normalizeTdnetPdfUrl as fullUrl } from '@/lib/tdnet-url';
 import { assessClaim, inferExperimentalScore, type ExperimentalScore } from '@/lib/scoring';
 import { extractScoreInput, type ScoreDocument } from '@/lib/score-extraction';
 import { fetchCandidatePdf, searchDisclosureCandidates } from '@/lib/disclosure-search';
 import { getProvider } from '@/lib/llm-providers';
 import { customApiPermission, SCORING_PDF_PERMISSIONS } from '@/lib/host-permissions';
-import type { SummaryMetadata, ExtractionMode, PdfExtractionResult } from '@/types/summaryMetadata';
+import type {
+  SummaryMetadata,
+  ExtractionMode,
+  PdfExtractionResult,
+  ExtractedPage,
+} from '@/types/summaryMetadata';
 
 interface BaseRequest {
   pdfUrl: string;
@@ -131,26 +140,23 @@ function configOf(settings: Settings): LLMConfig {
     baseUrl: settings.customUrl || undefined,
   };
 }
-function fullUrl(url: string): string {
-  const parsed = new URL(url, 'https://www.release.tdnet.info/inbs/');
-  if (
-    parsed.origin !== 'https://www.release.tdnet.info' ||
-    parsed.username ||
-    parsed.password ||
-    !parsed.pathname.startsWith('/inbs/') ||
-    !/\.pdf$/i.test(parsed.pathname)
-  )
-    throw new Error('TDnetのPDF URLではありません');
-  return parsed.href;
-}
 async function fetchPDF(url: string): Promise<ArrayBuffer> {
   const response = await fetch(fullUrl(url));
   if (!response.ok)
     throw new Error(`PDF取得に失敗しました: ${response.status} ${response.statusText}`);
   return response.arrayBuffer();
 }
-async function resultId(pdfUrl: string, fingerprint: string, facts: FactSummary): Promise<string> {
-  const bytes = new TextEncoder().encode(JSON.stringify([pdfUrl, fingerprint, facts]));
+async function hashPdf(data: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+async function resultId(
+  pdfUrl: string,
+  fingerprint: string,
+  facts: FactSummary,
+  documentHash: string
+): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalJSON([pdfUrl, fingerprint, documentHash, facts]));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -175,9 +181,11 @@ async function handleSummarize(request: SummarizeRequest) {
     model: settings.model,
     extractionMode: mode,
   });
-  const id = await resultId(request.pdfUrl, fingerprint, facts);
+  const documentHash = await hashPdf(data);
+  const id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
   const metadata: SummaryMetadata = {
     ...extraction.metadata,
+    documentHash,
     analysisSchemaVersion: FACT_SCHEMA_VERSION,
     provider: settings.provider,
     model: settings.model,
@@ -200,8 +208,18 @@ async function handleFollowup(
   const data = await fetchPDF(request.pdfUrl);
   await setupOffscreenDocument();
   const extraction = await extractTextFromPDF(data, documentType, 'full');
-  const facts = parseFactSummary(JSON.stringify(request.facts), documentType, extraction.pages);
-  if ((await resultId(request.pdfUrl, request.fingerprint, facts)) !== request.resultId)
+  // 必須判定は初回の選択範囲で実施済み。全文再取得では元事実の意味を再照合する。
+  // 再照合で事実が変われば、PDFハッシュを含むresultIdの一致検査で拒否する。
+  const facts = parseFactSummary(
+    JSON.stringify(request.facts),
+    documentType,
+    extraction.pages,
+    false
+  );
+  if (
+    (await resultId(request.pdfUrl, request.fingerprint, facts, await hashPdf(data))) !==
+    request.resultId
+  )
     throw new Error('要約結果の識別子が一致しません');
   const config = configOf(settings);
   if (request.action === 'analyze') return { analysis: await analyzeFacts(config, facts) };
@@ -413,6 +431,25 @@ async function extractTextFromPDF(
       throw new Error(response.error || 'PDF抽出に失敗しました');
     }
 
+    validatePages(response.pages);
+    if (
+      typeof response.text !== 'string' ||
+      !response.metadata ||
+      response.metadata.extractionMode !== extractionMode ||
+      response.metadata.totalPages !== response.pages.length ||
+      response.pages.some((p: ExtractedPage, i: number) => p.pageNumber !== i + 1) ||
+      JSON.stringify(response.metadata.extractedPages) !==
+        JSON.stringify(
+          response.pages
+            .filter((p: ExtractedPage) => p.selection === 'selected')
+            .map((p: ExtractedPage) => p.pageNumber)
+        ) ||
+      response.text !==
+        serializePagesForAnalysis(
+          response.pages.filter((p: ExtractedPage) => p.selection === 'selected')
+        )
+    )
+      throw new Error('PDF抽出応答の形式が不正です');
     return {
       text: response.text,
       pages: response.pages,

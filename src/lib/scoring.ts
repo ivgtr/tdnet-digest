@@ -1,7 +1,9 @@
+import type { FactSemantics } from './fact-contract';
 import type { TableEvidence } from './numeric-evidence';
 import type { DocumentType } from './document-type';
 import { generateText, type LLMConfig } from './llm-client';
 import { getProviderCapabilities } from './structured-output';
+import { isPerShareDividend } from './metric-semantics';
 
 export type ScoreCategory =
   | 'operatingProfit'
@@ -24,8 +26,18 @@ export type PeriodKind =
   | 'standaloneQ4'
   | 'month'
   | 'eventDate';
-export type ValueKind = 'actual' | 'forecastBefore' | 'forecastAfter';
+export type ValueKind =
+  | 'actual'
+  | 'forecast'
+  | 'forecastBefore'
+  | 'forecastAfter'
+  | 'planned'
+  | 'decided'
+  | 'contracted'
+  | 'completed';
 export interface ScoreSource {
+  factId: string;
+  semantics: FactSemantics;
   url: string;
   page: number;
   quote: string;
@@ -35,8 +47,8 @@ export interface ScoreSource {
   periodKind: PeriodKind;
   valueKind: ValueKind;
   metric: string;
-  basis: string;
-  scope: string;
+  basis: string | null;
+  scope: string | null;
 }
 export interface ScoreValue {
   value: number;
@@ -90,11 +102,28 @@ export const SCORE_LIMITS: Record<ScoreCategory, number> = {
   capitalAction: 10,
   cashFlow: 5,
 };
+export function hasComparableScope(
+  scope: unknown,
+  metric: string,
+  metricKind: FactSemantics['metricKind'],
+  unit: string
+): boolean {
+  return (
+    (typeof scope === 'string' && !!scope.trim()) ||
+    (scope === null && metricKind === 'perShare' && isPerShareDividend(metric, unit))
+  );
+}
 export function compatible(a: ScoreValue, b: ScoreValue, forecast = false): boolean {
   const x = a.source,
     y = b.source;
   return (
+    hasComparableScope(x.scope, x.metric, x.semantics.metricKind, a.unit) &&
+    hasComparableScope(y.scope, y.metric, y.semantics.metricKind, b.unit) &&
     a.unit === b.unit &&
+    x.semantics.polarity === y.semantics.polarity &&
+    JSON.stringify(x.semantics.qualifiers) === JSON.stringify(y.semantics.qualifiers) &&
+    JSON.stringify(x.semantics.conditions) === JSON.stringify(y.semantics.conditions) &&
+    x.semantics.subject === y.semantics.subject &&
     x.metric === y.metric &&
     x.basis === y.basis &&
     x.scope === y.scope &&
@@ -187,6 +216,8 @@ function ownershipRatio(claim: ScoreClaim): number | null {
     a.source.fiscalYear !== b.source.fiscalYear ||
     a.source.period !== b.source.period ||
     a.source.periodKind !== b.source.periodKind ||
+    !hasComparableScope(a.source.scope, a.source.metric, a.source.semantics.metricKind, a.unit) ||
+    !hasComparableScope(b.source.scope, b.source.metric, b.source.semantics.metricKind, b.unit) ||
     a.source.scope !== b.source.scope
   )
     return null;

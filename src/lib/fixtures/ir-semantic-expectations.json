@@ -1,0 +1,1380 @@
+[
+  {
+    "id": "bluememe-20260930",
+    "review": "原文確認済みの固定候補。実モデル応答ではない。",
+    "facts": [
+      {
+        "id": "f1",
+        "importance": "key",
+        "kind": "number",
+        "label": "売上高",
+        "value": 3298,
+        "unit": "百万円",
+        "period": "2026年3月期",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s66",
+          "metricIds": [
+            "p1s52"
+          ],
+          "periodIds": [
+            "p1s64",
+            "p1s65"
+          ],
+          "unitIds": [
+            "p1s56"
+          ],
+          "contextIds": [
+            "p1s48",
+            "p1s50"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f2",
+        "importance": "key",
+        "kind": "number",
+        "label": "営業利益",
+        "value": 47,
+        "unit": "百万円",
+        "period": "2026年3月期",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s70",
+          "metricIds": [
+            "p1s53"
+          ],
+          "periodIds": [
+            "p1s64",
+            "p1s65"
+          ],
+          "unitIds": [
+            "p1s58"
+          ],
+          "contextIds": [
+            "p1s48",
+            "p1s50"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f3",
+        "importance": "key",
+        "kind": "number",
+        "label": "親会社株主に帰属する当期純利益",
+        "value": 24,
+        "unit": "百万円",
+        "period": "2026年3月期",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s76",
+          "metricIds": [
+            "p1s51",
+            "p1s55"
+          ],
+          "periodIds": [
+            "p1s64",
+            "p1s65"
+          ],
+          "unitIds": [
+            "p1s62"
+          ],
+          "contextIds": [
+            "p1s48",
+            "p1s50"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f4",
+        "importance": "key",
+        "kind": "number",
+        "label": "売上高",
+        "value": 2600,
+        "unit": "百万円",
+        "period": "2027年3月期通期",
+        "valueKind": "forecast",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s284",
+          "metricIds": [
+            "p1s268"
+          ],
+          "periodIds": [
+            "p1s282",
+            "p1s283"
+          ],
+          "unitIds": [
+            "p1s273"
+          ],
+          "contextIds": [
+            "p1s263"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f5",
+        "importance": "key",
+        "kind": "number",
+        "label": "営業利益",
+        "value": 30,
+        "unit": "百万円",
+        "period": "2027年3月期通期",
+        "valueKind": "forecast",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s288",
+          "metricIds": [
+            "p1s269"
+          ],
+          "periodIds": [
+            "p1s282",
+            "p1s283"
+          ],
+          "unitIds": [
+            "p1s275"
+          ],
+          "contextIds": [
+            "p1s263"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f6",
+        "importance": "key",
+        "kind": "number",
+        "label": "親会社株主に帰属する当期純利益",
+        "value": -400,
+        "unit": "百万円",
+        "period": "2027年3月期通期",
+        "valueKind": "forecast",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s294",
+          "metricIds": [
+            "p1s265",
+            "p1s271"
+          ],
+          "periodIds": [
+            "p1s282",
+            "p1s283"
+          ],
+          "unitIds": [
+            "p1s279"
+          ],
+          "contextIds": [
+            "p1s263"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f7",
+        "importance": "key",
+        "kind": "number",
+        "label": "売上高営業利益率",
+        "value": 1.4,
+        "unit": "%",
+        "period": "2026年3月期",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s120",
+          "metricIds": [
+            "p1s97",
+            "p1s103"
+          ],
+          "periodIds": [
+            "p1s110",
+            "p1s111"
+          ],
+          "unitIds": [
+            "p1s109"
+          ],
+          "contextIds": [],
+          "scopeIds": [
+            "p1b1",
+            "p1b3",
+            "p1b9"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "rate",
+          "qualifiers": [],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f8",
+        "importance": "key",
+        "kind": "number",
+        "label": "１株当たり当期純利益",
+        "value": -119.53,
+        "unit": "円",
+        "period": "2027年3月期通期",
+        "valueKind": "forecast",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s296",
+          "metricIds": [
+            "p1s266",
+            "p1s267",
+            "p1s272"
+          ],
+          "periodIds": [
+            "p1s282",
+            "p1s283"
+          ],
+          "unitIds": [
+            "p1s281"
+          ],
+          "contextIds": [
+            "p1s263"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "qualifiers": [],
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f9",
+        "importance": "key",
+        "kind": "number",
+        "label": "年間配当金",
+        "value": 0,
+        "unit": "円",
+        "period": "2027年3月期",
+        "valueKind": "forecast",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s259",
+          "metricIds": [
+            "p1s205",
+            "p1s215"
+          ],
+          "periodIds": [
+            "p1s251",
+            "p1s252"
+          ],
+          "unitIds": [
+            "p1s221"
+          ],
+          "contextIds": [
+            "p1s203"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "qualifiers": [],
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f10",
+        "importance": "key",
+        "kind": "event",
+        "label": "損失予想の背景",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "しかしながら、調査関連費用394百万円（概算額）により当期純損失が見込まれ、その結果、親会社株主に帰\n属する当期純損失となる見込みです。",
+        "page": 5,
+        "quote": "しかしながら、調査関連費用394百万円（概算額）により当期純損失が見込まれ、その結果、親会社株主に帰\n属する当期純損失となる見込みです。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p5b20",
+          "contextIds": [
+            "p5b17"
+          ],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "none",
+          "metricKind": "none",
+          "qualifiers": [
+            "概算額"
+          ],
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f11",
+        "importance": "key",
+        "kind": "event",
+        "label": "調査関連費用の計上予定",
+        "value": null,
+        "unit": null,
+        "period": "翌連結会計年度",
+        "valueKind": null,
+        "column": null,
+        "statement": "当該調査費用及び過年度決算の訂正等に要する費用を翌連結会計年度の連結財務諸表において特別損失に計上す\nる予定です。",
+        "page": 18,
+        "quote": "当該調査費用及び過年度決算の訂正等に要する費用を翌連結会計年度の連結財務諸表において特別損失に計上す\nる予定です。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p18b17",
+          "contextIds": [],
+          "scopeIds": [
+            "p1b1",
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社BlueMeme",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "relativeYear",
+          "metricKind": "none",
+          "qualifiers": [],
+          "state": "planned",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      }
+    ]
+  },
+  {
+    "id": "buyback-20260714",
+    "review": "原文確認済みの固定候補。実モデル応答ではない。",
+    "facts": [
+      {
+        "id": "f1",
+        "importance": "key",
+        "kind": "number",
+        "label": "取得する株式の総数",
+        "value": 200000,
+        "unit": "株",
+        "period": "2026年7月15日",
+        "valueKind": null,
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "(1)取得対象株式の種類 当社普通株式\n(2)取得する株式の総数 200,000株（上限）",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p1b15",
+          "contextIds": [
+            "p1b13"
+          ],
+          "scopeIds": [
+            "p1b3",
+            "p1b15"
+          ],
+          "qualifierIds": [
+            "p1b20"
+          ]
+        },
+        "semantics": {
+          "subject": "丸八倉庫株式会社",
+          "scope": "当社普通株式",
+          "basis": null,
+          "periodKind": "eventDate",
+          "metricKind": "count",
+          "qualifiers": [
+            "上限"
+          ],
+          "state": "planned",
+          "polarity": "affirmative",
+          "conditions": [
+            "当該買付注文は\n当該取引時間限りの注文とする。",
+            "なお、市場動向等により一部又は全部の取得が行われな\nい可能性もある。"
+          ]
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f2",
+        "importance": "key",
+        "kind": "number",
+        "label": "株式の取得価額の総額",
+        "value": 206200000,
+        "unit": "円",
+        "period": "2026年7月15日",
+        "valueKind": null,
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "(3)株式の取得価額の総額 206,200,000円（上限）",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p1b17",
+          "contextIds": [
+            "p1b13"
+          ],
+          "scopeIds": [
+            "p1b3",
+            "p1b15"
+          ],
+          "qualifierIds": [
+            "p1b20"
+          ]
+        },
+        "semantics": {
+          "subject": "丸八倉庫株式会社",
+          "scope": "当社普通株式",
+          "basis": null,
+          "periodKind": "eventDate",
+          "metricKind": "amount",
+          "qualifiers": [
+            "上限"
+          ],
+          "state": "planned",
+          "polarity": "affirmative",
+          "conditions": [
+            "当該買付注文は\n当該取引時間限りの注文とする。",
+            "なお、市場動向等により一部又は全部の取得が行われな\nい可能性もある。"
+          ]
+        },
+        "quantity": null,
+        "dateRoles": null
+      }
+    ]
+  },
+  {
+    "id": "monthly-20260714",
+    "review": "原文確認済みの固定候補。実モデル応答ではない。",
+    "facts": [
+      {
+        "id": "f1",
+        "importance": "key",
+        "kind": "number",
+        "label": "MRR",
+        "value": 338214,
+        "unit": "千円",
+        "period": "2026年6月",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 4,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p4s28",
+          "metricIds": [
+            "p4s6"
+          ],
+          "periodIds": [
+            "p4s26",
+            "p4s27"
+          ],
+          "unitIds": [
+            "p4s29"
+          ],
+          "contextIds": [
+            "p4s1",
+            "p4s2",
+            "p4s3"
+          ],
+          "scopeIds": [
+            "p1b3",
+            "p4b1"
+          ],
+          "qualifierIds": [
+            "p5b22"
+          ]
+        },
+        "semantics": {
+          "subject": "株式会社うるる",
+          "scope": "NJSS",
+          "basis": null,
+          "periodKind": "month",
+          "metricKind": "amount",
+          "qualifiers": [
+            "速報値",
+            "修正する可能性"
+          ],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": [
+            "※本数値は速報値であり、今後修正する可能性があります。"
+          ]
+        },
+        "quantity": null,
+        "dateRoles": null
+      }
+    ]
+  },
+  {
+    "id": "ma-20260713",
+    "review": "原文確認済みの固定候補。実モデル応答ではない。",
+    "facts": [
+      {
+        "id": "f1",
+        "importance": "key",
+        "kind": "number",
+        "label": "売上高",
+        "value": 592019,
+        "unit": "千円",
+        "period": "2025年7月期",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 2,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p2s17",
+          "metricIds": [
+            "p2s12",
+            "p2s13",
+            "p2s14"
+          ],
+          "periodIds": [
+            "p1s103"
+          ],
+          "unitIds": [
+            "p2s17"
+          ],
+          "contextIds": [
+            "p1s98",
+            "p1s99"
+          ],
+          "scopeIds": [
+            "p1b13"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社富士設計",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f2",
+        "importance": "key",
+        "kind": "status",
+        "label": "取得価額",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "（３） 取 得 価 額 取得価額については、守秘義務により非開示とさせていただきます。",
+        "page": 2,
+        "quote": "（３） 取 得 価 額 取得価額については、守秘義務により非開示とさせていただきます。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p2b27",
+          "contextIds": [],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "ＩＺＵＭＩグループ株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "qualifiers": [],
+          "state": "unspecified",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f3",
+        "importance": "key",
+        "kind": "event",
+        "label": "決議・契約・実行予定日",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "（１） 取 締 役 会 決 議 日 2026 年７月 13 日\n（２） 契 約 締 結 日 2026 年７月 13 日\n（３） 株 式 譲 渡 実 行 日 2026 年７月 30 日（予定）",
+        "page": 2,
+        "quote": "（１） 取 締 役 会 決 議 日 2026 年７月 13 日\n（２） 契 約 締 結 日 2026 年７月 13 日\n（３） 株 式 譲 渡 実 行 日 2026 年７月 30 日（予定）",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p2b32",
+          "contextIds": [],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "ＩＺＵＭＩグループ株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "qualifiers": [],
+          "state": "planned",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f4",
+        "importance": "key",
+        "kind": "number",
+        "label": "営業利益",
+        "value": 64168,
+        "unit": "千円",
+        "period": "2025年7月期",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 2,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p2s24",
+          "metricIds": [
+            "p2s18",
+            "p2s19",
+            "p2s20",
+            "p2s21"
+          ],
+          "periodIds": [
+            "p1s103"
+          ],
+          "unitIds": [
+            "p2s24"
+          ],
+          "contextIds": [
+            "p1s98",
+            "p1s99"
+          ],
+          "scopeIds": [
+            "p1b13"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社富士設計",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f5",
+        "importance": "key",
+        "kind": "number",
+        "label": "当期純利益",
+        "value": 44195,
+        "unit": "千円",
+        "period": "2025年7月期",
+        "valueKind": "actual",
+        "column": null,
+        "statement": null,
+        "page": 2,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p2s39",
+          "metricIds": [
+            "p2s32",
+            "p2s33",
+            "p2s34",
+            "p2s35",
+            "p2s36"
+          ],
+          "periodIds": [
+            "p1s103"
+          ],
+          "unitIds": [
+            "p2s39"
+          ],
+          "contextIds": [
+            "p1s98",
+            "p1s99"
+          ],
+          "scopeIds": [
+            "p1b13"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "株式会社富士設計",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": [],
+          "state": "actual",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f6",
+        "importance": "key",
+        "kind": "event",
+        "label": "株式取得の決議",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "当社は、2026 年７月 13 日開催の取締役会において、以下のとおり、株式会社富士設計の株式を取得し、子\n会社化することについて決議いたしましたので、お知らせいたします。",
+        "page": 1,
+        "quote": "当社は、2026 年７月 13 日開催の取締役会において、以下のとおり、株式会社富士設計の株式を取得し、子\n会社化することについて決議いたしましたので、お知らせいたします。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p1b8",
+          "contextIds": [],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "ＩＺＵＭＩグループ株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "qualifiers": [],
+          "state": "decided",
+          "polarity": "affirmative",
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": null
+      }
+    ]
+  },
+  {
+    "id": "revision-20260910",
+    "facts": [
+      {
+        "id": "f1",
+        "importance": "key",
+        "kind": "number",
+        "label": "売上収益",
+        "value": 19730,
+        "unit": "百万円",
+        "period": "2026年９月期",
+        "valueKind": "forecastBefore",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s72",
+          "metricIds": [
+            "p1s58"
+          ],
+          "periodIds": [
+            "p1s71"
+          ],
+          "unitIds": [
+            "p1s64"
+          ],
+          "contextIds": [
+            "p1s46",
+            "p1s47"
+          ],
+          "scopeIds": [
+            "p1b3",
+            "p1b12"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": null,
+          "state": "forecastBefore",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f2",
+        "importance": "key",
+        "kind": "number",
+        "label": "営業利益",
+        "value": 2800,
+        "unit": "百万円",
+        "period": "2026年９月期",
+        "valueKind": "forecastBefore",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s74",
+          "metricIds": [
+            "p1s59"
+          ],
+          "periodIds": [
+            "p1s71"
+          ],
+          "unitIds": [
+            "p1s65"
+          ],
+          "contextIds": [
+            "p1s46",
+            "p1s47"
+          ],
+          "scopeIds": [
+            "p1b3",
+            "p1b12"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": null,
+          "state": "forecastBefore",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f3",
+        "importance": "key",
+        "kind": "number",
+        "label": "売上収益",
+        "value": 22000,
+        "unit": "百万円",
+        "period": "2026年９月期",
+        "valueKind": "forecastAfter",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s81",
+          "metricIds": [
+            "p1s58"
+          ],
+          "periodIds": [
+            "p1s80"
+          ],
+          "unitIds": [
+            "p1s64"
+          ],
+          "contextIds": [
+            "p1s46",
+            "p1s47"
+          ],
+          "scopeIds": [
+            "p1b3",
+            "p1b12"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": null,
+          "state": "forecastAfter",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f4",
+        "importance": "key",
+        "kind": "number",
+        "label": "営業利益",
+        "value": 2900,
+        "unit": "百万円",
+        "period": "2026年９月期",
+        "valueKind": "forecastAfter",
+        "column": null,
+        "statement": null,
+        "page": 1,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p1s82",
+          "metricIds": [
+            "p1s59"
+          ],
+          "periodIds": [
+            "p1s80"
+          ],
+          "unitIds": [
+            "p1s65"
+          ],
+          "contextIds": [
+            "p1s46",
+            "p1s47"
+          ],
+          "scopeIds": [
+            "p1b3",
+            "p1b12"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "qualifiers": null,
+          "state": "forecastAfter",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f5",
+        "importance": "key",
+        "kind": "number",
+        "label": "年間配当金期末",
+        "value": 125,
+        "unit": "円",
+        "period": "2026年９月期",
+        "valueKind": "forecastBefore",
+        "column": null,
+        "statement": null,
+        "page": 2,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p2s24",
+          "metricIds": [
+            "p2s5",
+            "p2s9",
+            "p2s10"
+          ],
+          "periodIds": [
+            "p2s23"
+          ],
+          "unitIds": [
+            "p2s19",
+            "p2s20"
+          ],
+          "contextIds": [
+            "p2s3",
+            "p2s4"
+          ],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "qualifiers": null,
+          "state": "forecastBefore",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f6",
+        "importance": "key",
+        "kind": "number",
+        "label": "年間配当金期末",
+        "value": 127,
+        "unit": "円",
+        "period": "2026年９月期",
+        "valueKind": "forecastAfter",
+        "column": null,
+        "statement": null,
+        "page": 2,
+        "quote": "",
+        "evidence": {
+          "kind": "table",
+          "valueId": "p2s27",
+          "metricIds": [
+            "p2s5",
+            "p2s9",
+            "p2s10"
+          ],
+          "periodIds": [
+            "p2s26"
+          ],
+          "unitIds": [
+            "p2s19",
+            "p2s20"
+          ],
+          "contextIds": [
+            "p2s3",
+            "p2s4"
+          ],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "qualifiers": null,
+          "state": "forecastAfter",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      }
+    ]
+  },
+  {
+    "id": "partnership-20260915",
+    "facts": [
+      {
+        "id": "f1",
+        "importance": "key",
+        "kind": "event",
+        "label": "基本合意書（MOU）",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "ティアンドエスグループ株式会社（本社：神奈川県横浜市西区、代表取締役：武川 義浩、以下「T&SG」）と\n株式会社TMH（本社：大分県大分市、代表取締役 榎並 大輔（コード番号：280A東証グロース市場・福証\nQ-Board上場）、以下「TMH」）は、両社の強みを相互に補完し半導体メーカーおよび装置メーカー向けのソ\nリューション提供を目的とした、業務提携に関する基本合意書（MOU）を締結いたしましたので、お知らせいた\nします。",
+        "page": 1,
+        "quote": "ティアンドエスグループ株式会社（本社：神奈川県横浜市西区、代表取締役：武川 義浩、以下「T&SG」）と\n株式会社TMH（本社：大分県大分市、代表取締役 榎並 大輔（コード番号：280A東証グロース市場・福証\nQ-Board上場）、以下「TMH」）は、両社の強みを相互に補完し半導体メーカーおよび装置メーカー向けのソ\nリューション提供を目的とした、業務提携に関する基本合意書（MOU）を締結いたしましたので、お知らせいた\nします。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p1b7",
+          "contextIds": [],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "ティアンドエスグループ株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "qualifiers": null,
+          "state": "contracted",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f2",
+        "importance": "key",
+        "kind": "event",
+        "label": "提携・協業の取り組み内容",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "現場ニーズに即応するため、以下のソフトウェアエンジニア派遣およびシステム保守運用サービスを優\n先的に展開いたします。",
+        "page": 1,
+        "quote": "現場ニーズに即応するため、以下のソフトウェアエンジニア派遣およびシステム保守運用サービスを優\n先的に展開いたします。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p1b16",
+          "contextIds": [],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "ティアンドエスグループ株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "qualifiers": null,
+          "state": "planned",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      },
+      {
+        "id": "f3",
+        "importance": "key",
+        "kind": "event",
+        "label": "提携・協業の取り組み内容",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "九州や東北地域をはじめとするFab（半導体工場）集積地域において、両社エンジニアの採用強化およ\nび顧客対応力向上を目的とした拠点連携・共同利用についても検討を進めてまいります。",
+        "page": 2,
+        "quote": "九州や東北地域をはじめとするFab（半導体工場）集積地域において、両社エンジニアの採用強化およ\nび顧客対応力向上を目的とした拠点連携・共同利用についても検討を進めてまいります。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p2b5",
+          "contextIds": [],
+          "scopeIds": [
+            "p1b3"
+          ],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "ティアンドエスグループ株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "qualifiers": null,
+          "state": "planned",
+          "polarity": "affirmative",
+          "conditions": null
+        },
+        "quantity": null,
+        "dateRoles": null
+      }
+    ]
+  }
+]

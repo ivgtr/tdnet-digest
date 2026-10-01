@@ -1,311 +1,225 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { generateText } from './llm-client';
-import { generateVerifiedFactSummary, parseFactSummary, renderFacts } from './fact-summary';
-
+import { parseFactSummary, generateVerifiedFactSummary, renderFacts } from './fact-summary';
+import { textPage, numberCandidate } from './fixtures/v4-test-source';
+import type { VerifiedFact } from './fact-contract';
+import { serializeLayout } from './pdf-layout';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
-
-const pages = [
-  {
-    pageNumber: 1,
-    spans: [],
-    text: '2026年通期\n単位: 百万円\n営業利益1150百万円\n前回予想 今回予想',
-  },
-];
-const fact = {
-  id: 'f1',
-  importance: 'key',
-  kind: 'number',
-  label: '営業利益',
-  value: 1150,
-  unit: '百万円',
-  period: '2026年通期',
-  valueKind: 'forecastAfter',
-  column: null,
-  statement: null,
-  page: 1,
-  evidence: null,
-  quote: '営業利益1150百万円',
-};
-const raw = (item: unknown) =>
-  JSON.stringify({ version: 3, documentType: 'other', facts: [item], unverified: [] });
-
-describe('事実要約の原文照合', () => {
-  it('数値・単位・期間・物理ページと連続引用を確認して表示する', () => {
-    const checked = parseFactSummary(raw(fact), 'other', pages);
-    expect(renderFacts(checked)).toContain('1150百万円（2026年通期');
-    expect(renderFacts(checked)).toContain('PDF p.1');
+const page = textPage(
+  '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
+);
+const fact = numberCandidate(page);
+const raw = (facts: VerifiedFact[], version = 4) =>
+  JSON.stringify({ version, documentType: 'other', facts, unverified: [] });
+const parse = (candidate: VerifiedFact, source = [page]) =>
+  parseFactSummary(raw([candidate]), 'other', source, false);
+describe('v4の原文と意味の照合', () => {
+  it('原数量・共通属性を保持し、保存した事実を再検証する', () => {
+    const result = parse(fact);
+    expect(result.unverified).toEqual([]);
+    expect(result.facts[0].quantity?.decimal).toBe('100');
+    expect(result.facts[0].id).toMatch(/^fact-/);
+    expect(parseFactSummary(raw(result.facts), 'other', [page], false)).toEqual(result);
+    expect(renderFacts(result)).toContain('100百万円（2026年3月期、株式会社テスト、連結、実績');
   });
   it.each([
-    ['営業利益', 'については', 20, '百万円'],
-    ['取得価額の総額', 'として', 10, '億円'],
-  ] as const)(
-    '複合助詞を含む%sの本文を照合し、対象行の実績区分を確認する',
-    (label, bridge, value, unit) => {
-      const quote = `2026年3月期 決算短信\n${label}${bridge}${value}${unit}です。`;
-      const source = [{ pageNumber: 1, spans: [], text: quote }];
-      const candidate = {
-        ...fact,
-        label,
-        value,
-        unit,
-        period: '2026年3月期',
-        valueKind: 'actual',
-        quote,
-      };
-      const parse = (valueKind: string) =>
-        parseFactSummary(
-          JSON.stringify({
-            version: 3,
-            documentType: 'earnings',
-            facts: [{ ...candidate, valueKind }],
-            unverified: [],
-          }),
-          'earnings',
-          source,
-          false
-        );
-      const checked = parse('actual');
-      expect(checked.facts).toHaveLength(1);
-      expect(checked.unverified).toEqual([]);
-      expect(renderFacts(checked)).toContain(`${value}${unit}`);
-      expect(parse('forecast').facts).toHaveLength(0);
-      expect(parse('forecast').unverified.join('')).toContain('実績・予想区分');
-    }
+    { value: 101 },
+    { period: '2025年3月期' },
+    { unit: '億円' },
+    { page: 2 },
+    { quote: '営業利益は100百万円' },
+    { label: '営業利益率' },
+  ])('誤対応 %j を拒否する', (change) =>
+    expect(parse({ ...fact, ...change }).facts).toHaveLength(0)
   );
-  it('離れた行の擬似引用を拒否する', () => {
-    expect(() =>
-      parseFactSummary(raw({ ...fact, quote: '2026年通期\n営業利益 100 1150' }), 'other', pages)
-    ).toThrow('連続引用');
+  it('旧スキーマ・未知項目・欠損を受け入れない', () => {
+    expect(() => parseFactSummary(raw([fact], 3), 'other', [page])).toThrow('形式');
+    expect(parse({ ...fact, extra: 1 } as never).facts).toHaveLength(0);
+    expect(parse({ ...fact, semantics: undefined } as never).facts).toHaveLength(0);
   });
-  it('誤った数値、単位、期間、ページ、列を拒否する', () => {
-    for (const change of [
-      { value: 1200 },
-      { unit: '億円' },
-      { period: '2027年通期' },
-      { page: 2 },
-    ]) {
-      expect(() => parseFactSummary(raw({ ...fact, ...change }), 'other', pages)).toThrow();
-    }
+  it('別セクションのscope/basisを借用しない', () => {
+    const other = textPage(page.text + '\nIFRS 非連結');
+    const bad = numberCandidate(other);
+    bad.evidence.scopeIds = [other.blocks[3].id];
+    bad.semantics.basis = 'IFRS';
+    bad.semantics.scope = '非連結';
+    expect(parse(bad, [other]).facts).toHaveLength(0);
   });
-  it('決算短信では年度のない対象期間を採用しない', () => {
-    const source = [
-      {
-        pageNumber: 1,
-        spans: [],
-        text: '2026年9月期通期\n単位: 百万円\n営業利益1150百万円\n前回予想 今回予想',
-      },
-    ];
-    const candidate = {
+  it('ページ抽出失敗を成功した本文で補わない', () =>
+    expect(() => parse(fact, [page, { ...textPage('', 2), status: 'failed' }])).toThrow(
+      '抽出失敗'
+    ));
+  it('原文字の欠損を旧形式のページで補わない', () =>
+    expect(() => parse(fact, [{ ...page, sourceItems: undefined } as never])).toThrow('原文字'));
+  it('smartで未選択の見出し本文・IDを入力せず、同ページの事実や根拠参照を拒否する', async () => {
+    const omitted = textPage(
+      '会社名 株式会社テスト\n2026年3月期 業績予想\n取得の方法は翌月の市場買付です。',
+      2
+    );
+    omitted.selection = 'omitted';
+    const sources = [page, omitted];
+    const text = serializeLayout(sources);
+    expect(text).not.toContain('取得の方法は翌月の市場買付です。');
+    expect(text).not.toContain('p2b');
+    expect(text).not.toContain('p2s');
+    const event: VerifiedFact = {
       ...fact,
-      valueKind: 'forecast',
-      period: '通期',
-    };
-    const result = parseFactSummary(
-      JSON.stringify({ version: 3, documentType: 'earnings', facts: [candidate], unverified: [] }),
-      'earnings',
-      source,
-      false
-    );
-    expect(result.facts).toHaveLength(0);
-    expect(result.unverified.join('')).toContain('対象年度と決算月');
-  });
-  it('IFRS決算の親会社所有者帰属利益を必須の利益項目として認識する', () => {
-    const source = [
-      {
-        pageNumber: 1,
-        spans: [],
-        text: '2026年3月期 決算短信〔IFRS〕\n売上収益100百万円\n営業利益20百万円\n親会社の所有者に帰属する当期利益10百万円',
-      },
-    ];
-    const items = [
-      ['売上収益', 100],
-      ['営業利益', 20],
-      ['親会社の所有者に帰属する当期利益', 10],
-    ].map(([label, value], index) => ({
-      id: `f${index + 1}`,
-      importance: 'key',
-      kind: 'number',
-      label,
-      value,
-      unit: '百万円',
-      period: '2026年3月期',
-      valueKind: 'actual',
-      column: null,
-      statement: null,
-      page: 1,
-      evidence: null,
-      quote: `${label}${value}百万円`,
-    }));
-    const result = parseFactSummary(
-      JSON.stringify({ version: 3, documentType: 'earnings', facts: items, unverified: [] }),
-      'earnings',
-      source
-    );
-    expect(result.facts).toHaveLength(3);
-  });
-  it('業績予想が未定なら実績の要約を通し、数値予想があれば必須項目を確認する', () => {
-    const actual = [
-      ['売上高', 100],
-      ['営業利益', 20],
-      ['親会社株主に帰属する当期純利益', 10],
-    ].map(([label, value], index) => ({
-      ...fact,
-      id: `f${index + 1}`,
-      label,
-      value,
-      period: '2026年3月期',
-      valueKind: 'actual',
-      column: null,
-      evidence: null,
-      quote: `${label}${value}百万円`,
-    }));
-    const actualText =
-      '2026年3月期 決算短信\n売上高100百万円\n営業利益20百万円\n親会社株主に帰属する当期純利益10百万円';
-    const raw = JSON.stringify({
-      version: 3,
-      documentType: 'earnings',
-      facts: actual,
-      unverified: [],
-    });
-    expect(
-      parseFactSummary(raw, 'earnings', [
-        { pageNumber: 1, spans: [], text: `${actualText}\n業績予想については未定です` },
-      ]).facts
-    ).toHaveLength(3);
-    expect(() =>
-      parseFactSummary(raw, 'earnings', [
-        {
-          pageNumber: 1,
-          spans: [],
-          text: `${actualText}\n業績予想\n売上高 営業利益 親会社株主に帰属する当期純利益\n百万円 百万円 百万円\n通期 110 25 15`,
-        },
-      ])
-    ).toThrow('通期予想の重要指標');
-    expect(() =>
-      parseFactSummary(raw, 'earnings', [
-        {
-          pageNumber: 1,
-          spans: [],
-          text: `${actualText}\n業績予想は売上高110百万円、営業利益25百万円、親会社株主に帰属する当期純利益15百万円です`,
-        },
-      ])
-    ).toThrow('通期予想の重要指標');
-  });
-  it('△と▲で表した損失を負数として照合する', () => {
-    for (const sign of ['△', '▲', '△ ', '▲ ']) {
-      const source = [
-        { pageNumber: 1, spans: [], text: `2026年3月期 決算短信\n営業利益 ${sign}2,000百万円` },
-      ];
-      const parse = (value: number) =>
-        parseFactSummary(
-          JSON.stringify({
-            version: 3,
-            documentType: 'earnings',
-            facts: [
-              {
-                ...fact,
-                value,
-                period: '2026年3月期',
-                valueKind: 'actual',
-                column: null,
-                quote: `営業利益 ${sign}2,000百万円`,
-              },
-            ],
-            unverified: [],
-          }),
-          'earnings',
-          source,
-          false
-        );
-      expect(parse(-2000).facts.map((item) => item.value)).toEqual([-2000]);
-      expect(parse(2000).facts).toHaveLength(0);
-    }
-  });
-  it('決算説明文の実績値を予想として採用しない', () => {
-    const source = [
-      {
-        pageNumber: 1,
-        spans: [],
-        text: '2026年5月期 決算短信\n１．経営成績\n売上高100百万円\n３．2027年5月期の業績予想\n売上高110百万円',
-      },
-    ];
-    const parse = (value: number, period: string, valueKind: string, quote: string) =>
-      parseFactSummary(
-        JSON.stringify({
-          version: 3,
-          documentType: 'earnings',
-          facts: [{ ...fact, label: '売上高', value, period, valueKind, column: null, quote }],
-          unverified: [],
-        }),
-        'earnings',
-        source,
-        false
-      );
-    expect(parse(100, '2026年5月期', 'actual', '売上高100百万円').facts).toHaveLength(1);
-    expect(parse(100, '2026年5月期', 'forecast', '売上高100百万円').facts).toHaveLength(0);
-    expect(parse(110, '2027年5月期', 'forecast', '売上高110百万円').facts).toHaveLength(1);
-    expect(parse(110, '2027年5月期', 'actual', '売上高110百万円').facts).toHaveLength(0);
-  });
-  it('同じ表にある別列の値を営業利益として採用しない', () => {
-    expect(() => parseFactSummary(raw({ ...fact, value: 100 }), 'other', pages)).toThrow(
-      '重要事実'
-    );
-  });
-  it('複数の指標が続く説明文は指標名と数値と単位の直接対応を確認する', () => {
-    const narrative = [
-      { pageNumber: 1, spans: [], text: '2026年通期\n売上高3,393千円、営業利益634千円' },
-    ];
-    const item = {
-      ...fact,
-      value: 634,
-      unit: '千円',
-      column: null,
-      quote: narrative[0].text.split('\n')[1],
-    };
-    expect(parseFactSummary(raw(item), 'other', narrative).facts).toHaveLength(1);
-    expect(() => parseFactSummary(raw({ ...item, value: 3393 }), 'other', narrative)).toThrow(
-      '重要事実'
-    );
-  });
-  it('未知項目を拒否する', () => {
-    expect(() => parseFactSummary(raw({ ...fact, rating: 5 }), 'other', pages)).toThrow('形式');
-  });
-  it('修復時は検証済み事実を保持し、不足した決定事項だけを補う', async () => {
-    const source = [
-      {
-        pageNumber: 1,
-        spans: [],
-        text: '2026年通期\n単位: 百万円\n営業利益1150百万円\n前回予想 今回予想\n基本合意書を締結',
-      },
-    ];
-    const event = {
       id: 'f2',
-      importance: 'key',
       kind: 'event',
-      label: '基本合意',
+      label: '取得の方法',
       value: null,
       unit: null,
       period: null,
       valueKind: null,
-      column: null,
-      statement: '基本合意書を締結',
-      page: 1,
-      evidence: null,
-      quote: '基本合意書を締結',
+      statement: omitted.blocks[2].text,
+      quote: omitted.blocks[2].text,
+      page: 2,
+      evidence: {
+        kind: 'prose',
+        blockId: omitted.blocks[2].id,
+        contextIds: [],
+        scopeIds: [],
+        qualifierIds: [],
+      },
+      semantics: {
+        subject: null,
+        scope: null,
+        basis: null,
+        periodKind: 'none',
+        metricKind: 'none',
+        state: 'unspecified',
+        polarity: 'affirmative',
+        qualifiers: [],
+        conditions: [],
+      },
+      quantity: null,
+      dateRoles: null,
     };
-    const reply = (items: unknown[]) =>
-      JSON.stringify({ version: 3, documentType: 'ma', facts: items, unverified: [] });
+    expect(parseFactSummary(raw([event]), 'other', sources, false).unverified.join(' ')).toContain(
+      '未選択ページ'
+    );
+    const wrongReference = structuredClone(fact);
+    wrongReference.evidence.scopeIds = [omitted.blocks[0].id];
+    expect(
+      parseFactSummary(raw([wrongReference]), 'other', sources, false).unverified.join(' ')
+    ).toContain('未選択ページの根拠');
     vi.mocked(generateText)
-      .mockResolvedValueOnce(reply([fact, { ...event, quote: '存在しない引用' }]))
-      .mockResolvedValueOnce(reply([event]));
+      .mockReset()
+      .mockResolvedValueOnce(raw([fact, event]));
     const result = await generateVerifiedFactSummary(
       { provider: 'openai', model: 'test', apiKey: 'test' },
-      'ma',
-      source[0].text,
-      source
+      'other',
+      page.text,
+      sources
+    );
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.facts.unverified.join(' ')).toContain('未選択ページ');
+    expect(vi.mocked(generateText).mock.calls[0][1][1].content).not.toContain(
+      '取得の方法は翌月の市場買付です。'
+    );
+    omitted.status = 'failed';
+    expect(() => parseFactSummary(raw([fact]), 'other', sources)).toThrow('抽出失敗');
+  });
+  it('月次の他月割当を拒否し、正しい暦月を採用する', () => {
+    const monthly = textPage(
+      '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年7月実績\n店舗数は120店舗です。\n2026年8月実績\n店舗数は130店舗です。'
+    );
+    const candidate = numberCandidate(monthly, '店舗数', 120, '2026年7月');
+    candidate.unit = '店舗';
+    candidate.semantics.metricKind = 'count';
+    candidate.semantics.periodKind = 'month';
+    expect(parse(candidate, [monthly]).facts).toHaveLength(1);
+    expect(parse({ ...candidate, period: '2026年8月' }, [monthly]).facts).toHaveLength(0);
+  });
+  it('Q1の期間と区分を省略できない', () => {
+    const quarterly = textPage(
+      '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 第1四半期連結累計期間の経営成績\n営業利益は100百万円です。'
+    );
+    const candidate = numberCandidate(quarterly);
+    expect(parse(candidate, [quarterly]).facts).toHaveLength(0);
+    candidate.period = '2026年3月期第1四半期累計';
+    candidate.semantics.periodKind = 'cumulativeQ1';
+    expect(parse(candidate, [quarterly]).facts).toHaveLength(1);
+  });
+  it('否定の末尾を切った出来事を拒否する', () => {
+    const p = textPage('配当増額を決定していません。');
+    const event: VerifiedFact = {
+      ...fact,
+      kind: 'event',
+      label: '配当増額',
+      value: null,
+      unit: null,
+      period: null,
+      valueKind: null,
+      statement: p.text,
+      page: 1,
+      quote: p.text,
+      evidence: {
+        kind: 'prose',
+        blockId: p.blocks[0].id,
+        contextIds: [],
+        scopeIds: [],
+        qualifierIds: [],
+      },
+      semantics: {
+        subject: null,
+        scope: null,
+        basis: null,
+        periodKind: 'none',
+        metricKind: 'none',
+        qualifiers: [],
+        state: 'decided',
+        polarity: 'negative',
+        conditions: [],
+      },
+      quantity: null,
+    };
+    expect(parse(event, [p]).facts).toHaveLength(1);
+    expect(renderFacts(parse(event, [p]))).toContain('決定していません');
+    expect(parse({ ...event, statement: '配当増額を決定' }, [p]).facts).toHaveLength(0);
+    expect(
+      parse({ ...event, semantics: { ...event.semantics, polarity: 'affirmative' } }, [p]).facts
+    ).toHaveLength(0);
+  });
+  it('上限と予定の欠落を拒否し、完全な限定を表示する', () => {
+    const p = textPage(
+      '会社名 株式会社テスト | 株式種類 普通株式\n2026年7月15日取得予定\n取得する株式の総数は200,000株（上限）です。'
+    );
+    const f = numberCandidate(p, '取得する株式の総数', 200000, '2026年7月15日');
+    f.unit = '株';
+    f.valueKind = null;
+    f.semantics = {
+      ...f.semantics,
+      basis: null,
+      scope: '普通株式',
+      periodKind: 'eventDate',
+      metricKind: 'count',
+      state: 'planned',
+      qualifiers: ['上限'],
+    };
+    expect(parse(f, [p]).facts).toHaveLength(1);
+    expect(renderFacts(parse(f, [p]))).toContain('実施予定、上限');
+    expect(parse({ ...f, semantics: { ...f.semantics, qualifiers: [] } }, [p]).facts).toHaveLength(
+      0
+    );
+    expect(
+      parse({ ...f, valueKind: 'actual', semantics: { ...f.semantics, state: 'actual' } }, [p])
+        .facts
+    ).toHaveLength(0);
+  });
+  it('f1の付け替えに依存せず修復前の事実を維持する', async () => {
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(raw([{ ...fact, value: 999 }]))
+      .mockResolvedValueOnce(raw([{ ...fact, id: 'f7' }]));
+    const result = await generateVerifiedFactSummary(
+      { provider: 'openai', model: 'test', apiKey: 'test' },
+      'other',
+      page.text,
+      [page]
     );
     expect(result.repairAttempted).toBe(true);
-    expect(result.facts.facts.map((item) => item.id)).toEqual(['f1', 'f2']);
-    expect(result.facts.facts[0].period).toBe('2026年通期');
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.facts.facts[0].id).toMatch(/^fact-/);
   });
 });

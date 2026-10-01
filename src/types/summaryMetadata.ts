@@ -1,3 +1,4 @@
+import type { SourceItem, TextBlock, QuantityCell } from '../lib/document-structure';
 import type { PdfSpan } from '../lib/pdf-layout';
 import type { DocumentType } from '../lib/document-type';
 import type { FactSummary } from '../lib/fact-summary';
@@ -8,6 +9,11 @@ export interface ExtractedPage {
   pageNumber: number;
   text: string;
   spans: PdfSpan[];
+  sourceItems: SourceItem[];
+  status: 'ok' | 'empty' | 'failed';
+  selection: 'selected' | 'omitted';
+  blocks: TextBlock[];
+  quantities: QuantityCell[];
 }
 
 export interface EvidenceFact {
@@ -22,6 +28,7 @@ export interface QualityWarning {
 }
 
 export interface SummaryMetadata {
+  documentHash?: string;
   totalPages: number;
   extractedPages: number[];
   sectionsUsed?: string[];

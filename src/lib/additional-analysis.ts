@@ -2,7 +2,7 @@ import { generateText, type LLMConfig } from './llm-client';
 import { getProviderCapabilities } from './structured-output';
 import type { FactSummary } from './fact-summary';
 
-export const ANALYSIS_VERSION = 1;
+export const ANALYSIS_VERSION = 2;
 export interface AnalysisView {
   text: string;
   factIds: string[];
@@ -49,7 +49,7 @@ export async function analyzeFacts(
       },
       {
         role: 'user',
-        content: `形式: {"version":1,"interpretation":{"text":"解釈","factIds":["f1"]},"shortTerm":{"text":"短期","factIds":["f1"]},"mediumTerm":{"text":"中期","factIds":[]},"longTerm":{"text":"長期","factIds":[]},"watchPoints":[{"text":"確認点","factIds":["f1"]}]}\n検証済み事実: ${JSON.stringify(facts)}`,
+        content: `形式: {"version":2,"interpretation":{"text":"解釈","factIds":["入力の確定事実ID"]},"shortTerm":{"text":"短期","factIds":["入力の確定事実ID"]},"mediumTerm":{"text":"中期","factIds":[]},"longTerm":{"text":"長期","factIds":[]},"watchPoints":[{"text":"確認点","factIds":["入力の確定事実ID"]}]}\n検証済み事実: ${JSON.stringify(facts)}`,
       },
     ]
   );

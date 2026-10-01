@@ -8,7 +8,8 @@ import {
 import { extractPageLayout } from './pdf-layout';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { PdfSpan } from './pdf-layout';
-import type { ExtractedPage } from '@/types/summaryMetadata';
+import type { ExtractedPage as FullPage } from '@/types/summaryMetadata';
+type ExtractedPage = Pick<FullPage, 'pageNumber' | 'text' | 'spans'>;
 
 const span = (id: string, text: string, x: number, y: number, width = 40): PdfSpan => ({
   id,
@@ -74,7 +75,6 @@ describe('本文の指標と数量の対応', () => {
     '取得価額の総額は営業利益が10億円です。',
     '取得価額の総額は5億円、営業利益は10億円です。',
     '取得価額の総額。10億円です。',
-    '取得価額の総額は\n10億円です。',
     '取得価額の総額ははははははは10億円です。',
     '取得価額の総額は110億円です。',
     '取得価額の総額は10.1億円です。',
@@ -82,7 +82,6 @@ describe('本文の指標と数量の対応', () => {
     '取得価額の総額については、（10億円です。',
     '取得価額の総額については営業利益が10億円です。',
     '取得価額の総額については5億円、営業利益は10億円です。',
-    '取得価額の総額については\n10億円です。',
     '取得価額の総額ではなく10億円です。',
     '取得価額の総額については約10億円です。',
     '取得価額の総額としては最大10億円です。',

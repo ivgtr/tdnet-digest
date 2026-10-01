@@ -1,6 +1,7 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
-import { parseQuantity, isUnitToken } from './quantity';
+import { parseQuantity, parseExactRange, isUnitToken } from './quantity';
+import { quantityCells, lineRuns } from './document-structure';
 
 export interface TableEvidence {
   valueId: string;
@@ -11,7 +12,8 @@ export interface TableEvidence {
 }
 export interface NumericClaim {
   label: string;
-  value: number;
+  value: number | null;
+  range?: boolean;
   unit: string;
   period: string;
   valueKind: string;
@@ -62,9 +64,10 @@ function refs(value: unknown, spans: PdfSpan[], name: string, empty = false): Pd
 }
 
 export function verifyTableEvidence(
-  page: ExtractedPage,
+  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
   raw: unknown,
-  claim: NumericClaim
+  claim: NumericClaim,
+  checkMeaning = true
 ): { evidence: TableEvidence; quote: string } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('参照の形式');
   const object = raw as Record<string, unknown>;
@@ -72,8 +75,14 @@ export function verifyTableEvidence(
   if (Object.keys(object).length !== keys.length || !keys.every((k) => k in object))
     fail('参照の項目');
   if (!Array.isArray(page.spans) || !page.spans.length) fail('PDFの位置情報がありません');
-  const value = page.spans.find((s) => s.id === object.valueId) ?? fail('値の参照先');
-  const parsedValue = parseQuantity(value.text) ?? fail('値・符号');
+  const value =
+    quantityCells(page.spans).find((s) => s.id === object.valueId) ??
+    fail('値の参照先・値・符号・数量の一部参照');
+  const parsedRange = parseExactRange(value.text);
+  const parsedValue =
+    claim.range && parsedRange
+      ? { value: null, unit: parsedRange.unit }
+      : (parseQuantity(value.text) ?? fail('値・符号'));
   if (parsedValue.value !== claim.value) fail('値・符号');
   const metrics = refs(object.metricIds, page.spans, '指標');
   const periods = refs(object.periodIds, page.spans, '期間');
@@ -88,7 +97,8 @@ export function verifyTableEvidence(
     (label === '年間配当金' && metricText === '年間配当金合計') ||
     (label === '期末配当金' && metricText === '年間配当金期末');
   if (metricText !== label && !dividend) fail('指標名');
-  const expectedUnit = compact(claim.unit).replace(/^円銭$/, '円');
+  if (compact(claim.unit) === '円銭') fail('円銭の列見出しに対する数量単位は円です');
+  const expectedUnit = compact(claim.unit);
   const unitIncludesValue = units.some((s) => s.id === value.id);
   const orderedUnits = units.filter((s) => s.id !== value.id).sort((a, b) => a.x - b.x);
   if (unitIncludesValue && !parsedValue.unit) fail('単位');
@@ -144,9 +154,36 @@ export function verifyTableEvidence(
       ![...metrics, ...periods, ...contexts, ...units.filter((u) => u.id !== value.id)].some(
         (ref) => ref.id === s.id
       ) &&
-      (numeric(s.text) !== null || /^[－―—–-]$/.test(compact(s.text)))
+      (numeric(s.text) !== null || parseExactRange(s.text) || /^[－―—–-]$/.test(compact(s.text)))
   );
-  const metricOnRow = metrics.every((s) => sameRow(s, value) && s.x + s.width <= value.x);
+  const metricOnRow =
+    metrics.some((s) => sameRow(s, value)) &&
+    metrics.every(
+      (s) => s.x + s.width <= value.x && s.y <= value.y && value.y - s.y <= s.height * 4
+    );
+  if (metricOnRow) {
+    const left = Math.min(...metrics.map((s) => s.x)),
+      right = Math.max(...metrics.map((s) => s.x + s.width));
+    const quantities = quantityCells(page.spans);
+    const precedingRow = Math.max(
+      -Infinity,
+      ...quantities
+        .filter((q) => q.y < value.y && quantities.filter((other) => sameRow(q, other)).length >= 2)
+        .map((q) => q.y)
+    );
+    const incomplete = page.spans.some(
+      (s) =>
+        s.y > precedingRow &&
+        s.y <= value.y &&
+        value.y - s.y <= s.height * 3 &&
+        s.x >= left &&
+        s.x + s.width <= right &&
+        !selected.some((r) => r.id === s.id) &&
+        !parseQuantity(s.text) &&
+        !/20\d{2}年|単位|通期|四半期|百万円|千円/.test(s.text)
+    );
+    if (incomplete) fail('行指標見出しの一部が未参照');
+  }
   const singleValueRow = metricOnRow && rowNumbers.length === 1;
   const allUnits = page.spans.filter(
     (s) =>
@@ -154,7 +191,26 @@ export function verifyTableEvidence(
       s.y < value.y &&
       ![...metrics, ...periods, ...contexts].some((ref) => ref.id === s.id)
   );
-  const localUnit = units.length === 1 && isUnitToken(compact(units[0].text)) ? units[0] : null;
+  const groupedUnit = [...units].sort((a, b) => a.x - b.x);
+  const contiguousUnit = groupedUnit.every(
+    (s, i) =>
+      !i ||
+      (sameRow(s, groupedUnit[0]) &&
+        s.x - groupedUnit[i - 1].x - groupedUnit[i - 1].width >= -0.5 &&
+        s.x - groupedUnit[i - 1].x - groupedUnit[i - 1].width <=
+          Math.min(s.height, groupedUnit[i - 1].height) * 0.6)
+  );
+  const localUnit =
+    contiguousUnit && isUnitToken(joined(groupedUnit))
+      ? {
+          ...groupedUnit[0],
+          text: joined(groupedUnit),
+          width:
+            groupedUnit[groupedUnit.length - 1].x +
+            groupedUnit[groupedUnit.length - 1].width -
+            groupedUnit[0].x,
+        }
+      : null;
   let anchors: PdfSpan[];
   let metricBand: [number, number];
   let unitY: number;
@@ -164,7 +220,7 @@ export function verifyTableEvidence(
     metricBand = [band.left, band.right];
     unitY = value.y;
   } else if (localUnit) {
-    const peers = allUnits
+    const peers = [localUnit, ...allUnits.filter((s) => !units.some((u) => u.id === s.id))]
       .filter((s) => sameRow(s, localUnit))
       .sort((a, b) => center(a) - center(b));
     anchors = peers.length >= 2 ? peers : rowNumbers;
@@ -206,7 +262,16 @@ export function verifyTableEvidence(
   const above = (s: PdfSpan) => s.y < value.y && value.y - s.y <= headerHeight * 18;
   if (
     !metricOnRow &&
-    !metrics.every((s) => above(s) && (inBand(s) || compact(s.text) === '年間配当金'))
+    !metrics.every((s) => {
+      const run = lineRuns(page.spans).find((run) => run.some((part) => part.id === s.id))!;
+      const left = Math.min(...run.map((part) => part.x)),
+        right = Math.max(...run.map((part) => part.x + part.width));
+      return (
+        above(s) &&
+        (((left + right) / 2 > metricBand[0] && (left + right) / 2 < metricBand[1]) ||
+          compact(s.text) === '年間配当金')
+      );
+    })
   )
     fail('指標の列');
   if (!metricOnRow) {
@@ -238,24 +303,105 @@ export function verifyTableEvidence(
         compact(s.text) !== expectedUnit &&
         !/経営成績|業績|配当の状況|決算短信|増減率/.test(s.text)
     );
-    if (omitted.length) fail('指標見出しの一部が未参照');
+    // Inspect complete horizontal runs, so the leading digit of a neighbouring heading
+    // cannot become a missing fragment of this metric. Do not discard numeric headings.
+    const owned = lineRuns(page.spans.filter((s) => s.y < unitY && s.y > top))
+      .filter((run) => {
+        // A complete calendar heading is a period axis, including when it wraps
+        // into a financial column. Its digits are never a metric qualifier.
+        const text = compact(joined(run));
+        const temporal =
+          /20\d{2}年/.test(text) &&
+          !text.replace(/20\d{2}年\d{1,2}月(?:\d{1,2}日|期)?/g, '').replace(/[()（）～〜~-]/g, '')
+            .length;
+        const left = Math.min(...run.map((s) => s.x)),
+          right = Math.max(...run.map((s) => s.x + s.width));
+        return (
+          !temporal && (left + right) / 2 > metricBand[0] && (left + right) / 2 < metricBand[1]
+        );
+      })
+      .flat();
+    const missingMetric = omitted.filter((s) => owned.some((o) => o.id === s.id));
+    if (missingMetric.length)
+      fail(
+        `指標見出しの一部が未参照。必要=${JSON.stringify(missingMetric.map((s) => [s.id, s.text]))}`
+      );
   }
+  // A vertically centred row label may sit between the units and its values.
+  // Bind it to one nearest numeric data row; an equal-distance tie is ambiguous.
+  const dataCells = quantityCells(page.spans).filter((q) => q.y > unitY);
+  const dataRows = [
+    ...new Set(
+      dataCells
+        .filter((q) => dataCells.filter((other) => sameRow(q, other)).length >= 2)
+        .map((q) => q.y)
+    ),
+  ];
+  const onDataRow = (s: PdfSpan) => {
+    if (sameRow(s, value)) return true;
+    if (Math.abs(s.y - value.y) > Math.min(s.height, value.height) * 1.2) return false;
+    const distances = dataRows.map((y) => Math.abs(y - s.y));
+    const nearest = Math.min(...distances);
+    return (
+      Math.abs(value.y - s.y) <= nearest + 0.1 &&
+      distances.filter((d) => Math.abs(d - nearest) < 0.1).length === 1
+    );
+  };
   if (!metricOnRow) {
     const axisFragments = page.spans.filter(
       (s) =>
-        sameRow(s, value) &&
+        onDataRow(s) &&
         s.x + s.width < Math.min(...rowNumbers.map((n) => n.x)) &&
         /予想|見込|見通し|前回|従来|修正|今回|通期|四半期|中間期|20\d{2}年/.test(compact(s.text))
     );
     if (axisFragments.some((s) => !periods.some((ref) => ref.id === s.id)))
-      fail('期間・区分見出しの一部が未参照');
+      fail(
+        `期間・区分見出しの一部が未参照。periodIdsに必要=${JSON.stringify(axisFragments.filter((s) => !periods.some((ref) => ref.id === s.id)).map((s) => [s.id, s.text]))}`
+      );
   }
   const rowPeriods = periods.filter(
-    (s) => sameRow(s, value) && s.x + s.width < Math.min(...rowNumbers.map((n) => n.x))
+    (s) => onDataRow(s) && s.x + s.width < Math.min(...rowNumbers.map((n) => n.x))
   );
-  const columnPeriods = periods.filter((s) => above(s) && inBand(s));
-  if (metricOnRow ? columnPeriods.length !== periods.length : rowPeriods.length !== periods.length)
-    fail('期間の行・列');
+  const fiscalPeers = page.spans.filter(
+    (s) => s.y < value.y && /20\d{2}年\d{1,2}月期/.test(compact(s.text))
+  );
+  const ownedFiscal = (s: PdfSpan) => {
+    const peers = fiscalPeers.filter((other) => sameRow(s, other));
+    return peers.length >= 2 && peers[bandFor(value, peers).index].id === s.id;
+  };
+  const columnPeriods = periods.filter(
+    (s) => !sameRow(s, value) && above(s) && (inBand(s) || ownedFiscal(s))
+  );
+  const commonPeriodIds = new Set(
+    lineRuns(page.spans)
+      .filter((run) => {
+        const text = joined(run);
+        return (
+          /20\d{2}年\d{1,2}月期/.test(text) &&
+          /業績予想|経営成績/.test(text) &&
+          [...text.matchAll(/20\d{2}年\d{1,2}月期/g)].length === 1 &&
+          run.every((s) => above(s) && s.y < Math.min(...metrics.map((m) => m.y)))
+        );
+      })
+      .flatMap((run) => run.map((s) => s.id))
+  );
+  const commonPeriods = periods.filter((s) => !rowPeriods.includes(s) && commonPeriodIds.has(s.id));
+  const monthAxes = /^20\d{2}年\d{1,2}月(?:度)?$/.test(compact(claim.period));
+  if (
+    metricOnRow
+      ? columnPeriods.filter((s) => !commonPeriodIds.has(s.id)).length + commonPeriods.length !==
+        periods.length
+      : monthAxes
+        ? rowPeriods.length === 0 ||
+          rowPeriods.length +
+            columnPeriods.filter((s) => !commonPeriodIds.has(s.id)).length +
+            commonPeriods.length !==
+            periods.length
+        : rowPeriods.length === 0 || rowPeriods.length + commonPeriods.length !== periods.length
+  )
+    fail(
+      `期間の行・列。選んだperiodIds=${JSON.stringify(periods.map((s) => [s.id, s.text]))}。行の区分と、月次の年度列だけを参照し、表の年度タイトルはcontextIdsへ入れます`
+    );
   if (
     !units.every(
       (s) =>
@@ -264,14 +410,29 @@ export function verifyTableEvidence(
     )
   )
     fail('単位の適用範囲');
-  const firstHeaderY = Math.min(unitY, ...metrics.map((s) => s.y), ...periods.map((s) => s.y));
-  if (!contexts.every((s) => s.y <= firstHeaderY && value.y - s.y < value.height * 32))
+  const firstHeaderY = Math.min(
+    unitY,
+    ...metrics.map((s) => s.y),
+    ...periods.filter((s) => !commonPeriodIds.has(s.id)).map((s) => s.y)
+  );
+  if (
+    !contexts.every(
+      (s) =>
+        (s.y <= firstHeaderY || rowPeriods.some((axis) => axis.id === s.id)) &&
+        value.y - s.y < value.height * 32
+    )
+  )
     fail('文脈の適用範囲');
   // 選んだ文脈と表の間に別の決算セクションがあれば、遠い見出しは使わない。
   const section = /経営成績|連結業績|業績予想|配当の状況|財政状態|損益計算書/;
   const headings = page.spans.filter((s) => s.y < firstHeaderY && section.test(compact(s.text)));
   const nearest = headings.sort((a, b) => b.y - a.y)[0];
   if (
+    !(
+      nearest &&
+      /経営成績|連結業績/.test(compact(nearest.text)) &&
+      contexts.some((context) => context.id === nearest.id)
+    ) &&
     contexts.some((context) =>
       allUnits.some(
         (unit) =>
@@ -289,7 +450,8 @@ export function verifyTableEvidence(
   )
     fail('別セクションの文脈');
 
-  verifyPeriodAndKind(claim, joined(periods), joined(contexts), nearest?.text ?? '');
+  if (checkMeaning)
+    verifyPeriodAndKind(claim, joined(periods), joined(contexts), nearest?.text ?? '');
   const unique = [...new Map(selected.map((s) => [s.id, s])).values()].sort(
     (a, b) => a.y - b.y || a.x - b.x
   );
@@ -340,29 +502,78 @@ function bandFor(
   return { index, left, right };
 }
 
-function verifyPeriodAndKind(claim: NumericClaim, axis: string, context: string, nearest: string) {
-  const target = compact(claim.period);
-  const yearPattern = /20\d{2}年\d{1,2}月(?:期|\d{1,2}日)/;
-  const axisYear = axis.match(yearPattern)?.[0];
-  const year = axisYear ?? context.match(yearPattern)?.[0];
-  if (target.match(yearPattern)?.[0] !== year || !year) fail('対象年度・決算月');
-  const shape = (text: string) => text.match(/第[1-4]四半期|中間期|通期/)?.[0] ?? null;
-  const axisShape = shape(axis);
+export function verifyPeriodAndKind(
+  claim: NumericClaim,
+  axis: string,
+  context: string,
+  nearest: string
+) {
+  axis = compact(axis);
+  context = compact(context);
+  const target = compact(claim.period),
+    local = axis + context;
+  const fiscal = /20\d{2}年\d{1,2}月期/;
+  const date = /20\d{2}年\d{1,2}月\d{1,2}日/;
+  const month = /20\d{2}年\d{1,2}月(?![\d期])/;
+  const axisCalendarMonth = axis.match(/(\d{1,2})月(?!期)/);
+  const targetCalendarMonth = target.match(/^20\d{2}年(\d{1,2})月(?:度)?$/);
   if (
-    axisShape &&
-    axisShape !== shape(target) &&
-    !(axisShape === '中間期' && shape(target) === '第2四半期')
+    axisCalendarMonth &&
+    targetCalendarMonth &&
+    Number(axisCalendarMonth[1]) !== Number(targetCalendarMonth[1])
+  )
+    fail('対象月の行');
+  const closing = (axis.match(fiscal) ?? context.match(fiscal))?.[0].match(
+    /(20\d{2})年(\d{1,2})月期/
+  );
+  if (
+    axisCalendarMonth &&
+    targetCalendarMonth &&
+    closing &&
+    Number(target.slice(0, 4)) !==
+      Number(closing[1]) - (Number(axisCalendarMonth[1]) > Number(closing[2]) ? 1 : 0)
+  )
+    fail('月次の年度と暦年');
+  const match = target.match(fiscal)?.[0] ?? target.match(date)?.[0] ?? target.match(month)?.[0];
+  if (!match) fail('対象年度・決算月');
+  if (!local.includes(match!)) {
+    const targetMonth = target.match(/^(20\d{2})年(\d{1,2})月$/);
+    const axisMonth = axis.match(/^(\d{1,2})月$/);
+    const closing = context.match(/(20\d{2})年(\d{1,2})月期/);
+    if (
+      !targetMonth ||
+      !axisMonth ||
+      !closing ||
+      Number(targetMonth[2]) !== Number(axisMonth[1]) ||
+      Number(targetMonth[1]) !==
+        Number(closing[1]) - (Number(axisMonth[1]) > Number(closing[2]) ? 1 : 0)
+    )
+      fail('対象年度・決算月');
+  }
+  const shape = (text: string) => text.match(/第[1-4]四半期|中間期|通期/)?.[0] ?? null;
+  const sourceShape = shape(axis) ?? shape(context),
+    claimedShape = shape(target);
+  if (
+    sourceShape &&
+    sourceShape !== claimedShape &&
+    !(sourceShape === '通期' && !claimedShape && fiscal.test(target)) &&
+    !(sourceShape === '中間期' && claimedShape === '第2四半期')
   )
     fail('対象期間');
-  if (!axisShape && shape(target) && shape(context) !== shape(target)) fail('対象期間の根拠');
-  if (/累計/.test(target) && !/累計/.test(axis + context)) fail('累計期間');
-  if (/単独/.test(target) && (!/単独/.test(axis + context) || /累計/.test(axis + context)))
-    fail('単独期間');
-  const kind = /前回|従来|修正前|直近の配当予想/.test(axis)
+  if (!sourceShape && claimedShape && !(claimedShape === '通期' && fiscal.test(local)))
+    fail('対象期間の根拠');
+  if ((/累計/.test(local) && /単独/.test(target)) || (/単独/.test(local) && /累計/.test(target)))
+    fail('累計・単独期間');
+  if (/累計/.test(target) && !/累計/.test(local)) fail('累計期間');
+  if (/単独/.test(target) && !/単独/.test(local)) fail('単独期間');
+  const kindAxis = /前回|従来|修正前|直近の配当予想|今回|修正後|決定額/.test(axis) ? axis : context;
+  if (/前回|従来|修正前/.test(kindAxis) && /今回|修正後/.test(kindAxis))
+    fail('修正前後の対応が曖昧');
+  const kind = /前回|従来|修正前|直近の配当予想/.test(kindAxis)
     ? 'forecastBefore'
-    : /今回|修正後|決定額/.test(axis)
+    : /今回|修正後|決定額/.test(kindAxis)
       ? 'forecastAfter'
-      : /予想|見込|見通し/.test(axis) || /業績予想/.test(compact(nearest))
+      : /予想|見込|見通し/.test(local) || /業績予想/.test(compact(nearest))
         ? 'forecast'
         : 'actual';
   if (claim.valueKind !== kind) fail('実績・予想区分');
@@ -370,7 +581,7 @@ function verifyPeriodAndKind(claim: NumericClaim, axis: string, context: string,
 
 /** 表と本文は別の根拠形式。本文でも指標・数値・単位の直接対応だけを採用する。 */
 export function verifyProseEvidence(
-  page: ExtractedPage,
+  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
   quote: string,
   claim: NumericClaim
 ): number {
@@ -378,19 +589,23 @@ export function verifyProseEvidence(
   // 複合助詞は語単位で認める。任意のひらがなは許さず、否定・概数の語を跨がない。
   const bridge = '((?:について|に関して|に対して|において|として|[はがをにでと、:()]){0,6})';
   const binding = new RegExp(
-    `${escape(claim.label)}${bridge}(-?\\d+(?:\\.\\d+)?)${escape(claim.unit)}(?![\\d.%/])`,
+    `${escape(claim.label)}${bridge}(${claim.range ? '[△▲−-]?\\d+(?:\\.\\d+)?[～〜~][△▲−-]?\\d+(?:\\.\\d+)?' : '-?\\d+(?:\\.\\d+)?'})${escape(claim.unit)}(?![\\d.%/])`,
     'u'
   );
-  const lineIndex = quote.split('\n').findIndex((line) => {
-    const normalized = compact(line).replace(/[△▲](?=\d)/g, '-');
+  const lineIndex = [quote].findIndex((line) => {
+    const normalized = compact(line).replace(/[△▲−](?=\d)/g, '-');
     return [...normalized.matchAll(new RegExp(binding, 'gu'))].some(
-      (match) => match[1].length <= 6 && Number(match[2]) === claim.value
+      (match) =>
+        match[1].length <= 6 &&
+        (claim.range ? parseExactRange(match[2]) !== null : Number(match[2]) === claim.value)
     );
   });
   if (!compact(page.text).includes(compact(quote)) || lineIndex < 0)
     throw new Error('引用で数値・単位・指標・期間の対応を確認できません');
   // 数量セルの並ぶ行を説明文として選んで、セル参照の検証を迂回させない。
-  const cells = page.spans.filter((s) => numeric(s.text) === claim.value);
+  const cells = page.spans.filter((s) =>
+    claim.range ? parseExactRange(s.text) !== null : numeric(s.text) === claim.value
+  );
   if (
     cells.some(
       (cell) =>
