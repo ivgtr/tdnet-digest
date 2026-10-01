@@ -61,7 +61,8 @@ export function headingLevel(block: TextBlock): number | null {
 function captionText(block: TextBlock): string {
   return normalized(block.text)
     .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
-    .replace(/^20\d{2}年\d{1,2}月期(?:(?:第[1-4]四半期|中間期|通期)|\(中間期\))*(?:の)?/, '');
+    .replace(/^20\d{2}年\d{1,2}月期(?:(?:第[1-4]四半期|中間期|通期)|\(中間期\))*(?:の)?/, '')
+    .replace(/^[1-4]Q(?=決算短信)/, '');
 }
 function isReportingCover(block: TextBlock): boolean {
   return /^(?:四半期|中間)?決算短信/.test(captionText(block));

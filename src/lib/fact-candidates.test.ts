@@ -9,7 +9,7 @@ import { reviewCandidates, serializeCandidateSource, type Candidate } from './fa
 import { generateVerifiedFactSummary, parseFactSummary, renderFacts } from './fact-summary';
 import { generateText } from './llm-client';
 import { verifyCoverage, coverageReport } from './fact-coverage';
-import { buildDocumentContext, bindingFor } from './document-context';
+import { buildDocumentContext, bindingFor, applicableDeclarations } from './document-context';
 import { assertionStates, verifyAssertionState } from './assertion-semantics';
 import { stableFactId } from './fact-contract';
 import type { VerifiedFact } from './fact-contract';
@@ -27,7 +27,137 @@ const raw = (cs: Candidate[], extra: object = {}) =>
   });
 const review = (cs: Candidate[]) => reviewCandidates(raw(cs), 'earnings', pages);
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+const qReportingCases = [
+  ['2026年3月期 1Q決算短信〔日本基準〕（連結）', '2026年3月期', '連結', '日本基準'],
+  ['2026年8月期 2Q決算短信〔日本基準〕（連結）', '2026年8月期', '連結', '日本基準'],
+  ['2026年12月期 3Q決算短信〔IFRS〕（連結）', '2026年12月期', '連結', 'IFRS'],
+  ['2026年3月期 4Q決算短信〔日本基準〕（非連結）', '2026年3月期', '非連結', '日本基準'],
+  ['２Ｑ決算短信〔IFRS〕（個別）', '2026年3月期', '個別', 'IFRS'],
+] as const;
+function qReportingFixture(testCase: readonly [string, string, string, string]) {
+  const [caption, period, scope, basis] = testCase;
+  const source = [
+    textPage(`${caption}\n会社名 株式会社テスト`),
+    textPage(`1. ${period} 財政状態\n${period}の総資産は100百万円となる見込みです。`, 2),
+  ];
+  const fact = numberCandidate(source[1], '総資産', 100, period);
+  fact.semantics = {
+    ...fact.semantics,
+    scope,
+    basis,
+    state: 'forecast',
+  };
+  fact.valueKind = 'forecast';
+  return { source, fact };
+}
 describe('生成専用候補と原文文脈の契約', () => {
+  it.each(qReportingCases)('Q表記の表紙属性を別ページの通期予想へ保持する: %s', (...testCase) => {
+    const { source, fact } = qReportingFixture(testCase);
+    const result = reviewCandidates(candidateResponse([fact], source), 'other', source);
+    expect(result.unverified).toEqual([]);
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0].semantics).toEqual(fact.semantics);
+    expect(
+      parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'other', facts: result.facts, unverified: [] }),
+        'other',
+        source
+      ).facts
+    ).toEqual(result.facts);
+  });
+  it.each(qReportingCases)(
+    'Q表記の明示属性を省略・変更した候補と保存事実を拒否する: %s',
+    (...testCase) => {
+      const { source, fact } = qReportingFixture(testCase);
+      for (const attributes of [
+        { scope: null, basis: null },
+        { scope: fact.semantics.scope, basis: null },
+        { scope: null, basis: fact.semantics.basis },
+        { scope: fact.semantics.scope === '個別' ? '連結' : '個別', basis: fact.semantics.basis },
+        {
+          scope: fact.semantics.scope,
+          basis: fact.semantics.basis === 'IFRS' ? '日本基準' : 'IFRS',
+        },
+      ]) {
+        const wrong = { ...fact, semantics: { ...fact.semantics, ...attributes } };
+        expect(reviewCandidates(candidateResponse([wrong], source), 'other', source).facts).toEqual(
+          []
+        );
+        const altered = {
+          ...reviewCandidates(candidateResponse([fact], source), 'other', source).facts[0],
+          semantics: wrong.semantics,
+        };
+        altered.id = stableFactId(altered);
+        expect(
+          parseFactSummary(
+            JSON.stringify({ version: 4, documentType: 'other', facts: [altered], unverified: [] }),
+            'other',
+            source,
+            false
+          ).facts
+        ).toEqual([]);
+      }
+    }
+  );
+  it.each(['0Q決算短信', '5Q決算短信', '2Q個別契約の締結', '3QのIFRS対応の方針'])(
+    '未知の四半期・通常表題をQ決算表紙へ読み替えない: %s',
+    (caption) => {
+      const source = [
+        textPage(
+          `${caption}〔日本基準〕（連結）\n会社名 株式会社テスト\n当社は契約を締結しました。`
+        ),
+      ];
+      const graph = buildDocumentContext(source);
+      expect(
+        bindingFor(graph, source[0].blocks[2].id).declarations.filter(
+          (d) => d.origin === 'document' && d.role !== 'subject'
+        )
+      ).toEqual([]);
+    }
+  );
+  it('Q表紙の属性は非財務事実と別会社に適用せず、同じ節の明示欄を優先する', () => {
+    const { source } = qReportingFixture(qReportingCases[1]);
+    source.push(
+      textPage('1. 契約の締結\n当社は契約を締結しました。', 3),
+      textPage(
+        '会社名 株式会社別会社\n1. 2026年8月期 財政状態\n2026年8月期の総資産は200百万円です。',
+        4
+      ),
+      textPage(
+        '1. 2026年8月期 財政状態\n範囲 個別\n会計基準 IFRS\n2026年8月期の総資産は300百万円です。',
+        5
+      )
+    );
+    const graph = buildDocumentContext(source);
+    for (const [page, financial] of [
+      [source[2], false],
+      [source[3], true],
+    ] as const) {
+      const binding = bindingFor(graph, page.blocks[page.blocks.length - 1].id);
+      expect(applicableDeclarations(binding, 'scope', financial)).toEqual([]);
+      expect(applicableDeclarations(binding, 'basis', financial)).toEqual([]);
+    }
+    const local = bindingFor(graph, source[4].blocks[source[4].blocks.length - 1].id);
+    expect(applicableDeclarations(local, 'scope', true).map((d) => d.value)).toEqual(['個別']);
+    expect(applicableDeclarations(local, 'basis', true).map((d) => d.value)).toEqual(['IFRS']);
+  });
+  it('Q表紙の属性省略を1回修復し、根拠付きの通期予想を表示・保存再照合する', async () => {
+    const { source, fact } = qReportingFixture(qReportingCases[1]);
+    const wrong = { ...fact, semantics: { ...fact.semantics, scope: null, basis: null } };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([wrong], source))
+      .mockResolvedValueOnce(candidateResponse([fact], source));
+    const result = await generateVerifiedFactSummary(config, 'other', 'source', source);
+    expect(result.repairAttempted).toBe(true);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.facts.facts[0].semantics).toEqual(fact.semantics);
+    expect(renderFacts(result.facts)).toContain('連結、日本基準、予想');
+    expect(parseFactSummary(JSON.stringify(result.facts), 'other', source).facts).toEqual(
+      result.facts.facts
+    );
+  });
   it.each([0, 1, 2, 3, 4, 5])('原文構造から資料%iの完全な表対応を構成し確定v4を再照合する', (i) => {
     const source = corpus[i].pages.map((p) =>
       extractPageLayout(p.items as TextItem[], p.pageNumber)
