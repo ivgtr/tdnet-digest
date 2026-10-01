@@ -6,7 +6,13 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import type { LLMConfig } from '../../src/lib/llm-client';
 import type { CandidateFact } from '../../src/lib/fact-contract';
+import { candidateResponse } from '../../src/lib/fixtures/candidate-test-source';
+import { extractPageLayout } from '../../src/lib/pdf-layout';
+import corpus from '../../src/lib/fixtures/ir-semantic-corpus.json';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import type { VerifiedFact } from '../../src/lib/fact-contract';
 import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
+import { parseFactSummary } from '../../src/lib/fact-summary';
 import { expectedErrors, type Case as BrowserCase } from './fact-summary-expectations';
 async function builtDigest(): Promise<string> {
   const digest = createHash('sha256');
@@ -34,6 +40,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     throw new Error('既存PlaywrightモジュールとChromiumを指定してください');
   const { chromium } = await import(pathToFileURL(arg('--browser-module')).href);
   const withComparison = args.includes('--with-comparison');
+  const fixedFailure = args.includes('--fixed-failure');
+  if (fixedFailure && !args.includes('--fixed-api'))
+    throw new Error('拒否表示試験は固定API専用です');
+  const smartFull = args.includes('--smart-full');
+  if (smartFull && item.id !== 'bluememe-20260930')
+    throw new Error('smart/full比較はBlueMemeに限定します');
   if (withComparison && (!args.includes('--fixed-api') || item.id !== 'bluememe-20260930'))
     throw new Error('比較固定試験はBlueMemeの固定APIでのみ使用します');
   const fixed = args.includes('--fixed-api'),
@@ -48,6 +60,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
   const evidence: any = {
     caseId: item.id,
     api: fixed ? 'fixed' : 'live',
+    expectedOutcome: fixedFailure ? 'failure' : 'success',
     source: fixtureSource ? 'fixture' : 'TDnet',
     buildDigest,
     stages: [],
@@ -81,11 +94,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           ...settings,
           customUrl: settings.baseUrl ?? '',
           extensionEnabled: true,
-          extractionMode: 'full',
+          extractionMode: settings.extractionMode,
           experimentalScoring: false,
         });
       },
       {
+        extractionMode: smartFull ? 'smart' : 'full',
         provider: credentials.provider,
         model: credentials.model,
         apiKey: credentials.apiKey,
@@ -106,6 +120,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         previous.evidence.periodIds = ['p1s78', 'p1s79'];
         fixedFacts.push(previous);
       }
+      const fixture = corpus.find((c) => c.id === item.id)!;
+      const sourcePages = fixture.pages.map((p) =>
+        extractPageLayout(p.items as TextItem[], p.pageNumber)
+      );
       await context.route('https://api.openai.com/**', async (route: any) => {
         const prompt = route
           .request()
@@ -114,6 +132,26 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           .join('\n');
         apiCalls++;
         let result: any;
+        if (fixedFailure) {
+          await route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      candidateVersion: 0,
+                      documentType: item.documentType,
+                      candidates: [],
+                      unverified: [],
+                    }),
+                  },
+                },
+              ],
+            }),
+          });
+          return;
+        }
         if (prompt.includes('"claims"') && failScore) {
           await route.fulfill({ status: 429, body: 'fixed score failure' });
           return;
@@ -157,12 +195,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
             watchPoints: [],
           };
         } else
-          result = {
-            version: 4,
-            documentType: item.documentType,
-            facts: fixedFacts,
-            unverified: [],
-          };
+          result = JSON.parse(
+            candidateResponse(fixedFacts as VerifiedFact[], sourcePages, item.documentType)
+          );
         await route.fulfill({
           contentType: 'application/json',
           body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }),
@@ -235,18 +270,83 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           document
             .querySelector<HTMLIFrameElement>('#main_list')
             ?.contentDocument?.querySelector('.tdnet-digest-summary-row')?.textContent ?? '';
-        return (
-          text.includes('確認できた事実') ||
-          text.includes('要約エラー') ||
-          text.includes('COVERAGE:') ||
-          text.includes('APIレスポンス') ||
-          text.includes('出力上限')
-        );
+        return text.trim().length > 0;
       },
       {},
-      { timeout: 900000 }
+      { timeout: 330000 }
     );
     evidence.stages.push('button → PDF → offscreen → API → facts → HTML');
+    if (fixedFailure) {
+      evidence.rendered = await summary.innerText();
+      assert.ok(evidence.rendered.includes('形式が不正'));
+      const trace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      evidence.trace = trace;
+      assert.equal(trace.outcome, 'failure');
+      assert.deepEqual(
+        trace.attempts.map((a: any) => a.phase),
+        ['first', 'repair']
+      );
+      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const download = await downloadEvent;
+      assert.deepEqual(JSON.parse(await readFile(await download.path(), 'utf8')), trace);
+      assert.equal(apiCalls, 2);
+      evidence.stages.push('failed first/complete-repair → error HTML → raw diagnostic export');
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
+
+    if (smartFull) {
+      const before = await worker.evaluate(async () => {
+        const entries = await chrome.storage.local.get();
+        return Object.entries(entries).find(
+          ([k, v]: [string, any]) =>
+            k.startsWith('summaryCacheV2:') && v.metadata?.extractionMode === 'smart'
+        )?.[1];
+      });
+      assert.ok(before?.facts?.facts.length, 'smart事実が確定しませんでした');
+      evidence.smart = before;
+      // Re-fetch through the built extension's offscreen route, then recheck exactly
+      // the same confirmed facts without generation or addition of full-page facts.
+      const fullExtraction = await worker.evaluate(async (url: string) => {
+        const data = await (await fetch(url)).arrayBuffer();
+        return chrome.runtime.sendMessage({
+          action: 'extractPdfText',
+          pdfData: Array.from(new Uint8Array(data)),
+          extractionMode: 'full',
+          documentType: 'earnings',
+        });
+      }, pdfUrl);
+      assert.ok(fullExtraction.success);
+      const checked = parseFactSummary(
+        JSON.stringify(before.facts),
+        'earnings',
+        fullExtraction.pages,
+        false
+      );
+      assert.deepEqual(
+        checked.facts.map((f) => f.id),
+        before.facts.facts.map((f: any) => f.id)
+      );
+      evidence.stages.push('smart facts retain IDs after extension full PDF retrieval');
+      const priorCalls = apiCalls;
+      await summary.getByRole('button', { name: '全文で再要約', exact: true }).click();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector<HTMLIFrameElement>('#main_list')
+            ?.contentDocument?.querySelector('.tdnet-digest-summary-row')
+            ?.textContent?.includes('全文抽出'),
+        {},
+        { timeout: 330000 }
+      );
+      assert.ok(apiCalls > priorCalls);
+      evidence.stages.push('smart → full regenerates with the same candidate contract');
+    }
     const body = await summary.innerText();
     evidence.rendered = body;
     const expected = item.id.startsWith('bluememe')
@@ -270,12 +370,28 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     for (const term of expected) assert.ok(body.includes(term), `表示に必要な意味がない: ${term}`);
     const stored = await worker.evaluate(async () => {
       const data = await chrome.storage.local.get();
-      const entry = Object.entries(data).find(([key]) => key.startsWith('summaryCacheV2:'));
+      const entry = Object.entries(data).find(
+        ([key, value]: [string, any]) =>
+          key.startsWith('summaryCacheV2:') && value.metadata?.extractionMode === 'full'
+      );
       return entry ? { key: entry[0], value: entry[1] } : null;
     });
     assert.ok(stored?.value?.facts?.version === 4);
     assert.match(stored.value.metadata.documentHash, /^[a-f0-9]{64}$/);
     if (pdfHash) assert.equal(stored.value.metadata.documentHash, pdfHash);
+    const trace = await worker.evaluate(
+      async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+    );
+    evidence.trace = trace;
+    assert.ok(trace?.attempts.length);
+    assert.equal(trace.documentHash, stored.value.metadata.documentHash);
+    assert.equal(trace.error, null);
+    const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
+    await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+    const download = await downloadEvent;
+    const exported = JSON.parse(await readFile(await download.path(), 'utf8'));
+    assert.deepEqual(exported, trace);
+    evidence.stages.push('phase/raw/diagnostics/hash/usage trace exported from UI');
     evidence.sourceHash = stored.value.metadata.documentHash;
     evidence.facts = stored.value.facts;
     evidence.metadata = stored.value.metadata;
@@ -289,6 +405,23 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
     evidence.stages.push('hide/show/cache without API');
+    const listUrl = page
+      .frames()
+      .find((f: any) => /I_list_|fixture-list/.test(f.url()))!
+      .url();
+    await page.reload();
+    await frame.locator('#main-list-table').waitFor({ timeout: 20000 });
+    await page
+      .frames()
+      .find((f: any) => /I_list_|fixture-list/.test(f.url()))!
+      .goto(listUrl);
+    await row.getByRole('button', { name: '表示', exact: true }).click({ timeout: 20000 });
+    await summary
+      .getByRole('heading', { name: '確認できた事実', exact: true })
+      .waitFor({ timeout: 10000 });
+    assert.equal(apiCalls, callsBefore);
+    evidence.stages.push('page reload restores exact current facts without API');
+
     if (!fixed && args.includes('--live-followups')) {
       await summary.getByRole('button', { name: '追加分析', exact: true }).click();
       await page.waitForFunction(
@@ -299,7 +432,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           return !!result?.querySelector('h5') || !!result?.textContent?.includes('追加分析失敗');
         },
         {},
-        { timeout: 300000 }
+        { timeout: 330000 }
       );
       const analysis = await worker.evaluate(async () => {
         const entries = await chrome.storage.local.get();
@@ -320,7 +453,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           return text.includes('採点を再試行') || text.includes('材料スコア:');
         },
         {},
-        { timeout: 300000 }
+        { timeout: 330000 }
       );
       evidence.followupRendered = await summary.innerText();
       assert.ok(evidence.followupRendered.includes('確認できた事実'));
@@ -411,6 +544,13 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     evidence.success = true;
   } catch (error) {
     evidence.error = error instanceof Error ? error.message : String(error);
+    if (context) {
+      const w = context.serviceWorkers()[0];
+      if (w)
+        evidence.trace = await w.evaluate(
+          async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+        );
+    }
     throw error;
   } finally {
     if (context) await context.close();

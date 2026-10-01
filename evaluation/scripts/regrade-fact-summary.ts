@@ -11,7 +11,8 @@ import { expectedErrors, type Case } from './fact-summary-expectations';
 const cases: Case[] = JSON.parse(
   await readFile('evaluation/fixtures/fact-summary-cases.json', 'utf8')
 );
-for (const file of process.argv.slice(2)) {
+const diagnosticRenumber = process.argv.includes('--diagnostic-renumber');
+for (const file of process.argv.slice(2).filter((a) => a !== '--diagnostic-renumber')) {
   if (
     path.dirname(file) !== 'evaluation/results/local' ||
     !cases.some((item) => path.basename(file).startsWith(`${item.id}-`)) ||
@@ -34,12 +35,21 @@ for (const file of process.argv.slice(2)) {
   }
   await pdf.destroy();
   const errors: string[] = [];
+  let acceptedFacts = 0,
+    rejectedFacts = 0;
+  const original = saved.result ?? saved.facts;
+  if (!original) throw new Error('保存された確定結果がありません');
+  const input = diagnosticRenumber
+    ? {
+        ...original,
+        facts: original.facts.map((f: object, i: number) => ({ ...f, id: `f${i + 1}` })),
+      }
+    : original;
   try {
-    const result = parseFactSummary(
-      JSON.stringify(saved.result ?? saved.facts),
-      item.documentType,
-      pages
-    );
+    const partial = parseFactSummary(JSON.stringify(input), item.documentType, pages, false);
+    acceptedFacts = partial.facts.length;
+    rejectedFacts = original.facts.length - acceptedFacts;
+    const result = parseFactSummary(JSON.stringify(input), item.documentType, pages);
     errors.push(...expectedErrors(item, result));
     if (result.unverified.length !== (saved.result ?? saved.facts).unverified.length)
       errors.push('現行検証で確定事実の拒否が増えました');
@@ -49,6 +59,11 @@ for (const file of process.argv.slice(2)) {
   const checker = createHash('sha256');
   for (const name of [
     'src/lib/fact-contract.ts',
+    'src/lib/document-context.ts',
+    'src/lib/source-mappings.ts',
+    'src/lib/source-periods.ts',
+    'src/lib/fact-candidates.ts',
+    'src/lib/assertion-semantics.ts',
     'src/lib/quantity.ts',
     'src/lib/document-structure.ts',
     'src/lib/document-links.ts',
@@ -71,6 +86,9 @@ for (const file of process.argv.slice(2)) {
     checkerDigest: checker.digest('hex'),
     regradedAt: new Date().toISOString(),
     modelCalls: 0,
+    mode: diagnosticRenumber ? 'explicit-ID-renumber-diagnostic-only' : 'strict-saved-contract',
+    acceptedFacts,
+    rejectedFacts,
     success: errors.length === 0,
     errors,
   };
