@@ -374,3 +374,25 @@ fullの3資料では、CLIと拡張の入力hashも一致した。表示/非表�
 
 
 最終の固定拒否試験（実モデル0回）では初回/complete修復へ不正候補版を返し、18秒/固定API2回で拒否のエラー表示に到達した。画面から初回・修復・最終失敗の生応答/診断JSONをダウンロードし、保存内容との一致も確認した。評価器の終了判定を修正後に失敗経路で検証した証拠は、05:35:54.467 UTCの `bluememe-20260930-<日時>-browser.json`（`expectedOutcome=failure`, `success=true` は拒否試験の成功）と `/tmp/tdnet-finalE-error-browser.log`。生成成功や一般成功率へ加算しない。
+
+
+#### PR #25のレビュー回帰（2026-10-01）
+
+レビュー対象 `b5fe1b1` との比較で、次の3固定候補反例は旧版ですべて失敗、新版ですべて通過した。恒久テストは `src/lib/fact-candidates.test.ts` に保持する。
+
+- 営業利益率の表が省略ページにだけあるsmart相当の入力：selectedの実績3指標を受理し、率のslotはoutsideSelectionとする。省略ページの候補は拒否する。
+- 初回20件の最後のdetailが別ページの必須株数を満たす入力：容量確保で必須を消さず、元IDを保ち、金額のみ1回修復して上限20件に収める。調整後のslotと確定集合を同じ状態から記録する。
+- sourceIdsが空のunknown株数slotと既知の別ページ金額slotが併存する入力：修復へ全selectedを渡し、元omittedは保持する。unknownの存在を受理の証明にせず、候補を原文検証して確定する。
+
+実行IDを要求受付時に発行し、応答とtraceへ共有する。PDF URLだけの診断照合を廃止し、現在の結果はrunId、保存復元は成功traceのresultIdで照合する。設定・取得・抽出の早期失敗や送信前/通信の失敗、別結果・旧traceは過去の診断を出力しない。生成前の失敗はtraceを新規保存しないので「対応する診断がありません」と明示する。要約v4・候補v2・事実ID・要約キャッシュv34は維持し、診断に不足IDを補完する旧形式変換はしない。
+
+`npm test` 453件/25ファイル、type-check/lint/build成功。既存実生成セットEの9結果をstrict-saved-contractで再判定し9/9成功、拒否増加0、モデル呼出し0。checker digestは `f35da58ca0d2f5ecbefca8d635aea8baa8ede8fe2e739e0f629dc2912ee99ff9`。これは保存再判定で、新規モデル生成ではない。
+
+ビルド済み拡張の証拠：artifact digest `0d808c08622b51a372137db6b4bcf7b91a05cfa9da5dec5b8d4d155c8dfcb941`、公開ソースdigest `b480fd124c1d5f489c3fad6c08f62e8ae16897fbd059eabc7eb1ef20f84b6203`。
+
+| 固定経路 | 結果 | 固定API回数・時間 | 保存証拠（results/local/） |
+| --- | --- | --- | --- |
+| BlueMeme正常生成→保存復元→診断出力→同PDF再実行のAPIキー未設定 | 古いtraceを保持しても現在の失敗では出力拒否。画面に対応なし、ダウンロード0。復元した正しい結果は出力可 | 1回・15秒 | bluememe-20260930-2026-10-01T06-15-16-446Z-browser.json |
+| BlueMeme不正候補版を初回とcomplete修復に返す | 最終拒否のエラー表示と、現在の初回/修復診断出力が成功 | 2回・20秒 | bluememe-20260930-2026-10-01T06-15-20-578Z-browser.json |
+
+前者の再実行は生成前の失敗なので追加API0回。後者のexpectedOutcome=failure / success=trueは拒否試験の成功であり、生成成功ではない。いずれも同ハッシュ原PDF・固定一覧/PDFルート・固定APIで、実モデル回数へ加えない。診断回帰の再実行は既存の固定APIコマンドへ `--review-diagnostics` を付ける（`--fixture-source`必須、`--fixed-failure`併用不可）。未知形式や根拠を確定できないunknownは拒否が残り、今回は新規実LLM生成・当時の実TDnet経路・smart初回生応答保存を追加確認していない。

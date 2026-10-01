@@ -50,6 +50,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     throw new Error('比較固定試験はBlueMemeの固定APIでのみ使用します');
   const fixed = args.includes('--fixed-api'),
     fixtureSource = args.includes('--fixture-source');
+  const reviewDiagnostics = args.includes('--review-diagnostics');
+  if (reviewDiagnostics && (!fixed || !fixtureSource || fixedFailure))
+    throw new Error('診断対応の回帰は正常な固定API・固定原文ルートで実行してください');
   const buildDigest = await builtDigest();
   const profile = await mkdtemp(path.join(tmpdir(), 'tdnet-ir-browser-'));
   let context: any;
@@ -421,6 +424,40 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
     evidence.stages.push('page reload restores exact current facts without API');
+
+    if (reviewDiagnostics) {
+      // A cached result has no current request ID, but its exact result ID must match.
+      const restoredDownload = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const restored = await restoredDownload;
+      assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
+      evidence.stages.push('cached result ID matches diagnostic export after reload');
+      let staleDownloads = 0;
+      page.on('download', () => staleDownloads++);
+      await worker.evaluate(async () => chrome.storage.sync.set({ apiKey: '' }));
+      await summary.getByRole('button', { name: '再要約', exact: true }).click();
+      await summary
+        .getByText('APIキーが設定されていません', { exact: false })
+        .waitFor({ timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      await row
+        .getByRole('alert')
+        .filter({ hasText: 'この要約結果に対応する診断がありません' })
+        .waitFor({ timeout: 10000 });
+      assert.equal(staleDownloads, 0);
+      assert.equal(apiCalls, callsBefore);
+      const unchanged = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.deepEqual(unchanged, trace);
+      evidence.stages.push(
+        'same-PDF early failure refuses stale diagnostic with explicit UI error and no download'
+      );
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
 
     if (!fixed && args.includes('--live-followups')) {
       await summary.getByRole('button', { name: '追加分析', exact: true }).click();

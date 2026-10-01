@@ -68,11 +68,20 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
   if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
-  const task = request.action === 'summarize' ? handleSummarize(request) : handleFollowup(request);
+  const diagnosticRunId = request.action === 'summarize' ? crypto.randomUUID() : null;
+  const task =
+    request.action === 'summarize'
+      ? handleSummarize(request, diagnosticRunId!)
+      : handleFollowup(request);
   task
-    .then(sendResponse)
+    .then((response) =>
+      sendResponse({ ...response, ...(diagnosticRunId ? { diagnosticRunId } : {}) })
+    )
     .catch((error) =>
-      sendResponse({ error: error instanceof Error ? error.message : String(error) })
+      sendResponse({
+        error: error instanceof Error ? error.message : String(error),
+        ...(diagnosticRunId ? { diagnosticRunId } : {}),
+      })
     );
   return true;
 });
@@ -163,7 +172,7 @@ async function resultId(
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function handleSummarize(request: SummarizeRequest) {
+async function handleSummarize(request: SummarizeRequest, runId: string) {
   const settings = await getSettings();
   const documentType = detectDocumentType(request.title);
   const mode = request.forceExtractionMode ?? settings.extractionMode;
@@ -183,6 +192,8 @@ async function handleSummarize(request: SummarizeRequest) {
   );
   const trace: SummaryTrace = {
     version: 1,
+    runId,
+    resultId: null,
     startedAt: new Date().toISOString(),
     pdfUrl: fullUrl(request.pdfUrl),
     documentType,
@@ -215,6 +226,7 @@ async function handleSummarize(request: SummarizeRequest) {
   };
   await saveTrace();
   let facts: FactSummary | null = null;
+  let id: string | null = null;
   let generationError: unknown = null;
   try {
     const generated = await generateVerifiedFactSummary(
@@ -228,6 +240,8 @@ async function handleSummarize(request: SummarizeRequest) {
       }
     );
     facts = generated.facts;
+    id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
+    trace.resultId = id;
     trace.outcome = generated.repairAttempted ? 'repairSuccess' : 'firstSuccess';
   } catch (error) {
     trace.outcome = 'failure';
@@ -244,8 +258,7 @@ async function handleSummarize(request: SummarizeRequest) {
     );
   }
   if (generationError) throw generationError;
-  if (!facts) throw new Error('要約結果を確認できません');
-  const id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
+  if (!facts || !id) throw new Error('要約結果を確認できません');
   const metadata: SummaryMetadata = {
     ...extraction.metadata,
     documentHash,

@@ -1,4 +1,5 @@
 import type { SummaryTrace } from '../lib/summary-trace';
+import { matchingSummaryTrace } from '../lib/summary-trace';
 import type { LLMConfig } from '../lib/llm-client';
 import { candidateResponse } from '../lib/fixtures/candidate-test-source';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +21,7 @@ const mocked = vi.hoisted(() => ({
 }));
 interface TestResponse {
   error?: string;
+  diagnosticRunId: string;
   summary: string;
   metadata: { analysisFingerprint: string; score?: unknown };
   facts: FactSummary;
@@ -181,6 +183,9 @@ describe('要約・採点・追加分析の分離', () => {
       error: 'fixture API failure',
     });
     expect(writes[writes.length - 1].attempts.map((a) => a.phase)).toEqual(['first', 'repair']);
+    expect(
+      matchingSummaryTrace(writes[writes.length - 1], 'test.pdf', result.diagnosticRunId, null)
+    ).toEqual(writes[writes.length - 1]);
     expect(JSON.stringify(writes)).not.toMatch(/apiKey|headers|authorization/);
   });
   it('要約は1回のLLM呼び出しで採点を待たずに返す', async () => {
@@ -194,6 +199,48 @@ describe('要約・採点・追加分析の分離', () => {
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
+  it.each(['settings', 'download', 'extraction'])(
+    '同じPDFの次の実行が%sで失敗しても以前の診断を現在の結果として出力しない',
+    async (stage) => {
+      mocked.generateText.mockResolvedValue(
+        candidateResponse(facts.facts, [nativePage], facts.documentType)
+      );
+      const request = await setup(false);
+      let saved: SummaryTrace | undefined;
+      vi.mocked(chrome.storage.local.set).mockImplementation(
+        async (items: Record<string, unknown>) => {
+          saved = structuredClone(items.summaryLastRunV1) as SummaryTrace;
+        }
+      );
+      const success = await request({ action: 'summarize' });
+      expect(saved?.runId).toBe(success.diagnosticRunId);
+      expect(
+        matchingSummaryTrace(saved, 'test.pdf', success.diagnosticRunId, success.resultId)
+      ).toEqual(saved);
+      expect(matchingSummaryTrace(saved, 'test.pdf', null, success.resultId)).toEqual(saved);
+      if (stage === 'settings')
+        chrome.storage.sync.get = vi.fn(async () => ({
+          provider: 'invalid',
+        })) as typeof chrome.storage.sync.get;
+      if (stage === 'download')
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('download failed'));
+      if (stage === 'extraction')
+        vi.mocked(chrome.runtime.sendMessage).mockRejectedValueOnce(new Error('extraction failed'));
+      const failure = await request({ action: 'summarize' });
+      expect(failure.error).toBeTruthy();
+      expect(failure.diagnosticRunId).not.toBe(success.diagnosticRunId);
+      expect(() => matchingSummaryTrace(saved, 'test.pdf', failure.diagnosticRunId, null)).toThrow(
+        '対応する診断がありません'
+      );
+      // Local failures before sendMessage and another same-PDF result also refuse it.
+      expect(() => matchingSummaryTrace(saved, 'test.pdf', null, null)).toThrow();
+      expect(() => matchingSummaryTrace(saved, 'test.pdf', null, 'different-result')).toThrow();
+      expect(() =>
+        matchingSummaryTrace({ ...saved, runId: undefined }, 'test.pdf', null, success.resultId)
+      ).toThrow();
+      expect(mocked.generateText).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('更新前から残る二段階要約設定を削除し、要約を続行する', async () => {
     mocked.generateText.mockResolvedValue(

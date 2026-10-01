@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
-import { SUMMARY_TRACE_KEY } from '@/lib/summary-trace';
-import { normalizeTdnetPdfUrl } from '@/lib/tdnet-url';
+import { SUMMARY_TRACE_KEY, matchingSummaryTrace } from '@/lib/summary-trace';
 import { BUTTON_STYLES } from './constants/styles';
 
 interface RowData {
@@ -103,9 +102,12 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   const exportDiagnostic = async () => {
     try {
       const saved = await chrome.storage.local.get(SUMMARY_TRACE_KEY);
-      const trace = saved[SUMMARY_TRACE_KEY];
-      if (!trace || trace.pdfUrl !== normalizeTdnetPdfUrl(rowData.pdfUrl))
-        throw new Error('この資料の直近診断がありません');
+      const trace = matchingSummaryTrace(
+        saved[SUMMARY_TRACE_KEY],
+        rowData.pdfUrl,
+        result?.diagnosticRunId ?? null,
+        result?.resultId ?? null
+      );
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(trace, null, 2)], { type: 'application/json' })
       );

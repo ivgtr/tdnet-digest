@@ -20,6 +20,7 @@ export interface SummaryResult {
   metadata: SummaryMetadata | null;
   facts: FactSummary | null;
   resultId: string | null;
+  diagnosticRunId: string | null;
 }
 export interface Stage<T> {
   loading: boolean;
@@ -175,6 +176,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           metadata: null,
           facts: null,
           resultId: null,
+          diagnosticRunId: null,
           error: '保存された現行要約の形式・原数量・設定が不正です。再要約してください。',
         });
       return;
@@ -185,6 +187,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       metadata: entry.metadata,
       facts: entry.facts,
       resultId: entry.resultId,
+      diagnosticRunId: null,
       error: null,
     });
     await restoreStages(entry.resultId, entry.facts);
@@ -200,6 +203,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       setStagesReady(false);
       scoreStarted.current = null;
       idRef.current = null;
+      let diagnosticRunId: string | null = null;
       try {
         const settings = settingsRef.current;
         if (!settings) throw new Error('設定の読み込みが完了していません');
@@ -219,6 +223,9 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           ...(forceExtractionMode ? { forceExtractionMode } : {}),
         });
         if (run !== runRef.current) return;
+        if (typeof response.diagnosticRunId !== 'string' || !response.diagnosticRunId)
+          throw new Error('要約結果の実行IDが不正です');
+        diagnosticRunId = response.diagnosticRunId;
         if (response.error) throw new Error(response.error);
         const key = buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint);
         if (key !== expectedKey) throw new Error('要約結果の設定が一致しません');
@@ -230,6 +237,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           metadata: response.metadata,
           facts: response.facts,
           resultId: response.resultId,
+          diagnosticRunId,
           error: null,
         });
         setStagesReady(true);
@@ -252,6 +260,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
             metadata: null,
             facts: null,
             resultId: null,
+            diagnosticRunId,
             error: error instanceof Error ? error.message : String(error),
           });
       } finally {
