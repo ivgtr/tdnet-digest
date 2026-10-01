@@ -47,7 +47,15 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
   if (reviewCase && (!args.includes('--fixed-api') || !args.includes('--fixture-source')))
     throw new Error('追加レビューは固定API・合成PDF専用です');
   const reviewFixture = reviewCase ? await additionalReviewFixture(reviewCase) : null;
-  if (reviewFixture) item = { ...item, documentType: 'other', title: '追加セルフレビュー用開示' };
+  if (reviewFixture)
+    item = {
+      ...item,
+      documentType: reviewFixture.documentType,
+      title:
+        reviewFixture.documentType === 'earnings'
+          ? '2027年3月期 決算短信〔日本基準〕（連結）'
+          : '追加セルフレビュー用開示',
+    };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure = args.includes('--fixed-failure') || reviewCase === 'reject';
   if (fixedFailure && !args.includes('--fixed-api'))
@@ -277,7 +285,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v39:openai:fixture:full';
+          const fingerprint = 'v40:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -332,7 +340,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v39 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v40 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -508,11 +516,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       const checked = parseFactSummary(
         JSON.stringify(stored.value.facts),
-        'other',
+        reviewFixture.documentType,
         reviewFixture.pages
       );
       assert.deepEqual(checked, stored.value.facts);
-      assert.equal(trace.attempts.length, reviewCase === 'repair' ? 2 : 1);
+      assert.equal(trace.attempts.length, reviewFixture.repairRequired ? 2 : 1);
       assert.equal(stored.value.facts.facts.length, reviewFixture.legacy.facts.length);
       assert.deepEqual(stored.value.facts.unverified, reviewFixture.warnings);
       if (reviewCase === 'repair')
@@ -595,6 +603,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       if (reviewCase === 'attributes') {
         altered.facts[0].semantics.scope = '連結';
         altered.facts[0].semantics.basis = '日本基準';
+        altered.facts[0].id = stableFactId(altered.facts[0]);
+      } else {
+        altered.facts[0].semantics.polarity =
+          altered.facts[0].semantics.polarity === 'affirmative' ? 'negative' : 'affirmative';
         altered.facts[0].id = stableFactId(altered.facts[0]);
       }
       const extensionPage = await context.newPage();

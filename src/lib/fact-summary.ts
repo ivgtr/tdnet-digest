@@ -295,7 +295,7 @@ export async function generateVerifiedFactSummary(
       if (f.kind === 'event' || f.kind === 'status') return true;
       const block = pages.flatMap((p) => p.blocks).find((b) => b.id === source.blockId)!;
       return (
-        source.metric === normalized(f.label) &&
+        normalized(source.metric ?? '') === normalized(f.label) &&
         proseQuantities(block).some(
           (q) =>
             q.id === source.quantityId &&

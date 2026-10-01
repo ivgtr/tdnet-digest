@@ -5,7 +5,8 @@ import { buildDocumentContext, bindingFor, resolveScopeIds } from '../../src/lib
 import { assertionPolarity } from '../../src/lib/assertion-semantics';
 import { candidateResponse } from '../../src/lib/fixtures/candidate-test-source';
 import { stableFactId, type VerifiedFact, type FactSummary } from '../../src/lib/fact-contract';
-import { renderFacts } from '../../src/lib/fact-summary';
+import { parseFactSummary, renderFacts } from '../../src/lib/fact-summary';
+import type { DocumentType } from '../../src/lib/document-type';
 
 /** Deterministic text PDF, not an offscreen mock: PDF.js must recover these physical pages. */
 function textPdf(texts: string[]): Uint8Array {
@@ -59,6 +60,8 @@ function textPdf(texts: string[]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
+  if (['semantics', 'cover-outlook', 'metric-repair'].includes(mode))
+    return latestReviewFixture(mode);
   if (!['reject', 'repair', 'attributes', 'boundary'].includes(mode))
     throw Error('未知の追加レビューケース');
   const period = '2027年3月期';
@@ -160,5 +163,128 @@ export async function additionalReviewFixture(mode: string) {
           ? ['売上高: 100百万円', '予想']
           : [...tails, ...warnings],
     warnings,
+    documentType: 'other' as DocumentType,
+    repairRequired: mode === 'repair',
+  };
+}
+
+async function latestReviewFixture(mode: string) {
+  const period = '2027年3月期';
+  const documentType: DocumentType = mode === 'cover-outlook' ? 'earnings' : 'other';
+  const metrics = ['売上高', '営業利益', '当期純利益'];
+  const bodies = [
+    '当社は取得を予定しておりません。',
+    '当社はAを取得しましたが、Bは取得していません。',
+  ];
+  const texts =
+    mode === 'cover-outlook'
+      ? [
+          `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${period}の通期業績予想について説明します。\n${metrics.map((m) => `${period}の${m}は100百万円です。`).join('\n')}`,
+          `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円の見込みです。`).join('\n')}`,
+        ]
+      : mode === 'semantics'
+        ? ['会社名 株式会社テスト', ...bodies.map((body) => `1. 事業説明\n${body}`)]
+        : [
+            '会社名 株式会社テスト',
+            `1. ${period} 業績予想\n${period}の売上高は100百万円の見込みです。`,
+          ];
+  const pdf = textPdf(texts);
+  const document = await getDocument({ data: pdf.slice(), disableFontFace: true }).promise;
+  const pages = [];
+  for (let n = 1; n <= document.numPages; n++) {
+    const p = await document.getPage(n);
+    pages.push(extractPageLayout((await p.getTextContent()).items, n));
+    p.cleanup();
+  }
+  await document.destroy();
+  const context = buildDocumentContext(pages);
+  const facts: VerifiedFact[] = [];
+  for (const page of mode === 'cover-outlook' ? pages : pages.slice(1)) {
+    for (const metric of mode === 'semantics'
+      ? ['当社']
+      : mode === 'cover-outlook'
+        ? metrics
+        : ['売上高']) {
+      const f = numberCandidate(page, metric, 100, period);
+      f.semantics.scope =
+        mode === 'cover-outlook' ? (page.pageNumber === 1 ? '連結' : '個別') : null;
+      f.semantics.basis =
+        mode === 'cover-outlook' ? (page.pageNumber === 1 ? '日本基準' : 'IFRS') : null;
+      if (mode === 'semantics') {
+        f.kind = 'event';
+        f.label = f.statement = f.quote;
+        f.value = f.unit = f.valueKind = null;
+        f.period = null;
+        f.semantics.periodKind = 'none';
+        f.semantics.metricKind = 'none';
+        f.semantics.state = page.pageNumber === 2 ? 'unspecified' : 'completed';
+        f.semantics.polarity = page.pageNumber === 2 ? 'negative' : 'mixed';
+      } else
+        f.valueKind = f.semantics.state =
+          mode === 'cover-outlook' && page.pageNumber === 1 ? 'actual' : 'forecast';
+      const binding = bindingFor(context, f.evidence.kind === 'prose' ? f.evidence.blockId : '');
+      f.evidence.contextIds = binding.contextIds;
+      f.evidence.scopeIds = resolveScopeIds(binding, f.semantics, mode === 'cover-outlook');
+      f.id = `f${facts.length + 1}`;
+      facts.push(f);
+    }
+  }
+  const checked = parseFactSummary(
+    JSON.stringify({ version: 4, documentType, facts, unverified: [] }),
+    documentType,
+    pages
+  );
+  if (checked.facts.length !== facts.length || checked.unverified.length)
+    throw Error(JSON.stringify(checked.unverified));
+  const wrong = structuredClone(facts);
+  if (mode === 'semantics') {
+    wrong[0].semantics.state = 'planned';
+    wrong[0].semantics.polarity = 'affirmative';
+    wrong[1].semantics.polarity = 'negative';
+  } else if (mode === 'cover-outlook')
+    wrong.slice(0, 3).forEach((f) => {
+      f.semantics.scope = f.semantics.basis = null;
+    });
+  else wrong[0].semantics.scope = '連結';
+  const first = JSON.parse(candidateResponse(wrong, pages, documentType));
+  if (mode === 'metric-repair') first.candidates[0].source.metric = '売上 高';
+  const legacy = structuredClone(checked);
+  if (mode === 'semantics')
+    legacy.facts.forEach((f, i) => {
+      f.semantics = wrong[i].semantics;
+      f.id = stableFactId(f);
+    });
+  else if (mode === 'cover-outlook')
+    legacy.facts.slice(0, 3).forEach((f) => {
+      f.semantics.scope = f.semantics.basis = null;
+      if (f.evidence.kind !== 'prose') throw Error('expected prose');
+      f.evidence.scopeIds = resolveScopeIds(
+        bindingFor(context, f.evidence.blockId),
+        f.semantics,
+        false
+      );
+      f.id = stableFactId(f);
+    });
+  else legacy.unverified = ['c1 SCOPE:修復済みの旧診断'];
+  return {
+    pdf,
+    pages,
+    documentType,
+    repairRequired: true,
+    first: JSON.stringify(first),
+    repair: candidateResponse(
+      mode === 'cover-outlook' ? facts.slice(0, 3) : facts,
+      pages,
+      documentType
+    ),
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [] as string[],
+    expected:
+      mode === 'semantics'
+        ? bodies
+        : mode === 'cover-outlook'
+          ? ['連結', '日本基準', '個別', 'IFRS', '売上高: 100百万円']
+          : ['売上高: 100百万円'],
   };
 }

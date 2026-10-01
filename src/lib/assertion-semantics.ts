@@ -1,14 +1,49 @@
 import type { FactSemantics } from './fact-contract';
 import { normalized } from './document-structure';
 
-const negative =
-  /していません|していない|しません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない|に(?:は)?(?:満たない|届かない|達しない)/;
+const negativePredicate =
+  /しておりません|しておらず|行っておりません|していません|していない|しません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない/;
+// A negative bound can still be forecast; denial of a plan cannot prove a plan.
+const negative = new RegExp(`${negativePredicate.source}|に(?:は)?(?:満たない|届かない|達しない)`);
+const finitePredicate =
+  /(?:しました|しています|しております|しておりません|しておらず|行っておりません|していません|していない|しません|ありません|ございません|です|であります|未実施|未締結)/;
+const predicateEnd = new RegExp(`(?:${finitePredicate.source})$`);
+/** Split proved contrasts, never parentheses or a subject followed by a comma. */
+function assertionClauses(text: string): string[] {
+  const source = normalized(text);
+  const clauses: string[] = [];
+  let start = 0,
+    depth = 0;
+  for (let i = 0; i < source.length; i++) {
+    const replacement = source.slice(i).match(/^(?:ではなく|でなく)/)?.[0];
+    if (replacement) {
+      clauses.push(source.slice(start, i + replacement.length));
+      i += replacement.length - 1;
+      start = i + 1;
+      continue;
+    }
+    const char = source[i];
+    if ('([「『'.includes(char)) depth++;
+    if (')]」』'.includes(char)) depth = Math.max(0, depth - 1);
+    if (char === '。') {
+      clauses.push(source.slice(start, i));
+      start = i + 1;
+      continue;
+    }
+    if (depth) continue;
+    const connector = source.slice(i).match(/^(?:が、?|けれども、?|けれど、?|ものの、?|、|;)/)?.[0];
+    if (!connector || !predicateEnd.test(source.slice(start, i))) continue;
+    const rest = source.slice(i + connector.length).split('。')[0];
+    if (!finitePredicate.test(rest) && !negative.test(rest)) continue;
+    clauses.push(source.slice(start, i));
+    i += connector.length - 1;
+    start = i + 1;
+  }
+  clauses.push(source.slice(start));
+  return clauses.filter(Boolean);
+}
 export function assertionPolarity(text: string): FactSemantics['polarity'] {
-  const clauses = text
-    .replace(/(ではなく|でなく)/g, '$1。')
-    .split('。')
-    .map(normalized)
-    .filter(Boolean);
+  const clauses = assertionClauses(text);
   const n = clauses.filter((c) => negative.test(c)).length;
   return n === 0 ? 'affirmative' : n === clauses.length ? 'negative' : 'mixed';
 }
@@ -33,13 +68,9 @@ export function verifyQuantityAssertion(suffix: string): void {
 /** Proof is deliberately bounded to explicit predicates, never a role word anywhere in a heading. */
 export function assertionStates(text: string): FactSemantics['state'][] {
   const states = new Set<FactSemantics['state']>();
-  for (const clause of text
-    .replace(/(ではなく|でなく)/g, '$1。')
-    .split(/[。\n]/)
-    .map(normalized)
-    .filter(Boolean)) {
+  for (const clause of assertionClauses(text)) {
     const positive = clause.replace(
-      /[^、；]*(?:していません|していない|しません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない)[^、；]*/g,
+      new RegExp(`[^、;]*(?:${negativePredicate.source})[^、;]*`, 'g'),
       ''
     );
     if (!positive) continue;

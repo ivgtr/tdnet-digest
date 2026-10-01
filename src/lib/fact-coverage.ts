@@ -10,6 +10,8 @@ import {
   buildDocumentContext,
   bindingFor,
   isFinancialUnit,
+  reportingUnitTitle,
+  isReportingCoverUnit,
   verifyScopeEvidence,
   applicableDeclarations,
   type DocumentContext,
@@ -65,28 +67,14 @@ function isReportingMetricSource(
   context: DocumentContext
 ): boolean {
   const binding = bindingFor(context, anchor);
-  const blocks = pages.flatMap((p) => p.blocks);
-  const spans = pages.flatMap((p) => p.spans);
   // The innermost section owns prose and tables; a child business section
   // cannot borrow its parent's financial-results role.
-  const section = binding.sectionIds
-    .slice(-1)
-    .map((id) => blocks.find((b) => b.id === id)!.text)
-    .join('');
-  const mapping = context.tableMappings.find((h) => h.valueId === anchor);
-  const title = compact(
-    section || mapping?.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('') || ''
-  );
+  const title = reportingUnitTitle(binding, pages);
   // An unsectioned claim on the reporting cover belongs to that explicit root.
   // This supplies a source role only; local scope/basis still resolve separately.
-  if (!title && binding.page === 1 && state === 'actual')
-    return (
-      pages
-        .find((p) => p.pageNumber === 1)
-        ?.blocks.some((b) => /20\d{2}年.*月期.*決算短信/.test(compact(b.text))) ?? false
-    );
+  if (!title && state === 'actual') return isReportingCoverUnit(binding, pages);
   return state === 'forecast'
-    ? /業績予想/.test(title)
+    ? /業績予想|今後の見通し/.test(title)
     : state === 'actual' &&
         !/予想|見通し/.test(title) &&
         /経営成績|損益計算書|連結業績|個別業績/.test(title);

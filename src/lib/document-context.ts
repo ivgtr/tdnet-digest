@@ -361,6 +361,31 @@ export function resolveScopeIds(
   }
   return unique(ids);
 }
+/** Reporting role ownership is separate from local scope/basis ownership. */
+export function reportingUnitTitle(binding: ContextBinding, pages: ExtractedPage[]): string {
+  const blocks = pages.flatMap((p) => p.blocks);
+  const spans = pages.flatMap((p) => p.spans);
+  const section = binding.sectionIds
+    .slice(-1)
+    .map((id) => blocks.find((b) => b.id === id)!.text)
+    .join('');
+  return normalized(
+    section ||
+      binding.contextIds
+        .map(
+          (id) =>
+            blocks.find((b) => b.id === id)?.text ?? spans.find((s) => s.id === id)?.text ?? ''
+        )
+        .join('')
+  );
+}
+export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPage[]): boolean {
+  return (
+    binding.page === 1 &&
+    !binding.sectionIds.length &&
+    !!pages.find((p) => p.pageNumber === 1)?.blocks.some((b) => /決算短信/.test(normalized(b.text)))
+  );
+}
 export function isFinancialUnit(
   fact: Pick<VerifiedFact, 'kind' | 'label' | 'quote' | 'semantics'>,
   binding: ContextBinding,
@@ -371,7 +396,13 @@ export function isFinancialUnit(
     .map((id) => pages.flatMap((p) => p.blocks).find((b) => b.id === id)?.text ?? '')
     .join('\n');
   return (
-    /経営成績|業績予想|財政状態|損益計算書|貸借対照表|キャッシュ.*フロー/.test(titles) ||
+    /経営成績|業績予想|今後の見通し|財政状態|損益計算書|貸借対照表|キャッシュ.*フロー/.test(
+      titles + reportingUnitTitle(binding, pages)
+    ) ||
+    (isReportingCoverUnit(binding, pages) &&
+      /売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|(?:当期|中間|四半期).*純(?:利益|損失)|総資産|純資産|資本金|キャッシュ.*フロー/.test(
+        normalized(fact.label)
+      )) ||
     /連結財務諸表|純損失|特別損失/.test(fact.quote)
   );
 }
