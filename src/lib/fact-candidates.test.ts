@@ -560,6 +560,215 @@ describe('生成専用候補と原文文脈の契約', () => {
         .every((d) => d.value === '連結')
     ).toBe(true);
   });
+  it.each([
+    ['1. 連結子会社の異動', 'scope', '連結'],
+    ['1. 個別契約の締結', 'scope', '個別'],
+    ['1. IFRS対応の方針', 'basis', 'IFRS'],
+  ] as const)('報告欄ではない見出しから属性を作らない: %s', (heading, role, fabricated) => {
+    const source = [textPage(`会社名 株式会社テスト\n${heading}\n当社は契約を締結しました。`)];
+    const block = source[0].blocks[2];
+    const fact: VerifiedFact = {
+      ...fixture[9],
+      page: 1,
+      quote: block.text,
+      label: block.text,
+      statement: block.text,
+      evidence: {
+        kind: 'prose',
+        blockId: block.id,
+        contextIds: [],
+        scopeIds: [],
+        qualifierIds: [],
+      },
+      semantics: {
+        ...fixture[9].semantics,
+        subject: '株式会社テスト',
+        scope: null,
+        basis: null,
+        state: 'contracted',
+        qualifiers: [],
+      },
+    };
+    const correct = reviewCandidates(candidateResponse([fact], source), 'other', source);
+    expect(correct.unverified).toEqual([]);
+    expect(correct.facts).toHaveLength(1);
+    expect(correct.facts[0].semantics).toMatchObject({ scope: null, basis: null });
+    expect(
+      parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'other', facts: correct.facts, unverified: [] }),
+        'other',
+        source
+      ).facts
+    ).toEqual(correct.facts);
+    const wrong = reviewCandidates(
+      candidateResponse(
+        [{ ...fact, semantics: { ...fact.semantics, [role]: fabricated } }],
+        source
+      ),
+      'other',
+      source
+    );
+    expect(wrong.facts).toEqual([]);
+    expect(wrong.diagnostics).toContainEqual(
+      expect.objectContaining({ check: `scope.${role}`, status: 'invalid' })
+    );
+    const altered = {
+      ...correct.facts[0],
+      semantics: { ...correct.facts[0].semantics, [role]: fabricated },
+    };
+    altered.id = stableFactId(altered);
+    expect(
+      parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'other', facts: [altered], unverified: [] }),
+        'other',
+        source,
+        false
+      ).facts
+    ).toEqual([]);
+  });
+  it.each([
+    '2027年3月期の「売上高は100百万円」を上回る見込みです。',
+    '（2027年3月期の売上高は100百万円）を下回る見込みです。',
+    '2027年3月期の「売上高は100百万円」以上となる見込みです。',
+  ])('閉じ記号を挟んでも閾値を確定額へ変換しない: %s', (body) => {
+    const source = [textPage(`会社名 株式会社テスト\n2027年3月期 業績予想\n${body}`)];
+    const fact = numberCandidate(source[0], '売上高', 100, '2027年3月期');
+    fact.semantics.scope = fact.semantics.basis = null;
+    fact.valueKind = fact.semantics.state = 'forecast';
+    const result = reviewCandidates(candidateResponse([fact], source), 'other', source);
+    expect(result.facts).toEqual([]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ status: 'blocked', message: expect.stringContaining('境界') })
+    );
+    expect(
+      parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'other', facts: [fact], unverified: [] }),
+        'other',
+        source,
+        false
+      ).facts
+    ).toEqual([]);
+  });
+  it('閾値ではない引用符付きの確定数量は受理して保存再照合できる', () => {
+    const source = [
+      textPage(
+        '会社名 株式会社テスト\n2027年3月期 業績予想\n2027年3月期の「売上高は100百万円」の見込みです。'
+      ),
+    ];
+    const fact = numberCandidate(source[0], '売上高', 100, '2027年3月期');
+    fact.semantics.scope = fact.semantics.basis = null;
+    fact.valueKind = fact.semantics.state = 'forecast';
+    const result = reviewCandidates(candidateResponse([fact], source), 'other', source);
+    expect(result.unverified).toEqual([]);
+    expect(result.facts).toHaveLength(1);
+    expect(
+      parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'other', facts: result.facts, unverified: [] }),
+        'other',
+        source
+      ).facts
+    ).toEqual(result.facts);
+  });
+  it.each([
+    [
+      '2026年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n2026年3月期 経営成績',
+      '連結',
+      '日本基準',
+    ],
+    ['会社名 株式会社テスト | 会計基準 IFRS | 範囲 個別\n2026年3月期 経営成績', '個別', 'IFRS'],
+    [
+      '会社名 株式会社テスト\n2026年3月期 経営成績\n会計基準：日本基準\n範囲：非連結',
+      '非連結',
+      '日本基準',
+    ],
+    [
+      '会社名 株式会社テスト\n2026年3月期 経営成績\n会計基準 日本基準\n範囲 連結子会社',
+      '連結子会社',
+      '日本基準',
+    ],
+  ])('実際の報告表題・明示欄の範囲と基準は保持する: %s', (header, scope, basis) => {
+    const source = [textPage(`${header}\n2026年3月期の営業利益は100百万円です。`)];
+    const fact = numberCandidate(source[0]);
+    fact.semantics.scope = scope;
+    fact.semantics.basis = basis;
+    const result = reviewCandidates(candidateResponse([fact], source), 'other', source);
+    expect(result.unverified).toEqual([]);
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0].semantics).toMatchObject({ scope, basis });
+    for (const missing of [null, ...['連結', '個別'].filter((v) => v !== scope)]) {
+      const wrong = { ...fact, semantics: { ...fact.semantics, scope: missing } };
+      expect(reviewCandidates(candidateResponse([wrong], source), 'other', source).facts).toEqual(
+        []
+      );
+    }
+  });
+  it('誤った個別範囲を1回修復し、元本文を範囲の付け直しなしで表示する', async () => {
+    const source = [
+      textPage('会社名 株式会社テスト\n1. 個別契約の締結\n当社は契約を締結しました。'),
+    ];
+    const block = source[0].blocks[2];
+    const fact: VerifiedFact = {
+      ...fixture[9],
+      page: 1,
+      quote: block.text,
+      label: block.text,
+      statement: block.text,
+      evidence: {
+        kind: 'prose',
+        blockId: block.id,
+        contextIds: [],
+        scopeIds: [],
+        qualifierIds: [],
+      },
+      semantics: {
+        ...fixture[9].semantics,
+        subject: '株式会社テスト',
+        scope: null,
+        basis: null,
+        state: 'contracted',
+        qualifiers: [],
+      },
+    };
+    const wrong = { ...fact, semantics: { ...fact.semantics, scope: '個別' } };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([wrong], source))
+      .mockResolvedValueOnce(candidateResponse([fact], source));
+    const result = await generateVerifiedFactSummary(config, 'other', 'source', source);
+    expect(result.repairAttempted).toBe(true);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.facts.facts[0].semantics.scope).toBeNull();
+    expect(renderFacts(result.facts)).toContain(block.text);
+    expect(renderFacts(result.facts)).not.toContain('範囲=個別');
+  });
+  it('閾値の誤った確定額を1回修復し、比較を含む原文をそのまま表示する', async () => {
+    const body = '2027年3月期の「売上高は100百万円」を上回る見込みです。';
+    const source = [textPage(`会社名 株式会社テスト\n2027年3月期 業績予想\n${body}`)];
+    const amount = numberCandidate(source[0], '売上高', 100, '2027年3月期');
+    amount.semantics.scope = amount.semantics.basis = null;
+    amount.valueKind = amount.semantics.state = 'forecast';
+    const statement: VerifiedFact = {
+      ...amount,
+      kind: 'event',
+      value: null,
+      unit: null,
+      valueKind: null,
+      label: body,
+      statement: body,
+      semantics: { ...amount.semantics, metricKind: 'none' },
+    };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([amount], source))
+      .mockResolvedValueOnce(candidateResponse([statement], source));
+    const result = await generateVerifiedFactSummary(config, 'other', 'source', source);
+    expect(result.repairAttempted).toBe(true);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.facts.facts[0]).toMatchObject({ kind: 'event', value: null, statement: body });
+    expect(renderFacts(result.facts)).toContain(body);
+  });
   it.each(['当社は契約を締結していない。', '当社は契約を締結する予定です。'])(
     '契約の否定/予定を契約済みへ変換しない: %s',
     (text) => {

@@ -650,8 +650,10 @@ export function verifyProseEvidence(
     for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))
       prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
     if (prefix) throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
-    // Parentheses or quotation marks do not detach an adjacent quantity qualifier.
-    const suffix = normalized.slice(match.index! + match[0].length).replace(/^[([「『]+/, '');
+    // Opening and closing delimiters do not detach an adjacent quantity qualifier.
+    const suffix = normalized
+      .slice(match.index! + match[0].length)
+      .replace(/^[()[\]「」『』]+/, '');
     if (
       /^(?:増加|減少|増減|上昇|低下|増え|減り|から|以上|以下|未満|超|程度|前後|弱|強|を(?:上回|下回|超))/.test(
         suffix

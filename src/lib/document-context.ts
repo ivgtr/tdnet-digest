@@ -58,6 +58,48 @@ export function headingLevel(block: TextBlock): number | null {
     return 3;
   return null;
 }
+function captionText(block: TextBlock): string {
+  return normalized(block.text)
+    .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
+    .replace(/^20\d{2}年\d{1,2}月期(?:(?:第[1-4]四半期|中間期|通期)|\(中間期\))*(?:の)?/, '');
+}
+function isReportingCover(block: TextBlock): boolean {
+  return /^(?:四半期|中間)?決算短信/.test(captionText(block));
+}
+/** A role field supplies its entire value; a caption needs an explicit reporting object. */
+function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value: string }[] {
+  const attributes: { role: 'scope' | 'basis'; value: string }[] = [];
+  for (const part of block.text.normalize('NFKC').split(/[\n|]/)) {
+    const text = part.trim().replace(/^(?:\(\d+\)|\d+[.．])/, '');
+    const field = text.match(/^(範囲|会計基準)(?:\s*:\s*|\s+)([^。；]+)$/);
+    if (field) {
+      attributes.push({
+        role: field[1] === '範囲' ? 'scope' : 'basis',
+        value: normalized(field[2]),
+      });
+      continue;
+    }
+    const atom = normalized(text);
+    const scopeMatch = atom.match(/^(?:範囲:?)?(?:\((非連結|個別|連結)\)|(非連結|個別|連結))$/);
+    const scope = scopeMatch?.[1] ?? scopeMatch?.[2];
+    const basis = atom.match(/^(?:会計基準:?)?(日本基準|IFRS)$/)?.[1];
+    if (scope) attributes.push({ role: 'scope', value: scope });
+    if (basis) attributes.push({ role: 'basis', value: basis });
+  }
+  const caption = captionText(block);
+  if (isReportingCover(block)) {
+    for (const match of caption.matchAll(/\((非連結|個別|連結)\)/g))
+      attributes.push({ role: 'scope', value: match[1] });
+    for (const match of caption.matchAll(/〔(日本基準|IFRS)〕|\[(日本基準|IFRS)\]/g))
+      attributes.push({ role: 'basis', value: match[1] ?? match[2] });
+  } else if (headingLevel(block) !== null) {
+    const scope = caption.match(
+      /^\(?(非連結|個別|連結)(?:累計期間)?(?:の)?(?:経営成績|業績|財政状態|財務諸表|損益計算書|貸借対照表|キャッシュ.*フロー)/
+    )?.[1];
+    if (scope) attributes.push({ role: 'scope', value: scope });
+  }
+  return attributes;
+}
 function declarations(
   block: TextBlock,
   origin: ContextDeclaration['origin']
@@ -69,18 +111,8 @@ function declarations(
     id: block.id,
     origin,
   }));
-  // Scope and basis declarations are captions/fields. Mentioning another report in
-  // an ordinary sentence never changes the owner of the subsequent paragraph.
-  if (
-    headingLevel(block) !== null ||
-    /決算短信|会計基準|範囲/.test(text) ||
-    /^(?:連結|個別|非連結|日本基準|IFRS)$/.test(text)
-  ) {
-    for (const value of unique(text.match(/非連結|個別|連結/g) ?? []))
-      result.push({ role: 'scope', value, id: block.id, origin });
-    for (const value of unique(text.match(/日本基準|IFRS/g) ?? []))
-      result.push({ role: 'basis', value, id: block.id, origin });
-  }
+  for (const attribute of reportingAttributes(block))
+    result.push({ ...attribute, id: block.id, origin });
   const fieldStock = text.match(/株式種類([^|｜]+)/)?.[1];
   if (fieldStock) result.push({ role: 'scope', value: fieldStock, id: block.id, origin });
   const stock = block.text.split('\n').find((line) => /取得対象株式.*種類/.test(normalized(line)));
@@ -117,8 +149,7 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   // A cover consisting of one standalone company name is also a declaration.
   const namedIssuer = issuer.filter((b) => /会社名/.test(normalized(b.text)));
   const issuerBlocks = namedIssuer.length ? namedIssuer : issuer.length === 1 ? issuer : [];
-  const reporting =
-    first?.blocks.filter((b) => /決算短信/.test(b.text) && b.text.length < 180) ?? [];
+  const reporting = first?.blocks.filter((b) => isReportingCover(b) && b.text.length < 180) ?? [];
   const documentDeclarations = [...issuerBlocks, ...reporting].flatMap((b) =>
     declarations(b, 'document')
   );
