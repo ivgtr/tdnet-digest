@@ -1,3 +1,5 @@
+import { SUMMARY_TRACE_KEY, summaryBuildDigest, type SummaryTrace } from '@/lib/summary-trace';
+import { serializeCandidateSource } from '@/lib/fact-candidates';
 import type { LLMConfig } from '@/lib/llm-client';
 import { detectDocumentType, type DocumentType } from '@/lib/document-type';
 import {
@@ -170,18 +172,79 @@ async function handleSummarize(request: SummarizeRequest) {
   await setupOffscreenDocument();
   const extraction = await extractTextFromPDF(data, documentType, mode);
   const config = configOf(settings);
-  const { facts } = await generateVerifiedFactSummary(
-    config,
-    documentType,
-    extraction.text,
-    extraction.pages
-  );
   const fingerprint = buildAnalysisFingerprint({
     provider: settings.provider,
     model: settings.model,
     extractionMode: mode,
   });
   const documentHash = await hashPdf(data);
+  const inputBytes = new TextEncoder().encode(
+    serializeCandidateSource(extraction.pages, undefined, documentType)
+  );
+  const trace: SummaryTrace = {
+    version: 1,
+    startedAt: new Date().toISOString(),
+    pdfUrl: fullUrl(request.pdfUrl),
+    documentType,
+    provider: settings.provider,
+    model: settings.model,
+    extractionMode: mode,
+    fingerprint,
+    buildDigest: summaryBuildDigest(),
+    documentHash,
+    inputHash: await hashPdf(inputBytes.buffer),
+    selectedPages: extraction.pages
+      .filter((p) => p.selection === 'selected')
+      .map((p) => p.pageNumber),
+    attempts: [],
+    usage: [],
+    elapsedMs: 0,
+    outcome: 'running',
+    error: null,
+  };
+  const started = performance.now();
+  const saveTrace = async () => {
+    trace.elapsedMs = Math.round(performance.now() - started);
+    try {
+      await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: trace });
+    } catch {
+      throw new Error(
+        `診断の保存に失敗しました。${trace.error ?? '直近実行を保存できませんでした'}`
+      );
+    }
+  };
+  await saveTrace();
+  let facts: FactSummary | null = null;
+  let generationError: unknown = null;
+  try {
+    const generated = await generateVerifiedFactSummary(
+      { ...config, signal: AbortSignal.timeout(300_000), onUsage: (u) => trace.usage.push(u) },
+      documentType,
+      extraction.text,
+      extraction.pages,
+      async (a) => {
+        trace.attempts.push(a);
+        await saveTrace();
+      }
+    );
+    facts = generated.facts;
+    trace.outcome = generated.repairAttempted ? 'repairSuccess' : 'firstSuccess';
+  } catch (error) {
+    trace.outcome = 'failure';
+    trace.error = error instanceof Error ? error.message : String(error);
+    generationError = error;
+  }
+  trace.elapsedMs = Math.round(performance.now() - started);
+  // One bounded last-run record, with no configuration object/credentials/headers.
+  try {
+    await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: trace });
+  } catch {
+    throw new Error(
+      `診断の保存に失敗しました。${trace.error ?? '要約生成は成功しましたが診断を保存できませんでした'}`
+    );
+  }
+  if (generationError) throw generationError;
+  if (!facts) throw new Error('要約結果を確認できません');
   const id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
   const metadata: SummaryMetadata = {
     ...extraction.metadata,

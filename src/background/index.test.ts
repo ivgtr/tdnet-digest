@@ -1,3 +1,6 @@
+import type { SummaryTrace } from '../lib/summary-trace';
+import type { LLMConfig } from '../lib/llm-client';
+import { candidateResponse } from '../lib/fixtures/candidate-test-source';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { textPage, numberCandidate } from '../lib/fixtures/v4-test-source';
 import { parseFactSummary } from '../lib/fact-summary';
@@ -95,6 +98,7 @@ async function setup(
       }),
     },
     storage: {
+      local: { set: vi.fn(async () => {}) },
       sync: {
         get: async () => ({
           provider: 'openai',
@@ -150,8 +154,39 @@ describe('要約・採点・追加分析の分離', () => {
     });
   });
 
+  it('修復APIが失敗しても初回診断を先に保存し、未完と失敗を区別する', async () => {
+    const request = await setup(false);
+    const writes: SummaryTrace[] = [];
+    vi.mocked(chrome.storage.local.set).mockImplementation(
+      async (items: Record<string, unknown>) => {
+        writes.push(structuredClone(items.summaryLastRunV1) as SummaryTrace);
+      }
+    );
+    mocked.generateText
+      .mockImplementationOnce(async (config: LLMConfig) => {
+        expect(config.signal).toBeInstanceOf(AbortSignal);
+        expect(writes[writes.length - 1]).toMatchObject({ outcome: 'running', attempts: [] });
+        return 'malformed';
+      })
+      .mockImplementationOnce(async () => {
+        expect(writes[writes.length - 1].attempts).toEqual([
+          expect.objectContaining({ phase: 'first', response: 'malformed' }),
+        ]);
+        throw new Error('fixture API failure');
+      });
+    const result = await request({ action: 'summarize' });
+    expect(result.error).toContain('fixture API failure');
+    expect(writes[writes.length - 1]).toMatchObject({
+      outcome: 'failure',
+      error: 'fixture API failure',
+    });
+    expect(writes[writes.length - 1].attempts.map((a) => a.phase)).toEqual(['first', 'repair']);
+    expect(JSON.stringify(writes)).not.toMatch(/apiKey|headers|authorization/);
+  });
   it('要約は1回のLLM呼び出しで採点を待たずに返す', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     const request = await setup(true);
     const result = await request({ action: 'summarize' });
     expect(result.summary).toContain('1150百万円');
@@ -161,7 +196,9 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('更新前から残る二段階要約設定を削除し、要約を続行する', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     const request = await setup(false, true, false, true);
     const result = await request({ action: 'summarize' });
     expect(result.summary).toContain('1150百万円');
@@ -176,16 +213,18 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('スコアOFFでも追加分析を明示操作で実行できる', async () => {
-    mocked.generateText.mockResolvedValueOnce(JSON.stringify(facts)).mockResolvedValueOnce(
-      JSON.stringify({
-        version: 2,
-        interpretation: { text: '判断不能', factIds: [] },
-        shortTerm: { text: '判断不能', factIds: [] },
-        mediumTerm: { text: '判断不能', factIds: [] },
-        longTerm: { text: '判断不能', factIds: [] },
-        watchPoints: [],
-      })
-    );
+    mocked.generateText
+      .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          version: 2,
+          interpretation: { text: '判断不能', factIds: [] },
+          shortTerm: { text: '判断不能', factIds: [] },
+          mediumTerm: { text: '判断不能', factIds: [] },
+          longTerm: { text: '判断不能', factIds: [] },
+          watchPoints: [],
+        })
+      );
     const request = await setup(false);
     const summary = await request({ action: 'summarize' });
     const analysis = await request({
@@ -199,7 +238,9 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('スコアONの採点は別要求で事実を起点にする', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({
       claims: [{ category: 'revenue' }],
       unverified: [],
@@ -252,16 +293,18 @@ describe('要約・採点・追加分析の分離', () => {
         'earnings',
         pages
       );
-      mocked.generateText.mockResolvedValueOnce(JSON.stringify(smartFacts)).mockResolvedValueOnce(
-        JSON.stringify({
-          version: 2,
-          interpretation: { text: '判断不能', factIds: [] },
-          shortTerm: { text: '判断不能', factIds: [] },
-          mediumTerm: { text: '判断不能', factIds: [] },
-          longTerm: { text: '判断不能', factIds: [] },
-          watchPoints: [],
-        })
-      );
+      mocked.generateText
+        .mockResolvedValueOnce(candidateResponse(smartFacts.facts, pages, smartFacts.documentType))
+        .mockResolvedValueOnce(
+          JSON.stringify({
+            version: 2,
+            interpretation: { text: '判断不能', factIds: [] },
+            shortTerm: { text: '判断不能', factIds: [] },
+            mediumTerm: { text: '判断不能', factIds: [] },
+            longTerm: { text: '判断不能', factIds: [] },
+            watchPoints: [],
+          })
+        );
       mocked.extractScoreInput.mockResolvedValue({
         claims: [{ category: 'coreForecast' }],
         unverified: [],
@@ -310,7 +353,9 @@ describe('要約・採点・追加分析の分離', () => {
   );
 
   it('過去資料の任意権限がない場合は別サイトを取得しない', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({
       claims: [{ category: 'revenue' }],
       unverified: [],
@@ -348,7 +393,9 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('検索API失敗は採点エラーとして返し、表示済み要約を保持する', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({ claims: [], unverified: [], searchStatus: '' });
     mocked.searchDisclosureCandidates.mockResolvedValue({
       urls: [],
@@ -372,7 +419,9 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('検索後も比較値を検証できなければ採点結果を作らない', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({
       claims: [],
       unverified: ['引用を確認できません'],
