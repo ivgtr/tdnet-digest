@@ -53,6 +53,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
   const reviewDiagnostics = args.includes('--review-diagnostics');
   if (reviewDiagnostics && (!fixed || !fixtureSource || fixedFailure))
     throw new Error('診断対応の回帰は正常な固定API・固定原文ルートで実行してください');
+  const reviewSettingsChange = args.includes('--review-settings-change');
+  if (reviewSettingsChange && (!fixed || !fixtureSource || fixedFailure))
+    throw new Error('応答待ちの設定変更試験は正常な固定API・固定原文ルートで実行してください');
+  let signalFirstRequest = () => {},
+    releaseFirstResponse = () => {};
+  const firstRequest = new Promise<void>((resolve) => {
+    signalFirstRequest = resolve;
+  });
+  const firstResponse = new Promise<void>((resolve) => {
+    releaseFirstResponse = resolve;
+  });
   const buildDigest = await builtDigest();
   const profile = await mkdtemp(path.join(tmpdir(), 'tdnet-ir-browser-'));
   let context: any;
@@ -134,6 +145,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           .messages.map((m: any) => m.content)
           .join('\n');
         apiCalls++;
+        if (reviewSettingsChange && apiCalls === 1) {
+          signalFirstRequest();
+          await firstResponse;
+        }
         let result: any;
         if (fixedFailure) {
           await route.fulfill({
@@ -266,6 +281,29 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
     const summary = frame.locator('.tdnet-digest-summary-row');
+    if (reviewSettingsChange) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          firstRequest,
+          new Promise<void>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('応答待ちの初回要求を確認できません')),
+              10000
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      await worker.evaluate(async () => chrome.storage.sync.set({ model: 'fixture-next' }));
+      const button = row.getByRole('button', { name: '要約', exact: true });
+      await button.waitFor({ timeout: 10000 });
+      assert.equal(await button.isEnabled(), true);
+      releaseFirstResponse();
+      await button.click();
+      evidence.stages.push('model changed while API pending → button enabled → new request');
+    }
     // The product inserts its result row after generation, not while the API is pending.
     await page.waitForFunction(
       () => {
@@ -380,6 +418,18 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     });
     assert.ok(stored?.value?.facts?.version === 4);
+    if (reviewSettingsChange) {
+      assert.equal(
+        await worker.evaluate(async () =>
+          Object.keys(await chrome.storage.local.get()).some(
+            (key) => key.startsWith('summaryCacheV2:') && key.includes(':fixture:full:')
+          )
+        ),
+        false
+      );
+      assert.equal(stored.value.metadata.model, 'fixture-next');
+      evidence.stages.push('stale first-model response never displayed or cached');
+    }
     assert.match(stored.value.metadata.documentHash, /^[a-f0-9]{64}$/);
     if (pdfHash) assert.equal(stored.value.metadata.documentHash, pdfHash);
     const trace = await worker.evaluate(
@@ -590,6 +640,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     }
     throw error;
   } finally {
+    releaseFirstResponse();
     if (context) await context.close();
     await rm(profile, { recursive: true, force: true });
     evidence.elapsedSeconds = Math.round((performance.now() - started) / 1000);

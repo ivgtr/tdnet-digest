@@ -136,6 +136,42 @@ describe('要約モード別の表示とキャッシュ', () => {
     }
   );
 
+  it('要約の応答待ちにモデルを変更しても操作可能へ戻り、古い応答を表示・保存しない', async () => {
+    let model = 'before';
+    let resolveResponse: (response: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveResponse = resolve;
+    });
+    const changed = vi.fn();
+    const saved = vi.fn();
+    vi.stubGlobal('chrome', {
+      storage: {
+        sync: {
+          get: (_keys: string[], callback: (settings: unknown) => void) =>
+            callback({ provider: 'openai', model, extractionMode: 'full' }),
+        },
+        local: { set: saved },
+        onChanged: { addListener: changed, removeListener: vi.fn() },
+      },
+      runtime: { sendMessage: vi.fn(() => pending) },
+    });
+    const hook = useSummarize({
+      pdfUrl: 'test.pdf',
+      title: '開示',
+      code: '1234',
+      companyName: '会社',
+    });
+    const run = hook.summarize();
+    expect(stateSetters[0]).toHaveBeenLastCalledWith(true);
+    model = 'after';
+    changed.mock.calls[0][0]({ model: { newValue: model } }, 'sync');
+    expect(stateSetters[0]).toHaveBeenLastCalledWith(false);
+    resolveResponse({ error: '古い応答', diagnosticRunId: 'before-run' });
+    await run;
+    expect(stateSetters[1]).toHaveBeenLastCalledWith(null);
+    expect(saved).not.toHaveBeenCalled();
+  });
+
   it('算出不能の採点応答は要約を保ったままエラーにし、保存しない', async () => {
     const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
     const id = 'a'.repeat(64);

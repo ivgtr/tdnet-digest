@@ -93,6 +93,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           idRef.current = null;
           scoreStarted.current = null;
           runRef.current++;
+          setLoading(false);
           setResult(null);
           setScore(emptyStage());
           setAnalysis(emptyStage());
