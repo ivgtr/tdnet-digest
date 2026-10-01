@@ -362,3 +362,5 @@ smartでは、本文に加えて見出し候補・継続表・系列注記・段
 利用者のパッチリリース指示に基づき、PR #24を `release:patch` で公開する。製品コードの対象は `113635c`。同コミットへの[Codex再レビュー](https://github.com/ivgtr/tdnet-digest/pull/24#issuecomment-5921872648)は重大な問題なしで完了し、レビュー指摘への返信・解決も完了した。この準備では現在の分析指紋の説明と公開記録だけを更新し、製品コードは変更していない。
 
 直前の公開版はv0.7.1。版更新は手元で重複実施せず、マージ時のRelease workflowへ委ねる。Actionsが型チェック・lint・410件の回帰・ビルドを実行し、成功後にバージョンコミット/タグ/ZIPを公開する。公開完了の確認対象は[Release v0.7.2](https://github.com/ivgtr/tdnet-digest/releases/tag/v0.7.2)、タグのコミット、ZIP内Manifestの版とする。評価ガイドの実LLM/実ブラウザー・比較採点・7月TDnet実経路の未達条件は公開後も残る。Chrome Web Storeや利用者の既存読み込み先の差し替えはこの操作に含めない。
+
+PR #24はUTC2026-10-01 00:16:42に `ebb8edd` へsquashマージされた。[Release Actions #36795367125](https://github.com/ivgtr/tdnet-digest/actions/runs/36795367125)は成功し、UTC00:17:29にv0.7.2を公開した。タグは版更新コミット `519a616fb42ca5f27f9bcf11466fd35ba0cc3d2e` を参照し、その変更はpackage.json/lockの版だけ。公開ZIPのManifest=0.7.2、LICENSE、ZIP整合性、公開assetのSHA-256一致を確認した。公開後のこの記録更新も文書だけで、タグは移動しない。

@@ -224,3 +224,5 @@ Contentのキャッシュ復元で `example.pdf` / `./example.pdf` / `/inbs/exam
 利用者の指示によりPR #24をパッチリリースへ進める。製品コード `113635c` のCodex再レビューは重大な問題なし。公開前のローカル410件・型チェック・lint・ビルドの証拠は上記の検証を再利用し、文書だけの変更で繰り返さない。Release workflowでは版更新後のソースで同じ検証とZIP生成を行う。Actionsの成功、公開タグの参照先、配布ZIPのManifest=0.7.2を公開完了条件とする。
 
 この配布検証は実LLMや利用者の既存プロファイルでの更新試験を兼ねない。v32の実LLM/実ブラウザー追試、実API比較採点、7月TDnet実経路などの未達条件は解消したとは扱わない。公開記録は[Release v0.7.2](https://github.com/ivgtr/tdnet-digest/releases/tag/v0.7.2)とRelease Actionsの実行履歴で確認する。
+
+公開完了：UTC2026-10-01 00:17:29。[Actions #36795367125](https://github.com/ivgtr/tdnet-digest/actions/runs/36795367125)で24ファイル410件・型チェック・lint・ビルドが成功した。公開タグv0.7.2は `519a616fb42ca5f27f9bcf11466fd35ba0cc3d2e`。ダウンロードした `tdnet-digest-v0.7.2.zip`（553,514 bytes）のSHA-256は `4611ff5bb877444eeabad7314e12ed88d144c10fe90ff894d0436418136e91aa` で公開assetのdigestと一致した。ZIPのCRC検査、Manifest=0.7.2、LICENSEを確認した。版更新コミットはpackage.json/lockだけを変更している。配布成果物の確認であり、上記の実経路の未達条件を解消する証拠ではない。
