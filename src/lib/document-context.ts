@@ -29,6 +29,8 @@ export interface DocumentContext {
   tableMappings: TableMapping[];
 }
 const unique = <T>(items: T[]) => [...new Set(items)];
+const reportingScope = '非連結|個別|単体|連結';
+const reportingBasis = '日本基準|IFRS|国際会計基準|米国基準';
 export function declaredSubjectsIn(block: TextBlock): string[] {
   return unique(
     block.text.split('\n').flatMap((line) => {
@@ -62,7 +64,7 @@ function captionText(block: TextBlock): string {
   return normalized(block.text)
     .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
     .replace(/^20\d{2}年\d{1,2}月期(?:(?:第[1-4]四半期|中間期|通期)|\(中間期\))*(?:の)?/, '')
-    .replace(/^[1-4]Q(?=決算短信)/, '');
+    .replace(/^(?:[1-4]Q|第[1-4]四半期(?:\(中間期\))?)(?=決算短信)/i, '');
 }
 function isReportingCover(block: TextBlock): boolean {
   return /^(?:四半期|中間)?決算短信/.test(captionText(block));
@@ -81,21 +83,27 @@ function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value
       continue;
     }
     const atom = normalized(text);
-    const scopeMatch = atom.match(/^(?:範囲:?)?(?:\((非連結|個別|連結)\)|(非連結|個別|連結))$/);
+    const scopeMatch = atom.match(
+      new RegExp(`^(?:範囲:?)?(?:\\((${reportingScope})\\)|(${reportingScope}))$`)
+    );
     const scope = scopeMatch?.[1] ?? scopeMatch?.[2];
-    const basis = atom.match(/^(?:会計基準:?)?(日本基準|IFRS)$/)?.[1];
+    const basis = atom.match(new RegExp(`^(?:会計基準:?)?(${reportingBasis})$`, 'i'))?.[1];
     if (scope) attributes.push({ role: 'scope', value: scope });
     if (basis) attributes.push({ role: 'basis', value: basis });
   }
   const caption = captionText(block);
   if (isReportingCover(block)) {
-    for (const match of caption.matchAll(/\((非連結|個別|連結)\)/g))
+    for (const match of caption.matchAll(new RegExp(`\\((${reportingScope})\\)`, 'g')))
       attributes.push({ role: 'scope', value: match[1] });
-    for (const match of caption.matchAll(/〔(日本基準|IFRS)〕|\[(日本基準|IFRS)\]/g))
+    for (const match of caption.matchAll(
+      new RegExp(`〔(${reportingBasis})〕|\\[(${reportingBasis})\\]`, 'gi')
+    ))
       attributes.push({ role: 'basis', value: match[1] ?? match[2] });
   } else if (headingLevel(block) !== null) {
     const scope = caption.match(
-      /^\(?(非連結|個別|連結)(?:累計期間)?(?:の)?(?:経営成績|業績|財政状態|財務諸表|損益計算書|貸借対照表|キャッシュ.*フロー)/
+      new RegExp(
+        `^\\(?(${reportingScope})(?:累計期間)?(?:の)?(?:経営成績|業績|財政状態|財務諸表|損益計算書|貸借対照表|キャッシュ.*フロー)`
+      )
     )?.[1];
     if (scope) attributes.push({ role: 'scope', value: scope });
   }

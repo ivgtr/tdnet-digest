@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import corpus from './fixtures/ir-semantic-corpus.json';
 import expectations from './fixtures/ir-semantic-expectations.json';
+import classificationCases from '../../evaluation/fixtures/classification-cases.json';
 import { extractPageLayout } from './pdf-layout';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { candidateFixture, candidateResponse } from './fixtures/candidate-test-source';
@@ -33,8 +34,21 @@ const qReportingCases = [
   ['2026年12月期 3Q決算短信〔IFRS〕（連結）', '2026年12月期', '連結', 'IFRS'],
   ['2026年3月期 4Q決算短信〔日本基準〕（非連結）', '2026年3月期', '非連結', '日本基準'],
   ['２Ｑ決算短信〔IFRS〕（個別）', '2026年3月期', '個別', 'IFRS'],
+  ['2026年8月期 2q決算短信〔日本基準〕（連結）', '2026年8月期', '連結', '日本基準'],
+  ['３ｑ決算短信〔IFRS〕（個別）', '2026年3月期', '個別', 'IFRS'],
+  ['2026年3月期 第3四半期決算短信〔日本基準〕（単体）', '2026年3月期', '単体', '日本基準'],
+  ['第3四半期決算短信〔日本基準〕（単体）', '2026年3月期', '単体', '日本基準'],
+  [
+    '2026年12月期 第2四半期決算短信〔国際会計基準〕（連結）',
+    '2026年12月期',
+    '連結',
+    '国際会計基準',
+  ],
+  ['2026年12月期 第3四半期決算短信〔米国基準〕（連結）', '2026年12月期', '連結', '米国基準'],
+  ['第2四半期（中間期）決算短信[国際会計基準]（単体）', '2026年3月期', '単体', '国際会計基準'],
+  ['4q決算短信[ifrs]（単体）', '2026年3月期', '単体', 'ifrs'],
 ] as const;
-function qReportingFixture(testCase: readonly [string, string, string, string]) {
+function qReportingFixture(testCase: readonly [string, string, string | null, string | null]) {
   const [caption, period, scope, basis] = testCase;
   const source = [
     textPage(`${caption}\n会社名 株式会社テスト`),
@@ -51,6 +65,69 @@ function qReportingFixture(testCase: readonly [string, string, string, string]) 
   return { source, fact };
 }
 describe('生成専用候補と原文文脈の契約', () => {
+  it.each(classificationCases.filter((c) => c.targetType === 'earnings'))(
+    '分類正例の報告属性は既定値を補わず原文表記で確定・保存再照合する: $id',
+    ({ title }) => {
+      const period = title.match(/20\d{2}年\d{1,2}月期/)?.[0] ?? '2026年3月期';
+      const scope = title.match(/（(非連結|個別|単体|連結)）/)?.[1] ?? null;
+      const basis = title.match(/〔([^〕]+)〕/)?.[1] ?? null;
+      const { source, fact } = qReportingFixture([title, period, scope, basis]);
+      const result = reviewCandidates(candidateResponse([fact], source), 'other', source);
+      expect(result.unverified).toEqual([]);
+      expect(result.facts).toHaveLength(1);
+      expect(result.facts[0].semantics).toEqual(fact.semantics);
+      expect(
+        parseFactSummary(
+          JSON.stringify({
+            version: 4,
+            documentType: 'other',
+            facts: result.facts,
+            unverified: [],
+          }),
+          'other',
+          source
+        ).facts
+      ).toEqual(result.facts);
+    }
+  );
+  it.each([
+    ['単体', '国際会計基準'],
+    ['非連結', '米国基準'],
+    ['単体', 'ifrs'],
+  ])('独立した属性欄でも原文の範囲・基準を保持する: %s / %s', (scope, basis) => {
+    const { source, fact } = qReportingFixture(['決算短信', '2026年3月期', scope, basis]);
+    source[1] = textPage(
+      `1. 2026年3月期 財政状態\n（${scope}）\n${basis}\n2026年3月期の総資産は100百万円となる見込みです。`,
+      2
+    );
+    const candidate = numberCandidate(source[1], '総資産');
+    candidate.semantics = fact.semantics;
+    candidate.valueKind = fact.valueKind;
+    const result = reviewCandidates(candidateResponse([candidate], source), 'other', source);
+    expect(result.unverified).toEqual([]);
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0].semantics).toEqual(fact.semantics);
+    const wrong = { ...candidate, semantics: { ...candidate.semantics, scope: null, basis: null } };
+    expect(reviewCandidates(candidateResponse([wrong], source), 'other', source).facts).toEqual([]);
+  });
+  it('表紙に複数の範囲・基準がある場合は最初の値へ補完せず曖昧として拒否する', () => {
+    const { source, fact } = qReportingFixture([
+      '2026年3月期 2q決算短信〔日本基準〕〔米国基準〕（連結）（単体）',
+      '2026年3月期',
+      '連結',
+      '日本基準',
+    ]);
+    const result = reviewCandidates(candidateResponse([fact], source), 'other', source);
+    expect(result.facts).toEqual([]);
+    for (const role of ['scope', 'basis'])
+      expect(result.diagnostics).toContainEqual(
+        expect.objectContaining({
+          check: `scope.${role}`,
+          status: 'blocked',
+          message: expect.stringContaining('曖昧'),
+        })
+      );
+  });
   it.each(qReportingCases)('Q表記の表紙属性を別ページの通期予想へ保持する: %s', (...testCase) => {
     const { source, fact } = qReportingFixture(testCase);
     const result = reviewCandidates(candidateResponse([fact], source), 'other', source);
@@ -141,23 +218,28 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(applicableDeclarations(local, 'scope', true).map((d) => d.value)).toEqual(['個別']);
     expect(applicableDeclarations(local, 'basis', true).map((d) => d.value)).toEqual(['IFRS']);
   });
-  it('Q表紙の属性省略を1回修復し、根拠付きの通期予想を表示・保存再照合する', async () => {
-    const { source, fact } = qReportingFixture(qReportingCases[1]);
-    const wrong = { ...fact, semantics: { ...fact.semantics, scope: null, basis: null } };
-    vi.mocked(generateText)
-      .mockReset()
-      .mockResolvedValueOnce(candidateResponse([wrong], source))
-      .mockResolvedValueOnce(candidateResponse([fact], source));
-    const result = await generateVerifiedFactSummary(config, 'other', 'source', source);
-    expect(result.repairAttempted).toBe(true);
-    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
-    expect(result.facts.facts).toHaveLength(1);
-    expect(result.facts.facts[0].semantics).toEqual(fact.semantics);
-    expect(renderFacts(result.facts)).toContain('連結、日本基準、予想');
-    expect(parseFactSummary(JSON.stringify(result.facts), 'other', source).facts).toEqual(
-      result.facts.facts
-    );
-  });
+  it.each([qReportingCases[1], ...qReportingCases.slice(5)])(
+    '表紙の属性省略を1回修復し、原文表記の予想を表示・保存再照合する: %s',
+    async (...testCase) => {
+      const { source, fact } = qReportingFixture(testCase);
+      const wrong = { ...fact, semantics: { ...fact.semantics, scope: null, basis: null } };
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse([wrong], source))
+        .mockResolvedValueOnce(candidateResponse([fact], source));
+      const result = await generateVerifiedFactSummary(config, 'other', 'source', source);
+      expect(result.repairAttempted).toBe(true);
+      expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+      expect(result.facts.facts).toHaveLength(1);
+      expect(result.facts.facts[0].semantics).toEqual(fact.semantics);
+      expect(renderFacts(result.facts)).toContain(
+        `${fact.semantics.scope}、${fact.semantics.basis}、予想`
+      );
+      expect(parseFactSummary(JSON.stringify(result.facts), 'other', source).facts).toEqual(
+        result.facts.facts
+      );
+    }
+  );
   it.each([0, 1, 2, 3, 4, 5])('原文構造から資料%iの完全な表対応を構成し確定v4を再照合する', (i) => {
     const source = corpus[i].pages.map((p) =>
       extractPageLayout(p.items as TextItem[], p.pageNumber)
@@ -694,6 +776,9 @@ describe('生成専用候補と原文文脈の契約', () => {
     ['1. 連結子会社の異動', 'scope', '連結'],
     ['1. 個別契約の締結', 'scope', '個別'],
     ['1. IFRS対応の方針', 'basis', 'IFRS'],
+    ['1. 単体契約の締結', 'scope', '単体'],
+    ['1. 国際会計基準への移行', 'basis', '国際会計基準'],
+    ['1. 米国基準への対応', 'basis', '米国基準'],
   ] as const)('報告欄ではない見出しから属性を作らない: %s', (heading, role, fabricated) => {
     const source = [textPage(`会社名 株式会社テスト\n${heading}\n当社は契約を締結しました。`)];
     const block = source[0].blocks[2];
