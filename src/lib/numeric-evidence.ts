@@ -1,5 +1,6 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
+import { declaredQuantityUnit } from './quantity';
 import { parseQuantity, parseExactRange, isUnitToken } from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
 
@@ -105,14 +106,13 @@ export function verifyTableEvidence(
   if (parsedValue.unit && !unitIncludesValue) fail('値セル内の単位が未参照');
   const inlineUnit = unitIncludesValue && orderedUnits.length === 0 ? parsedValue.unit : null;
   // 値セルに含まれる単位断片も参照を必須とし、隣接セルの断片と原文順に照合する。
-  const unitText = (
+  const unitText = declaredQuantityUnit(
     unitIncludesValue
       ? parsedValue.unit + orderedUnits.map((s) => compact(s.text)).join('')
       : joined(units)
-          .replace(/^\(?単位[:：]?/, '')
-          .replace(/\)$/, '')
-  ).replace(/^円銭$/, '円');
-  if (unitText !== expectedUnit || (unitIncludesValue && !isUnitToken(unitText))) fail('単位');
+  );
+  if (unitText === null) fail('単位宣言の形式');
+  if (unitText !== expectedUnit || (unitIncludesValue && !isUnitToken(unitText!))) fail('単位');
   const adjacentUnit =
     orderedUnits.length > 0 &&
     (parsedValue.unit === null || unitIncludesValue) &&
@@ -142,7 +142,7 @@ export function verifyTableEvidence(
         sameRow(s, value) &&
         gap >= -0.5 &&
         gap <= Math.min(s.height, last.height) * 0.6 &&
-        couldContinueUnit(unitText, compact(s.text))
+        couldContinueUnit(unitText!, compact(s.text))
       );
     });
     if (omittedSuffix) fail('単位の続きになり得る隣接セルが未参照');
@@ -566,6 +566,8 @@ export function verifyPeriodAndKind(
     fail('累計・単独期間');
   if (/累計/.test(target) && !/累計/.test(local)) fail('累計期間');
   if (/単独/.test(target) && !/単独/.test(local)) fail('単独期間');
+  if (/予定|取得する株式|買付けの委託を行う/.test(local))
+    fail('予定数量を財務実績・予想へ変換できません');
   const kindAxis = /前回|従来|修正前|直近の配当予想|今回|修正後|決定額/.test(axis) ? axis : context;
   if (/前回|従来|修正前/.test(kindAxis) && /今回|修正後/.test(kindAxis))
     fail('修正前後の対応が曖昧');

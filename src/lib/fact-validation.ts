@@ -1,3 +1,10 @@
+import {
+  buildDocumentContext,
+  bindingFor,
+  resolveScopeIds,
+  isFinancialUnit,
+} from './document-context';
+import { assertionPolarity, verifyAssertionState } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
 import {
@@ -282,7 +289,11 @@ function stateSupported(state: VerifiedFact['semantics']['state'], text: string)
   if (state === 'unspecified') return !Object.values(markers).some((re) => re.test(source));
   return markers[state].test(source);
 }
-export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFact {
+export function validateFact(
+  value: unknown,
+  pages: ExtractedPage[],
+  documentContext = buildDocumentContext(pages)
+): VerifiedFact {
   if (
     !record(value) ||
     !exact(value, FACT_KEYS) ||
@@ -475,81 +486,58 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
         normalized(fact.statement ?? '') !== normalized(source)
       )
         fail('SEMANTICS:主語・否定・条件を含む完結した原文が必要です');
+      if (normalized(fact.label) !== normalized(source))
+        fail('SEMANTICS:出来事のlabelも完結した原文です。自由な主張文へ変更できません');
       if (fact.kind === 'status' && !/非開示|未定|該当.*なし|該当事項.*ございません/.test(source))
         fail('SEMANTICS:明示状態がありません');
     }
   }
-  // Scope/context references must be ancestors of this block, not unrelated later sections.
-  for (const id of [...contexts, ...scopes]) {
-    const span = page.spans.find((s) => s.id === id);
-    const block = page.blocks.find((b) => b.id === id);
-    const inherited = pages.find(
-      (p) =>
-        p.pageNumber < page.pageNumber &&
-        (p.spans.some((s) => s.id === id) || p.blocks.some((b) => b.id === id))
-    );
-    const ancestor = inherited?.blocks.find((b) => b.id === id || b.spanIds.includes(id));
-    const coverCompanies =
-      inherited?.pageNumber === 1
-        ? inherited.blocks.filter((b) =>
-            /^(?:株式会社[\p{L}\p{N}・&]+|[\p{L}\p{N}・&]+株式会社)$/u.test(normalized(b.text))
-          )
-        : [];
-    const documentHeading =
-      ancestor &&
-      inherited?.pageNumber === 1 &&
-      (/決算短信|上場会社名|会社名/.test(normalized(ancestor.text)) ||
-        (coverCompanies.length === 1 && coverCompanies[0].id === ancestor.id));
-    const continued =
-      continuation && [...continuation.contextIds, ...continuation.scopeIds].includes(id);
-    const transactionTarget =
-      scopes.includes(id) &&
-      fact.semantics.scope &&
-      fact.semantics.subject !== fact.semantics.scope &&
-      ancestor &&
-      /概要|名称/.test(normalized(ancestor.text)) &&
-      normalized(ancestor.text).includes(normalized(fact.semantics.scope)) &&
-      inherited?.pageNumber === 1 &&
-      inherited.blocks.some(
-        (b) =>
-          normalized(b.text).includes(normalized(fact.semantics.scope!)) &&
-          /株式.*取得|子会社化/.test(normalized(b.text))
-      ) &&
-      page.blocks.some((b) => b.y < atY && /取得.*価額|日程/.test(normalized(b.text)));
-    if (
-      (!span && !block && !documentHeading && !continued && !transactionTarget) ||
-      (span?.y ?? block?.y ?? -Infinity) > atY
+  const anchor = ev.kind === 'table' ? ev.valueId : ev.blockId;
+  const binding = bindingFor(documentContext, anchor);
+  const nearest = page.blocks.find(
+    (b) => b.id === binding.sectionIds[binding.sectionIds.length - 1]
+  );
+  const requiredScopes = resolveScopeIds(
+    binding,
+    fact.semantics,
+    isFinancialUnit(
+      { ...fact, semantics: { ...fact.semantics, qualifiers: [], conditions: [] } },
+      binding,
+      pages
     )
-      fail(`SCOPE:別の段落・表の見出し ${id}。contextIds/scopeIdsは後段の参照を認めません`);
-  }
-  // A subsequent local section overrides an earlier context; never borrow its basis/scope.
-  const nearest = page.blocks
-    .filter(
-      (b) =>
-        b.y < atY &&
-        b.text.length < 180 &&
-        /^(?:[0-9]+[.．]|[（(][0-9]+[）)]|20[0-9]{2}年|今後の見通し)/.test(normalized(b.text)) &&
-        /経営成績|業績予想|当期.*月期|異動する子会社|今後の見通し|配当の状況/.test(
-          normalized(b.text)
-        )
-    )
-    .sort((a, b) => b.y - a.y)[0];
+  );
+  const contextBlocks = pages
+    .flatMap((p) => p.blocks)
+    .filter((b) => binding.contextIds.some((id) => b.id === id || b.spanIds.includes(id)));
+  const allowedContexts = new Set([
+    ...binding.contextIds,
+    ...page.blocks
+      .filter((b) => binding.sectionIds.includes(b.id))
+      .flatMap((b) => [b.id, ...b.spanIds]),
+  ]);
   if (
-    nearest &&
-    ![...contexts, ...scopes].some((id) => nearest.spanIds.includes(id) || id === nearest.id) &&
-    nearest.y >
-      Math.max(
-        ...contexts.map(
-          (id) =>
-            page.spans.find((s) => s.id === id)?.y ??
-            page.blocks.find((b) => b.id === id)?.y ??
-            Infinity
-        )
-      )
+    contexts.some((id) => !allowedContexts.has(id)) ||
+    contextBlocks.some(
+      (b) => ![...contexts, ...scopes].some((id) => id === b.id || b.spanIds.includes(id))
+    )
   )
-    fail(
-      `SCOPE:直近見出し ${nearest.id} が未参照。contextIdsにはspanIds=${JSON.stringify(nearest.spanIds)}から適用する断片を入れます。原文=${nearest.text}`
-    );
+    fail(`SCOPE:適用見出しの不一致。必要なcontextIds=${JSON.stringify(binding.contextIds)}`);
+  if (
+    scopes.some((id) => !requiredScopes.includes(id)) ||
+    ['subject', 'scope', 'basis'].some((role) => {
+      const r = role as 'subject' | 'scope' | 'basis';
+      return (
+        fact.semantics[r] !== null &&
+        !binding.declarations.some(
+          (d) =>
+            d.role === r &&
+            normalized(d.value) === normalized(fact.semantics[r]!) &&
+            scopes.includes(d.id)
+        )
+      );
+    })
+  )
+    fail(`SCOPE:役割に適用するscopeIdsが不一致です。必要=${JSON.stringify(requiredScopes)}`);
   // Cross-page notes need a shared named metric series; adjacency alone is insufficient.
   for (const link of noteLinks(pages).filter(
     (link) => link.fromPage === page.pageNumber && link.metric === normalized(fact.label)
@@ -586,7 +574,8 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
   const rowQualifiers = row ? sourceQualifiers(row.text) : [];
   if (rowQualifiers.some((q) => !sourceQualifiers(source + notes).includes(q)))
     fail('QUALIFIER:値の行の限定が未参照');
-  const local = source + '\n' + context + '\n' + notes;
+  const local =
+    source + '\n' + context + '\n' + referenceText(pages, binding.contextIds) + '\n' + notes;
   if (
     (fact.kind === 'number' || fact.kind === 'range') &&
     fact.semantics.state === 'planned' &&
@@ -609,6 +598,19 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
   }
 
   if (fact.kind === 'number' || fact.kind === 'range') {
+    const plannedDates = [
+      ...new Set(
+        datedStates(local)
+          .filter((d) => d.state === 'planned')
+          .map((d) => d.date)
+      ),
+    ];
+    if (
+      fact.semantics.state === 'planned' &&
+      fact.semantics.periodKind === 'eventDate' &&
+      plannedDates.length > 1
+    )
+      fail('PERIOD:適用する予定日が曖昧です');
     if (!fact.period && pages.some((p) => /20\d{2}年\d{1,2}月/.test(normalized(p.text))))
       fail(
         `PERIOD:原文の対象期間が欠落しています。日付の役割候補=${JSON.stringify(datedStates(local))}`
@@ -680,7 +682,12 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
         fail('PERIOD:出来事の日付の役割と状態が不一致です');
     }
   }
-  if (!stateSupported(fact.semantics.state, local + '\n' + scope))
+  if (fact.kind === 'event' || fact.kind === 'status')
+    verifyAssertionState(fact.semantics.state, source);
+  else if (
+    !['actual', 'forecast', 'forecastBefore', 'forecastAfter'].includes(fact.semantics.state) &&
+    !stateSupported(fact.semantics.state, local)
+  )
     fail(
       'STATE:状態の根拠がありません。取得予定は取得方法・予定日の段落をcontextIdsで参照してください'
     );
@@ -707,21 +714,7 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
       JSON.stringify(conditions.map(normalized).sort())
   )
     fail(`CONDITION:条件の欠落・不一致。原文の条件文全体=${JSON.stringify(conditions)}`);
-  const fragments = source
-    .split(/[。()（）]/)
-    .map(normalized)
-    .filter(Boolean);
-  const negatives = fragments.filter((text) =>
-    /していません|しません|行わない|行われない|ありません|ございません|未実施|締結していない/.test(
-      text
-    )
-  );
-  const polarity =
-    negatives.length === 0
-      ? 'affirmative'
-      : negatives.length === fragments.length
-        ? 'negative'
-        : 'mixed';
+  const polarity = assertionPolarity(source);
   if (fact.semantics.polarity !== polarity)
     fail(`POLARITY:否定の不一致。完結した原文の区分=${polarity}（混在する文はmixed）`);
   for (const k of ['subject', 'scope', 'basis'] as const) {
@@ -856,6 +849,7 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
     dateRoles,
     semantics: { ...fact.semantics, qualifiers: allQualifiers, conditions },
   };
+  checkSemantics(checked.semantics);
   const id = stableFactId(checked);
   if (fact.id.startsWith('fact-') && fact.id !== id)
     fail('REFERENCE:保存した確定IDが根拠・意味と一致しません');

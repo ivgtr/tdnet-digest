@@ -19,6 +19,8 @@ export interface LLMConfig {
     reasoningTokens?: number | null;
   }) => void;
   responseFormat?: 'json_object';
+  signal?: AbortSignal;
+  onResponse?: (response: string) => void;
 }
 
 export interface ChatMessage {
@@ -74,6 +76,7 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
   const started = performance.now();
   const response = await fetch(baseUrl, {
     method: 'POST',
+    signal: config.signal,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
@@ -121,6 +124,8 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
       : null,
   });
 
+  if (typeof data.choices?.[0]?.message?.content === 'string')
+    config.onResponse?.(data.choices[0].message.content);
   if (data.choices?.[0]?.finish_reason === 'length')
     throw new Error('APIの推論・出力上限に達しました。応答は採用できません');
   if (
@@ -148,6 +153,7 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
   const started = performance.now();
   const response = await fetch(baseUrl, {
     method: 'POST',
+    signal: config.signal,
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': config.apiKey,
@@ -186,6 +192,7 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
     elapsedMs: Math.round(performance.now() - started),
     finishReason: typeof data.stop_reason === 'string' ? data.stop_reason : null,
   });
+  if (typeof data.content?.[0]?.text === 'string') config.onResponse?.(data.content[0].text);
   if (['max_tokens', 'model_context_window_exceeded'].includes(data.stop_reason))
     throw new Error('APIの推論・出力上限に達しました。応答は採用できません');
   if (typeof data.content?.[0]?.text !== 'string' || !data.content[0].text.trim()) {

@@ -432,8 +432,9 @@ describe('実PDFの意味を保った利用経路', () => {
     if (caption.evidence.kind !== 'table') throw new Error('table expected');
     caption.evidence.periodIds.push('p1s46', 'p1s47');
     caption.evidence.contextIds = ['p1s80'];
-    expect(parse(4, [caption]).unverified).toEqual([]);
-    expect(parse(4, [caption]).facts).toHaveLength(1);
+    // The fiscal caption belongs to context, not the axis for a different row.
+    expect(parse(4, [caption]).facts).toHaveLength(0);
+    expect(parse(4, [fact(4,2)]).unverified).toEqual([]);
     const wrong = fact(4);
     if (wrong.evidence.kind !== 'table') throw new Error('table expected');
     wrong.evidence.periodIds = ['p1s80'];

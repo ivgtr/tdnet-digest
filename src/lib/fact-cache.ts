@@ -152,6 +152,8 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
       fact.quantity !== null ||
       fact.valueKind !== null ||
       typeof fact.statement !== 'string' ||
+      fact.label.normalize('NFKC').replace(/\s/g, '') !==
+        fact.quote.normalize('NFKC').replace(/\s/g, '') ||
       fact.statement.normalize('NFKC').replace(/\s/g, '') !==
         fact.quote.normalize('NFKC').replace(/\s/g, '')
     )

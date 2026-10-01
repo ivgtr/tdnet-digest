@@ -1,3 +1,4 @@
+import { candidateResponse, candidateFixture } from './fixtures/candidate-test-source';
 import { describe, it, expect, vi } from 'vitest';
 import { generateText } from './llm-client';
 import { parseFactSummary, generateVerifiedFactSummary, renderFacts } from './fact-summary';
@@ -20,7 +21,9 @@ describe('v4の原文と意味の照合', () => {
     expect(result.facts[0].quantity?.decimal).toBe('100');
     expect(result.facts[0].id).toMatch(/^fact-/);
     expect(parseFactSummary(raw(result.facts), 'other', [page], false)).toEqual(result);
-    expect(renderFacts(result)).toContain('100百万円（2026年3月期、株式会社テスト、連結、実績');
+    expect(renderFacts(result)).toContain(
+      '100百万円（2026年3月期、株式会社テスト、連結、日本基準、実績'
+    );
   });
   it.each([
     { value: 101 },
@@ -66,7 +69,7 @@ describe('v4の原文と意味の照合', () => {
       ...fact,
       id: 'f2',
       kind: 'event',
-      label: '取得の方法',
+      label: omitted.blocks[2].text,
       value: null,
       unit: null,
       period: null,
@@ -105,7 +108,7 @@ describe('v4の原文と意味の照合', () => {
     ).toContain('未選択ページの根拠');
     vi.mocked(generateText)
       .mockReset()
-      .mockResolvedValueOnce(raw([fact, event]));
+      .mockResolvedValueOnce(candidateResponse([fact, event], sources));
     const result = await generateVerifiedFactSummary(
       { provider: 'openai', model: 'test', apiKey: 'test' },
       'other',
@@ -146,7 +149,7 @@ describe('v4の原文と意味の照合', () => {
     const event: VerifiedFact = {
       ...fact,
       kind: 'event',
-      label: '配当増額',
+      label: p.text,
       value: null,
       unit: null,
       period: null,
@@ -168,7 +171,7 @@ describe('v4の原文と意味の照合', () => {
         periodKind: 'none',
         metricKind: 'none',
         qualifiers: [],
-        state: 'decided',
+        state: 'unspecified',
         polarity: 'negative',
         conditions: [],
       },
@@ -210,8 +213,20 @@ describe('v4の原文と意味の照合', () => {
   it('f1の付け替えに依存せず修復前の事実を維持する', async () => {
     vi.mocked(generateText)
       .mockReset()
-      .mockResolvedValueOnce(raw([{ ...fact, value: 999 }]))
-      .mockResolvedValueOnce(raw([{ ...fact, id: 'f7' }]));
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          candidateVersion: 1,
+          documentType: 'other',
+          candidates: [
+            {
+              ...candidateFixture(fact, [page]),
+              meaning: { ...candidateFixture(fact, [page]).meaning, period: '2025年3月期' },
+            },
+          ],
+          unverified: [],
+        })
+      )
+      .mockResolvedValueOnce(candidateResponse([{ ...fact, id: 'f7' }], [page]));
     const result = await generateVerifiedFactSummary(
       { provider: 'openai', model: 'test', apiKey: 'test' },
       'other',

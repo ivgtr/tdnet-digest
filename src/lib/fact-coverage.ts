@@ -1,26 +1,38 @@
+import { assertionStates } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
 import { tableContinuations, noteLinks } from './document-links';
 import { compact } from './numeric-evidence';
-import { tableReferenceHints } from './document-structure';
+import { sourceDateOptions } from './source-periods';
+import { buildTableMappings } from './source-mappings';
+import { buildDocumentContext, type DocumentContext } from './document-context';
+import { normalized } from './document-structure';
+import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
 
 function reportedDividends(pages: ExtractedPage[]) {
   return pages.flatMap((page) => {
     const text = (ids: string[]) =>
       ids.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
-    return tableReferenceHints(page).flatMap((hint) => {
-      if (!/配当の状況/.test(compact(text(hint.contextIds)))) return [];
-      const unitText = compact(text(hint.unitIds));
-      const unit = unitText === '円銭' ? '円' : unitText;
-      if (!isPerShareDividend(text(hint.metricIds), unit)) return [];
-      const axis = compact(text(hint.periodIds));
-      const period = axis.match(/20\d{2}年\d{1,2}月期/)?.[0];
-      return period
-        ? [{ period, state: /予想|見込/.test(axis) ? ('forecast' as const) : ('actual' as const) }]
-        : [];
-    });
+    return buildTableMappings(pages)
+      .filter((h) => page.quantities.some((q) => q.id === h.valueId))
+      .flatMap((hint) => {
+        if (!/配当の状況/.test(compact(text(hint.contextIds)))) return [];
+        const unitText = compact(text(hint.unitIds));
+        const unit = unitText === '円銭' ? '円' : unitText;
+        if (!isPerShareDividend(text(hint.metricIds), unit)) return [];
+        const axis = compact(text(hint.periodIds));
+        const period = axis.match(/20\d{2}年\d{1,2}月期/)?.[0];
+        return period
+          ? [
+              {
+                period,
+                state: /予想|見込/.test(axis) ? ('forecast' as const) : ('actual' as const),
+              },
+            ]
+          : [];
+      });
   });
 }
 export function standardMetric(fact: VerifiedFact): string | null {
@@ -98,7 +110,13 @@ export function verifyCoverage(
           missing.push(`COVERAGE:通期予想の重要指標 ${metric}`);
     }
     if (
-      /売上高営業利益率/.test(first?.text ?? '') &&
+      buildTableMappings(allPages).some((h) =>
+        h.metricIds
+          .map((id) => allPages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+          .join('')
+          .replace(/\s/g, '')
+          .includes('売上高営業利益率')
+      ) &&
       !facts.some(
         (f) =>
           f.kind === 'number' &&
@@ -149,15 +167,26 @@ export function verifyCoverage(
         )
           missing.push(`COVERAGE:配当の重要事実 対象期=${target.period} 区分=${target.state}`);
     }
+    const backgroundBlocks = pages
+      .flatMap((p) => p.blocks)
+      .filter(
+        (b) =>
+          /純損失/.test(b.text) &&
+          /概算額/.test(b.text) &&
+          assertionStates(b.text).includes('forecast')
+      );
     if (
-      /今後の見通し/.test(source) &&
-      /純損失/.test(source) &&
-      /概算額/.test(source) &&
+      backgroundBlocks.length > 0 &&
       !facts.some(
         (f) =>
           f.kind === 'event' &&
+          f.evidence.kind === 'prose' &&
+          backgroundBlocks.some(
+            (b) => f.evidence.kind === 'prose' && b.id === f.evidence.blockId
+          ) &&
           /純損失/.test(f.statement ?? '') &&
           /概算/.test(f.quote) &&
+          f.semantics.state === 'forecast' &&
           !!f.semantics.subject &&
           (!issuer || compact(issuer).includes(compact(f.semantics.subject))) &&
           (!expectedScope || f.semantics.scope === expectedScope) &&
@@ -167,12 +196,24 @@ export function verifyCoverage(
       missing.push(
         `COVERAGE:損失予想の背景・限定。本文事実にも対象会社と報告範囲=${expectedScope}を保持し、scopeIdsへ決算短信の範囲見出し ${first?.blocks.find((b) => /決算短信/.test(b.text))?.id} と会社名見出しを参照してください`
       );
+    const plannedLossBlocks = pages
+      .flatMap((p) => p.blocks)
+      .filter(
+        (b) =>
+          /特別損失に計上[^。]*予定/.test(compact(b.text)) &&
+          assertionStates(b.text).length === 1 &&
+          assertionStates(b.text)[0] === 'planned'
+      );
     if (
-      /特別損失に計上.*予定/.test(source) &&
+      plannedLossBlocks.length > 0 &&
       !facts.some(
         (f) =>
           f.kind === 'event' &&
           f.semantics.state === 'planned' &&
+          f.evidence.kind === 'prose' &&
+          plannedLossBlocks.some(
+            (b) => f.evidence.kind === 'prose' && b.id === f.evidence.blockId
+          ) &&
           /特別損失/.test(f.quote) &&
           !!f.semantics.subject &&
           (!issuer || compact(issuer).includes(compact(f.semantics.subject))) &&
@@ -317,4 +358,202 @@ export function verifyCoverage(
   )
     missing.push('COVERAGE:提携の決定事項');
   if (missing.length) throw new Error(missing.join(' / '));
+}
+
+export interface CoverageSlot {
+  id: string;
+  requirement: string;
+  sourceIds: string[];
+  expected: {
+    kind?: VerifiedFact['kind'];
+    state?: VerifiedFact['semantics']['state'];
+    metricKind?: VerifiedFact['semantics']['metricKind'];
+    periodKind?: VerifiedFact['semantics']['periodKind'];
+    period?: string;
+  };
+  status: 'satisfied' | 'absent' | 'invalid' | 'unknown' | 'outsideSelection';
+}
+/** Scope requirements to source units; never join unrelated prose to identify a predicate. */
+export function coverageReport(
+  type: DocumentType,
+  pages: ExtractedPage[],
+  facts: VerifiedFact[],
+  diagnostics: Diagnostic[] = [],
+  context: DocumentContext = buildDocumentContext(pages)
+): CoverageSlot[] {
+  const collect = (source: ExtractedPage[], accepted: VerifiedFact[]) => {
+    try {
+      verifyCoverage(type, source, accepted);
+      return [] as string[];
+    } catch (e) {
+      return (e instanceof Error ? e.message : String(e)).split(' / ');
+    }
+  };
+  const selected = pages.filter((p) => p.selection === 'selected');
+  const obligations = collect(selected, []),
+    missing = collect(selected, facts);
+  const fullObligations = collect(
+    pages.map((p) => ({ ...p, selection: 'selected' as const })),
+    []
+  );
+  const captions = pages.flatMap((p) => p.blocks);
+  const spans = pages.flatMap((p) => p.spans);
+  const units = context.tableMappings.map((h) => ({
+    anchor: h.valueId,
+    label: normalized(h.metricIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
+    axis: normalized(h.periodIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
+    context: normalized(h.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
+  }));
+  const sourceIds = (requirement: string): string[] => {
+    const metric = requirement.match(
+      /revenue|operatingProfit|netProfit|1株当たり利益|営業利益率|配当|KPI/
+    )?.[0];
+    const marker = {
+      revenue: /^(売上高|売上収益|営業収益)$/,
+      operatingProfit: /^営業(?:利益|損失)/,
+      netProfit: /(?:当期|四半期|中間).*純(?:利益|損失)/,
+      '1株当たり利益': /株当たり.*利益/,
+      営業利益率: /営業利益率/,
+      配当: /配当/,
+      KPI: /MRR|ARR|KPI/,
+    }[metric ?? ''] as RegExp | undefined;
+    if (marker) {
+      const kind = requirement.includes('forecastBefore')
+        ? 'forecastBefore'
+        : requirement.includes('forecastAfter')
+          ? 'forecastAfter'
+          : /予想/.test(requirement)
+            ? 'forecast'
+            : /実績|利益率/.test(requirement)
+              ? 'actual'
+              : null;
+      return units
+        .filter(
+          (u) =>
+            marker.test(u.label) &&
+            (kind === 'forecastBefore'
+              ? /前回|修正前/.test(u.axis)
+              : kind === 'forecastAfter'
+                ? /今回|修正後/.test(u.axis)
+                : kind === 'forecast'
+                  ? /予想|見込/.test(u.axis + u.context)
+                  : kind === 'actual'
+                    ? !/予想|見込/.test(u.axis)
+                    : true)
+        )
+        .map((u) => u.anchor);
+    }
+    const predicate = /損失予想の背景/.test(requirement)
+      ? /概算.*純損失/
+      : /損失の計上予定/.test(requirement)
+        ? /特別損失に計上[^。]*予定/
+        : /自己株取得/.test(requirement)
+          ? requirement.endsWith('count')
+            ? /取得する株式.*総数/
+            : /取得価額.*総額/
+          : /取得の条件/.test(requirement)
+            ? /取得.*可能性/
+            : /報告対象月/.test(requirement)
+              ? /20\d{2}年.*月/
+              : /速報値/.test(requirement)
+                ? /速報値/
+                : /取得の決議/.test(requirement)
+                  ? /決議いたしました/
+                  : /取得価額の非開示/.test(requirement)
+                    ? /取得価額.*非開示/
+                    : /譲渡の実行/.test(requirement)
+                      ? /譲渡実行日/
+                      : /提携の決定/.test(requirement)
+                        ? /基本合意書/
+                        : null;
+    return predicate
+      ? captions.filter((b) => predicate.test(normalized(b.text))).map((b) => b.id)
+      : [];
+  };
+  return [...new Set([...obligations, ...fullObligations])].map((requirement) => {
+    const ids = sourceIds(requirement);
+    const selectedIds = ids.filter((id) =>
+      selected.some(
+        (p) => p.blocks.some((b) => b.id === id) || p.quantities.some((q) => q.id === id)
+      )
+    );
+    const rejected = diagnostics.some(
+      (d) => d.status !== 'valid' && d.sourceKey !== null && selectedIds.includes(d.sourceKey)
+    );
+    const status = !obligations.includes(requirement)
+      ? 'outsideSelection'
+      : !missing.includes(requirement)
+        ? 'satisfied'
+        : !ids.length
+          ? 'unknown'
+          : rejected
+            ? 'invalid'
+            : 'absent';
+    const resolvedIds = ids.filter((id) => context.bindings.some((b) => b.anchorId === id));
+    const assertion = /損失予想の背景|損失の計上予定|取得の決議|譲渡の実行|提携の決定/.test(
+      requirement
+    );
+    const amount = /revenue|operatingProfit|netProfit|自己株取得.*amount/.test(requirement);
+    const state = requirement.includes('forecastBefore')
+      ? 'forecastBefore'
+      : requirement.includes('forecastAfter')
+        ? 'forecastAfter'
+        : /予想|損失予想の背景/.test(requirement)
+          ? 'forecast'
+          : /計上予定|自己株取得|譲渡の実行/.test(requirement)
+            ? 'planned'
+            : /決議/.test(requirement)
+              ? 'decided'
+              : /実績|利益率|報告対象月|KPI/.test(requirement)
+                ? 'actual'
+                : null;
+    const period = requirement.match(/対象期=(20\d{2}年\d{1,2}月期)/)?.[1] ?? null;
+    const dates = resolvedIds
+      .flatMap((id) => sourceDateOptions(context.bindings.find((b) => b.anchorId === id)!, pages))
+      .filter((d) => d.state === state);
+    const dateValues = [...new Set(dates.map((d) => d.date))];
+    const explicitDate =
+      !assertion && state === 'planned' && dateValues.length === 1 ? dateValues[0] : null;
+    const expected = {
+      kind: assertion
+        ? 'event'
+        : /非開示/.test(requirement)
+          ? 'status'
+          : amount || /配当|1株当たり|利益率|自己株取得|対象月|KPI/.test(requirement)
+            ? 'number'
+            : null,
+      state,
+      metricKind: assertion
+        ? 'none'
+        : amount
+          ? 'amount'
+          : /配当|1株当たり/.test(requirement)
+            ? 'perShare'
+            : /利益率/.test(requirement)
+              ? 'rate'
+              : /自己株取得.*count/.test(requirement)
+                ? 'count'
+                : null,
+      periodKind: explicitDate
+        ? 'eventDate'
+        : /損失予想の背景/.test(requirement)
+          ? 'none'
+          : /計上予定/.test(requirement)
+            ? 'relativeYear'
+            : /対象月|KPI/.test(requirement)
+              ? 'month'
+              : null,
+      period: explicitDate ?? period,
+    };
+    return {
+      id: `slot:${type}:${requirement}`,
+      requirement,
+      sourceIds: resolvedIds,
+      status,
+      // Missing constraints are omitted; null is never an enum/default to copy.
+      expected: Object.fromEntries(
+        Object.entries(expected).filter(([, v]) => v !== null)
+      ) as CoverageSlot['expected'],
+    };
+  });
 }

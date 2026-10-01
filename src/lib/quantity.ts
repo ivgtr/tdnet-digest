@@ -72,3 +72,16 @@ export function isQuantityPrefix(text: string): boolean {
     text.normalize('NFKC').replace(/\s/g, '')
   );
 }
+
+/** Explicit unit-caption grammar shared by composition and verification. */
+export function declaredQuantityUnit(raw: string): string | null {
+  const text = raw.normalize('NFKC').replace(/\s/g, '');
+  let unit = text;
+  if (text.startsWith('(単位')) {
+    const caption = text.match(/^\(単位[:：]?([^()]+)\)$/);
+    if (!caption) return null;
+    unit = caption[1];
+  } else if (text.startsWith('単位')) unit = text.replace(/^単位[:：]?/, '');
+  if (unit === '円銭') return '円';
+  return isUnitToken(unit) ? unit : null;
+}
