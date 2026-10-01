@@ -26,7 +26,7 @@ import {
   quantityNumber,
   declaredQuantityUnit,
 } from './quantity';
-import { verifyPeriodAndKind, verifyTableEvidence } from './numeric-evidence';
+import { verifyPeriodAndKind, verifyProsePeriod, verifyTableEvidence } from './numeric-evidence';
 import { classifyMetric } from './metric-semantics';
 import { validateFact, periodKind } from './fact-validation';
 import { assertionPolarity, assertionStates, verifyAssertionState } from './assertion-semantics';
@@ -294,7 +294,9 @@ function compose(
         candidateId: candidate.candidateId,
         sourceKey: anchor,
         check,
-        status: /曖昧|複数の主張状態|未対応|原文で確定できる区分=unspecified/.test(message(e))
+        status: /^STRUCTURE:|曖昧|複数の主張状態|未対応|原文で確定できる区分=unspecified/.test(
+          message(e)
+        )
           ? 'blocked'
           : 'invalid',
         message: message(e),
@@ -319,6 +321,18 @@ function compose(
     });
     attempt('period', () => {
       const axis = s.kind === 'table' ? text(s.periodIds) : block.text;
+      if (s.kind === 'prose')
+        verifyProsePeriod(
+          {
+            label,
+            value: base.value,
+            unit: base.unit!,
+            period: period ?? '',
+            valueKind: base.valueKind ?? '',
+          },
+          axis,
+          applicableText
+        );
       if (meaning.periodKind !== periodKind(period, axis + applicableText))
         throw new Error('PERIOD:期間区分の不一致です');
       if (['actual', 'forecast', 'forecastBefore', 'forecastAfter'].includes(meaning.state))

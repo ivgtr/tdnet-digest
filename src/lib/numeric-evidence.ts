@@ -18,6 +18,8 @@ export interface NumericClaim {
   unit: string;
   period: string;
   valueKind: string;
+  subject?: string | null;
+  scope?: string | null;
 }
 export const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，]/g, '');
 const center = (s: PdfSpan) => s.x + s.width / 2;
@@ -581,6 +583,23 @@ export function verifyPeriodAndKind(
   if (claim.valueKind !== kind) fail('実績・予想区分');
 }
 
+/** Prose has no row/column axis: a source period overrides inherited captions. */
+export function verifyProsePeriod(claim: NumericClaim, source: string, context: string): void {
+  const axes = (text: string) => [
+    ...new Set(compact(text).match(/20\d{2}年\d{1,2}月期|20\d{2}年\d{1,2}月(?![\d期])/g) ?? []),
+  ];
+  const own = axes(source);
+  const applicable = own.length ? own : axes(context);
+  const shapes = [
+    ...new Set(compact(own.length ? source : context).match(/第[1-4]四半期|中間期|通期/g) ?? []),
+  ];
+  if (applicable.length > 1 || shapes.length > 1)
+    throw new Error('STRUCTURE:本文数量に複数の期間があり対応を一意に証明できません');
+  const target = axes(claim.period);
+  if (own.length && (target.length !== 1 || target[0] !== own[0]))
+    throw new Error('PERIOD:本文の明示期間と数量の期間が不一致です');
+}
+
 /** 表と本文は別の根拠形式。本文でも指標・数値・単位の直接対応だけを採用する。 */
 export function verifyProseEvidence(
   page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
@@ -594,6 +613,52 @@ export function verifyProseEvidence(
     `${escape(claim.label)}${bridge}(${claim.range ? '[△▲−-]?\\d+(?:\\.\\d+)?[～〜~][△▲−-]?\\d+(?:\\.\\d+)?' : '-?\\d+(?:\\.\\d+)?'})${escape(claim.unit)}(?![\\d.%/])`,
     'u'
   );
+  // PDF paragraphs may merge consecutive numbered fields. Only a numbered
+  // field at a physical line start is a new prefix boundary; a wrapped noun is not.
+  const normalized = compact(quote.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；')).replace(
+    /[△▲−](?=\d)/g,
+    '-'
+  );
+  const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
+  const heads = [
+    ...normalized.matchAll(new RegExp(`${escape(claim.label)}${bridge}(${token})`, 'gu')),
+  ];
+  if (heads.length > 1)
+    throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
+  const match = [...normalized.matchAll(new RegExp(binding, 'gu'))].find(
+    (m) =>
+      m[1].length <= 6 &&
+      (claim.range ? parseExactRange(m[2]) !== null : Number(m[2]) === claim.value)
+  );
+  if (match) {
+    // Only explicit periods, resolved subject/scope and grammatical separators
+    // may precede a metric. A suffix of an unproven parent metric is not proof.
+    let prefix =
+      normalized
+        .slice(0, match.index)
+        .split(/[。;；、:「」]/)
+        .slice(-1)[0] ?? '';
+    prefix = prefix.replace(/^\(\d+\)/, '').replace(/^\(+/, '');
+    for (const owner of [claim.subject, claim.scope, '当社', '当グループ'].filter(
+      (x): x is string => !!x
+    ))
+      prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
+    prefix = prefix.replace(
+      /^20\d{2}年\d{1,2}月(?:期(?:第[1-4]四半期|中間期|通期)?|\d{1,2}日|度)?(?:の|は|における)?/,
+      ''
+    );
+    for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))
+      prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
+    if (prefix) throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
+    // Parentheses or quotation marks do not detach an adjacent quantity qualifier.
+    const suffix = normalized.slice(match.index! + match[0].length).replace(/^[([「『]+/, '');
+    if (
+      /^(?:増加|減少|増減|上昇|低下|増え|減り|から|以上|以下|未満|超|程度|前後|弱|強|を(?:上回|下回|超))/.test(
+        suffix
+      )
+    )
+      throw new Error('STRUCTURE:変化量・境界を指標そのものの数量へ変換できません');
+  }
   const lineIndex = [quote].findIndex((line) => {
     const normalized = compact(line).replace(/[△▲−](?=\d)/g, '-');
     return [...normalized.matchAll(new RegExp(binding, 'gu'))].some(

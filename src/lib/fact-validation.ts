@@ -10,6 +10,7 @@ import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity'
 import {
   verifyTableEvidence,
   verifyProseEvidence,
+  verifyProsePeriod,
   compact,
   verifyPeriodAndKind,
 } from './numeric-evidence';
@@ -444,14 +445,18 @@ export function validateFact(
         fact.statement !== null
       )
         fail('SCHEMA:本文の数量');
-      verifyProseEvidence(page, source, {
+      const proseClaim = {
         label: fact.label,
         value: fact.value,
         range: fact.kind === 'range',
         unit: fact.unit!,
         period: fact.period ?? '',
         valueKind: fact.valueKind ?? 'actual',
-      });
+        subject: fact.semantics.subject,
+        scope: fact.semantics.scope,
+      };
+      verifyProseEvidence(page, source, proseClaim);
+      verifyProsePeriod(proseClaim, source, context);
       const escaped = normalized(fact.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const token = '[△▲−-]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?';
       const match = normalized(source).match(

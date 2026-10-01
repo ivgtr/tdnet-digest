@@ -92,6 +92,68 @@ describe('生成専用候補と原文文脈の契約', () => {
       coverageReport('earnings', pages, r.facts).find((s) => s.requirement.includes('営業利益率'))
     ).toMatchObject({ status: 'absent', sourceIds: expect.arrayContaining(['p1s120']) });
   });
+  it.each([
+    ['2025年3月期の営業利益は100百万円、2026年3月期の営業利益は200百万円です。', '2026年3月期'],
+    ['2026年3月期の営業利益は100百万円です。', '2025年3月期'],
+    ['2026年3月期の営業利益は100百万円増加しました。', '2026年3月期'],
+    ['2026年3月期の調整後営業利益は100百万円です。', '2026年3月期'],
+    ['2026年3月期の営業利益は100百万円以上です。', '2026年3月期'],
+    ['2026年3月期の営業利益は100百万円（以上）です。', '2026年3月期'],
+    ['2026年3月期の営業利益は100百万円「未満」です。', '2026年3月期'],
+  ])('本文数量の期間・変化量・指標限定を省いた対応を拒否する: %s', (body, period) => {
+    const p = textPage(
+      `会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2025年3月期 連結経営成績\n${body}`
+    );
+    const result = reviewCandidates(
+      candidateResponse([numberCandidate(p, '営業利益', 100, period)], [p]),
+      'other',
+      [p]
+    );
+    expect(result.facts).toEqual([]);
+    expect(result.diagnostics.some((d) => d.status !== 'valid')).toBe(true);
+  });
+  it('本文の一意な当年数量と完全な調整後指標を保持し、複数年度・反復指標は未確認とする', () => {
+    const p = textPage(
+      '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2025年3月期 連結経営成績\n2026年3月期の調整後営業利益は100百万円です。'
+    );
+    const f = numberCandidate(p, '調整後営業利益', 100, '2026年3月期');
+    const result = reviewCandidates(candidateResponse([f], [p]), 'other', [p]);
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0]).toMatchObject({
+      label: '調整後営業利益',
+      period: '2026年3月期',
+      value: 100,
+    });
+    expect(
+      parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'other', facts: result.facts, unverified: [] }),
+        'other',
+        [p]
+      ).facts
+    ).toEqual(result.facts);
+    for (const change of [{ label: '営業利益' }, { period: '2025年3月期' }]) {
+      const altered = { ...result.facts[0], ...change };
+      altered.id = stableFactId(altered);
+      expect(
+        parseFactSummary(
+          JSON.stringify({ version: 4, documentType: 'other', facts: [altered], unverified: [] }),
+          'other',
+          [p],
+          false
+        ).facts
+      ).toEqual([]);
+    }
+    const ambiguous = textPage(
+      '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n2025年3月期の営業利益は100百万円、2026年3月期の営業利益は200百万円です。'
+    );
+    const r = reviewCandidates(
+      candidateResponse([numberCandidate(ambiguous, '営業利益', 200, '2026年3月期')], [ambiguous]),
+      'other',
+      [ambiguous]
+    );
+    expect(r.facts).toEqual([]);
+    expect(r.diagnostics).toContainEqual(expect.objectContaining({ status: 'blocked' }));
+  });
   it('省略ページだけの営業利益率を選択ページの必須へ混入しない', () => {
     const selected = textPage(
       '2026年3月期 決算短信〔日本基準〕（連結）\n上場会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n' +
