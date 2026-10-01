@@ -110,12 +110,14 @@ export function verifyCoverage(
           missing.push(`COVERAGE:通期予想の重要指標 ${metric}`);
     }
     if (
-      buildTableMappings(allPages).some((h) =>
-        h.metricIds
-          .map((id) => allPages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
-          .join('')
-          .replace(/\s/g, '')
-          .includes('売上高営業利益率')
+      buildTableMappings(allPages).some(
+        (h) =>
+          pages.some((p) => p.quantities.some((q) => q.id === h.valueId)) &&
+          h.metricIds
+            .map((id) => allPages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+            .join('')
+            .replace(/\s/g, '')
+            .includes('売上高営業利益率')
       ) &&
       !facts.some(
         (f) =>

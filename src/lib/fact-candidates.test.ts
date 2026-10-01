@@ -92,6 +92,150 @@ describe('生成専用候補と原文文脈の契約', () => {
       coverageReport('earnings', pages, r.facts).find((s) => s.requirement.includes('営業利益率'))
     ).toMatchObject({ status: 'absent', sourceIds: expect.arrayContaining(['p1s120']) });
   });
+  it('省略ページだけの営業利益率を選択ページの必須へ混入しない', () => {
+    const selected = textPage(
+      '2026年3月期 決算短信〔日本基準〕（連結）\n上場会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n' +
+        '2026年3月期の売上高は100百万円です。\n' +
+        '2026年3月期の営業利益は20百万円です。\n' +
+        '2026年3月期の当期純利益は10百万円です。'
+    );
+    const omitted = {
+      ...extractPageLayout(corpus[0].pages[0].items as TextItem[], 2),
+      selection: 'omitted' as const,
+    };
+    const source = [selected, omitted];
+    const expected = [
+      ['売上高', 100],
+      ['営業利益', 20],
+      ['当期純利益', 10],
+    ].map(([label, value]) => numberCandidate(selected, String(label), Number(value)));
+    const r = reviewCandidates(candidateResponse(expected, source, 'earnings'), 'earnings', source);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(3);
+    expect(() => verifyCoverage('earnings', source, r.facts)).not.toThrow();
+    expect(
+      coverageReport('earnings', source, r.facts).find((s) => s.requirement.includes('営業利益率'))
+    ).toMatchObject({ status: 'outsideSelection' });
+    const wrong = candidateFixture(fixture[6], pages);
+    if (wrong.source.kind !== 'table') throw new Error('table fixture expected');
+    wrong.source.valueId = wrong.source.valueId.replace('p1', 'p2');
+    wrong.source.contextBindingId = `ctx:${wrong.source.valueId}`;
+    expect(reviewCandidates(raw([wrong]), 'earnings', source).unverified.join(' ')).toContain(
+      '未選択ページ'
+    );
+  });
+  const buybackSource = (countLabel = '取得する株式の総数') => [
+    textPage(
+      '会社名 株式会社テスト\n１．経営成績\n2026年3月期 実績\n' +
+        Array.from({ length: 19 }, (_, i) => `科目${i + 1}は${100 + i}百万円です。`).join('\n')
+    ),
+    textPage(
+      `１．取得する株式\n2026年7月15日取得予定\n取得対象株式の種類 普通株式\n${countLabel}は200,000株（上限）です。`,
+      2
+    ),
+    textPage(
+      '２．取得する株式\n2026年7月15日取得予定\n取得対象株式の種類 普通株式\n株式の取得価額の総額は206,200,000円（上限）です。',
+      3
+    ),
+  ];
+  const buybackFacts = (
+    source: ReturnType<typeof buybackSource>,
+    countLabel = '取得する株式の総数'
+  ) =>
+    [
+      [source[1], countLabel, 200000, '株', 'count'],
+      [source[2], '株式の取得価額の総額', 206200000, '円', 'amount'],
+    ].map(([page, label, value, unit, metric]) => {
+      const f = numberCandidate(
+        page as (typeof source)[number],
+        String(label),
+        Number(value),
+        '2026年7月15日'
+      );
+      f.unit = String(unit);
+      f.valueKind = null;
+      Object.assign(f.semantics, {
+        scope: '普通株式',
+        basis: null,
+        state: 'planned',
+        metricKind: metric,
+        periodKind: 'eventDate',
+        qualifiers: ['上限'],
+      });
+      return f;
+    });
+  it('上限20件の末尾でdetailが必須を満たす場合も保持し、調整後のslotで修復する', async () => {
+    const source = buybackSource();
+    const initial = Array.from({ length: 19 }, (_, i) => {
+      const f = numberCandidate(source[0], `科目${i + 1}`, 100 + i);
+      f.importance = i === 0 ? 'key' : 'detail';
+      f.semantics.scope = f.semantics.basis = null;
+      return f;
+    });
+    const [count, amount] = buybackFacts(source);
+    count.importance = 'detail';
+    initial.push(count);
+    const first = reviewCandidates(
+      candidateResponse(initial, source, 'shareRepurchase'),
+      'shareRepurchase',
+      source
+    );
+    expect(first.facts).toHaveLength(20);
+    const countId = first.facts.find((f) => f.semantics.metricKind === 'count')!.id;
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse(initial, source, 'shareRepurchase'))
+      .mockResolvedValueOnce(candidateResponse([amount], source, 'shareRepurchase'));
+    const attempts: Array<{ slots?: ReturnType<typeof coverageReport>; confirmedIds?: string[] }> =
+      [];
+    const result = await generateVerifiedFactSummary(
+      config,
+      'shareRepurchase',
+      'source',
+      source,
+      (a) => {
+        attempts.push(a);
+      }
+    );
+    expect(result.facts.facts).toHaveLength(20);
+    expect(result.facts.facts.some((f) => f.id === countId)).toBe(true);
+    expect(attempts[0].confirmedIds).toContain(countId);
+    expect(attempts[0].slots?.find((s) => s.requirement.endsWith('count'))?.status).toBe(
+      'satisfied'
+    );
+    expect(attempts[1].slots?.every((s) => s.status === 'satisfied')).toBe(true);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+  });
+  it('根拠未解決の必須と別ページの既知必須が併存しても選択範囲全体を修復に渡す', async () => {
+    const countLabel = '取得株数';
+    const source = buybackSource(countLabel);
+    const initial = numberCandidate(source[0], '科目1', 100);
+    initial.semantics.scope = initial.semantics.basis = null;
+    // Originally omitted pages must stay omitted even when narrowing is disabled.
+    source.push({
+      ...textPage('会社名 株式会社テスト\n営業利益は999百万円です。', 4),
+      selection: 'omitted',
+    });
+    const slots = coverageReport('shareRepurchase', source, []);
+    expect(slots.find((s) => s.requirement.endsWith('count'))).toMatchObject({
+      status: 'unknown',
+      sourceIds: [],
+    });
+    expect(slots.find((s) => s.requirement.endsWith('amount'))?.sourceIds.length).toBeGreaterThan(
+      0
+    );
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([initial], source, 'shareRepurchase'))
+      .mockResolvedValueOnce(
+        candidateResponse(buybackFacts(source, countLabel), source, 'shareRepurchase')
+      );
+    const result = await generateVerifiedFactSummary(config, 'shareRepurchase', 'source', source);
+    expect(result.facts.facts).toHaveLength(3);
+    expect(result.facts.facts.some((f) => f.page === 4)).toBe(false);
+    expect(vi.mocked(generateText).mock.calls[1][1][1].content).toContain('取得株数は200,000株');
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+  });
   it('未知の述語の状態と構造証明不能を意味の誤りと誤診断しない', () => {
     const p = textPage('会社名 株式会社テスト\n当社は新たな枠組みを策定しました。');
     const f = {

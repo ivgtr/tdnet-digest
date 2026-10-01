@@ -194,22 +194,30 @@ export async function generateVerifiedFactSummary(
     { role: 'user', content: prompt.user },
   ]);
   const first = reviewCandidates(raw, documentType, pages, context);
-  const firstSlots = coverageReport(documentType, pages, first.facts, first.diagnostics, context);
-  const pending = firstSlots.filter(
-    (s) => s.status !== 'satisfied' && s.status !== 'outsideSelection'
-  );
+  const pendingSlots = (slots: CoverageSlot[]) =>
+    slots.filter((s) => s.status !== 'satisfied' && s.status !== 'outsideSelection');
+  let firstSlots = coverageReport(documentType, pages, first.facts, first.diagnostics, context);
+  let pending = pendingSlots(firstSlots);
   // Reserve a slot per independent obligation before confirming optional detail.
   // Omitted details are explicit diagnostics, never deleted by later repair.
   const reserve = Math.min(20, pending.length);
   if (first.facts.length > 20 - reserve) {
-    const kept = first.facts.filter((f) => f.importance === 'key');
-    const details = first.facts.filter((f) => f.importance === 'detail');
-    const available = Math.max(0, 20 - reserve - kept.length);
-    first.facts = [...kept, ...details.slice(0, available)];
-    for (const f of details.slice(available))
+    const missingIds = new Set(pending.map((s) => s.id));
+    // Importance is model-supplied: a detail can still satisfy a required slot.
+    // Remove only details whose absence creates no additional obligation.
+    for (const f of [...first.facts].reverse()) {
+      if (first.facts.length <= 20 - reserve) break;
+      if (f.importance !== 'detail') continue;
+      const remaining = first.facts.filter((fact) => fact !== f);
+      const slots = coverageReport(documentType, pages, remaining, first.diagnostics, context);
+      if (pendingSlots(slots).some((s) => !missingIds.has(s.id))) continue;
+      first.facts = remaining;
       first.unverified.push(
         `CAPACITY:必須修復の枠を確保するため補足 ${factSourceKey(f)} は確定しませんでした`
       );
+    }
+    firstSlots = coverageReport(documentType, pages, first.facts, first.diagnostics, context);
+    pending = pendingSlots(firstSlots);
   }
   const error = assess(first);
   await onAttempt?.({
@@ -241,8 +249,11 @@ export async function generateVerifiedFactSummary(
   const closure = new Set(
     neededIds.flatMap((id) => context.bindings.find((b) => b.anchorId === id)?.requiredPages ?? [])
   );
+  const unresolved =
+    pending.some((s) => !s.sourceIds.length) ||
+    neededIds.some((id) => !context.bindings.some((b) => b.anchorId === id));
   const repairPages =
-    mode === 'complete' || !closure.size
+    mode === 'complete' || unresolved || !closure.size
       ? pages
       : pages.map((p) => ({
           ...p,
