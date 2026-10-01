@@ -6,7 +6,14 @@ import { tableContinuations, noteLinks } from './document-links';
 import { compact } from './numeric-evidence';
 import { sourceDateOptions } from './source-periods';
 import { buildTableMappings } from './source-mappings';
-import { buildDocumentContext, type DocumentContext } from './document-context';
+import {
+  buildDocumentContext,
+  bindingFor,
+  isFinancialUnit,
+  verifyScopeEvidence,
+  applicableDeclarations,
+  type DocumentContext,
+} from './document-context';
 import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
@@ -53,7 +60,8 @@ export function standardMetric(fact: VerifiedFact): string | null {
 export function verifyCoverage(
   type: DocumentType,
   allPages: ExtractedPage[],
-  facts: VerifiedFact[]
+  facts: VerifiedFact[],
+  context: DocumentContext = buildDocumentContext(allPages)
 ): void {
   // 原文の整合性・根拠関係は全ページで検証し、必須判定はモデルの本文入力に揃える。
   const pages = allPages.filter((page) => page.selection === 'selected');
@@ -67,19 +75,36 @@ export function verifyCoverage(
     if (!title) throw new Error('COVERAGE:報告対象の決算期を確認できません');
     const period = compact(title[1]);
     const reportQuarter = compact(title[0]).match(/第[1-4]四半期|中間期/)?.[0];
-    const expectedScope = /非連結/.test(title[0])
-      ? '非連結'
-      : /個別/.test(title[0])
-        ? '個別'
-        : /連結/.test(title[0])
-          ? '連結'
-          : null;
     const issuer = first?.blocks.find((b) => /上場会社名/.test(compact(b.text)))?.text;
-    const expectedBasis = /日本基準/.test(title[0])
-      ? '日本基準'
-      : /IFRS/.test(title[0])
-        ? 'IFRS'
-        : null;
+    const applicableMeaning = (f: VerifiedFact) => {
+      try {
+        const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId;
+        const binding = bindingFor(context, anchor);
+        verifyScopeEvidence(
+          binding,
+          f.semantics,
+          isFinancialUnit(f, binding, allPages),
+          f.evidence.scopeIds
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    // Only diagnostics need an expected value; facts are matched at their own source unit.
+    const attributesFor = (blocks: { id: string }[]) => {
+      const ds = blocks.flatMap((b) => bindingFor(context, b.id).declarations);
+      const bindings = blocks.map((b) => bindingFor(context, b.id));
+      const values = (role: 'scope' | 'basis') => [
+        ...new Set(
+          bindings.flatMap((b) => applicableDeclarations(b, role, true).map((d) => d.value))
+        ),
+      ];
+      const scope = values('scope').join('/') || null;
+      const basis = values('basis').join('/') || null;
+      const scopeId = ds.find((d) => d.role === 'scope' && d.value === scope)?.id;
+      return { scope, basis, scopeId };
+    };
     const has = (metric: string, kind: string, target: string) =>
       facts.some(
         (f) =>
@@ -89,7 +114,7 @@ export function verifyCoverage(
           (!reportQuarter ||
             kind !== 'actual' ||
             compact(f.period ?? '').includes(reportQuarter)) &&
-          (!expectedScope || f.semantics.scope === expectedScope) &&
+          applicableMeaning(f) &&
           !!f.semantics.subject &&
           (!issuer || compact(issuer).includes(compact(f.semantics.subject)))
       );
@@ -177,6 +202,7 @@ export function verifyCoverage(
           /概算額/.test(b.text) &&
           assertionStates(b.text).includes('forecast')
       );
+    const backgroundAttributes = attributesFor(backgroundBlocks);
     if (
       backgroundBlocks.length > 0 &&
       !facts.some(
@@ -191,12 +217,11 @@ export function verifyCoverage(
           f.semantics.state === 'forecast' &&
           !!f.semantics.subject &&
           (!issuer || compact(issuer).includes(compact(f.semantics.subject))) &&
-          (!expectedScope || f.semantics.scope === expectedScope) &&
-          (!expectedBasis || f.semantics.basis === expectedBasis)
+          applicableMeaning(f)
       )
     )
       missing.push(
-        `COVERAGE:損失予想の背景・限定。本文事実にも対象会社と報告範囲=${expectedScope}を保持し、scopeIdsへ決算短信の範囲見出し ${first?.blocks.find((b) => /決算短信/.test(b.text))?.id} と会社名見出しを参照してください`
+        `COVERAGE:損失予想の背景・限定。本文事実にも対象会社と報告範囲=${backgroundAttributes.scope}を保持し、scopeIdsへ決算短信の範囲見出し ${backgroundAttributes.scopeId} と会社名見出しを参照してください`
       );
     const plannedLossBlocks = pages
       .flatMap((p) => p.blocks)
@@ -206,6 +231,7 @@ export function verifyCoverage(
           assertionStates(b.text).length === 1 &&
           assertionStates(b.text)[0] === 'planned'
       );
+    const plannedAttributes = attributesFor(plannedLossBlocks);
     if (
       plannedLossBlocks.length > 0 &&
       !facts.some(
@@ -219,12 +245,11 @@ export function verifyCoverage(
           /特別損失/.test(f.quote) &&
           !!f.semantics.subject &&
           (!issuer || compact(issuer).includes(compact(f.semantics.subject))) &&
-          (!expectedScope || f.semantics.scope === expectedScope) &&
-          (!expectedBasis || f.semantics.basis === expectedBasis)
+          applicableMeaning(f)
       )
     )
       missing.push(
-        `COVERAGE:損失の計上予定。原文の期間とsubject・scope=${expectedScope}・basis=${expectedBasis}を確定してください`
+        `COVERAGE:損失の計上予定。原文の期間とsubject・scope=${plannedAttributes.scope}・basis=${plannedAttributes.basis}を確定してください`
       );
   }
   if (type === 'earningsRevision' && /前回|修正前/.test(source) && /今回|修正後/.test(source)) {
@@ -385,7 +410,7 @@ export function coverageReport(
 ): CoverageSlot[] {
   const collect = (source: ExtractedPage[], accepted: VerifiedFact[]) => {
     try {
-      verifyCoverage(type, source, accepted);
+      verifyCoverage(type, source, accepted, context);
       return [] as string[];
     } catch (e) {
       return (e instanceof Error ? e.message : String(e)).split(' / ');

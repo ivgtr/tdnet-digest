@@ -3,6 +3,7 @@ import type { PdfSpan } from './pdf-layout';
 import { declaredQuantityUnit } from './quantity';
 import { parseQuantity, parseExactRange, isUnitToken } from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
+import { verifyQuantityAssertion } from './assertion-semantics';
 
 export interface TableEvidence {
   valueId: string;
@@ -650,16 +651,7 @@ export function verifyProseEvidence(
     for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))
       prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
     if (prefix) throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
-    // Opening and closing delimiters do not detach an adjacent quantity qualifier.
-    const suffix = normalized
-      .slice(match.index! + match[0].length)
-      .replace(/^[()[\]「」『』]+/, '');
-    if (
-      /^(?:増加|減少|増減|上昇|低下|増え|減り|から|以上|以下|未満|超|程度|前後|弱|強|を(?:上回|下回|超))/.test(
-        suffix
-      )
-    )
-      throw new Error('STRUCTURE:変化量・境界を指標そのものの数量へ変換できません');
+    verifyQuantityAssertion(normalized.slice(match.index! + match[0].length));
   }
   const lineIndex = [quote].findIndex((line) => {
     const normalized = compact(line).replace(/[△▲−](?=\d)/g, '-');

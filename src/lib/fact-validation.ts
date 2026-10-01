@@ -1,7 +1,7 @@
 import {
   buildDocumentContext,
   bindingFor,
-  resolveScopeIds,
+  verifyScopeEvidence,
   isFinancialUnit,
 } from './document-context';
 import { assertionPolarity, verifyAssertionState } from './assertion-semantics';
@@ -502,14 +502,15 @@ export function validateFact(
   const nearest = page.blocks.find(
     (b) => b.id === binding.sectionIds[binding.sectionIds.length - 1]
   );
-  const requiredScopes = resolveScopeIds(
+  verifyScopeEvidence(
     binding,
     fact.semantics,
     isFinancialUnit(
       { ...fact, semantics: { ...fact.semantics, qualifiers: [], conditions: [] } },
       binding,
       pages
-    )
+    ),
+    scopes
   );
   const contextBlocks = pages
     .flatMap((p) => p.blocks)
@@ -527,22 +528,6 @@ export function validateFact(
     )
   )
     fail(`SCOPE:適用見出しの不一致。必要なcontextIds=${JSON.stringify(binding.contextIds)}`);
-  if (
-    scopes.some((id) => !requiredScopes.includes(id)) ||
-    ['subject', 'scope', 'basis'].some((role) => {
-      const r = role as 'subject' | 'scope' | 'basis';
-      return (
-        fact.semantics[r] !== null &&
-        !binding.declarations.some(
-          (d) =>
-            d.role === r &&
-            normalized(d.value) === normalized(fact.semantics[r]!) &&
-            scopes.includes(d.id)
-        )
-      );
-    })
-  )
-    fail(`SCOPE:役割に適用するscopeIdsが不一致です。必要=${JSON.stringify(requiredScopes)}`);
   // Cross-page notes need a shared named metric series; adjacency alone is insufficient.
   for (const link of noteLinks(pages).filter(
     (link) => link.fromPage === page.pageNumber && link.metric === normalized(fact.label)
@@ -749,12 +734,6 @@ export function validateFact(
       !continuation.scopeIds.every((id) => scopes.includes(id)))
   )
     fail('SCOPE:継続表の対象会社が不一致');
-  const localScope = scope + context;
-  if (
-    (/非連結|個別/.test(localScope) && fact.semantics.scope === '連結') ||
-    (/日本基準/.test(localScope) && fact.semantics.basis === 'IFRS')
-  )
-    fail('SCOPE:会計基準・範囲の競合');
   const issuerHeading = pages
     .find((p) => p.pageNumber === 1)
     ?.blocks.find((b) => /上場会社名|会社名/.test(normalized(b.text)));
@@ -763,31 +742,6 @@ export function validateFact(
   const reportingHeading = pages
     .find((p) => p.pageNumber === 1)
     ?.blocks.find((b) => /決算短信/.test(b.text));
-  if (
-    (fact.kind === 'number' || fact.kind === 'range') &&
-    reportingHeading &&
-    /経営成績|業績予想/.test(nearest?.text ?? '') &&
-    !/配当/.test(fact.label)
-  ) {
-    const heading = normalized(reportingHeading.text);
-    const expectedScope = /非連結/.test(heading)
-      ? '非連結'
-      : /個別/.test(heading)
-        ? '個別'
-        : /連結/.test(heading)
-          ? '連結'
-          : null;
-    const expectedBasis = /日本基準/.test(heading)
-      ? '日本基準'
-      : /IFRS/.test(heading)
-        ? 'IFRS'
-        : null;
-    if (
-      (expectedScope && fact.semantics.scope !== expectedScope) ||
-      (expectedBasis && fact.semantics.basis !== expectedBasis)
-    )
-      fail('SCOPE:報告見出しの範囲・会計基準が欠落・不一致');
-  }
   // Per-share dividends belong to the issuer's shares. A consolidation caption
   // from the financial statements does not establish their security scope.
   if (

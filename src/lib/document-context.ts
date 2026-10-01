@@ -375,3 +375,27 @@ export function isFinancialUnit(
     /連結財務諸表|純損失|特別損失/.test(fact.quote)
   );
 }
+
+/** Use role ownership for both confirmed facts and coverage, including evidence references. */
+export function verifyScopeEvidence(
+  binding: ContextBinding,
+  meaning: Pick<FactSemantics, 'subject' | 'scope' | 'basis'>,
+  financial: boolean,
+  scopeIds: string[]
+): void {
+  const required = resolveScopeIds(binding, meaning, financial);
+  if (
+    scopeIds.some((id) => !required.includes(id)) ||
+    (['subject', 'scope', 'basis'] as const).some(
+      (role) =>
+        meaning[role] !== null &&
+        !binding.declarations.some(
+          (d) =>
+            d.role === role &&
+            normalized(d.value) === normalized(meaning[role]!) &&
+            scopeIds.includes(d.id)
+        )
+    )
+  )
+    throw new Error(`SCOPE:役割に適用するscopeIdsが不一致です。必要=${JSON.stringify(required)}`);
+}
