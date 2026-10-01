@@ -6,7 +6,7 @@ const negative =
 export function assertionPolarity(text: string): FactSemantics['polarity'] {
   const clauses = text
     .replace(/(ではなく|でなく)/g, '$1。')
-    .split(/[。()（）]/)
+    .split('。')
     .map(normalized)
     .filter(Boolean);
   const n = clauses.filter((c) => negative.test(c)).length;
@@ -18,7 +18,9 @@ export function verifyQuantityAssertion(suffix: string): void {
   // Delimiters can enclose a modifier; they never make it a separate assertion.
   // Only a following numbered field is an independent source boundary.
   // A later sentence in the same assertion may retract this amount.
-  const clause = normalized(suffix.split(/；(?=\(\d+\))/)[0]).replace(/[()[\]「」『』]/g, '');
+  const clause = normalized(suffix)
+    .split(/[;；](?=\(\d+\))/)[0]
+    .replace(/[()[\]「」『』]/g, '');
   // These are retained by sourceQualifiers and subsequently compared/displayed.
   const qualified = clause.replace(/^(?:上限|下限|概算額|概算|速報値)/, '');
   const predicate =

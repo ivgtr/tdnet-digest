@@ -277,7 +277,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v38:openai:fixture:full';
+          const fingerprint = 'v39:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -332,7 +332,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v38 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v39 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -513,10 +513,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
       assert.deepEqual(checked, stored.value.facts);
       assert.equal(trace.attempts.length, reviewCase === 'repair' ? 2 : 1);
-      assert.equal(stored.value.facts.facts.length, 3);
+      assert.equal(stored.value.facts.facts.length, reviewFixture.legacy.facts.length);
+      assert.deepEqual(stored.value.facts.unverified, reviewFixture.warnings);
       if (reviewCase === 'repair')
         assert.ok(stored.value.facts.facts.every((f: VerifiedFact) => f.kind === 'event'));
-      else
+      else if (reviewCase === 'attributes')
         assert.ok(
           stored.value.facts.facts.every(
             (f: VerifiedFact) => f.semantics.scope === '個別' && f.semantics.basis === 'IFRS'

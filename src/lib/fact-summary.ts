@@ -7,9 +7,11 @@ import {
   reviewCandidates,
   serializeCandidateSource,
   factSourceKey,
+  proseQuantities,
   type Diagnostic,
   type CandidateReview,
 } from './fact-candidates';
+import { normalized } from './document-structure';
 import {
   FACT_SCHEMA_VERSION,
   record,
@@ -279,12 +281,41 @@ export async function generateVerifiedFactSummary(
     }
     if (!before) merged.set(key, f);
   }
+  // Only an accepted correction of the same source resolves a first-pass diagnostic.
+  // Model-reported uncertainties have no source identity and must remain visible.
+  const diagnosticResolved = (d: Diagnostic) => {
+    const source = d.candidateId === null ? undefined : first.candidateSources.get(d.candidateId);
+    if (!source) return false;
+    return repaired.facts.some((f) => {
+      if (source.kind === 'table')
+        return f.evidence.kind === 'table' && f.evidence.valueId === source.valueId;
+      if (f.evidence.kind !== 'prose' || f.evidence.blockId !== source.blockId) return false;
+      // A complete event/status proves the entire assertion. A quantity correction
+      // only resolves its own metric and quantity, not other fields in that block.
+      if (f.kind === 'event' || f.kind === 'status') return true;
+      const block = pages.flatMap((p) => p.blocks).find((b) => b.id === source.blockId)!;
+      return (
+        source.metric === normalized(f.label) &&
+        proseQuantities(block).some(
+          (q) =>
+            q.id === source.quantityId &&
+            normalized(q.raw) === normalized((f.quantity?.raw ?? '') + (f.unit ?? ''))
+        )
+      );
+    });
+  };
   const final = {
     ...repaired,
     facts: [...merged.values()],
     unverified: [
-      ...first.unverified.filter((x) => x.startsWith('CAPACITY:')),
-      ...repaired.unverified,
+      ...new Set([
+        ...(mode === 'delta' ? first.reportedUnverified : []),
+        ...first.unverified.filter((x) => x.startsWith('CAPACITY:')),
+        ...first.diagnostics
+          .filter((d) => mode === 'delta' && d.status !== 'valid' && !diagnosticResolved(d))
+          .map((d) => `${d.candidateId ?? '応答'} ${d.message}`),
+        ...repaired.unverified,
+      ]),
     ],
   };
   if (final.facts.length > 20) failure = 'CAPACITY:確定事実と必須修復が20件の上限を超えます';

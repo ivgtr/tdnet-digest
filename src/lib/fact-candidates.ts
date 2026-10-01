@@ -60,6 +60,8 @@ export interface Diagnostic {
 }
 export interface CandidateReview {
   facts: VerifiedFact[];
+  reportedUnverified: string[];
+  candidateSources: Map<string, Candidate['source']>;
   unverified: string[];
   diagnostics: Diagnostic[];
   envelopeValid: boolean;
@@ -387,6 +389,8 @@ export function reviewCandidates(
 ): CandidateReview {
   const result: CandidateReview = {
     facts: [],
+    reportedUnverified: [],
+    candidateSources: new Map(),
     unverified: [],
     diagnostics: [],
     envelopeValid: false,
@@ -411,7 +415,8 @@ export function reviewCandidates(
       ids.add(item.candidateId);
     }
     result.envelopeValid = true;
-    result.unverified = [...parsed.unverified] as string[];
+    result.reportedUnverified = [...parsed.unverified] as string[];
+    result.unverified = [...result.reportedUnverified];
     for (const item of parsed.candidates) {
       let anchor: string | null = null;
       const start = result.diagnostics.length;
@@ -421,6 +426,7 @@ export function reviewCandidates(
           if (typeof id === 'string') anchor = id;
         }
         checkCandidate(item);
+        result.candidateSources.set(item.candidateId, item.source);
         anchor = item.source.kind === 'table' ? item.source.valueId : item.source.blockId;
         const fact = compose(item, pages, context, result.diagnostics);
         if (!result.diagnostics.slice(start).some((d) => d.status !== 'valid')) {

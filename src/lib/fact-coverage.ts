@@ -57,6 +57,40 @@ export function standardMetric(fact: VerifiedFact): string | null {
     return 'netProfit';
   return null;
 }
+/** A same-named business metric is not a financial-reporting obligation. */
+function isReportingMetricSource(
+  anchor: string,
+  state: string,
+  pages: ExtractedPage[],
+  context: DocumentContext
+): boolean {
+  const binding = bindingFor(context, anchor);
+  const blocks = pages.flatMap((p) => p.blocks);
+  const spans = pages.flatMap((p) => p.spans);
+  // The innermost section owns prose and tables; a child business section
+  // cannot borrow its parent's financial-results role.
+  const section = binding.sectionIds
+    .slice(-1)
+    .map((id) => blocks.find((b) => b.id === id)!.text)
+    .join('');
+  const mapping = context.tableMappings.find((h) => h.valueId === anchor);
+  const title = compact(
+    section || mapping?.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('') || ''
+  );
+  // An unsectioned claim on the reporting cover belongs to that explicit root.
+  // This supplies a source role only; local scope/basis still resolve separately.
+  if (!title && binding.page === 1 && state === 'actual')
+    return (
+      pages
+        .find((p) => p.pageNumber === 1)
+        ?.blocks.some((b) => /20\d{2}年.*月期.*決算短信/.test(compact(b.text))) ?? false
+    );
+  return state === 'forecast'
+    ? /業績予想/.test(title)
+    : state === 'actual' &&
+        !/予想|見通し/.test(title) &&
+        /経営成績|損益計算書|連結業績|個別業績/.test(title);
+}
 export function verifyCoverage(
   type: DocumentType,
   allPages: ExtractedPage[],
@@ -91,6 +125,13 @@ export function verifyCoverage(
         return false;
       }
     };
+    const reportingMetric = (f: VerifiedFact) => {
+      const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId;
+      return (
+        pages.some((p) => p.pageNumber === f.page) &&
+        isReportingMetricSource(anchor, f.valueKind ?? '', allPages, context)
+      );
+    };
     // Only diagnostics need an expected value; facts are matched at their own source unit.
     const attributesFor = (blocks: { id: string }[]) => {
       const ds = blocks.flatMap((b) => bindingFor(context, b.id).declarations);
@@ -109,6 +150,7 @@ export function verifyCoverage(
       facts.some(
         (f) =>
           standardMetric(f) === metric &&
+          reportingMetric(f) &&
           f.valueKind === kind &&
           compact(f.period ?? '').includes(target) &&
           (!reportQuarter ||
@@ -458,6 +500,9 @@ export function coverageReport(
         .filter(
           (u) =>
             marker.test(u.label) &&
+            (type !== 'earnings' ||
+              !['revenue', 'operatingProfit', 'netProfit'].includes(metric!) ||
+              isReportingMetricSource(u.anchor, kind ?? '', pages, context)) &&
             (kind === 'forecastBefore'
               ? /前回|修正前/.test(u.axis)
               : kind === 'forecastAfter'

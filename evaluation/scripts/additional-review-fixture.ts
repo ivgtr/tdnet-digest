@@ -35,7 +35,10 @@ function textPdf(texts: string[]): Uint8Array {
       stream(
         text
           .split('\n')
-          .map((line, i) => `BT /F1 10 Tf 1 0 0 1 30 ${800 - i * 24} Tm <${hex(line)}> Tj ET`)
+          .map(
+            (line, i) =>
+              `BT /F1 10 Tf 1 0 0 1 30 ${800 - i * 24 + (/^\(2\)/.test(line) ? 4 : 0)} Tm <${hex(line)}> Tj ET`
+          )
           .join('\n')
       )
     );
@@ -56,12 +59,14 @@ function textPdf(texts: string[]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
-  if (!['reject', 'repair', 'attributes'].includes(mode)) throw Error('未知の追加レビューケース');
+  if (!['reject', 'repair', 'attributes', 'boundary'].includes(mode))
+    throw Error('未知の追加レビューケース');
   const period = '2027年3月期';
   const tails = [
     '100百万円ではなく200百万円を見込んでおります。',
     '100百万円に満たない見込みです。',
     '100百万円に届かない見込みです。',
+    '100百万円（には満たない見込み）です。',
   ];
   const texts =
     mode === 'attributes'
@@ -72,10 +77,15 @@ export async function additionalReviewFixture(mode: string) {
               `1. ${period} ${h}\n範囲 個別\n会計基準 IFRS\n${period}の売上高は100百万円${h === '業績予想' ? 'の見込みです' : 'です'}。`
           ),
         ]
-      : [
-          `会社名 株式会社テスト`,
-          ...tails.map((t) => `1. ${period} 業績予想\n${period}の売上高は${t}`),
-        ];
+      : mode === 'boundary'
+        ? [
+            '会社名 株式会社テスト',
+            `1. ${period} 業績予想\n${period}の売上高は100百万円の見込みです\n(2)取得条件は別途決定します`,
+          ]
+        : [
+            `会社名 株式会社テスト`,
+            ...tails.map((t) => `1. ${period} 業績予想\n${period}の売上高は${t}`),
+          ];
   const pdf = textPdf(texts);
   const document = await getDocument({ data: pdf.slice(), disableFontFace: true }).promise;
   const pages = [];
@@ -131,13 +141,24 @@ export async function additionalReviewFixture(mode: string) {
     facts: legacyFacts,
     unverified: [],
   };
+  const first = JSON.parse(candidateResponse(facts, pages));
+  const warnings = mode === 'repair' ? ['補足内訳は確認できません'] : [];
+  first.unverified = warnings;
+  if (mode === 'boundary' && !facts[0].quote.includes('\n(2)'))
+    throw Error('番号付き欄が実PDF抽出で結合していません');
   return {
     pdf,
     pages,
-    first: candidateResponse(facts, pages),
+    first: JSON.stringify(first),
     repair: candidateResponse(mode === 'repair' ? events : facts, pages),
     legacy,
     legacyRendered: renderFacts(legacy),
-    expected: mode === 'attributes' ? ['個別', 'IFRS', '実績', '予想'] : tails,
+    expected:
+      mode === 'attributes'
+        ? ['個別', 'IFRS', '実績', '予想']
+        : mode === 'boundary'
+          ? ['売上高: 100百万円', '予想']
+          : [...tails, ...warnings],
+    warnings,
   };
 }

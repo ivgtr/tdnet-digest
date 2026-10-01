@@ -35,9 +35,9 @@ describe('要約モード別の表示とキャッシュ', () => {
     vi.unstubAllGlobals();
   });
 
-  it('誤受理が残るv38キャッシュを読み出して再表示しない', async () => {
+  it.each([38, 39])('誤受理が残るv%sキャッシュを読み出して再表示しない', async (version) => {
     const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
-    const oldKey = `summaryCacheV2:v38:openai:gpt-4o:full:${pdfUrl}`;
+    const oldKey = `summaryCacheV2:v${version}:openai:gpt-4o:full:${pdfUrl}`;
     const currentKey = `summaryCacheV2:${buildSummaryCacheKey(pdfUrl, buildAnalysisFingerprint({ provider: 'openai', model: 'gpt-4o', extractionMode: 'full' }))}`;
     const get = vi.fn(async () => ({ [oldKey]: { summary: '売上高: 100百万円（予想）' } }));
     const sendMessage = vi.fn();
