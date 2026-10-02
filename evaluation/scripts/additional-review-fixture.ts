@@ -4,6 +4,7 @@ import { numberCandidate } from '../../src/lib/fixtures/v4-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from '../../src/lib/document-context';
 import { assertionPolarity } from '../../src/lib/assertion-semantics';
 import { candidateResponse } from '../../src/lib/fixtures/candidate-test-source';
+import { reviewCandidates } from '../../src/lib/fact-candidates';
 import { stableFactId, type VerifiedFact, type FactSummary } from '../../src/lib/fact-contract';
 import { parseFactSummary, renderFacts } from '../../src/lib/fact-summary';
 import type { DocumentType } from '../../src/lib/document-type';
@@ -60,7 +61,7 @@ function textPdf(texts: string[]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
-  if (['semantics', 'cover-outlook', 'metric-repair'].includes(mode))
+  if (['semantics', 'cover-outlook', 'cover-boundary', 'metric-repair'].includes(mode))
     return latestReviewFixture(mode);
   if (!['reject', 'repair', 'attributes', 'boundary'].includes(mode))
     throw Error('未知の追加レビューケース');
@@ -169,25 +170,25 @@ export async function additionalReviewFixture(mode: string) {
 }
 
 async function latestReviewFixture(mode: string) {
+  const report = ['cover-outlook', 'cover-boundary'].includes(mode);
   const period = '2027年3月期';
-  const documentType: DocumentType = mode === 'cover-outlook' ? 'earnings' : 'other';
+  const documentType: DocumentType = report ? 'earnings' : 'other';
   const metrics = ['売上高', '営業利益', '当期純利益'];
   const bodies = [
-    '当社は取得を予定しておりません。',
-    '当社はAを取得しましたが、Bは取得していません。',
+    '当社は取得を行っていません。',
+    '当社はAの取得予定ではないが、別案件を取得しました。',
   ];
-  const texts =
-    mode === 'cover-outlook'
-      ? [
-          `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${period}の通期業績予想について説明します。\n${metrics.map((m) => `${period}の${m}は100百万円です。`).join('\n')}`,
-          `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円の見込みです。`).join('\n')}`,
-        ]
-      : mode === 'semantics'
-        ? ['会社名 株式会社テスト', ...bodies.map((body) => `1. 事業説明\n${body}`)]
-        : [
-            '会社名 株式会社テスト',
-            `1. ${period} 業績予想\n${period}の売上高は100百万円の見込みです。`,
-          ];
+  const texts = report
+    ? [
+        `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${metrics.map((m) => `${period}の${m}は100百万円です。`).join('\n')}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
+        `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円の見込みです。`).join('\n')}`,
+      ]
+    : mode === 'semantics'
+      ? ['会社名 株式会社テスト', ...bodies.map((body) => `1. 事業説明\n${body}`)]
+      : [
+          '会社名 株式会社テスト',
+          `1. ${period} 業績予想\n${period}の売上高は100百万円の見込みです。`,
+        ];
   const pdf = textPdf(texts);
   const document = await getDocument({ data: pdf.slice(), disableFontFace: true }).promise;
   const pages = [];
@@ -199,17 +200,11 @@ async function latestReviewFixture(mode: string) {
   await document.destroy();
   const context = buildDocumentContext(pages);
   const facts: VerifiedFact[] = [];
-  for (const page of mode === 'cover-outlook' ? pages : pages.slice(1)) {
-    for (const metric of mode === 'semantics'
-      ? ['当社']
-      : mode === 'cover-outlook'
-        ? metrics
-        : ['売上高']) {
+  for (const page of report ? pages : pages.slice(1)) {
+    for (const metric of mode === 'semantics' ? ['当社'] : report ? metrics : ['売上高']) {
       const f = numberCandidate(page, metric, 100, period);
-      f.semantics.scope =
-        mode === 'cover-outlook' ? (page.pageNumber === 1 ? '連結' : '個別') : null;
-      f.semantics.basis =
-        mode === 'cover-outlook' ? (page.pageNumber === 1 ? '日本基準' : 'IFRS') : null;
+      f.semantics.scope = report ? (page.pageNumber === 1 ? '連結' : '個別') : null;
+      f.semantics.basis = report ? (page.pageNumber === 1 ? '日本基準' : 'IFRS') : null;
       if (mode === 'semantics') {
         f.kind = 'event';
         f.label = f.statement = f.quote;
@@ -220,11 +215,10 @@ async function latestReviewFixture(mode: string) {
         f.semantics.state = page.pageNumber === 2 ? 'unspecified' : 'completed';
         f.semantics.polarity = page.pageNumber === 2 ? 'negative' : 'mixed';
       } else
-        f.valueKind = f.semantics.state =
-          mode === 'cover-outlook' && page.pageNumber === 1 ? 'actual' : 'forecast';
+        f.valueKind = f.semantics.state = report && page.pageNumber === 1 ? 'actual' : 'forecast';
       const binding = bindingFor(context, f.evidence.kind === 'prose' ? f.evidence.blockId : '');
       f.evidence.contextIds = binding.contextIds;
-      f.evidence.scopeIds = resolveScopeIds(binding, f.semantics, mode === 'cover-outlook');
+      f.evidence.scopeIds = resolveScopeIds(binding, f.semantics, report);
       f.id = `f${facts.length + 1}`;
       facts.push(f);
     }
@@ -238,23 +232,63 @@ async function latestReviewFixture(mode: string) {
     throw Error(JSON.stringify(checked.unverified));
   const wrong = structuredClone(facts);
   if (mode === 'semantics') {
-    wrong[0].semantics.state = 'planned';
+    wrong[0].semantics.state = 'unspecified';
     wrong[0].semantics.polarity = 'affirmative';
     wrong[1].semantics.polarity = 'negative';
-  } else if (mode === 'cover-outlook')
+  } else if (report)
     wrong.slice(0, 3).forEach((f) => {
       f.semantics.scope = f.semantics.basis = null;
     });
   else wrong[0].semantics.scope = '連結';
-  const first = JSON.parse(candidateResponse(wrong, pages, documentType));
+  let initial = wrong;
+  let repairFacts = report ? facts.slice(0, 3) : facts;
+  if (mode === 'cover-boundary') {
+    const late = numberCandidate(pages[0], '売上高', 200, period);
+    const block = pages[0].blocks.find((b) => b.text.includes('売上高は200'))!;
+    if (late.evidence.kind !== 'prose') throw Error('expected prose');
+    late.evidence.blockId = block.id;
+    late.evidence.contextIds = bindingFor(context, block.id).contextIds;
+    late.quote = block.text;
+    late.id = 'f7';
+    initial = [...facts.slice(1), late];
+    repairFacts = [facts[0]];
+  }
+  const first = JSON.parse(candidateResponse(initial, pages, documentType));
+  const warnings =
+    mode === 'cover-boundary'
+      ? reviewCandidates(JSON.stringify(first), documentType, pages).unverified
+      : [];
   if (mode === 'metric-repair') first.candidates[0].source.metric = '売上 高';
   const legacy = structuredClone(checked);
-  if (mode === 'semantics')
+  if (mode === 'cover-boundary') {
+    const late = structuredClone(initial[initial.length - 1]);
+    late.semantics.scope = late.semantics.basis = null;
+    late.evidence.scopeIds = resolveScopeIds(
+      bindingFor(context, late.evidence.kind === 'prose' ? late.evidence.blockId : ''),
+      late.semantics,
+      false
+    );
+    const validLate = parseFactSummary(
+      JSON.stringify({ version: 4, documentType: 'other', facts: [late], unverified: [] }),
+      'other',
+      pages
+    ).facts[0];
+    if (!validLate) throw Error('business source did not validate');
+    validLate.semantics.scope = '連結';
+    validLate.semantics.basis = '日本基準';
+    validLate.evidence.scopeIds = resolveScopeIds(
+      bindingFor(context, late.evidence.kind === 'prose' ? late.evidence.blockId : ''),
+      validLate.semantics,
+      true
+    );
+    validLate.id = stableFactId(validLate);
+    legacy.facts = [...checked.facts.slice(1), validLate];
+  } else if (mode === 'semantics')
     legacy.facts.forEach((f, i) => {
       f.semantics = wrong[i].semantics;
       f.id = stableFactId(f);
     });
-  else if (mode === 'cover-outlook')
+  else if (report)
     legacy.facts.slice(0, 3).forEach((f) => {
       f.semantics.scope = f.semantics.basis = null;
       if (f.evidence.kind !== 'prose') throw Error('expected prose');
@@ -272,18 +306,14 @@ async function latestReviewFixture(mode: string) {
     documentType,
     repairRequired: true,
     first: JSON.stringify(first),
-    repair: candidateResponse(
-      mode === 'cover-outlook' ? facts.slice(0, 3) : facts,
-      pages,
-      documentType
-    ),
+    repair: candidateResponse(repairFacts, pages, documentType),
     legacy,
     legacyRendered: renderFacts(legacy),
-    warnings: [] as string[],
+    warnings,
     expected:
       mode === 'semantics'
         ? bodies
-        : mode === 'cover-outlook'
+        : report
           ? ['連結', '日本基準', '個別', 'IFRS', '売上高: 100百万円']
           : ['売上高: 100百万円'],
   };

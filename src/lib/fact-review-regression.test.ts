@@ -375,6 +375,9 @@ describe('e81d816再レビューの意味と報告単位', () => {
     '当社は取得を実施いたしません。',
     '当社は、取得を予定していません。',
     '当社は取得を予定（しておりません）。',
+    '当社は取得を行っていません。',
+    '当社は取得を行っていない。',
+    '当社は取得を行っておらず、今後も取得を予定しておりません。',
   ])('丁寧な否定を肯定予定として確定・保存しない: %s', (body) => {
     const { pages, f } = assertion(body, 'unspecified', 'negative');
     expect(assertionPolarity(body)).toBe('negative');
@@ -393,6 +396,11 @@ describe('e81d816再レビューの意味と報告単位', () => {
     '当社はAを取得しましたが、Bは取得していません。',
     '当社はAを取得しましたがBは取得していません。',
     '当社はAを取得しました、Bは取得していません。',
+    '当社はAの取得予定ではないが、別案件を取得しました。',
+    '当社はAを取得しませんが別案件を取得しました。',
+    '当社はAの取得を行わない、別案件を取得しました。',
+    '当社はAの取得を行っていませんが、別案件を取得しました。',
+    '当社はAの取得を行っておらず、別案件を取得しました。',
   ])('対比する肯定完了と否定をmixedで照合する: %s', (body) => {
     const { pages, f } = assertion(body, 'completed', 'mixed');
     expect(assertionPolarity(body)).toBe('mixed');
@@ -506,6 +514,72 @@ describe('e81d816再レビューの意味と報告単位', () => {
     ]);
     expect(valid.unverified).toEqual([]);
     expect(valid.facts).toHaveLength(1);
+  });
+});
+
+describe('428b325再レビューの表紙出典範囲', () => {
+  const metrics = ['売上高', '営業利益', '当期純利益'];
+  const values = metrics.map((m) => `${period}の${m}は100百万円です。`).join('\n');
+  it.each(['事業概況', '当社の事業について説明します。', '売上構成は以下のとおりです。'])(
+    '番号のない本文で表紙の報告範囲を閉じ、再開しない: %s',
+    (boundary) => {
+      const pages = [
+        textPage(
+          `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${values}\n${boundary}\n${period}の売上高は200百万円です。`
+        ),
+      ];
+      const roots = metrics.map((m) => numberCandidate(pages[0], m, 100, period));
+      const late = numberCandidate(pages[0], '売上高', 200, period);
+      if (late.evidence.kind !== 'prose') throw new Error('expected prose');
+      const block = pages[0].blocks.find((b) => b.text === `${period}の売上高は200百万円です。`)!;
+      late.evidence.blockId = block.id;
+      late.quote = block.text;
+      late.semantics.scope = late.semantics.basis = null;
+      const good = reviewCandidates(
+        candidateResponse([...roots, late], pages, 'earnings'),
+        'earnings',
+        pages
+      );
+      expect(good.unverified).toEqual([]);
+      expect(good.facts).toHaveLength(4);
+      expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+      const withoutRevenue = good.facts.filter((f) => f.label !== '売上高' || f.value === 200);
+      expect(() => verifyCoverage('earnings', pages, withoutRevenue)).toThrow('revenue');
+      const slots = coverageReport('earnings', pages, withoutRevenue);
+      const revenue = slots.find((s) => s.requirement.includes('revenue'))!;
+      // Prose without a table mapping remains an unknown slot source.
+      expect(revenue.status).toBe('unknown');
+      expect(revenue.sourceIds).not.toContain(block.id);
+      const wrong = structuredClone(late);
+      wrong.semantics.scope = '連結';
+      wrong.semantics.basis = '日本基準';
+      expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
+      const forged = structuredClone(good.facts.find((f) => f.value === 200)!);
+      forged.semantics.scope = '連結';
+      forged.semantics.basis = '日本基準';
+      forged.evidence.scopeIds = resolveScopeIds(
+        bindingFor(buildDocumentContext(pages), block.id),
+        forged.semantics,
+        true
+      );
+      forged.id = stableFactId(forged);
+      validateSavedFacts({ version: 4, documentType: 'other', facts: [forged], unverified: [] });
+      expect(saved([forged], pages).facts).toEqual([]);
+    }
+  );
+  it('表紙への言及だけでは明示報告の出典にしない', () => {
+    const pages = [
+      textPage(`会社名 株式会社テスト\n参考: ${period} 決算短信について説明します。\n${values}`),
+    ];
+    const facts = metrics.map((m) => {
+      const f = numberCandidate(pages[0], m, 100, period);
+      f.semantics.scope = f.semantics.basis = null;
+      return f;
+    });
+    const good = reviewCandidates(candidateResponse(facts, pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(3);
+    expect(() => verifyCoverage('earnings', pages, good.facts)).toThrow('revenue');
   });
 });
 

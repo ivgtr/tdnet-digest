@@ -380,11 +380,39 @@ export function reportingUnitTitle(binding: ContextBinding, pages: ExtractedPage
   );
 }
 export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPage[]): boolean {
-  return (
-    binding.page === 1 &&
-    !binding.sectionIds.length &&
-    !!pages.find((p) => p.pageNumber === 1)?.blocks.some((b) => /決算短信/.test(normalized(b.text)))
+  if (binding.page !== 1 || binding.sectionIds.length) return false;
+  const blocks = pages.find((p) => p.pageNumber === 1)?.blocks ?? [];
+  const target = blocks.findIndex((b) => b.id === binding.blockId);
+  let cover = -1;
+  for (let i = 0; i < target; i++)
+    if (blocks[i].text.length < 180 && isReportingCover(blocks[i])) cover = i;
+  if (cover < 0) return false;
+  // Only a contiguous reporting-value area belongs to this cover. Unknown prose
+  // or an unnumbered caption closes it; later values cannot reopen it.
+  const metric =
+    '(?:売上高|売上収益|営業収益|営業(?:利益|損失)|経常(?:利益|損失)|(?:親会社株主に帰属する|親会社の所有者に帰属する)?(?:当期|中間|四半期)純(?:利益|損失)|総資産|純資産|資本金)';
+  const valueStart = new RegExp(
+    `^(?:20\\d{2}年\\d{1,2}月期(?:第[1-4]四半期|中間期|通期)?(?:の)?)?${metric}(?:は|:)?[+\\-△]?\\d`
   );
+  let valuesStarted = false;
+  for (let i = cover + 1; i <= target; i++) {
+    const block = blocks[i];
+    const attributes = reportingAttributes(block);
+    if (valueStart.test(normalized(block.text))) valuesStarted = true;
+    else if (
+      valuesStarted ||
+      !(
+        declaredSubjectsIn(block).length ||
+        (attributes.length &&
+          attributes.every((d) =>
+            new RegExp(`^(?:${reportingScope}|${reportingBasis})$`, 'i').test(d.value)
+          ))
+      )
+    )
+      return false;
+    if (i === target) return valuesStarted && valueStart.test(normalized(block.text));
+  }
+  return false;
 }
 export function isFinancialUnit(
   fact: Pick<VerifiedFact, 'kind' | 'label' | 'quote' | 'semantics'>,
