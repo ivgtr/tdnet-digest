@@ -1084,26 +1084,38 @@ describe('17f5ca9再レビューの指標明示性と受動形予想', () => {
       reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages).unverified
     );
   });
-  it.each(['と見込まれます。', 'と見込まれます'])(
-    '受動形の完結した予想を数量・状態・保存で受理する: %s',
-    (tail) => {
-      const { pages, f } = prose(`${period}の売上高は100百万円${tail}`);
-      const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);
-      expect(assertionStates(f.quote)).toEqual(['forecast']);
-      expect(r.unverified).toEqual([]);
-      expect(r.facts).toHaveLength(1);
-      expect(saved(r.facts, pages).facts).toEqual(r.facts);
-      expect(
-        renderFacts({ version: 4, documentType: 'other', facts: r.facts, unverified: [] })
-      ).toContain('売上高: 100百万円');
-    }
-  );
+  it.each([
+    'と見込まれます。',
+    'と見込まれます',
+    'と見込まれております。',
+    'と見込まれております',
+    'と見込まれる。',
+    'と見込まれる',
+    'と見込まれています。',
+    'と見込まれている。',
+  ])('受動形の完結した予想を数量・状態・保存で受理する: %s', (tail) => {
+    const { pages, f } = prose(`${period}の売上高は100百万円${tail}`);
+    const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(assertionStates(f.quote)).toEqual(['forecast']);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(1);
+    expect(saved(r.facts, pages).facts).toEqual(r.facts);
+    expect(
+      renderFacts({ version: 4, documentType: 'other', facts: r.facts, unverified: [] })
+    ).toContain('売上高: 100百万円');
+  });
   it.each([
     'と見込まれますが確定していません。',
     'と見込まれます。実際には100百万円に届かない見込みです。',
     'とは見込まれません。',
     'と見込まれない。',
     'と見込まれますではなく200百万円です。',
+    'と見込まれておりません。',
+    'と見込まれていません。',
+    'と見込まれていない。',
+    'と見込まれるとは限りません。',
+    'と見込まれております。実際には100百万円に届かない見込みです。',
+    'と見込まれるものの確定していません。',
   ])('受動形でも未検査の否定・撤回・後続を通さない: %s', (tail) => {
     const { pages, f } = prose(`${period}の売上高は100百万円${tail}`);
     expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
@@ -1120,30 +1132,33 @@ describe('17f5ca9再レビューの指標明示性と受動形予想', () => {
     validateSavedFacts({ version: 4, documentType: 'other', facts: [base], unverified: [] });
     expect(saved([base], pages).facts).toEqual([]);
   });
-  it('必須予想の受動形を差分修復して表示・保存する', async () => {
-    const actual = localReport('経営成績');
-    const future = textPage(
-      `1. ${period} 業績予想\n範囲 個別\n会計基準 IFRS\n${['売上高', '営業利益', '当期純利益'].map((m) => `${period}の${m}は100百万円と見込まれます。`).join('\n')}`,
-      3
-    );
-    const pages = [...actual.pages, future];
-    const forecast = ['売上高', '営業利益', '当期純利益'].map((m) => {
-      const f = numberCandidate(future, m, 100, period);
-      f.valueKind = f.semantics.state = 'forecast';
-      f.semantics.scope = '個別';
-      f.semantics.basis = 'IFRS';
-      return f;
-    });
-    vi.mocked(generateText)
-      .mockReset()
-      .mockResolvedValueOnce(
-        candidateResponse([...actual.facts, ...forecast.slice(1)], pages, 'earnings')
-      )
-      .mockResolvedValueOnce(candidateResponse([forecast[0]], pages, 'earnings'));
-    const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
-    expect(result.repairAttempted).toBe(true);
-    expect(result.facts.facts).toHaveLength(6);
-    expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
-    expect(renderFacts(result.facts)).toContain('個別、IFRS');
-  });
+  it.each(['ます', 'る', 'ております', 'ています', 'ている'])(
+    '必須予想の受動形「見込まれ%s」を差分修復して表示・保存する',
+    async (ending) => {
+      const actual = localReport('経営成績');
+      const future = textPage(
+        `1. ${period} 業績予想\n範囲 個別\n会計基準 IFRS\n${['売上高', '営業利益', '当期純利益'].map((m) => `${period}の${m}は100百万円と見込まれ${ending}。`).join('\n')}`,
+        3
+      );
+      const pages = [...actual.pages, future];
+      const forecast = ['売上高', '営業利益', '当期純利益'].map((m) => {
+        const f = numberCandidate(future, m, 100, period);
+        f.valueKind = f.semantics.state = 'forecast';
+        f.semantics.scope = '個別';
+        f.semantics.basis = 'IFRS';
+        return f;
+      });
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(
+          candidateResponse([...actual.facts, ...forecast.slice(1)], pages, 'earnings')
+        )
+        .mockResolvedValueOnce(candidateResponse([forecast[0]], pages, 'earnings'));
+      const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+      expect(result.repairAttempted).toBe(true);
+      expect(result.facts.facts).toHaveLength(6);
+      expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
+      expect(renderFacts(result.facts)).toContain('個別、IFRS');
+    }
+  );
 });

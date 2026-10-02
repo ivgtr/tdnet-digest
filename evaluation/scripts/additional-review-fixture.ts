@@ -69,6 +69,7 @@ export async function additionalReviewFixture(mode: string) {
       'cover-signs',
       'cover-ifrs-company',
       'net-profit-passive',
+      'passive-endings',
       'assertion-conflict',
       'metric-repair',
     ].includes(mode)
@@ -187,6 +188,7 @@ async function latestReviewFixture(mode: string) {
     'cover-signs',
     'cover-ifrs-company',
     'net-profit-passive',
+    'passive-endings',
     'assertion-conflict',
   ].includes(mode);
   const period = '2027年3月期';
@@ -204,7 +206,7 @@ async function latestReviewFixture(mode: string) {
   const texts = report
     ? [
         `${period} 決算短信〔${mode === 'cover-ifrs-company' ? 'IFRS' : '日本基準'}〕（連結）\n${mode === 'cover-ifrs-company' ? '上場会社名：株式会社テスト' : '会社名 株式会社テスト'}\n${metrics.map((m) => `${period}の${m}は${mode === 'cover-signs' ? (m === '営業損失' ? '▲10' : m === '当期純損失' ? '−20' : '100') : '100'}百万円です。`).join('\n')}${mode === 'net-profit-passive' ? `\n${period}の利益は5百万円です。` : ''}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
-        `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円${mode === 'net-profit-passive' ? 'と見込まれます' : 'の見込みです'}。`).join('\n')}`,
+        `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m, i) => `${period}の${m}は100百万円${mode === 'passive-endings' ? ['と見込まれる', 'と見込まれております', 'と見込まれています'][i] : mode === 'net-profit-passive' ? 'と見込まれます' : 'の見込みです'}。`).join('\n')}`,
       ]
     : mode === 'semantics'
       ? ['会社名 株式会社テスト', ...bodies.map((body) => `1. 事業説明\n${body}`)]
@@ -315,7 +317,11 @@ async function latestReviewFixture(mode: string) {
     ambiguous.id = stableFactId(ambiguous);
     initial = [...facts.slice(0, 2), ambiguous, ...facts.slice(3)];
   }
-  if (mode === 'assertion-conflict') {
+  if (mode === 'passive-endings') {
+    initial = structuredClone(facts);
+    initial[3].valueKind = initial[3].semantics.state = 'actual';
+    repairFacts = [facts[3]];
+  } else if (mode === 'assertion-conflict') {
     initial = facts.slice(1);
     const dated = structuredClone(facts[facts.length - 1]);
     dated.period = '2027年3月1日';
@@ -373,6 +379,8 @@ async function latestReviewFixture(mode: string) {
   } else if (mode === 'cover-ifrs-company') {
     legacy.facts[0].semantics.subject = ':株式会社テスト';
     legacy.facts[0].id = stableFactId(legacy.facts[0]);
+  } else if (mode === 'passive-endings') {
+    legacy.unverified = ['旧v45の診断'];
   } else if (mode === 'semantics')
     legacy.facts.forEach((f, i) => {
       f.semantics = wrong[i].semantics;

@@ -70,7 +70,7 @@ export function verifyQuantityAssertion(suffix: string): void {
   // These are retained by sourceQualifiers and subsequently compared/displayed.
   const qualified = clause.replace(/^(?:上限|下限|概算額|概算|速報値)/, '');
   const predicate =
-    /^(?:です|でした|であります|となりました|となっております|となります|になります|(?:の|となる)?見込み(?:です|であります)|(?:を|と)見込(?:んでおります|んでいます|みます)|と見込まれます|(?:を|と)予想(?:しております|しています)|を予定(?:しております|しています))?。?$/;
+    /^(?:です|でした|であります|となりました|となっております|となります|になります|(?:の|となる)?見込み(?:です|であります)|(?:を|と)見込(?:んでおります|んでいます|みます)|と見込まれ(?:る|ます|て(?:いる|います|おります))|(?:を|と)予想(?:しております|しています)|を予定(?:しております|しています))?。?$/;
   if (!predicate.test(qualified))
     throw new Error(
       'STRUCTURE:数量後の否定・置換・境界・変化量または未対応の述語を確定数量へ変換できません'
