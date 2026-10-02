@@ -3,16 +3,17 @@ import { assertionStates } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
-import { tableContinuations, noteLinks } from './document-links';
+import { tableContinuations, noteLinks, continuationSpans } from './document-links';
 import {
   compact,
+  verifyTableEvidence,
   verifyProseEvidence,
   verifyProsePeriod,
   verifyPeriodAndKind,
 } from './numeric-evidence';
 import { parseExactQuantity, proseQuantities, quantityNumber } from './quantity';
 import { sourceDateOptions } from './source-periods';
-import { buildTableMappings } from './source-mappings';
+import { buildTableMappings, type TableMapping } from './source-mappings';
 import {
   buildDocumentContext,
   bindingFor,
@@ -27,11 +28,33 @@ import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
 
-function reportedDividends(pages: ExtractedPage[]) {
-  return pages.flatMap((page) => {
-    const text = (ids: string[]) =>
-      ids.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
-    return buildTableMappings(pages)
+/** Structural proposals use the same complete numeric proof as accepted facts. */
+function provedMappedNumber(
+  pages: ExtractedPage[],
+  hint: TableMapping,
+  claim: { label: string; unit: string; period: string; valueKind: string }
+): boolean {
+  const page = pages.find((p) => p.quantities.some((q) => q.id === hint.valueId));
+  if (!page || page.selection !== 'selected') return false;
+  const quantity = parseExactQuantity(page.quantities.find((q) => q.id === hint.valueId)!.text);
+  const value = quantity && quantityNumber(quantity.decimal)?.value;
+  if (value === undefined || value === null) return false;
+  try {
+    verifyTableEvidence({ ...page, spans: continuationSpans(pages, page, hint.valueId) }, hint, {
+      ...claim,
+      value,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function reportedDividends(pages: ExtractedPage[], selected = pages) {
+  const spans = pages.flatMap((p) => p.spans);
+  const mappings = buildTableMappings(pages);
+  return selected.flatMap((page) => {
+    const text = (ids: string[]) => ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
+    return mappings
       .filter((h) => page.quantities.some((q) => q.id === h.valueId))
       .flatMap((hint) => {
         if (!/配当の状況/.test(compact(text(hint.contextIds)))) return [];
@@ -40,13 +63,15 @@ function reportedDividends(pages: ExtractedPage[]) {
         if (!isPerShareDividend(text(hint.metricIds), unit)) return [];
         const axis = compact(text(hint.periodIds));
         const period = axis.match(/20\d{2}年\d{1,2}月期/)?.[0];
-        return period
-          ? [
-              {
-                period,
-                state: /予想|見込/.test(axis) ? ('forecast' as const) : ('actual' as const),
-              },
-            ]
+        const state = /予想|見込/.test(axis) ? ('forecast' as const) : ('actual' as const);
+        return period &&
+          provedMappedNumber(pages, hint, {
+            label: text(hint.metricIds),
+            unit,
+            period,
+            valueKind: state,
+          })
+          ? [{ period, state, valueId: hint.valueId }]
           : [];
       });
   });
@@ -112,6 +137,36 @@ function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, 
     })
   );
 }
+/** A mapping proposes a source; only ordinary numeric proof can create an obligation. */
+function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, period: string) {
+  const spans = pages.flatMap((p) => p.spans);
+  const text = (ids: string[]) => ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
+  return context.tableMappings.filter((h) => {
+    const page = pages.find((p) => p.quantities.some((q) => q.id === h.valueId));
+    if (
+      !page ||
+      page.selection !== 'selected' ||
+      compact(text(h.metricIds)) !== '売上高営業利益率' ||
+      !isReportingMetricSource(h.valueId, 'actual', pages, context)
+    )
+      return false;
+    return provedMappedNumber(pages, h, {
+      label: '売上高営業利益率',
+      unit: '%',
+      period,
+      valueKind: 'actual',
+    });
+  });
+}
+function earningsReportingPeriod(pages: ExtractedPage[]) {
+  const title = pages
+    .find((p) => p.pageNumber === 1)
+    ?.text.normalize('NFKC')
+    .match(/(20\d{2}年\s*\d{1,2}月期)[^\n]*決算短信[^\n]*/);
+  return title
+    ? { period: compact(title[1]), quarter: compact(title[0]).match(/第[1-4]四半期|中間期/)?.[0] }
+    : null;
+}
 export function verifyCoverage(
   type: DocumentType,
   allPages: ExtractedPage[],
@@ -124,12 +179,10 @@ export function verifyCoverage(
   const source = compact(pages.map((p) => p.text).join('\n'));
   if (type === 'earnings') {
     const first = pages.find((p) => p.pageNumber === 1);
-    const title = first?.text
-      .normalize('NFKC')
-      .match(/(20\d{2}年\s*\d{1,2}月期)[^\n]*決算短信[^\n]*/);
-    if (!title) throw new Error('COVERAGE:報告対象の決算期を確認できません');
-    const period = compact(title[1]);
-    const reportQuarter = compact(title[0]).match(/第[1-4]四半期|中間期/)?.[0];
+    const report = earningsReportingPeriod(pages);
+    if (!report) throw new Error('COVERAGE:報告対象の決算期を確認できません');
+    const period = report.period,
+      reportQuarter = report.quarter;
     const issuer = first?.blocks.find((b) => /上場会社名/.test(compact(b.text)))?.text;
     const applicableMeaning = (f: VerifiedFact) => {
       try {
@@ -197,24 +250,17 @@ export function verifyCoverage(
         if (!has(metric, 'forecast', forecast[1]))
           missing.push(`COVERAGE:通期予想の重要指標 ${metric}`);
     }
+    const marginPeriod = period + (reportQuarter ?? '');
     if (
-      (reportedProseMargins(pages, context, period).length > 0 ||
-        buildTableMappings(allPages).some(
-          (h) =>
-            pages.some((p) => p.quantities.some((q) => q.id === h.valueId)) &&
-            h.metricIds
-              .map((id) => allPages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
-              .join('')
-              .replace(/\s/g, '')
-              .includes('売上高営業利益率')
-        )) &&
+      (reportedProseMargins(pages, context, marginPeriod).length > 0 ||
+        reportedTableMargins(allPages, context, marginPeriod).length > 0) &&
       !facts.some(
         (f) =>
           f.kind === 'number' &&
           /営業利益率/.test(f.label) &&
           f.semantics.metricKind === 'rate' &&
           f.valueKind === 'actual' &&
-          compact(f.period ?? '') === period &&
+          compact(f.period ?? '') === marginPeriod &&
           reportingMetric(f) &&
           applicableMeaning(f)
       )
@@ -234,7 +280,7 @@ export function verifyCoverage(
     )
       missing.push('COVERAGE:通期予想の1株当たり利益');
     if (/配当の状況/.test(source)) {
-      const reported = reportedDividends(pages);
+      const reported = reportedDividends(allPages, pages);
       const relevant = reported.filter((d) => d.period === period || d.period === forecast?.[1]);
       const forecasts = relevant.filter((d) => d.state === 'forecast');
       const targets = forecasts.length
@@ -483,8 +529,8 @@ export function coverageReport(
     }
   };
   const selected = pages.filter((p) => p.selection === 'selected');
-  const obligations = collect(selected, []),
-    missing = collect(selected, facts);
+  const obligations = collect(pages, []),
+    missing = collect(pages, facts);
   const fullObligations = collect(
     pages.map((p) => ({ ...p, selection: 'selected' as const })),
     []
@@ -512,27 +558,39 @@ export function coverageReport(
     }[metric ?? ''] as RegExp | undefined;
     if (marker) {
       if (type === 'earnings' && metric === '営業利益率') {
-        const period = normalized(pages.find((p) => p.pageNumber === 1)?.text ?? '').match(
-          /20\d{2}年\d{1,2}月期/
-        )?.[0];
+        const report = earningsReportingPeriod(pages);
+        const period = report ? report.period + (report.quarter ?? '') : undefined;
         const proseIds = period
           ? reportedProseMargins(pages, context, period).map((b) => b.id)
           : [];
-        return [...proseIds, ...units.filter((u) => marker.test(u.label)).map((u) => u.anchor)];
+        return [
+          ...proseIds,
+          ...(period ? reportedTableMargins(pages, context, period).map((h) => h.valueId) : []),
+        ];
       }
-      const kind = requirement.includes('forecastBefore')
-        ? 'forecastBefore'
-        : requirement.includes('forecastAfter')
-          ? 'forecastAfter'
-          : /予想/.test(requirement)
-            ? 'forecast'
-            : /実績|利益率/.test(requirement)
-              ? 'actual'
-              : null;
+      const kind =
+        requirement.match(/区分=(actual|forecast)/)?.[1] ??
+        (requirement.includes('forecastBefore')
+          ? 'forecastBefore'
+          : requirement.includes('forecastAfter')
+            ? 'forecastAfter'
+            : /予想/.test(requirement)
+              ? 'forecast'
+              : /実績|利益率/.test(requirement)
+                ? 'actual'
+                : null);
+      const targetPeriod = requirement.match(/対象期=(20\d{2}年\d{1,2}月期)/)?.[1];
+      if (type === 'earnings' && metric === '配当')
+        return reportedDividends(pages)
+          .filter(
+            (d) => (!targetPeriod || d.period === targetPeriod) && (!kind || d.state === kind)
+          )
+          .map((d) => d.valueId);
       return units
         .filter(
           (u) =>
             marker.test(u.label) &&
+            (!targetPeriod || u.axis.match(/20\d{2}年\d{1,2}月期/)?.[0] === targetPeriod) &&
             (type !== 'earnings' ||
               !['revenue', 'operatingProfit', 'netProfit'].includes(metric!) ||
               isReportingMetricSource(u.anchor, kind ?? '', pages, context)) &&
@@ -606,19 +664,21 @@ export function coverageReport(
       requirement
     );
     const amount = /revenue|operatingProfit|netProfit|自己株取得.*amount/.test(requirement);
-    const state = requirement.includes('forecastBefore')
-      ? 'forecastBefore'
-      : requirement.includes('forecastAfter')
-        ? 'forecastAfter'
-        : /予想|損失予想の背景/.test(requirement)
-          ? 'forecast'
-          : /計上予定|自己株取得|譲渡の実行/.test(requirement)
-            ? 'planned'
-            : /決議/.test(requirement)
-              ? 'decided'
-              : /実績|利益率|報告対象月|KPI/.test(requirement)
-                ? 'actual'
-                : null;
+    const state =
+      requirement.match(/区分=(actual|forecast)/)?.[1] ??
+      (requirement.includes('forecastBefore')
+        ? 'forecastBefore'
+        : requirement.includes('forecastAfter')
+          ? 'forecastAfter'
+          : /予想|損失予想の背景/.test(requirement)
+            ? 'forecast'
+            : /計上予定|自己株取得|譲渡の実行/.test(requirement)
+              ? 'planned'
+              : /決議/.test(requirement)
+                ? 'decided'
+                : /実績|利益率|報告対象月|KPI/.test(requirement)
+                  ? 'actual'
+                  : null);
     const period = requirement.match(/対象期=(20\d{2}年\d{1,2}月期)/)?.[1] ?? null;
     const dates = resolvedIds
       .flatMap((id) => sourceDateOptions(context.bindings.find((b) => b.anchorId === id)!, pages))

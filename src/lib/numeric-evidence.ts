@@ -515,6 +515,20 @@ export function verifyPeriodAndKind(
   context = compact(context);
   const target = compact(claim.period),
     local = axis + context;
+  // An explicit axis owns its period; a cover/context year cannot override it.
+  const ownPeriods = [
+    ...new Set(
+      axis.match(
+        /20\d{2}年\d{1,2}月期|20\d{2}年\d{1,2}月\d{1,2}日|20\d{2}年\d{1,2}月(?![\d期])/g
+      ) ?? []
+    ),
+  ];
+  const claimedPeriod = target.match(
+    /20\d{2}年\d{1,2}月期|20\d{2}年\d{1,2}月\d{1,2}日|20\d{2}年\d{1,2}月(?![\d期])/
+  )?.[0];
+  if (ownPeriods.length && (ownPeriods.length !== 1 || ownPeriods[0] !== claimedPeriod))
+    fail('対象年度・決算月の明示軸');
+
   const fiscal = /20\d{2}年\d{1,2}月期/;
   const date = /20\d{2}年\d{1,2}月\d{1,2}日/;
   const month = /20\d{2}年\d{1,2}月(?![\d期])/;

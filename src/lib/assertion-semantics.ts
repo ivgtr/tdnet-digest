@@ -4,7 +4,7 @@ import { normalized } from './document-structure';
 const passiveForecast = /見込まれ(?:る|ます|て(?:いる|います|おります))/;
 const outlookForecast = /(?:となる|の)見通し(?:です|であります|である)/;
 const outlookForecastNegation =
-  /(?:となる|の)見通し(?:では(?:ありません|ございません|ない|なく)|で(?:ない|なく))/;
+  /(?:となる|の)見通し(?:では(?:ありません|ございません|ない|なく)|で(?:ない|なく)|は(?:ありません|ございません|ない|なく))/;
 const passiveForecastNegation =
   /見込まれ(?:ません|ない|ず|て(?:おりません|いません|いない|おらず))/;
 const negativePredicate = new RegExp(
@@ -15,6 +15,13 @@ const negative = new RegExp(`${negativePredicate.source}|に(?:は)?(?:満たな
 const finitePredicate = new RegExp(
   `(?:しました|します|行います|行っています|行っております|しています|しております|です|であります|でした|となりました|となっております|となります|になります|見込(?:んでおります|んでいます|みます)|${passiveForecast.source}|${outlookForecast.source}|${negativePredicate.source})`
 );
+/** A prose unit ends before a grammatical continuation, never at a unit allowlist. */
+export function quantityContinuationOffset(text: string): number | null {
+  const start = new RegExp(
+    `(?:の(?:見込み|見通し)|となる(?:見込み|見通し)|${finitePredicate.source}|${negative.source}|上限|下限|概算額|概算|速報値|未満|以下|以上|超|程度|増加|減少|増|減|見込み|見通し|予想|予定|当たり|[はがをにでと]|か(?=も|どう|否|$)|の)`
+  );
+  return text.search(start) < 0 ? null : text.search(start);
+}
 const predicateEnd = new RegExp(`${finitePredicate.source}$`);
 /** Split proved contrasts, never parentheses or a subject followed by a comma. */
 function assertionClauses(text: string): string[] {

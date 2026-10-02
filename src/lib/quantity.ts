@@ -1,3 +1,5 @@
+import { quantityContinuationOffset } from './assertion-semantics';
+
 /** Unit syntax is separate from unit meaning. */
 export function isUnitToken(text: string): boolean {
   return (
@@ -87,11 +89,28 @@ export function declaredQuantityUnit(raw: string): string | null {
 }
 /** Keep offsets in the NFKC source; whitespace separates quantity tokens, never digits. */
 export function proseQuantities(block: { id: string; text: string }) {
-  return [
-    ...block.text
-      .normalize('NFKC')
-      .matchAll(
-        /(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*[～〜~]\s*(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)?\s*(?:(?:百\s*万|万|千|億)?\s*円|[%％]|株|人|件|店舗|社|個|ドル|USD|EUR)/g
-      ),
-  ].map((m, i) => ({ id: `${block.id}:q${i + 1}`, raw: m[0], start: m.index }));
+  const source = block.text.normalize('NFKC');
+  // Calendar references are period/date options, not scalar quantity candidates.
+  const calendar = [
+    ...source.matchAll(
+      /20\d{2}年\s*\d{1,2}月(?:\s*\d{1,2}日|期(?:第[1-4]四半期|中間期|通期)?|度)?/g
+    ),
+  ].map((m) => ({ start: m.index, end: m.index + m[0].length }));
+  const found = [
+    ...source.matchAll(
+      /((?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*[～〜~]\s*(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)?\s*)([A-Za-z%/·]+\d+|(?:[\p{L}\p{Sc}%/·](?:[^\S\n]*[\p{L}\p{Sc}%/·])*))/gu
+    ),
+  ].flatMap((m) => {
+    if (calendar.some((c) => m.index < c.end && m.index + m[1].length > c.start)) return [];
+    const unitRun = m[2];
+    const compactUnit = unitRun.replace(/\s/g, '');
+    const boundary = quantityContinuationOffset(compactUnit) ?? compactUnit.length;
+    let count = 0,
+      end = 0;
+    for (; end < unitRun.length && count < boundary; end++) if (!/\s/.test(unitRun[end])) count++;
+    const rawUnit = unitRun.slice(0, end);
+    if (!isUnitToken(rawUnit.replace(/\s/g, ''))) return [];
+    return [{ raw: m[1] + rawUnit, start: m.index }];
+  });
+  return found.map((q, i) => ({ id: `${block.id}:q${i + 1}`, ...q }));
 }

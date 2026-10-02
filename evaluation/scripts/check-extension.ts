@@ -288,7 +288,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v48:openai:fixture:full';
+          const fingerprint = 'v49:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -343,7 +343,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v48 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v49 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -538,7 +538,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.equal(trace.attempts.length, reviewFixture.repairRequired ? 2 : 1);
       assert.equal(stored.value.facts.facts.length, reviewFixture.legacy.facts.length);
       assert.deepEqual(stored.value.facts.unverified, reviewFixture.warnings);
-      if (reviewCase === 'inherited-outlook-yen') {
+      if (reviewCase === 'inherited-outlook-yen' || reviewCase === 'period-outlook-units') {
         const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
         const revenue = checked.facts.find((f: VerifiedFact) => f.label === '売上高');
         const forecast = checked.facts.find((f: VerifiedFact) => f.kind === 'event');
@@ -549,6 +549,21 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         assert.ok(
           !trace.attempts[0].slots.some((s: any) => s.requirement.endsWith('当年営業利益率'))
         );
+      }
+      if (reviewCase === 'period-outlook-units') {
+        const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
+        const count = checked.facts.find((f: VerifiedFact) => f.label === '販売数量');
+        const dividend = checked.facts.find((f: VerifiedFact) => f.label === '年間配当金');
+        assert.equal(rate?.evidence.kind, 'table');
+        assert.equal(count?.unit, '台');
+        assert.equal(dividend?.semantics.state, 'forecast');
+        assert.equal(dividend?.period, '2027年3月期');
+        assert.ok(
+          trace.attempts[0].slots.some(
+            (s: any) => s.requirement.includes('配当の重要事実') && s.expected.state === 'forecast'
+          )
+        );
+        evidence.stages.push('cross-page financial mappings coexist with forecast dividend repair');
       }
       if (reviewCase === 'prose-disclosures') {
         assert.equal(checked.facts[4].semantics.state, 'forecast');
