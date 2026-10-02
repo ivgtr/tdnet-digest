@@ -4,7 +4,12 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
 import { tableContinuations, noteLinks } from './document-links';
-import { compact, verifyProseEvidence, verifyProsePeriod } from './numeric-evidence';
+import {
+  compact,
+  verifyProseEvidence,
+  verifyProsePeriod,
+  verifyPeriodAndKind,
+} from './numeric-evidence';
 import { parseExactQuantity, proseQuantities, quantityNumber } from './quantity';
 import { sourceDateOptions } from './source-periods';
 import { buildTableMappings } from './source-mappings';
@@ -97,8 +102,9 @@ function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, 
         const claim = { label: '売上高営業利益率', value, unit: '%', period, valueKind: 'actual' };
         try {
           verifyProsePeriod(claim, block.text, sourceContext);
+          verifyPeriodAndKind(claim, block.text, sourceContext, '');
           verifyProseEvidence(page, block.text, claim);
-          return !/予想|見込|見通し/.test(compact(block.text));
+          return true;
         } catch {
           return false;
         }

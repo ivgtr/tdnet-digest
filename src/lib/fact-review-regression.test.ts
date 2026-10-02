@@ -1589,3 +1589,192 @@ describe('4a2cd9a再レビューの本文数量・利益率・見通し', () => 
     expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
   });
 });
+
+describe('af9738e再レビューの継承期・見通し否定・万円', () => {
+  function event(f: VerifiedFact) {
+    const e = structuredClone(f);
+    e.kind = 'event';
+    e.label = e.statement = e.quote;
+    e.value = e.unit = e.valueKind = e.period = null;
+    e.quantity = null;
+    e.semantics.metricKind = 'none';
+    e.semantics.periodKind = 'none';
+    return e;
+  }
+  it.each(['ではありません', 'ではございません', 'ではない', 'でない'])(
+    '否定された見通しのnegative/forecastを候補・保存で維持する: %s',
+    (ending) => {
+      const { pages, f } = prose(`売上高は100百万円となる見通し${ending}。`);
+      const e = event(f);
+      e.semantics.polarity = 'negative';
+      expect(assertionStates(e.quote)).toEqual(['forecast']);
+      expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
+      const good = reviewCandidates(candidateResponse([e], pages), 'other', pages);
+      expect(good.unverified).toEqual([]);
+      expect(good.facts).toHaveLength(1);
+      expect(saved(good.facts, pages).facts).toEqual(good.facts);
+      const wrong = structuredClone(good.facts[0]);
+      wrong.semantics.state = 'unspecified';
+      wrong.id = stableFactId(wrong);
+      validateSavedFacts({ version: 4, documentType: 'other', facts: [wrong], unverified: [] });
+      expect(saved([wrong], pages).facts).toEqual([]);
+      expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
+    }
+  );
+  it('見通しの否定置換はmixed/forecastで原文全体を保持する', () => {
+    const { pages, f } = prose('売上高は100百万円となる見通しではなく50百万円となる見通しです。');
+    const e = event(f);
+    e.semantics.polarity = 'mixed';
+    expect(assertionPolarity(e.quote)).toBe('mixed');
+    expect(assertionStates(e.quote)).toEqual(['forecast']);
+    const good = reviewCandidates(candidateResponse([e], pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(saved(good.facts, pages).facts).toEqual(good.facts);
+    expect(good.facts[0].statement).toBe(e.quote);
+  });
+  function report(extra: string, heading = '1. 損失予想の背景') {
+    const pages = [
+      textPage(
+        `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${['売上高', '営業利益', '当期純利益'].map((m) => `${period}の${m}は100百万円です。`).join('\n')}`
+      ),
+      textPage(`${heading}\n${extra}`, 2),
+    ];
+    const amounts = ['売上高', '営業利益', '当期純利益'].map((m) =>
+      numberCandidate(pages[0], m, 100, period)
+    );
+    return { pages, amounts };
+  }
+  it('否定された損失見通しの背景欠落を1回修復し、誤状態の修復は最終拒否する', async () => {
+    const { pages, amounts } = report(
+      '親会社株主に帰属する当期純損失は概算額100百万円となる見通しではありません。'
+    );
+    const e = event(numberCandidate(pages[1], '純損失', 100, period));
+    e.semantics.state = 'forecast';
+    e.semantics.polarity = 'negative';
+    const good = reviewCandidates(
+      candidateResponse([...amounts, e], pages, 'earnings'),
+      'earnings',
+      pages
+    );
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(4);
+    const initial = good.facts.slice(0, 3);
+    expect(() => verifyCoverage('earnings', pages, initial)).toThrow('損失予想の背景');
+    expect(
+      coverageReport('earnings', pages, initial).find((s) =>
+        s.requirement.includes('損失予想の背景')
+      )?.sourceIds
+    ).toEqual([pages[1].blocks[1].id]);
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse(amounts, pages, 'earnings'))
+      .mockResolvedValueOnce(candidateResponse([e], pages, 'earnings'));
+    const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
+    e.semantics.state = 'unspecified';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse(amounts, pages, 'earnings'))
+      .mockResolvedValueOnce(candidateResponse([e], pages, 'earnings'));
+    await expect(generateVerifiedFactSummary(config, 'earnings', 'source', pages)).rejects.toThrow(
+      '損失予想の背景'
+    );
+    expect(generateText).toHaveBeenCalledTimes(2);
+  });
+  it.each(['2026年3月期', '2027年3月期'])(
+    '本文利益率の継承期を当年義務・修復・保存で一致させる: %s',
+    async (inherited) => {
+      const { pages, amounts } = report('売上高営業利益率は10%です。', `1. ${inherited} 経営成績`);
+      const rate = numberCandidate(pages[1], '売上高営業利益率', 10, inherited);
+      rate.unit = '%';
+      rate.semantics.metricKind = 'rate';
+      const good = reviewCandidates(
+        candidateResponse([...amounts, rate], pages, 'earnings'),
+        'earnings',
+        pages
+      );
+      expect(good.unverified).toEqual([]);
+      expect(good.facts).toHaveLength(4);
+      expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+      const initial = good.facts.slice(0, 3);
+      const slot = coverageReport('earnings', pages, initial).find((s) =>
+        s.requirement.endsWith('当年営業利益率')
+      );
+      if (inherited === period) {
+        expect(() => verifyCoverage('earnings', pages, initial)).toThrow('当年営業利益率');
+        expect(slot).toMatchObject({ sourceIds: [pages[1].blocks[1].id], status: 'absent' });
+      } else {
+        expect(() => verifyCoverage('earnings', pages, initial)).not.toThrow();
+        expect(slot).toBeUndefined();
+        const wrong = structuredClone(good.facts[3]);
+        wrong.period = period;
+        wrong.id = stableFactId(wrong);
+        validateSavedFacts({ version: 4, documentType: 'other', facts: [wrong], unverified: [] });
+        expect(saved([wrong], pages).facts).toEqual([]);
+        expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual(
+          []
+        );
+      }
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse(amounts, pages, 'earnings'))
+        .mockResolvedValueOnce(candidateResponse([rate], pages, 'earnings'));
+      const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+      expect(generateText).toHaveBeenCalledTimes(inherited === period ? 2 : 1);
+      expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
+    }
+  );
+  function yen(raw: string) {
+    const pages = [
+      textPage(`会社名 株式会社テスト\n1. ${period} 取引概要\n取得価額の総額は${raw}です。`),
+    ];
+    const f = numberCandidate(pages[0], '取得価額の総額', 100, period);
+    f.unit = '万円';
+    f.semantics.scope = f.semantics.basis = null;
+    return { pages, f };
+  }
+  it.each(['100万円', '100 万 円'])(
+    '既存の万円単位を値・原位置を変えず候補化し保存する: %s',
+    (raw) => {
+      const { pages, f } = yen(raw);
+      const q = proseQuantities(pages[0].blocks[2]);
+      expect(q).toHaveLength(1);
+      expect(q[0].raw).toBe(raw);
+      const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+      expect(good.unverified).toEqual([]);
+      expect(good.facts).toHaveLength(1);
+      expect(good.facts[0]).toMatchObject({ value: 100, unit: '万円' });
+      expect(saved(good.facts, pages).facts).toEqual(good.facts);
+    }
+  );
+  it('万円範囲の全断片を保持する', () => {
+    const { pages, f } = yen('100 ～ 200 万円');
+    f.kind = 'range';
+    f.value = null;
+    f.quantity = {
+      raw: '100 ～ 200 万円'.normalize('NFKC'),
+      decimal: null,
+      lower: '100',
+      upper: '200',
+      sourceIds: [],
+    };
+    const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts[0].quantity).toMatchObject({ lower: '100', upper: '200' });
+    expect(saved(good.facts, pages).facts).toEqual(good.facts);
+  });
+  it('唯一の重要額の誤数量参照を1回修復して万円を表示する', async () => {
+    const { pages, f } = yen('100万円');
+    const wrong = JSON.parse(candidateResponse([f], pages));
+    wrong.candidates[0].source.quantityId = 'missing';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(JSON.stringify(wrong))
+      .mockResolvedValueOnce(candidateResponse([f], pages));
+    const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(renderFacts(result.facts)).toContain('取得価額の総額: 100万円');
+    expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
+  });
+});

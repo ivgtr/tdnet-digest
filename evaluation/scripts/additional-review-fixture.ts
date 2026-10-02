@@ -61,6 +61,7 @@ function textPdf(texts: string[]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
+  if (mode === 'inherited-outlook-yen') return inheritedOutlookYenFixture();
   if (mode === 'prose-disclosures') return proseDisclosuresFixture();
   if (
     [
@@ -513,5 +514,83 @@ async function proseDisclosuresFixture() {
     legacyRendered: renderFacts(legacy),
     warnings: [],
     expected: ['売上高: 100百万円', '売上高営業利益率: 10%', body, '個別', 'IFRS'],
+  };
+}
+
+async function inheritedOutlookYenFixture() {
+  const period = '2027年3月期';
+  const historical = '2026年3月期';
+  const metrics = ['売上高', '営業利益', '当期純利益'];
+  const body = '親会社株主に帰属する当期純損失は概算額100万円となる見通しではありません。';
+  const pdf = textPdf([
+    `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${metrics.map((m) => `${period}の${m}は100万円です。`).join('\n')}`,
+    `1. ${historical} 経営成績\n範囲 個別\n会計基準 IFRS\n売上高営業利益率は10%です。`,
+    `2. 損失予想の背景\n範囲 個別\n会計基準 IFRS\n${body}`,
+  ]);
+  const document = await getDocument({ data: pdf.slice(), disableFontFace: true }).promise;
+  const pages = [];
+  for (let n = 1; n <= document.numPages; n++) {
+    const p = await document.getPage(n);
+    pages.push(extractPageLayout((await p.getTextContent()).items, n));
+    p.cleanup();
+  }
+  await document.destroy();
+  const facts = metrics.map((m) => {
+    const f = numberCandidate(pages[0], m, 100, period);
+    f.unit = '万円';
+    return f;
+  });
+  const rate = numberCandidate(pages[1], '売上高営業利益率', 10, historical);
+  rate.unit = '%';
+  rate.semantics.metricKind = 'rate';
+  const background = numberCandidate(pages[2], '純損失', 100, period);
+  background.kind = 'event';
+  background.label = background.statement = background.quote;
+  background.value = background.unit = background.valueKind = background.period = null;
+  background.semantics.periodKind = 'none';
+  background.semantics.metricKind = 'none';
+  background.semantics.state = 'forecast';
+  background.semantics.polarity = 'negative';
+  background.semantics.qualifiers = ['概算額'];
+  for (const f of [rate, background]) {
+    f.semantics.scope = '個別';
+    f.semantics.basis = 'IFRS';
+  }
+  facts.push(rate, background);
+  const context = buildDocumentContext(pages);
+  facts.forEach((f, i) => {
+    const binding = bindingFor(context, f.evidence.kind === 'prose' ? f.evidence.blockId : '');
+    f.id = `f${i + 1}`;
+    f.evidence.contextIds = binding.contextIds;
+    f.evidence.qualifierIds = binding.qualifierIds;
+    f.evidence.scopeIds = resolveScopeIds(binding, f.semantics, true);
+  });
+  const checked = parseFactSummary(
+    JSON.stringify({ version: 4, documentType: 'earnings', facts, unverified: [] }),
+    'earnings',
+    pages
+  );
+  if (checked.unverified.length || checked.facts.length !== 5)
+    throw Error(JSON.stringify(checked.unverified));
+  const wrong = structuredClone(facts);
+  wrong[0].semantics.metricKind = 'count';
+  wrong[4].semantics.state = 'unspecified';
+  const first = candidateResponse(wrong, pages, 'earnings');
+  if (reviewCandidates(first, 'earnings', pages).facts.length !== 3)
+    throw Error('initial wrong meaning was not rejected');
+  const legacy = structuredClone(checked);
+  legacy.facts[4].semantics.state = 'unspecified';
+  legacy.facts[4].id = stableFactId(legacy.facts[4]);
+  return {
+    pdf,
+    pages,
+    documentType: 'earnings' as DocumentType,
+    repairRequired: true,
+    first,
+    repair: candidateResponse([facts[0], facts[4]], pages, 'earnings'),
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [],
+    expected: ['売上高: 100万円', '売上高営業利益率: 10%', historical, body, '個別', 'IFRS'],
   };
 }
