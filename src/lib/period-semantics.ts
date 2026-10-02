@@ -1,19 +1,29 @@
 import type { VerifiedFact } from './fact-contract';
 const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，]/g, '');
 
+/** Supported source aliases share one meaning; generated fact periods remain canonical. */
+export function reportingPeriodText(text: string): string {
+  return compact(text).replace(/([1-4])Q/gi, '第$1四半期');
+}
+export function reportingPeriodShape(text: string): string | null {
+  const shape = reportingPeriodText(text).match(/第[1-4]四半期|中間期|通期/)?.[0];
+  return shape === '中間期' ? '第2四半期' : (shape ?? null);
+}
+
 export function periodKind(
   period: string | null,
   source: string
 ): VerifiedFact['semantics']['periodKind'] {
   if (!period) return 'none';
-  const text = compact(period),
-    context = compact(source);
+  const text = reportingPeriodText(period),
+    context = reportingPeriodText(source);
   if (/^(?:翌|次|当|前)連結会計年度$/.test(text)) return 'relativeYear';
   if (/20\d{2}年\d{1,2}月\d{1,2}日/.test(text))
     return /[～〜~-]|から/.test(text) ? 'interval' : 'eventDate';
   if (/^20\d{2}年\d{1,2}月(?:度)?$/.test(text)) return 'month';
-  const q =
-    (text + context).match(/第([1-4])四半期/)?.[1] ?? (/中間期/.test(text + context) ? '2' : null);
+  const shape = reportingPeriodShape(text) ?? reportingPeriodShape(context);
+  if (shape === '通期') return 'fullYear';
+  const q = shape?.match(/第([1-4])四半期/)?.[1];
   if (q) {
     if (/単独/.test(context)) return `standaloneQ${q}` as VerifiedFact['semantics']['periodKind'];
     if (/累計|中間期/.test(context) || q === '1')
@@ -84,7 +94,7 @@ export function matchesReportingPeriod(
 ): boolean {
   const text = compact(fact.period ?? '');
   if (text.match(/20\d{2}年\d{1,2}月期/)?.[0] !== period) return false;
-  const q = quarter?.match(/第([1-4])四半期/)?.[1] ?? (quarter === '中間期' ? '2' : null);
+  const q = reportingPeriodShape(quarter ?? '')?.match(/第([1-4])四半期/)?.[1];
   if (!q) return fact.semantics.periodKind === 'fullYear';
   return (
     (text.match(/第([1-4])四半期/)?.[1] ?? (/中間期/.test(text) ? '2' : null)) === q &&

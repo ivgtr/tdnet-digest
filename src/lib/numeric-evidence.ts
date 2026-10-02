@@ -1,4 +1,9 @@
-import { explicitCalendarAxisMatches, numericValueKind } from './period-semantics';
+import {
+  explicitCalendarAxisMatches,
+  numericValueKind,
+  reportingPeriodShape,
+  reportingPeriodText,
+} from './period-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
 import { declaredQuantityUnit, isUncaptionedUnit } from './quantity';
@@ -565,14 +570,12 @@ export function verifyPeriodAndKind(
     )
       fail('対象年度・決算月');
   }
-  const shape = (text: string) => text.match(/第[1-4]四半期|中間期|通期/)?.[0] ?? null;
-  const sourceShape = shape(axis) ?? shape(context),
-    claimedShape = shape(target);
+  const sourceShape = reportingPeriodShape(axis) ?? reportingPeriodShape(context),
+    claimedShape = reportingPeriodShape(target);
   if (
     sourceShape &&
     sourceShape !== claimedShape &&
-    !(sourceShape === '通期' && !claimedShape && fiscal.test(target)) &&
-    !(sourceShape === '中間期' && claimedShape === '第2四半期')
+    !(sourceShape === '通期' && !claimedShape && fiscal.test(target))
   )
     fail('対象期間');
   if (!sourceShape && claimedShape && !(claimedShape === '通期' && fiscal.test(local)))
@@ -593,7 +596,9 @@ export function verifyProsePeriod(claim: NumericClaim, source: string, context: 
   const own = axes(source);
   const applicable = own.length ? own : axes(context);
   const shapes = [
-    ...new Set(compact(own.length ? source : context).match(/第[1-4]四半期|中間期|通期/g) ?? []),
+    ...new Set(
+      reportingPeriodText(own.length ? source : context).match(/第[1-4]四半期|中間期|通期/g) ?? []
+    ),
   ];
   if (applicable.length > 1 || shapes.length > 1)
     throw new Error('STRUCTURE:本文数量に複数の期間があり対応を一意に証明できません');
@@ -649,7 +654,7 @@ export function verifyProseQuantity(
     ))
       prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
     prefix = prefix.replace(
-      /^20\d{2}年\d{1,2}月(?:期(?:(?:第[1-4]四半期|中間期)(?:\(?(?:累計|単独)\)?(?:期間)?)?|通期)?|\d{1,2}日|度)?(?:の|は|における)?/,
+      /^20\d{2}年\d{1,2}月(?:期(?:(?:第[1-4]四半期|[1-4]Q|中間期)(?:\(?(?:累計|単独)\)?(?:期間)?)?|通期)?|\d{1,2}日|度)?(?:の|は|における)?/i,
       ''
     );
     for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))

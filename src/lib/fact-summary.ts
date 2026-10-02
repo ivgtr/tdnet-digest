@@ -203,11 +203,9 @@ export async function generateVerifiedFactSummary(
   const reserve = Math.min(20, pending.length);
   if (first.facts.length > 20 - reserve) {
     const missingIds = new Set(pending.map((s) => s.id));
-    // Importance is model-supplied: a detail can still satisfy a required slot.
-    // Remove only details whose absence creates no additional obligation.
+    // Importance is model-supplied. Remove only facts whose absence creates no obligation.
     for (const f of [...first.facts].reverse()) {
       if (first.facts.length <= 20 - reserve) break;
-      if (f.importance !== 'detail') continue;
       const remaining = first.facts.filter((fact) => fact !== f);
       const slots = coverageReport(documentType, pages, remaining, first.diagnostics, context);
       if (pendingSlots(slots).some((s) => !missingIds.has(s.id))) continue;

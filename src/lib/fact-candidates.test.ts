@@ -438,48 +438,53 @@ describe('生成専用候補と原文文脈の契約', () => {
       });
       return f;
     });
-  it('上限20件の末尾でdetailが必須を満たす場合も保持し、調整後のslotで修復する', async () => {
-    const source = buybackSource();
-    const initial = Array.from({ length: 19 }, (_, i) => {
-      const f = numberCandidate(source[0], `科目${i + 1}`, 100 + i);
-      f.importance = i === 0 ? 'key' : 'detail';
-      f.semantics.scope = f.semantics.basis = null;
-      return f;
-    });
-    const [count, amount] = buybackFacts(source);
-    count.importance = 'detail';
-    initial.push(count);
-    const first = reviewCandidates(
-      candidateResponse(initial, source, 'shareRepurchase'),
-      'shareRepurchase',
-      source
-    );
-    expect(first.facts).toHaveLength(20);
-    const countId = first.facts.find((f) => f.semantics.metricKind === 'count')!.id;
-    vi.mocked(generateText)
-      .mockReset()
-      .mockResolvedValueOnce(candidateResponse(initial, source, 'shareRepurchase'))
-      .mockResolvedValueOnce(candidateResponse([amount], source, 'shareRepurchase'));
-    const attempts: Array<{ slots?: ReturnType<typeof coverageReport>; confirmedIds?: string[] }> =
-      [];
-    const result = await generateVerifiedFactSummary(
-      config,
-      'shareRepurchase',
-      'source',
-      source,
-      (a) => {
-        attempts.push(a);
-      }
-    );
-    expect(result.facts.facts).toHaveLength(20);
-    expect(result.facts.facts.some((f) => f.id === countId)).toBe(true);
-    expect(attempts[0].confirmedIds).toContain(countId);
-    expect(attempts[0].slots?.find((s) => s.requirement.endsWith('count'))?.status).toBe(
-      'satisfied'
-    );
-    expect(attempts[1].slots?.every((s) => s.status === 'satisfied')).toBe(true);
-    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
-  });
+  it.each(['detail', 'key'] as const)(
+    '上限20件の補足が%sでも必須のdetailを保持し修復する',
+    async (importance) => {
+      const source = buybackSource();
+      const initial = Array.from({ length: 19 }, (_, i) => {
+        const f = numberCandidate(source[0], `科目${i + 1}`, 100 + i);
+        f.importance = i === 0 ? 'key' : importance;
+        f.semantics.scope = f.semantics.basis = null;
+        return f;
+      });
+      const [count, amount] = buybackFacts(source);
+      count.importance = 'detail';
+      initial.push(count);
+      const first = reviewCandidates(
+        candidateResponse(initial, source, 'shareRepurchase'),
+        'shareRepurchase',
+        source
+      );
+      expect(first.facts).toHaveLength(20);
+      const countId = first.facts.find((f) => f.semantics.metricKind === 'count')!.id;
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse(initial, source, 'shareRepurchase'))
+        .mockResolvedValueOnce(candidateResponse([amount], source, 'shareRepurchase'));
+      const attempts: Array<{
+        slots?: ReturnType<typeof coverageReport>;
+        confirmedIds?: string[];
+      }> = [];
+      const result = await generateVerifiedFactSummary(
+        config,
+        'shareRepurchase',
+        'source',
+        source,
+        (a) => {
+          attempts.push(a);
+        }
+      );
+      expect(result.facts.facts).toHaveLength(20);
+      expect(result.facts.facts.some((f) => f.id === countId)).toBe(true);
+      expect(attempts[0].confirmedIds).toContain(countId);
+      expect(attempts[0].slots?.find((s) => s.requirement.endsWith('count'))?.status).toBe(
+        'satisfied'
+      );
+      expect(attempts[1].slots?.every((s) => s.status === 'satisfied')).toBe(true);
+      expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    }
+  );
   it('根拠未解決の必須と別ページの既知必須が併存しても選択範囲全体を修復に渡す', async () => {
     const countLabel = '取得株数';
     const source = buybackSource(countLabel);
@@ -1107,11 +1112,9 @@ describe('生成専用候補と原文文脈の契約', () => {
         .mockResolvedValueOnce(candidateResponse(initial, [source], 'shareRepurchase'))
         .mockResolvedValueOnce(candidateResponse(repair, [source], 'shareRepurchase'));
       const run = generateVerifiedFactSummary(config, 'shareRepurchase', source.text, [source]);
-      if (importance === 'detail') {
-        const result = await run;
-        expect(result.facts.facts).toHaveLength(20);
-        expect(result.facts.unverified.join(' ')).toContain('CAPACITY');
-      } else await expect(run).rejects.toThrow('CAPACITY');
+      const result = await run;
+      expect(result.facts.facts).toHaveLength(20);
+      expect(result.facts.unverified.join(' ')).toContain('CAPACITY');
       expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
     }
   );

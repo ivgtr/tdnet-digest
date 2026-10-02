@@ -289,7 +289,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v51:openai:fixture:full';
+          const fingerprint = 'v52:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -344,7 +344,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v51 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v52 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -552,14 +552,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
       }
       if (reviewCase === 'semantic-ownership') {
-        assert.equal(checked.facts.length, 12);
+        assert.equal(checked.facts.length, 14);
         assert.equal(checked.facts.filter((f: VerifiedFact) => f.label === '販売台数').length, 1);
         assert.equal(
           checked.facts.find((f: VerifiedFact) => f.label === '中間配当金')?.quantity?.raw,
           '10円50銭'
         );
         assert.equal(
-          checked.facts.find((f: VerifiedFact) => f.quote.includes('取得できません'))?.semantics
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('取得しない'))?.semantics
             .polarity,
           'mixed'
         );
@@ -575,6 +575,22 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         assert.equal(interval?.period, '2026年4月1日～2026年4月30日');
         assert.equal(interval?.semantics.periodKind, 'interval');
         assert.equal(dividend?.semantics.state, 'forecast');
+        assert.equal(rate?.semantics.scope, '単体');
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('特別損失に計上する予定'))
+            ?.semantics.periodKind,
+          'fullYear'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.period === '2028年3月期通期')?.semantics
+            .periodKind,
+          'fullYear'
+        );
+        assert.equal(
+          trace.attempts[0].slots.find((s: any) => s.requirement.includes('損失の計上予定'))
+            ?.expected.periodKind,
+          'fullYear'
+        );
         assert.ok(
           !trace.attempts[0].slots.some(
             (s: any) => s.requirement.endsWith('当年営業利益率') && s.status !== 'satisfied'

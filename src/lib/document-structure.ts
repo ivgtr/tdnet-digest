@@ -28,6 +28,10 @@ export interface QuantityCell {
   height: number;
 }
 export const normalized = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+export const reportingScope = '非連結|個別|単体|連結';
+export function isPerformanceReportingTitle(text: string): boolean {
+  return new RegExp(`経営成績|損益計算書|(?:${reportingScope})業績`).test(normalized(text));
+}
 export const sameLine = (a: PdfSpan, b: PdfSpan) =>
   Math.abs(a.y - b.y) <= Math.min(a.height, b.height) * 0.3;
 
@@ -240,7 +244,8 @@ export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantit
       .filter((run) => {
         const text = normalized(run.map((s) => s.text).join(''));
         return (
-          !/20\d{2}年|経営成績|業績予想|配当の状況|決算短信|表示は|未満(?:切捨て|四捨五入)|単位[:：]|^(?:\(?連結\)?|\(?個別\)?)$/.test(
+          !isPerformanceReportingTitle(text) &&
+          !/20\d{2}年|業績予想|配当の状況|決算短信|表示は|未満(?:切捨て|四捨五入)|単位[:：]|^(?:\(?連結\)?|\(?個別\)?)$/.test(
             text
           ) &&
           (text === '年間配当金' ||
@@ -281,9 +286,8 @@ export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantit
         (run) =>
           run[0].y < Math.min(...metrics.map((s) => s.y)) &&
           value.y - run[0].y < value.height * 32 &&
-          /経営成績|連結業績|業績予想|配当(?:の状況|予想)|損益計算書/.test(
-            normalized(run.map((s) => s.text).join(''))
-          )
+          (isPerformanceReportingTitle(run.map((s) => s.text).join('')) ||
+            /業績予想|配当(?:の状況|予想)/.test(normalized(run.map((s) => s.text).join(''))))
       )
       .sort((a, b) => b[0].y - a[0].y)[0];
     if (!axes.length || !context) continue;

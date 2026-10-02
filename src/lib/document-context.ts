@@ -1,7 +1,12 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
-import { normalized, type TextBlock } from './document-structure';
+import {
+  normalized,
+  reportingScope,
+  isPerformanceReportingTitle,
+  type TextBlock,
+} from './document-structure';
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import { continuationFor, noteLinks, paragraphNoteLinks } from './document-links';
 
@@ -30,7 +35,6 @@ export interface DocumentContext {
   tableMappings: TableMapping[];
 }
 const unique = <T>(items: T[]) => [...new Set(items)];
-const reportingScope = '非連結|個別|単体|連結';
 const reportingBasis = '日本基準|IFRS|国際会計基準|米国基準';
 export function declaredSubjectsIn(block: TextBlock): string[] {
   return unique(
@@ -430,7 +434,8 @@ export function isFinancialUnit(
     .map((id) => pages.flatMap((p) => p.blocks).find((b) => b.id === id)?.text ?? '')
     .join('\n');
   return (
-    /経営成績|業績予想|今後の見通し|財政状態|損益計算書|貸借対照表|キャッシュ.*フロー/.test(
+    isPerformanceReportingTitle(titles + reportingUnitTitle(binding, pages)) ||
+    /業績予想|今後の見通し|財政状態|貸借対照表|キャッシュ.*フロー/.test(
       titles + reportingUnitTitle(binding, pages)
     ) ||
     (isReportingCoverUnit(binding, pages) &&

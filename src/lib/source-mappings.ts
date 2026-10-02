@@ -1,5 +1,5 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { normalized, tableReferenceHints } from './document-structure';
+import { normalized, tableReferenceHints, isPerformanceReportingTitle } from './document-structure';
 import { tableContinuations, continuationSpans } from './document-links';
 import { declaredQuantityUnit, parseExactQuantity, isUncaptionedUnit } from './quantity';
 export type TableMapping = ReturnType<typeof tableReferenceHints>[number];
@@ -68,12 +68,20 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
     } else {
       if (units.length !== axes.length || !left.length) continue;
       const caption = page.blocks
-        .filter((b) => b.y < top && /経営成績|財政状態|業績予想/.test(normalized(b.text)))
+        .filter(
+          (b) =>
+            b.y < top &&
+            (isPerformanceReportingTitle(b.text) || /財政状態|業績予想/.test(normalized(b.text)))
+        )
         .sort((a, b) => b.y - a.y)[0];
       const context =
         caption?.spanIds ??
         page.spans
-          .filter((s) => s.y < top && /経営成績|財政状態/.test(normalized(s.text)))
+          .filter(
+            (s) =>
+              s.y < top &&
+              (isPerformanceReportingTitle(s.text) || /財政状態/.test(normalized(s.text)))
+          )
           .map((s) => s.id);
       if (!context.length) continue;
       for (const [i, c] of units.entries())

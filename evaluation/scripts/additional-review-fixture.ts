@@ -612,6 +612,9 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   const current = period + '第3四半期累計';
   const interval = '2026年4月1日～2026年4月30日';
   const bounded = '取得価額は100百万円以内です。';
+  const modalStatement = '当社はAを取得しないが、Bを取得しました。';
+  const lossPlan = '当該額は2028年3月期に特別損失に計上する予定です。';
+  const annualForecast = '2028年3月期通期の売上高は100万円を見込んでおります。';
   const metrics = ['売上高', '営業利益', '当期純利益'];
   const body = '親会社株主に帰属する当期純損失は概算額100万円となる見通しはありません。';
   const texts = [
@@ -624,15 +627,17 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     `4. 配当の状況\n\t年間配当金\t期末配当金\n\t円\t円\n2027年3月期(予想)\t12\t12`,
   ];
   if (semanticOwnership) {
-    texts[0] = `${period} 第3四半期決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${current} 経営成績\n${metrics.map((m) => `${current}期間の${m}は100万円です。`).join('\n')}`;
-    texts[1] = `1. ${current} 経営成績\n範囲 個別\n会計基準 IFRS\n\t2026年3月期第3四半期累計\t${current}\n売上高営業利益率\t8%\t10%`;
+    texts[0] = `${period} 3Q決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${current} 経営成績\n${metrics.map((m) => `${current}期間の${m}は100万円です。`).join('\n')}`;
+    texts[1] = `1. ${current} 単体業績\n範囲 単体\n会計基準 IFRS\n\t2026年3月期第3四半期累計\t${current}\n売上高営業利益率\t8%\t10%`;
     texts[6] = `4. 配当の状況（予想）\n\t年間配当金\t期末配当金\n\t円\t円\n${period}\t12\t12`;
     texts.push(
       `5. ${period} 取引概要\n${bounded}`,
       `6. 経営成績\n\t販売件数\t人数\n\t件\t人\n${interval}\t100\t20`,
-      '7. 取引概要\n当社はAを取得できませんが、Bを取得しました。',
+      `7. 取引概要\n${modalStatement}`,
       `8. ${period} 配当の状況\n中間配当金は10円50銭です。`,
-      `9. ${period}中間期 販売状況\n販売台数は100台です。`
+      `9. ${period}中間期 販売状況\n販売台数は100台です。`,
+      `10. 今後の予定\n${lossPlan}`,
+      `11. 取引概要\n${annualForecast}`
     );
     texts[3] = `3. ${period} 販売状況\n販売数量は100千kWhです。`;
   }
@@ -688,7 +693,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   );
   if (semanticOwnership) rate.semantics.periodKind = 'cumulativeQ3';
   rate.semantics.metricKind = 'rate';
-  rate.semantics.scope = '個別';
+  rate.semantics.scope = semanticOwnership ? '単体' : '個別';
   rate.semantics.basis = 'IFRS';
   const background = numberCandidate(pages[2], '純損失', 100, period);
   background.kind = 'event';
@@ -741,6 +746,19 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     alias.semantics.periodKind = 'cumulativeQ2';
     alias.semantics.scope = alias.semantics.basis = null;
     facts.push(modal, yen, alias);
+    const planned = numberCandidate(pages[12], '特別損失', 100, '2028年3月期');
+    planned.kind = 'event';
+    planned.label = planned.statement = planned.quote;
+    planned.value = planned.unit = planned.valueKind = null;
+    planned.semantics.metricKind = 'none';
+    planned.semantics.state = 'planned';
+    planned.semantics.scope = '連結';
+    planned.semantics.basis = '日本基準';
+    const forecast = numberCandidate(pages[13], '売上高', 100, '2028年3月期通期');
+    forecast.unit = '万円';
+    forecast.valueKind = forecast.semantics.state = 'forecast';
+    forecast.semantics.scope = forecast.semantics.basis = null;
+    facts.push(planned, forecast);
   }
   facts.forEach((f, i) => {
     const binding = bindingFor(
@@ -773,13 +791,14 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     f.semantics.scope = f.semantics.basis = null;
     firstFacts[6] = f;
     wrong[9].semantics.polarity = 'affirmative';
+    wrong[12].semantics.periodKind = 'relativeYear';
     // firstFacts already shares wrong[9]; an equivalent period spelling adds no fact.
     const alias = structuredClone(facts[11]);
     alias.period = period + '第2四半期';
     firstFacts.push(alias);
   }
   const first = candidateResponse(firstFacts, pages, 'earnings');
-  if (reviewCandidates(first, 'earnings', pages).facts.length !== (semanticOwnership ? 7 : 4))
+  if (reviewCandidates(first, 'earnings', pages).facts.length !== (semanticOwnership ? 8 : 4))
     throw Error('initial wrong meaning was not rejected');
   const legacy = structuredClone(checked);
   legacy.facts[4].semantics.state = 'unspecified';
@@ -791,7 +810,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     repairRequired: true,
     first,
     repair: candidateResponse(
-      [facts[0], facts[4], facts[6], ...(semanticOwnership ? [facts[7], facts[9]] : [])],
+      [facts[0], facts[4], facts[6], ...(semanticOwnership ? [facts[7], facts[9], facts[12]] : [])],
       pages,
       'earnings'
     ),
@@ -806,7 +825,14 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
       body,
       semanticOwnership ? '販売数量: 100千kWh' : '販売数量: 100台',
       ...(semanticOwnership
-        ? ['中間配当金: 10.50円', '当社はAを取得できませんが、Bを取得しました。', '販売台数: 100台']
+        ? [
+            '中間配当金: 10.50円',
+            modalStatement,
+            '販売台数: 100台',
+            lossPlan,
+            annualForecast.replace('の売上高は100万円を見込んでおります。', ''),
+            '単体',
+          ]
         : []),
       '年間配当金: 12円',
       '個別',

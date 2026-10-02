@@ -8,7 +8,7 @@ const outlookForecastNegation =
 const passiveForecastNegation =
   /見込まれ(?:ません|ない|ず|て(?:おりません|いません|いない|おらず))/;
 const negativePredicate = new RegExp(
-  `(?:${passiveForecastNegation.source}|${outlookForecastNegation.source}|できない|できません|しておりません|しておらず|行っておりません|行っておらず|行っていません|行っていない|していません|していない|しません|行いません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない)`
+  `(?:${passiveForecastNegation.source}|${outlookForecastNegation.source}|できない|できません|しておりません|しておらず|行っておりません|行っておらず|行っていません|行っていない|していません|していない|しない|しません|行いません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない)`
 );
 // A negative forecast remains a forecast; denial of a plan cannot prove a plan.
 const negative = new RegExp(`${negativePredicate.source}|に(?:は)?(?:満たない|届かない|達しない)`);

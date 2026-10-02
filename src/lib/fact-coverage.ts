@@ -1,4 +1,10 @@
-import { numericValueKind, matchesReportingPeriod, periodKind } from './period-semantics';
+import {
+  numericValueKind,
+  matchesReportingPeriod,
+  periodKind,
+  reportingPeriodShape,
+  reportingPeriodText,
+} from './period-semantics';
 import { NET_PROFIT_METRIC } from './metric-semantics';
 import { assertionStates } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
@@ -25,6 +31,7 @@ import {
   applicableDeclarations,
   type DocumentContext,
 } from './document-context';
+import { isPerformanceReportingTitle } from './document-structure';
 import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
@@ -104,9 +111,7 @@ function isReportingMetricSource(
   if (state === 'actual' && isReportingCoverUnit(binding, pages)) return true;
   return state === 'forecast'
     ? /業績予想|今後の見通し/.test(title)
-    : state === 'actual' &&
-        !/予想|見通し/.test(title) &&
-        /経営成績|損益計算書|連結業績|個別業績/.test(title);
+    : state === 'actual' && !/予想|見通し/.test(title) && isPerformanceReportingTitle(title);
 }
 /** Prose must prove a direct, complete amount at the reporting source and period. */
 function reportingPeriodSource(axis: string, context: string, period: string): boolean {
@@ -181,7 +186,7 @@ function earningsReportingPeriod(pages: ExtractedPage[]) {
     ?.text.normalize('NFKC')
     .match(/(20\d{2}年\s*\d{1,2}月期)[^\n]*決算短信[^\n]*/);
   return title
-    ? { period: compact(title[1]), quarter: compact(title[0]).match(/第[1-4]四半期|中間期/)?.[0] }
+    ? { period: compact(title[1]), quarter: reportingPeriodShape(title[0]) ?? undefined }
     : null;
 }
 export function verifyCoverage(
@@ -700,6 +705,27 @@ export function coverageReport(
     const dateValues = [...new Set(dates.map((d) => d.date))];
     const explicitDate =
       !assertion && state === 'planned' && dateValues.length === 1 ? dateValues[0] : null;
+    // A populated repair constraint needs one source period, never a report-cover default.
+    const lossPeriods = /損失の計上予定/.test(requirement)
+      ? [
+          ...new Set(
+            resolvedIds.flatMap(
+              (id) =>
+                reportingPeriodText(captions.find((b) => b.id === id)?.text ?? '').match(
+                  /(?:翌|次|当|前)連結会計年度|20\d{2}年\d{1,2}月(?:期(?:第[1-4]四半期|中間期|通期)?(?:累計|単独)?|\d{1,2}日|度)?/g
+                ) ?? []
+            )
+          ),
+        ]
+      : [];
+    let lossPeriodKind: VerifiedFact['semantics']['periodKind'] | null = null;
+    if (lossPeriods.length === 1) {
+      try {
+        lossPeriodKind = periodKind(lossPeriods[0], lossPeriods[0]);
+      } catch {
+        /* The ordinary verifier still decides unsupported/ambiguous source meaning. */
+      }
+    }
     const expected = {
       kind: assertion
         ? 'event'
@@ -725,7 +751,7 @@ export function coverageReport(
         : /損失予想の背景/.test(requirement)
           ? 'none'
           : /計上予定/.test(requirement)
-            ? 'relativeYear'
+            ? lossPeriodKind
             : /対象月|KPI/.test(requirement)
               ? 'month'
               : null,
