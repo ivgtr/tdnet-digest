@@ -5,14 +5,25 @@ const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，]/g, ''
 export function reportingPeriodText(text: string): string {
   return compact(text).replace(/([1-4])Q/gi, '第$1四半期');
 }
+export function reportingPeriodShapes(text: string): string[] {
+  return [
+    ...new Set(
+      (reportingPeriodText(text).match(/第[1-4]四半期|中間期|通期/g) ?? []).map((shape) =>
+        shape === '中間期' ? '第2四半期' : shape
+      )
+    ),
+  ];
+}
 export function reportingPeriodShape(text: string): string | null {
-  const shape = reportingPeriodText(text).match(/第[1-4]四半期|中間期|通期/)?.[0];
-  return shape === '中間期' ? '第2四半期' : (shape ?? null);
+  const shapes = reportingPeriodShapes(text);
+  if (shapes.length > 1) throw new Error('PERIOD:異なる報告期間の形が混在しています');
+  return shapes[0] ?? null;
 }
 
 export function periodKind(
   period: string | null,
-  source: string
+  source: string,
+  inherited = ''
 ): VerifiedFact['semantics']['periodKind'] {
   if (!period) return 'none';
   const text = reportingPeriodText(period),
@@ -21,12 +32,14 @@ export function periodKind(
   if (/20\d{2}年\d{1,2}月\d{1,2}日/.test(text))
     return /[～〜~-]|から/.test(text) ? 'interval' : 'eventDate';
   if (/^20\d{2}年\d{1,2}月(?:度)?$/.test(text)) return 'month';
-  const shape = reportingPeriodShape(text) ?? reportingPeriodShape(context);
+  const shape =
+    reportingPeriodShape(text) ?? reportingPeriodShape(context) ?? reportingPeriodShape(inherited);
   if (shape === '通期') return 'fullYear';
   const q = shape?.match(/第([1-4])四半期/)?.[1];
   if (q) {
-    if (/単独/.test(context)) return `standaloneQ${q}` as VerifiedFact['semantics']['periodKind'];
-    if (/累計|中間期/.test(context) || q === '1')
+    const qualified = /累計|単独|中間期/.test(context) ? context : compact(inherited);
+    if (/単独/.test(qualified)) return `standaloneQ${q}` as VerifiedFact['semantics']['periodKind'];
+    if (/累計|中間期/.test(qualified) || q === '1')
       return `cumulativeQ${q}` as VerifiedFact['semantics']['periodKind'];
     throw new Error('PERIOD:累計・単独を確認できません');
   }

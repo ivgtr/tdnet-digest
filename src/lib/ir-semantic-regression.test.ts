@@ -81,7 +81,9 @@ describe('実PDFの意味を保った利用経路', () => {
     const missingPeriod = fact(0, 10);
     missingPeriod.period = null;
     missingPeriod.semantics.periodKind = 'none';
-    expect(parse(0, [missingPeriod]).unverified.join(' ')).toContain('相対年度');
+    const rejectedPeriod = parse(0, [missingPeriod]);
+    expect(rejectedPeriod.facts).toHaveLength(0);
+    expect(rejectedPeriod.unverified.join(' ')).toContain('PERIOD:');
     const missingBasis = structuredClone(expectations[0].facts);
     missingBasis[10].semantics.basis = null;
     expect(() => parse(0, missingBasis, true)).toThrow('計上予定');

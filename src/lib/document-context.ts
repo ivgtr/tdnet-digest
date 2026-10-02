@@ -1,9 +1,11 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
+import { reportingPeriodText } from './period-semantics';
 import {
   normalized,
   reportingScope,
+  reportingScopeHeading,
   isPerformanceReportingTitle,
   type TextBlock,
 } from './document-structure';
@@ -66,10 +68,10 @@ export function headingLevel(block: TextBlock): number | null {
   return null;
 }
 function captionText(block: TextBlock): string {
-  return normalized(block.text)
+  return reportingPeriodText(block.text)
     .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
-    .replace(/^20\d{2}年\d{1,2}月期(?:(?:第[1-4]四半期|中間期|通期)|\(中間期\))*(?:の)?/, '')
-    .replace(/^(?:[1-4]Q|第[1-4]四半期(?:\(中間期\))?)(?=決算短信)/i, '');
+    .replace(/^20\d{2}年\d{1,2}月期(?:の)?/, '')
+    .replace(/^(?:第[1-4]四半期|中間期|通期|\((?:第[1-4]四半期|中間期|通期)\))+(?:の)?/, '');
 }
 function isReportingCover(block: TextBlock): boolean {
   return /^(?:四半期|中間)?決算短信/.test(captionText(block));
@@ -107,7 +109,7 @@ function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value
   } else if (headingLevel(block) !== null) {
     const scope = caption.match(
       new RegExp(
-        `^\\(?(${reportingScope})(?:累計期間)?(?:の)?(?:経営成績|業績|財政状態|財務諸表|損益計算書|貸借対照表|キャッシュ.*フロー)`
+        `^\\(?${reportingScopeHeading}(?:経営成績|業績|財政状態|財務諸表|損益計算書|貸借対照表|キャッシュ.*フロー)`
       )
     )?.[1];
     if (scope) attributes.push({ role: 'scope', value: scope });

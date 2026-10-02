@@ -334,7 +334,7 @@ function compose(
           axis,
           applicableText
         );
-      if (meaning.periodKind !== periodKind(period, axis + applicableText))
+      if (meaning.periodKind !== periodKind(period, axis, applicableText))
         throw new Error('PERIOD:期間区分の不一致です');
       if (['actual', 'forecast', 'forecastBefore', 'forecastAfter'].includes(meaning.state))
         verifyPeriodAndKind(
@@ -355,21 +355,8 @@ function compose(
       attempt('state', () =>
         verifyAssertionState(meaning.state, block.text + '\n' + applicableText)
       );
-  } else
-    attempt('period', () => {
-      if (meaning.periodKind !== periodKind(period, block.text))
-        throw new Error('PERIOD:出来事の期間区分が不一致です');
-      const relative = [
-        ...new Set(
-          block.text
-            .normalize('NFKC')
-            .replace(/\s/g, '')
-            .match(/(?:翌|次|当|前)連結会計年度/g) ?? []
-        ),
-      ];
-      if (relative.length > 1 || (relative.length === 1 && period !== relative[0]))
-        throw new Error('PERIOD:原文の相対年度が欠落・不一致です');
-    });
+  }
+  // Event periods are proved once by validateFact, also used for saved facts.
   if (!numeric) attempt('state', () => verifyAssertionState(meaning.state, block.text));
   attempt('polarity', () => {
     if (

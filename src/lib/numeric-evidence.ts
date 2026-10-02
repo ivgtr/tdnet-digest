@@ -2,7 +2,7 @@ import {
   explicitCalendarAxisMatches,
   numericValueKind,
   reportingPeriodShape,
-  reportingPeriodText,
+  reportingPeriodShapes,
 } from './period-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
@@ -595,11 +595,7 @@ export function verifyProsePeriod(claim: NumericClaim, source: string, context: 
   ];
   const own = axes(source);
   const applicable = own.length ? own : axes(context);
-  const shapes = [
-    ...new Set(
-      reportingPeriodText(own.length ? source : context).match(/第[1-4]四半期|中間期|通期/g) ?? []
-    ),
-  ];
+  const shapes = reportingPeriodShapes(own.length ? source : context);
   if (applicable.length > 1 || shapes.length > 1)
     throw new Error('STRUCTURE:本文数量に複数の期間があり対応を一意に証明できません');
   const target = axes(claim.period);

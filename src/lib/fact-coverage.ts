@@ -3,10 +3,9 @@ import {
   matchesReportingPeriod,
   periodKind,
   reportingPeriodShape,
-  reportingPeriodText,
 } from './period-semantics';
 import { NET_PROFIT_METRIC } from './metric-semantics';
-import { assertionStates } from './assertion-semantics';
+import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
@@ -27,11 +26,12 @@ import {
   isFinancialUnit,
   reportingUnitTitle,
   isReportingCoverUnit,
+  headingLevel,
   verifyScopeEvidence,
   applicableDeclarations,
   type DocumentContext,
 } from './document-context';
-import { isPerformanceReportingTitle } from './document-structure';
+import { isPerformanceReportingTitle, reportingScopeHeading } from './document-structure';
 import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
@@ -116,10 +116,27 @@ function isReportingMetricSource(
 /** Prose must prove a direct, complete amount at the reporting source and period. */
 function reportingPeriodSource(axis: string, context: string, period: string): boolean {
   return matchesReportingPeriod(
-    { period, semantics: { periodKind: periodKind(period, axis + context) } },
+    { period, semantics: { periodKind: periodKind(period, axis, context) } },
     period.match(/20\d{2}年\d{1,2}月期/)?.[0] ?? '',
     period.match(/第[1-4]四半期|中間期/)?.[0]
   );
+}
+/** A forecast heading declares an obligation; a forecast mentioned in prose does not. */
+function declaredForecastPeriod(pages: ExtractedPage[]): string | null {
+  const title = new RegExp(
+    `(20\\d{2}年\\d{1,2}月期)(?:の)?(?:通期)?(?:${reportingScopeHeading})?業績予想`
+  );
+  for (const block of pages.flatMap((p) => p.blocks)) {
+    const text = compact(block.text);
+    if (
+      headingLevel(block) === null &&
+      !/^20\d{2}年\d{1,2}月期.*業績予想について説明(?:します|いたします)。?$/.test(text)
+    )
+      continue;
+    const match = text.match(title);
+    if (match) return match[1];
+  }
+  return null;
 }
 function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, period: string) {
   return pages.flatMap((page) =>
@@ -255,7 +272,7 @@ export function verifyCoverage(
       );
     for (const metric of ['revenue', 'operatingProfit', 'netProfit'])
       if (!has(metric, 'actual', period)) missing.push(`COVERAGE:当年決算実績の重要指標 ${metric}`);
-    const forecast = source.match(/(20\d{2}年\d{1,2}月期)(?:の)?(?:通期)?(?:連結)?業績予想/);
+    const forecast = declaredForecastPeriod(pages);
     if (
       forecast &&
       !facts.some(
@@ -266,7 +283,7 @@ export function verifyCoverage(
       )
     ) {
       for (const metric of ['revenue', 'operatingProfit', 'netProfit'])
-        if (!has(metric, 'forecast', forecast[1]))
+        if (!has(metric, 'forecast', forecast))
           missing.push(`COVERAGE:通期予想の重要指標 ${metric}`);
     }
     const marginPeriod = period + (reportQuarter ?? '');
@@ -294,13 +311,13 @@ export function verifyCoverage(
           /^(?:1|１)株当たり当期純利益/.test(f.label) &&
           f.semantics.metricKind === 'perShare' &&
           f.valueKind === 'forecast' &&
-          compact(f.period ?? '').includes(forecast[1])
+          compact(f.period ?? '').includes(forecast)
       )
     )
       missing.push('COVERAGE:通期予想の1株当たり利益');
     if (/配当の状況/.test(source)) {
       const reported = reportedDividends(allPages, pages);
-      const relevant = reported.filter((d) => d.period === period || d.period === forecast?.[1]);
+      const relevant = reported.filter((d) => d.period === period || d.period === forecast);
       const forecasts = relevant.filter((d) => d.state === 'forecast');
       const targets = forecasts.length
         ? forecasts
@@ -356,12 +373,7 @@ export function verifyCoverage(
       );
     const plannedLossBlocks = pages
       .flatMap((p) => p.blocks)
-      .filter(
-        (b) =>
-          /特別損失に計上[^。]*予定/.test(compact(b.text)) &&
-          assertionStates(b.text).length === 1 &&
-          assertionStates(b.text)[0] === 'planned'
-      );
+      .filter((b) => isLossRecordingPlan(b.text));
     const plannedAttributes = attributesFor(plannedLossBlocks);
     if (
       plannedLossBlocks.length > 0 &&
@@ -384,7 +396,7 @@ export function verifyCoverage(
       );
   }
   if (type === 'earningsRevision' && /前回|修正前/.test(source) && /今回|修正後/.test(source)) {
-    const report = source.match(/(20\d{2}年\d{1,2}月期)(?:通期)?(?:連結|個別)?業績予想/)?.[1];
+    const report = declaredForecastPeriod(pages);
     if (!report) throw new Error('COVERAGE:予想修正の報告対象期を確認できません');
     const issuer = pages
       .find((p) => p.pageNumber === 1)
@@ -653,6 +665,7 @@ export function coverageReport(
           .filter(
             (b) =>
               predicate.test(normalized(b.text)) &&
+              (!/損失の計上予定/.test(requirement) || isLossRecordingPlan(b.text)) &&
               (!/損失予想の背景/.test(requirement) ||
                 (/概算額/.test(b.text) && assertionStates(b.text).includes('forecast')))
           )
@@ -706,20 +719,16 @@ export function coverageReport(
     const explicitDate =
       !assertion && state === 'planned' && dateValues.length === 1 ? dateValues[0] : null;
     // A populated repair constraint needs one source period, never a report-cover default.
-    const lossPeriods = /損失の計上予定/.test(requirement)
-      ? [
-          ...new Set(
-            resolvedIds.flatMap(
-              (id) =>
-                reportingPeriodText(captions.find((b) => b.id === id)?.text ?? '').match(
-                  /(?:翌|次|当|前)連結会計年度|20\d{2}年\d{1,2}月(?:期(?:第[1-4]四半期|中間期|通期)?(?:累計|単独)?|\d{1,2}日|度)?/g
-                ) ?? []
-            )
-          ),
-        ]
+    const lossPeriodGroups = /損失の計上予定/.test(requirement)
+      ? resolvedIds.map((id) => lossRecordingPeriods(captions.find((b) => b.id === id)?.text ?? ''))
       : [];
+    const lossPeriods = [...new Set(lossPeriodGroups.flat())];
     let lossPeriodKind: VerifiedFact['semantics']['periodKind'] | null = null;
-    if (lossPeriods.length === 1) {
+    if (
+      lossPeriodGroups.length &&
+      lossPeriodGroups.every((p) => p.length === 1) &&
+      lossPeriods.length === 1
+    ) {
       try {
         lossPeriodKind = periodKind(lossPeriods[0], lossPeriods[0]);
       } catch {

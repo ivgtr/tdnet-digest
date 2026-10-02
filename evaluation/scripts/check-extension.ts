@@ -289,7 +289,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v52:openai:fixture:full';
+          const fingerprint = 'v53:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -344,7 +344,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v52 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v53 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -552,7 +552,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
       }
       if (reviewCase === 'semantic-ownership') {
-        assert.equal(checked.facts.length, 14);
+        assert.equal(checked.facts.length, 15);
         assert.equal(checked.facts.filter((f: VerifiedFact) => f.label === '販売台数').length, 1);
         assert.equal(
           checked.facts.find((f: VerifiedFact) => f.label === '中間配当金')?.quantity?.raw,
@@ -561,7 +561,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         assert.equal(
           checked.facts.find((f: VerifiedFact) => f.quote.includes('取得しない'))?.semantics
             .polarity,
-          'mixed'
+          'negative'
         );
         const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
         const bounded = checked.facts.find((f: VerifiedFact) =>
@@ -569,7 +569,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
         const interval = checked.facts.find((f: VerifiedFact) => f.label === '販売件数');
         const dividend = checked.facts.find((f: VerifiedFact) => f.label === '年間配当金');
-        assert.equal(rate?.semantics.periodKind, 'cumulativeQ3');
+        assert.equal(rate?.semantics.periodKind, 'cumulativeQ2');
         assert.equal(bounded?.kind, 'event');
         assert.equal(bounded?.value, null);
         assert.equal(interval?.period, '2026年4月1日～2026年4月30日');
@@ -589,7 +589,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         assert.equal(
           trace.attempts[0].slots.find((s: any) => s.requirement.includes('損失の計上予定'))
             ?.expected.periodKind,
-          'fullYear'
+          undefined
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('2029年3月期の業績予想を参照'))
+            ?.period,
+          null
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('取得しないことを決定'))
+            ?.semantics.state,
+          'decided'
         );
         assert.ok(
           !trace.attempts[0].slots.some(
@@ -642,11 +652,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .find((f: any) => /I_list_|fixture-list/.test(f.url()))!
       .url();
     await page.reload();
+    // Reload resets the list date. Restore the tested date before waiting for its table.
+    await page.locator('#main_list').waitFor({ state: 'attached', timeout: 20000 });
+    const listFrame = await (await page.locator('#main_list').elementHandle()).contentFrame();
+    assert.ok(listFrame, 'reloaded disclosure iframe is available');
+    await listFrame.goto(listUrl);
     await frame.locator('#main-list-table').waitFor({ timeout: 20000 });
-    await page
-      .frames()
-      .find((f: any) => /I_list_|fixture-list/.test(f.url()))!
-      .goto(listUrl);
     await row.getByRole('button', { name: '表示', exact: true }).click({ timeout: 20000 });
     await summary
       .getByRole('heading', { name: '確認できた事実', exact: true })

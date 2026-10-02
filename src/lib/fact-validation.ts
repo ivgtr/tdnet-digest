@@ -1,4 +1,4 @@
-import { periodKind } from './period-semantics';
+import { periodKind, reportingPeriodShape, explicitCalendarAxisMatches } from './period-semantics';
 export { periodKind } from './period-semantics';
 import {
   declaredSubjectsIn,
@@ -7,7 +7,12 @@ import {
   verifyScopeEvidence,
   isFinancialUnit,
 } from './document-context';
-import { assertionPolarity, verifyAssertionState } from './assertion-semantics';
+import {
+  assertionPolarity,
+  verifyAssertionState,
+  isLossRecordingPlan,
+  lossRecordingPeriods,
+} from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
 import {
@@ -595,7 +600,7 @@ export function validateFact(
           fail('PERIOD:日付の役割が不一致です');
       }
     }
-    if (fact.semantics.periodKind !== periodKind(fact.period, (axis || source) + context))
+    if (fact.semantics.periodKind !== periodKind(fact.period, axis || source, context))
       fail('PERIOD:期間区分の不一致');
     if (fact.semantics.metricKind !== metricKind(fact.label, fact.unit))
       fail('METRIC:量の種類の不一致');
@@ -609,23 +614,48 @@ export function validateFact(
         'STATE:planned/decided/contracted/completed/unspecifiedではvalueKind=null。財務実績・予想だけはstateと同じvalueKindが必要です'
       );
   } else {
-    const relativePeriods = [
-      ...new Set(normalized(source).match(/(?:翌|次|当|前)連結会計年度/g) ?? []),
-    ];
-    if (relativePeriods.length > 1)
-      fail('PERIOD:複数の相対年度を含む段落は単一期間として確定できません');
-    if (relativePeriods.length === 1 && normalized(fact.period ?? '') !== relativePeriods[0])
-      fail(
-        `PERIOD:原文の相対年度が欠落・不一致です。period=${relativePeriods[0]}、periodKind=relativeYearが必要です`
-      );
-    if (fact.period && new Set(datedStates(source).map((d) => d.date)).size > 1)
-      fail('PERIOD:複数の日付役割を含む段落はperiod=nullとし、全日付をdateRolesへ保持します');
-    if (fact.period && !normalized(local).includes(normalized(fact.period)))
-      fail('PERIOD:出来事の対象期間の根拠がありません');
-    if (fact.semantics.periodKind !== periodKind(fact.period, local))
-      fail(
-        `PERIOD:出来事の期間区分が不一致。period=${fact.period}に対応する区分=${periodKind(fact.period, local)}`
-      );
+    const recordingPeriods = isLossRecordingPlan(source) ? lossRecordingPeriods(source) : null;
+    if (recordingPeriods !== null) {
+      if (recordingPeriods.length > 1)
+        fail('PERIOD:計上予定に複数の対象期間があり単一期間を確定できません');
+      const target = recordingPeriods[0];
+      if (target) {
+        const kind = periodKind(target, target);
+        const sameAxis =
+          kind === 'relativeYear'
+            ? normalized(fact.period ?? '') === target
+            : !!fact.period && explicitCalendarAxisMatches(target, fact.period);
+        const sameShape =
+          kind === 'fullYear' ||
+          reportingPeriodShape(fact.period ?? '') === reportingPeriodShape(target);
+        if (
+          !sameAxis ||
+          !sameShape ||
+          fact.semantics.periodKind !== kind ||
+          periodKind(fact.period, target) !== kind
+        )
+          fail('PERIOD:計上する述語に対応する対象期間が欠落・不一致です');
+      } else if (fact.period !== null || fact.semantics.periodKind !== 'none')
+        fail('PERIOD:計上予定との対応を証明できない期間を付与できません');
+    } else {
+      const relativePeriods = [
+        ...new Set(normalized(source).match(/(?:翌|次|当|前)連結会計年度/g) ?? []),
+      ];
+      if (relativePeriods.length > 1)
+        fail('PERIOD:複数の相対年度を含む段落は単一期間として確定できません');
+      if (relativePeriods.length === 1 && normalized(fact.period ?? '') !== relativePeriods[0])
+        fail(
+          `PERIOD:原文の相対年度が欠落・不一致です。period=${relativePeriods[0]}、periodKind=relativeYearが必要です`
+        );
+      if (fact.period && new Set(datedStates(source).map((d) => d.date)).size > 1)
+        fail('PERIOD:複数の日付役割を含む段落はperiod=nullとし、全日付をdateRolesへ保持します');
+      if (fact.period && !normalized(local).includes(normalized(fact.period)))
+        fail('PERIOD:出来事の対象期間の根拠がありません');
+      if (fact.semantics.periodKind !== periodKind(fact.period, source, context + notes))
+        fail(
+          `PERIOD:出来事の期間区分が不一致。period=${fact.period}に対応する区分=${periodKind(fact.period, source, context + notes)}`
+        );
+    }
     if (fact.semantics.metricKind !== 'none') fail('METRIC:出来事を数量の種類へ変換できません');
     if (fact.period && fact.semantics.periodKind === 'eventDate') {
       const date = normalized(fact.period).match(/20\d{2}年\d{1,2}月\d{1,2}日/)?.[0];

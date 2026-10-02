@@ -1,5 +1,6 @@
 import type { FactSemantics } from './fact-contract';
 import { normalized } from './document-structure';
+import { reportingPeriodText } from './period-semantics';
 
 const passiveForecast = /見込まれ(?:る|ます|て(?:いる|います|おります))/;
 const outlookForecast = /(?:となる|の)見通し(?:です|であります|である)/;
@@ -91,12 +92,18 @@ export function verifyQuantityAssertion(suffix: string): void {
 export function assertionStates(text: string): FactSemantics['state'][] {
   const states = new Set<FactSemantics['state']>();
   for (const clause of assertionClauses(text)) {
-    if (passiveForecastNegation.test(clause) || outlookForecastNegation.test(clause))
+    const negations = [...clause.matchAll(new RegExp(negativePredicate.source, 'g'))];
+    const lastNegative = negations[negations.length - 1];
+    // The embedded negative ends at its nominal/quoted complement. Only the
+    // outer predicate proves state; a negated outer predicate proves no action.
+    const outer = lastNegative
+      ? clause
+          .slice(lastNegative.index! + lastNegative[0].length)
+          .match(/^(?:ことを|ことに|方針を|と)(.+)$/)?.[1]
+      : undefined;
+    if (!outer && (passiveForecastNegation.test(clause) || outlookForecastNegation.test(clause)))
       states.add('forecast');
-    const positive = clause.replace(
-      new RegExp(`[^、;]*(?:${negativePredicate.source})[^、;]*`, 'g'),
-      ''
-    );
+    const positive = lastNegative ? (outer ?? '') : clause;
     if (!positive) continue;
     if (
       /予定|取得する株式|株式の取得価額|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります/.test(
@@ -117,6 +124,24 @@ export function assertionStates(text: string): FactSemantics['state'][] {
     if (/計上(?:して)?おります|計上しました/.test(positive)) states.add('actual');
   }
   return [...states];
+}
+
+/** A loss period must modify recording, not another assertion in the same block. */
+export function lossRecordingPeriods(text: string): string[] {
+  const period =
+    '(?:翌|次|当|前)連結会計年度|20\\d{2}年\\d{1,2}月(?:期(?:第[1-4]四半期|中間期|通期)?(?:\\((?:第[1-4]四半期|中間期)\\))?(?:\\(?(?:累計|単独)\\)?)?|\\d{1,2}日|度)?';
+  const recording = new RegExp(
+    `(${period})(?:に(?:おいて)?|の(?:連結)?財務諸表において|の)(?:は|、)?(?:当該(?:額|費用)(?:を|は))?特別損失に計上(?:する)?予定`,
+    'g'
+  );
+  return [...new Set([...reportingPeriodText(text).matchAll(recording)].map((m) => m[1]))];
+}
+export function isLossRecordingPlan(text: string): boolean {
+  return (
+    /特別損失に計上[^。]*予定/.test(normalized(text)) &&
+    assertionStates(text).length === 1 &&
+    assertionStates(text)[0] === 'planned'
+  );
 }
 export function verifyAssertionState(state: FactSemantics['state'], text: string): void {
   const states = assertionStates(text);

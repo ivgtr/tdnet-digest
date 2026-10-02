@@ -29,8 +29,9 @@ export interface QuantityCell {
 }
 export const normalized = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
 export const reportingScope = '非連結|個別|単体|連結';
+export const reportingScopeHeading = `(${reportingScope})(?:累計期間)?(?:の)?`;
 export function isPerformanceReportingTitle(text: string): boolean {
-  return new RegExp(`経営成績|損益計算書|(?:${reportingScope})業績`).test(normalized(text));
+  return new RegExp(`経営成績|損益計算書|${reportingScopeHeading}業績`).test(normalized(text));
 }
 export const sameLine = (a: PdfSpan, b: PdfSpan) =>
   Math.abs(a.y - b.y) <= Math.min(a.height, b.height) * 0.3;
