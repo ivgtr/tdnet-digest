@@ -85,3 +85,13 @@ export function declaredQuantityUnit(raw: string): string | null {
   if (unit === '円銭') return '円';
   return isUnitToken(unit) ? unit : null;
 }
+/** Keep offsets in the NFKC source; whitespace separates quantity tokens, never digits. */
+export function proseQuantities(block: { id: string; text: string }) {
+  return [
+    ...block.text
+      .normalize('NFKC')
+      .matchAll(
+        /(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*[～〜~]\s*(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)?\s*(?:(?:百\s*万|千|億)?\s*円|[%％]|株|人|件|店舗|社|個|ドル|USD|EUR)/g
+      ),
+  ].map((m, i) => ({ id: `${block.id}:q${i + 1}`, raw: m[0], start: m.index }));
+}

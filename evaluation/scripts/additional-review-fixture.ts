@@ -61,6 +61,7 @@ function textPdf(texts: string[]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
+  if (mode === 'prose-disclosures') return proseDisclosuresFixture();
   if (
     [
       'semantics',
@@ -443,5 +444,74 @@ async function latestReviewFixture(mode: string) {
               ]
             : ['連結', '日本基準', '個別', 'IFRS', '売上高: 100百万円']
           : ['売上高: 100百万円'],
+  };
+}
+
+async function proseDisclosuresFixture() {
+  const period = '2027年3月期';
+  const metrics = ['売上高', '営業利益', '当期純利益'];
+  const body = '親会社株主に帰属する当期純損失は概算額100百万円となる見通しです。';
+  const pdf = textPdf([
+    `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${metrics.map((m) => `${period}の${m}は 100 百万円です。`).join('\n')}\n${period}の売上高営業利益率は 10 %です。`,
+    `1. 損失予想の背景\n範囲 個別\n会計基準 IFRS\n${body}`,
+  ]);
+  const document = await getDocument({ data: pdf.slice(), disableFontFace: true }).promise;
+  const pages = [];
+  for (let n = 1; n <= document.numPages; n++) {
+    const p = await document.getPage(n);
+    pages.push(extractPageLayout((await p.getTextContent()).items, n));
+    p.cleanup();
+  }
+  await document.destroy();
+  const facts = metrics.map((m) => numberCandidate(pages[0], m, 100, period));
+  const margin = numberCandidate(pages[0], '売上高営業利益率', 10, period);
+  margin.unit = '%';
+  margin.semantics.metricKind = 'rate';
+  const background = numberCandidate(pages[1], '純損失', 100, period);
+  background.kind = 'event';
+  background.label = background.statement = background.quote;
+  background.value = background.unit = background.valueKind = background.period = null;
+  background.semantics.periodKind = 'none';
+  background.semantics.metricKind = 'none';
+  background.semantics.scope = '個別';
+  background.semantics.basis = 'IFRS';
+  background.semantics.state = 'forecast';
+  background.semantics.qualifiers = ['概算額'];
+  facts.push(margin, background);
+  const context = buildDocumentContext(pages);
+  facts.forEach((f, i) => {
+    const binding = bindingFor(context, f.evidence.kind === 'prose' ? f.evidence.blockId : '');
+    f.id = `f${i + 1}`;
+    f.evidence.contextIds = binding.contextIds;
+    f.evidence.qualifierIds = binding.qualifierIds;
+    f.evidence.scopeIds = resolveScopeIds(binding, f.semantics, true);
+  });
+  const checked = parseFactSummary(
+    JSON.stringify({ version: 4, documentType: 'earnings', facts, unverified: [] }),
+    'earnings',
+    pages
+  );
+  if (checked.unverified.length || checked.facts.length !== 5)
+    throw Error(JSON.stringify(checked.unverified));
+  const wrong = structuredClone(facts);
+  wrong[3].semantics.metricKind = 'amount';
+  wrong[4].semantics.state = 'unspecified';
+  const first = candidateResponse(wrong, pages, 'earnings');
+  const initial = reviewCandidates(first, 'earnings', pages);
+  if (initial.facts.length !== 3) throw Error('initial wrong meaning was not rejected');
+  const legacy = structuredClone(checked);
+  legacy.facts[4].semantics.state = 'unspecified';
+  legacy.facts[4].id = stableFactId(legacy.facts[4]);
+  return {
+    pdf,
+    pages,
+    documentType: 'earnings' as DocumentType,
+    repairRequired: true,
+    first,
+    repair: candidateResponse(facts.slice(3), pages, 'earnings'),
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [],
+    expected: ['売上高: 100百万円', '売上高営業利益率: 10%', body, '個別', 'IFRS'],
   };
 }

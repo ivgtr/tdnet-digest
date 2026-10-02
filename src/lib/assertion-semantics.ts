@@ -2,6 +2,7 @@ import type { FactSemantics } from './fact-contract';
 import { normalized } from './document-structure';
 
 const passiveForecast = /見込まれ(?:る|ます|て(?:いる|います|おります))/;
+const outlookForecast = /(?:となる|の)見通し(?:です|であります|である)/;
 const passiveForecastNegation =
   /見込まれ(?:ません|ない|ず|て(?:おりません|いません|いない|おらず))/;
 const negativePredicate = new RegExp(
@@ -10,7 +11,7 @@ const negativePredicate = new RegExp(
 // A negative forecast remains a forecast; denial of a plan cannot prove a plan.
 const negative = new RegExp(`${negativePredicate.source}|に(?:は)?(?:満たない|届かない|達しない)`);
 const finitePredicate = new RegExp(
-  `(?:しました|します|行います|行っています|行っております|しています|しております|です|であります|でした|となりました|となっております|となります|になります|見込(?:んでおります|んでいます|みます)|${passiveForecast.source}|${negativePredicate.source})`
+  `(?:しました|します|行います|行っています|行っております|しています|しております|です|であります|でした|となりました|となっております|となります|になります|見込(?:んでおります|んでいます|みます)|${passiveForecast.source}|${outlookForecast.source}|${negativePredicate.source})`
 );
 const predicateEnd = new RegExp(`${finitePredicate.source}$`);
 /** Split proved contrasts, never parentheses or a subject followed by a comma. */
@@ -77,7 +78,7 @@ export function verifyQuantityAssertion(suffix: string): void {
   // These are retained by sourceQualifiers and subsequently compared/displayed.
   const qualified = clause.replace(/^(?:上限|下限|概算額|概算|速報値)/, '');
   const predicate = new RegExp(
-    `^(?:です|でした|であります|となりました|となっております|となります|になります|(?:の|となる)?見込み(?:です|であります)|(?:を|と)見込(?:んでおります|んでいます|みます)|と${passiveForecast.source}|(?:を|と)予想(?:しております|しています)|を予定(?:しております|しています))?。?$`
+    `^(?:です|でした|であります|となりました|となっております|となります|になります|(?:の|となる)?見込み(?:です|であります)|${outlookForecast.source}|(?:を|と)見込(?:んでおります|んでいます|みます)|と${passiveForecast.source}|(?:を|と)予想(?:しております|しています)|を予定(?:しております|しています))?。?$`
   );
   if (!predicate.test(qualified))
     throw new Error(
@@ -100,7 +101,11 @@ export function assertionStates(text: string): FactSemantics['state'][] {
       )
     )
       states.add('planned');
-    if (/見込まれ|見込んで|見込み|予想して|見込め|想定して/.test(positive)) states.add('forecast');
+    if (
+      /見込まれ|見込んで|見込み|予想して|見込め|想定して/.test(positive) ||
+      new RegExp(`${outlookForecast.source}$`).test(positive)
+    )
+      states.add('forecast');
     if (/決議(?:いた)?しました|決定(?:いた)?しました/.test(positive)) states.add('decided');
     if (/締結(?:いた)?しました|契約を結びました/.test(positive)) states.add('contracted');
     if (/取得しました|実施しました|完了しました/.test(positive)) states.add('completed');

@@ -7,7 +7,7 @@ import {
 } from './document-context';
 import { assertionPolarity, verifyAssertionState } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
+import { parseExactQuantity, parseExactRange, quantityNumber, proseQuantities } from './quantity';
 import {
   verifyTableEvidence,
   verifyProseEvidence,
@@ -448,6 +448,16 @@ export function validateFact(
           `${escaped}(?:について|に関して|に対して|において|として|[はがをにでと、:()])*(${token}${fact.kind === 'range' ? `[～〜~]${token}` : ''})`
         )
       );
+      if (
+        !match ||
+        !proseQuantities(block).some(
+          (q) =>
+            normalized(q.raw) === normalized(match[1] + fact.unit) &&
+            normalized(source.normalize('NFKC').slice(0, q.start)).length ===
+              match.index! + match[0].length - match[1].length
+        )
+      )
+        fail('QUANTITY:本文数量の全断片を原位置で確認できません');
       const sourceIds = block.spanIds.flatMap(
         (id) => page.spans.find((s) => s.id === id)!.sourceIds!
       );

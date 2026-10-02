@@ -4,7 +4,8 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
 import { tableContinuations, noteLinks } from './document-links';
-import { compact } from './numeric-evidence';
+import { compact, verifyProseEvidence, verifyProsePeriod } from './numeric-evidence';
+import { parseExactQuantity, proseQuantities, quantityNumber } from './quantity';
 import { sourceDateOptions } from './source-periods';
 import { buildTableMappings } from './source-mappings';
 import {
@@ -68,12 +69,42 @@ function isReportingMetricSource(
   const title = reportingUnitTitle(binding, pages);
   // An unsectioned claim on the reporting cover belongs to that explicit root.
   // This supplies a source role only; local scope/basis still resolve separately.
-  if (!title && state === 'actual') return isReportingCoverUnit(binding, pages);
+  if (state === 'actual' && isReportingCoverUnit(binding, pages)) return true;
   return state === 'forecast'
     ? /業績予想|今後の見通し/.test(title)
     : state === 'actual' &&
         !/予想|見通し/.test(title) &&
         /経営成績|損益計算書|連結業績|個別業績/.test(title);
+}
+/** Prose must prove a direct, complete amount at the reporting source and period. */
+function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, period: string) {
+  return pages.flatMap((page) =>
+    page.blocks.filter((block) => {
+      if (block.kind !== 'paragraph') return false;
+      if (!isReportingMetricSource(block.id, 'actual', pages, context)) return false;
+      const binding = bindingFor(context, block.id);
+      const sourceContext = binding.contextIds
+        .map(
+          (id) =>
+            pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)?.text ?? ''
+        )
+        .join('\n');
+      return proseQuantities(block).some((q) => {
+        const quantity = parseExactQuantity(q.raw);
+        const value = quantity && quantityNumber(quantity.decimal)?.value;
+        if (!quantity || quantity.unit !== '%' || value === undefined || value === null)
+          return false;
+        const claim = { label: '売上高営業利益率', value, unit: '%', period, valueKind: 'actual' };
+        try {
+          verifyProsePeriod(claim, block.text, sourceContext);
+          verifyProseEvidence(page, block.text, claim);
+          return !/予想|見込|見通し/.test(compact(block.text));
+        } catch {
+          return false;
+        }
+      });
+    })
+  );
 }
 export function verifyCoverage(
   type: DocumentType,
@@ -161,22 +192,25 @@ export function verifyCoverage(
           missing.push(`COVERAGE:通期予想の重要指標 ${metric}`);
     }
     if (
-      buildTableMappings(allPages).some(
-        (h) =>
-          pages.some((p) => p.quantities.some((q) => q.id === h.valueId)) &&
-          h.metricIds
-            .map((id) => allPages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
-            .join('')
-            .replace(/\s/g, '')
-            .includes('売上高営業利益率')
-      ) &&
+      (reportedProseMargins(pages, context, period).length > 0 ||
+        buildTableMappings(allPages).some(
+          (h) =>
+            pages.some((p) => p.quantities.some((q) => q.id === h.valueId)) &&
+            h.metricIds
+              .map((id) => allPages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+              .join('')
+              .replace(/\s/g, '')
+              .includes('売上高営業利益率')
+        )) &&
       !facts.some(
         (f) =>
           f.kind === 'number' &&
           /営業利益率/.test(f.label) &&
           f.semantics.metricKind === 'rate' &&
           f.valueKind === 'actual' &&
-          compact(f.period ?? '') === period
+          compact(f.period ?? '') === period &&
+          reportingMetric(f) &&
+          applicableMeaning(f)
       )
     )
       missing.push('COVERAGE:当年営業利益率');
@@ -471,6 +505,15 @@ export function coverageReport(
       KPI: /MRR|ARR|KPI/,
     }[metric ?? ''] as RegExp | undefined;
     if (marker) {
+      if (type === 'earnings' && metric === '営業利益率') {
+        const period = normalized(pages.find((p) => p.pageNumber === 1)?.text ?? '').match(
+          /20\d{2}年\d{1,2}月期/
+        )?.[0];
+        const proseIds = period
+          ? reportedProseMargins(pages, context, period).map((b) => b.id)
+          : [];
+        return [...proseIds, ...units.filter((u) => marker.test(u.label)).map((u) => u.anchor)];
+      }
       const kind = requirement.includes('forecastBefore')
         ? 'forecastBefore'
         : requirement.includes('forecastAfter')
@@ -500,7 +543,7 @@ export function coverageReport(
         .map((u) => u.anchor);
     }
     const predicate = /損失予想の背景/.test(requirement)
-      ? /概算.*純損失/
+      ? /純損失/
       : /損失の計上予定/.test(requirement)
         ? /特別損失に計上[^。]*予定/
         : /自己株取得/.test(requirement)
@@ -523,7 +566,14 @@ export function coverageReport(
                         ? /基本合意書/
                         : null;
     return predicate
-      ? captions.filter((b) => predicate.test(normalized(b.text))).map((b) => b.id)
+      ? captions
+          .filter(
+            (b) =>
+              predicate.test(normalized(b.text)) &&
+              (!/損失予想の背景/.test(requirement) ||
+                (/概算額/.test(b.text) && assertionStates(b.text).includes('forecast')))
+          )
+          .map((b) => b.id)
       : [];
   };
   return [...new Set([...obligations, ...fullObligations])].map((requirement) => {

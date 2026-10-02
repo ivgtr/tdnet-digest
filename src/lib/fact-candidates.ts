@@ -25,6 +25,7 @@ import {
   parseExactRange,
   quantityNumber,
   declaredQuantityUnit,
+  proseQuantities,
 } from './quantity';
 import { verifyPeriodAndKind, verifyProsePeriod, verifyTableEvidence } from './numeric-evidence';
 import { classifyMetric } from './metric-semantics';
@@ -67,15 +68,7 @@ export interface CandidateReview {
   envelopeValid: boolean;
 }
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-export function proseQuantities(block: { id: string; text: string }) {
-  return [
-    ...block.text
-      .normalize('NFKC')
-      .matchAll(
-        /[△▲−-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[～〜~][△▲−-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)?(?:(?:百万|千|億)?円|[%％]|株|人|件|店舗|社|個|ドル|USD|EUR)/g
-      ),
-  ].map((m, i) => ({ id: `${block.id}:q${i + 1}`, raw: m[0], start: m.index }));
-}
+export { proseQuantities } from './quantity';
 export function factSourceKey(f: VerifiedFact): string {
   return JSON.stringify(
     f.evidence.kind === 'table'

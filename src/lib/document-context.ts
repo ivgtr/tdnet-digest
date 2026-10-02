@@ -244,6 +244,12 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
           qualifierIds: qualifiers,
           requiredPages: [],
         };
+        // A proved cover value may reference the explicit report period. This
+        // never crosses the contiguous cover boundary or supplies a default.
+        if (!table && block.kind === 'paragraph' && isReportingCoverUnit(binding, pages)) {
+          const cover = reporting.filter((b) => b.y < block.y).slice(-1)[0];
+          if (cover) binding.contextIds = unique([...binding.contextIds, cover.id]);
+        }
         // Preserve stock types and acquisition dates/method within the current
         // transaction section. A later unrelated section cannot supply them.
         if (!table && /取得する株式|株式の取得価額/.test(block.text)) {
@@ -390,7 +396,7 @@ export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPa
   if (cover < 0) return false;
   // Only a contiguous reporting-value area belongs to this cover. Unknown prose
   // or an unnumbered caption closes it; later values cannot reopen it.
-  const metric = `(?:売上高|売上収益|営業収益|営業(?:利益|損失)|経常(?:利益|損失)|${NET_PROFIT_METRIC}|総資産|純資産|資本金)`;
+  const metric = `(?:売上高営業利益率|売上高|売上収益|営業収益|営業(?:利益|損失)|経常(?:利益|損失)|${NET_PROFIT_METRIC}|総資産|純資産|資本金)`;
   const valueStart = new RegExp(
     `^(?:20\\d{2}年\\d{1,2}月期(?:第[1-4]四半期|中間期|通期)?(?:の)?)?${metric}(?:は|:)?[△▲−-]?\\d`
   );
