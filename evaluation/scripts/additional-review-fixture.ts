@@ -64,6 +64,7 @@ export async function additionalReviewFixture(mode: string) {
   if (
     [
       'semantics',
+      'event-semantics',
       'cover-outlook',
       'cover-boundary',
       'cover-signs',
@@ -199,16 +200,20 @@ async function latestReviewFixture(mode: string) {
       : mode === 'cover-signs'
         ? ['売上高', '営業損失', '当期純損失']
         : ['売上高', '営業利益', '当期純利益'];
-  const bodies = [
-    '当社は自己株式の取得を行いません。',
-    '当社はAの取得を行いませんが別案件を取得しました。',
-  ];
+  const bodies =
+    mode === 'event-semantics'
+      ? [
+          '当社の売上高は100百万円とは見込まれません。',
+          '当社はAの取得を行いますがBの取得は行いません。',
+          '当社は来期に新工場を建設することとなりました。',
+        ]
+      : ['当社は自己株式の取得を行いません。', '当社はAの取得を行いませんが別案件を取得しました。'];
   const texts = report
     ? [
         `${period} 決算短信〔${mode === 'cover-ifrs-company' ? 'IFRS' : '日本基準'}〕（連結）\n${mode === 'cover-ifrs-company' ? '上場会社名：株式会社テスト' : '会社名 株式会社テスト'}\n${metrics.map((m) => `${period}の${m}は${mode === 'cover-signs' ? (m === '営業損失' ? '▲10' : m === '当期純損失' ? '−20' : '100') : '100'}百万円です。`).join('\n')}${mode === 'net-profit-passive' ? `\n${period}の利益は5百万円です。` : ''}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
         `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m, i) => `${period}の${m}は100百万円${mode === 'passive-endings' ? ['と見込まれる', 'と見込まれております', 'と見込まれています'][i] : mode === 'net-profit-passive' ? 'と見込まれます' : 'の見込みです'}。`).join('\n')}`,
       ]
-    : mode === 'semantics'
+    : mode === 'semantics' || mode === 'event-semantics'
       ? ['会社名 株式会社テスト', ...bodies.map((body) => `1. 事業説明\n${body}`)]
       : [
           '会社名 株式会社テスト',
@@ -228,7 +233,9 @@ async function latestReviewFixture(mode: string) {
   const facts: VerifiedFact[] = [];
   for (const page of report ? pages : pages.slice(1)) {
     const assertionMode =
-      mode === 'semantics' || (mode === 'assertion-conflict' && page.pageNumber === 3);
+      mode === 'semantics' ||
+      mode === 'event-semantics' ||
+      (mode === 'assertion-conflict' && page.pageNumber === 3);
     for (const metric of assertionMode ? ['当社'] : report ? metrics : ['売上高']) {
       const value =
         mode === 'cover-signs' && page.pageNumber === 1
@@ -254,17 +261,27 @@ async function latestReviewFixture(mode: string) {
         f.semantics.periodKind = 'none';
         f.semantics.metricKind = 'none';
         f.semantics.state =
-          mode === 'assertion-conflict'
-            ? 'decided'
-            : page.pageNumber === 2
-              ? 'unspecified'
-              : 'completed';
+          mode === 'event-semantics'
+            ? page.pageNumber === 2
+              ? 'forecast'
+              : 'unspecified'
+            : mode === 'assertion-conflict'
+              ? 'decided'
+              : page.pageNumber === 2
+                ? 'unspecified'
+                : 'completed';
         f.semantics.polarity =
-          mode === 'assertion-conflict'
-            ? 'affirmative'
-            : page.pageNumber === 2
+          mode === 'event-semantics'
+            ? page.pageNumber === 2
               ? 'negative'
-              : 'mixed';
+              : page.pageNumber === 3
+                ? 'mixed'
+                : 'affirmative'
+            : mode === 'assertion-conflict'
+              ? 'affirmative'
+              : page.pageNumber === 2
+                ? 'negative'
+                : 'mixed';
       } else
         f.valueKind = f.semantics.state = report && page.pageNumber === 1 ? 'actual' : 'forecast';
       const binding = bindingFor(context, f.evidence.kind === 'prose' ? f.evidence.blockId : '');
@@ -282,7 +299,11 @@ async function latestReviewFixture(mode: string) {
   if (checked.facts.length !== facts.length || checked.unverified.length)
     throw Error(JSON.stringify(checked.unverified));
   const wrong = structuredClone(facts);
-  if (mode === 'semantics') {
+  if (mode === 'event-semantics') {
+    wrong[0].semantics.polarity = 'affirmative';
+    wrong[1].semantics.polarity = 'negative';
+    wrong[2].semantics.state = 'actual';
+  } else if (mode === 'semantics') {
     wrong[0].semantics.state = 'unspecified';
     wrong[0].semantics.polarity = 'affirmative';
     wrong[1].semantics.polarity = 'negative';
@@ -381,7 +402,7 @@ async function latestReviewFixture(mode: string) {
     legacy.facts[0].id = stableFactId(legacy.facts[0]);
   } else if (mode === 'passive-endings') {
     legacy.unverified = ['旧v45の診断'];
-  } else if (mode === 'semantics')
+  } else if (mode === 'semantics' || mode === 'event-semantics')
     legacy.facts.forEach((f, i) => {
       f.semantics = wrong[i].semantics;
       f.id = stableFactId(f);
@@ -409,7 +430,7 @@ async function latestReviewFixture(mode: string) {
     legacyRendered: renderFacts(legacy),
     warnings,
     expected:
-      mode === 'semantics'
+      mode === 'semantics' || mode === 'event-semantics'
         ? bodies
         : report
           ? mode === 'cover-ifrs-company'

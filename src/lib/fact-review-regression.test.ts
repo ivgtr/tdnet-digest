@@ -1162,3 +1162,197 @@ describe('17f5ca9再レビューの指標明示性と受動形予想', () => {
     }
   );
 });
+
+describe('979e6eb再レビューのevent極性と未完了の状態', () => {
+  function statement(
+    body: string,
+    state: VerifiedFact['semantics']['state'],
+    polarity: VerifiedFact['semantics']['polarity'],
+    kind: 'event' | 'status' = 'event'
+  ) {
+    const pages = [textPage(`会社名 株式会社テスト\n1. 事業説明\n${body}`)];
+    const f = numberCandidate(pages[0], body.startsWith('当社') ? '当社' : '売上高');
+    f.kind = kind;
+    f.label = f.statement = f.quote;
+    f.value = f.unit = f.valueKind = f.period = null;
+    f.semantics = {
+      ...f.semantics,
+      scope: null,
+      basis: null,
+      metricKind: 'none',
+      periodKind: 'none',
+      state,
+      polarity,
+    };
+    return { pages, f };
+  }
+  function check(
+    body: string,
+    state: VerifiedFact['semantics']['state'],
+    polarity: VerifiedFact['semantics']['polarity'],
+    wrongState: VerifiedFact['semantics']['state'],
+    wrongPolarity: VerifiedFact['semantics']['polarity'],
+    kind: 'event' | 'status' = 'event'
+  ) {
+    const { pages, f } = statement(body, state, polarity, kind);
+    const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(1);
+    expect(saved(good.facts, pages).facts).toEqual(good.facts);
+    const forged = structuredClone(good.facts[0]);
+    forged.semantics.state = wrongState;
+    forged.semantics.polarity = wrongPolarity;
+    forged.id = stableFactId(forged);
+    validateSavedFacts({ version: 4, documentType: 'other', facts: [forged], unverified: [] });
+    expect(reviewCandidates(candidateResponse([forged], pages), 'other', pages).facts).toEqual([]);
+    expect(saved([forged], pages).facts).toEqual([]);
+    expect(
+      renderFacts({ version: 4, documentType: 'other', facts: good.facts, unverified: [] })
+    ).toContain(body);
+    return { pages, f, forged };
+  }
+  it.each([
+    'とは見込まれません',
+    'と見込まれておりません',
+    'と見込まれない',
+    'と見込まれていません',
+    'と見込まれていない',
+  ])('受動形の否定%sをeventでもnegative/forecastで照合する', (ending) => {
+    const body = `売上高は100百万円${ending}。`;
+    expect(assertionPolarity(body)).toBe('negative');
+    expect(assertionStates(body)).toEqual(['forecast']);
+    check(body, 'forecast', 'negative', 'forecast', 'affirmative');
+  });
+  it('未定statusでも受動形否定を肯定forecastとして保存しない', () => {
+    check(
+      '売上高は100百万円とは見込まれません。業績予想は未定です。',
+      'forecast',
+      'mixed',
+      'forecast',
+      'affirmative',
+      'status'
+    );
+  });
+  it.each([
+    '当社はAの取得を行いますが、Bの取得は行いません。',
+    '当社はAの取得を行いますがBの取得は行いません。',
+    '当社はAの取得を行いませんがBの取得を行います。',
+    '当社はAの取得を実施しますがBの取得は実施しません。',
+    '当社はAの取得を行っていますがBの取得は行っていません。',
+    '当社はAの取得を行っておりますがBの取得は行っておりません。',
+  ])('現在形の対比をmixed/unspecifiedとして保持する: %s', (body) => {
+    expect(assertionPolarity(body)).toBe('mixed');
+    check(body, 'unspecified', 'mixed', 'unspecified', 'negative');
+  });
+  it('肯定と否定の受動形予想をmixed/forecastとして保持する', () => {
+    check(
+      '売上高は200百万円と見込まれますが100百万円とは見込まれません。',
+      'forecast',
+      'mixed',
+      'forecast',
+      'negative'
+    );
+  });
+  it.each([
+    '売上高は200百万円と見込んでおりますが100百万円とは見込まれません。',
+    '売上高は100百万円とは見込まれず200百万円と見込まれます。',
+    '売上高は100百万円と見込まれておらず200百万円と見込まれます。',
+  ])('予想の対比と否定接続でもmixed/forecastを保持する: %s', (body) => {
+    check(body, 'forecast', 'mixed', 'forecast', 'negative');
+  });
+  it.each([
+    '当社は来期に新工場を建設することとなりました。',
+    '当社は来期に新工場を建設する運びとなりました。',
+    '当社は新工場を建設することとなりました。',
+  ])('未完了の取決めをactualに変換しない: %s', (body) => {
+    expect(assertionStates(body)).toEqual([]);
+    check(body, 'unspecified', 'affirmative', 'actual', 'affirmative');
+  });
+  it.each([
+    ['当社は新工場建設を予定しております。', 'planned'],
+    ['当社は新工場建設を決定しました。', 'decided'],
+    ['当社は新工場建設を完了しました。', 'completed'],
+    ['当社は特別損失を計上しました。', 'actual'],
+  ] as const)('明示された状態を保持する: %s', (body, state) => {
+    const { pages, f } = statement(body, state, 'affirmative');
+    const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(1);
+    expect(saved(good.facts, pages).facts).toEqual(good.facts);
+  });
+  it('財務実績のとなりましたはnumberの意味検証で維持する', () => {
+    const source = localReport('経営成績');
+    const detail = textPage(source.pages[1].text.replace(/です。/g, 'となりました。'), 2);
+    const pages = [source.pages[0], detail];
+    const facts = ['売上高', '営業利益', '当期純利益'].map((m) => {
+      const f = numberCandidate(detail, m, 100, period);
+      f.semantics.scope = '個別';
+      f.semantics.basis = 'IFRS';
+      return f;
+    });
+    const good = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(3);
+    expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+  });
+  it.each([
+    ['売上高は100百万円とは見込まれません。', 'forecast', 'negative', 'forecast', 'affirmative'],
+    [
+      '当社はAの取得を行いますがBの取得は行いません。',
+      'unspecified',
+      'mixed',
+      'unspecified',
+      'negative',
+    ],
+    [
+      '当社は来期に新工場を建設することとなりました。',
+      'unspecified',
+      'affirmative',
+      'actual',
+      'affirmative',
+    ],
+  ] as const)(
+    '誤ったeventの意味を1回修復して保存する: %s',
+    async (body, state, polarity, wrongState, wrongPolarity) => {
+      const { pages, f } = statement(body, state, polarity);
+      const wrong = structuredClone(f);
+      wrong.semantics.state = wrongState;
+      wrong.semantics.polarity = wrongPolarity;
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse([wrong], pages))
+        .mockResolvedValueOnce(candidateResponse([f], pages));
+      const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
+      expect(result.repairAttempted).toBe(true);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
+    }
+  );
+  it('数量否定からeventへの修復にも極性とforecast状態を強制する', async () => {
+    const { pages, f } = prose(`${period}の売上高は100百万円とは見込まれません。`);
+    const event = structuredClone(f);
+    event.kind = 'event';
+    event.label = event.statement = event.quote;
+    event.value = event.unit = event.valueKind = null;
+    event.semantics.metricKind = 'none';
+    event.semantics.polarity = 'negative';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([f], pages))
+      .mockResolvedValueOnce(candidateResponse([event], pages));
+    const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
+    expect(result.facts.facts[0]).toMatchObject({
+      kind: 'event',
+      semantics: { state: 'forecast', polarity: 'negative' },
+    });
+    expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
+    event.semantics.polarity = 'affirmative';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([f], pages))
+      .mockResolvedValueOnce(candidateResponse([event], pages));
+    await expect(generateVerifiedFactSummary(config, 'other', 'source', pages)).rejects.toThrow(
+      '重要事実'
+    );
+  });
+});

@@ -674,3 +674,22 @@ Kの保存9結果/45事実を厳密再判定し、全受理・拒否0・モデ�
 | 実TDnet/PDF・実API | 初回11事実の期待値/表示/診断保存/表示切替/保存復元成功、再表示API追加0 | 要約API1回/37秒 | `bluememe-20260930-2026-10-02T08-12-39-684Z-browser.json` |
 
 固定経路は改変保存事実の後続API前拒否、追加分析の事実保持、比較不能採点での要約保持も成功。実API生成は13.3秒、入力78,796・出力4,573token、修復未発生。実API復元後診断再exportは通常経路に含めず固定APIの確認と区別する。2画面記録のartifact digest `f9594f33475419a5af5d916593ca038dce3a106f321c47d0236a46bbbe19fb99` と公開ソースdigest `4865cb276f43b100c2f8c75755f05eebd8cd0ec1883abbe4fb5cee5deaf505c4` が一致し、現在の公開ソースでも同値を確認。基準失敗・最終検証・K再判定・入力比較・画面/利用量は `results/local/summary-pr25-739-final-ledger.json`。同じ条件の成功済み検証は繰り返していない。今回の実モデル修復、実API復元後診断再export、未知形式/OCR/多主張分解・smart生応答/実API比較採点等は未確認のまま残す。
+
+
+#### PR #25再レビュー `979e6eb` の検証条件（2026-10-02）
+
+対象3件 `4164052255` / `4164052259` / `4164052262` は妥当と判断。受動形否定を共通の否定文法へ含め、negativeのままforecast状態を保持する。予定そのものの否定からplannedを推定しない規則は維持。既存の肯定受動形を数量後続と対比の有限述語で共用し、行います/します/行っています/行っておりますや予想の対比もmixedとして照合する。event/statusの状態検証から無制限の「となりました」によるactual推定を除く。将来の取決めは未証明のplanned/decidedを補わずunspecified、明示された予定/決定/完了/計上は元の状態を保持し、財務numberの「となりました」は従来の数量/出典役割でactualを検証する。
+
+恒久164件（従来136＋28）を基準979e6ebの隔離ツリーで実行し23件失敗（`/tmp/tdnet-pr25-979-baseline-final.log`）。隔離ツリーは削除。候補と形/IDの整合した保存事実、event/statusの否定、現在形/受動形/否定接続の対比、将来取決め、明示状態と財務数量の正常対、各誤eventの1回修復、数量否定からeventへ修復する時の正極性と誤極性の最終拒否を固定した。指紋v47で旧v38〜v46非表示。6原PDF/固定29事実と最終差分のtest・type-check・lint・buildを確認する。中間のテストのreplaceAllはES2020の型規約に合わず、同じ置換の正規表現へ修正し、製品判定は変更していない。
+
+重点3資料のPDF/通常生成入力hashはKと同一（`results/local/summary-pr25-979-final-input.json`）。プロンプト/モデル/設定不変、K保存9結果/45事実は現行ソースで全受理・拒否0・モデル0回（`results/local/summary-pr25-979-final-regrade.json`、checker digest `d328bcf62b1ce6bf2e474f3ad7c09db50d391b902b448f930d0c3f209b3f4cc1`）。K生成証拠を再利用して新規CLI9回は省略する。最終ビルドの画面は固定API event-semantics1回（3誤event拒否→1回修復、negative/forecast・mixed/unspecified・未来取決めunspecified、旧v46非表示/表示/保存復元/診断ID/後続利用）、実TDnet/実API BlueMeme通常要約1回の計2経路へ開始前に限定する。固定PDFは実Offscreen/PDF.jsを通す。実APIは従来のOpenRouter/deepseek/deepseek-v4.1-flash、full、温度0、推論low、32,768token、修復最大1回/300秒と同じ停止境界とし、認証/429/期限/契約失敗を分母に残して成功まで繰り返さない。未知形式/OCR/多主張分解、今回の実モデル修復、実API復元後診断再export等は既存未確認事項として残す。
+
+
+最終結果: 全713件/26ファイル・type-check・lint・build成功（`/tmp/tdnet-pr25-979-final-{test,type,lint,build}.log`）。ES2020に合わせた試験コード修正後の最終結果であり、型エラーを成功へ読み替えない。製品ソース不変のK再判定・入力比較は再利用し、新規CLI生成0回。画面は事前固定の2経路を各1回で成功した。
+
+| 画面経路 | 結果 | 呼出し/時間 | `results/local/` の証拠 |
+| --- | --- | --- | --- |
+| 固定API・event-semantics | 誤極性/誤状態の3eventを拒否→1回修復、negative/forecast・mixed/unspecified・未来取決めunspecifiedの3事実表示/保存意味照合/保存復元/診断ID/後続利用、旧v46非表示 | 固定API5回/12秒 | `bluememe-20260930-review-event-semantics-2026-10-02T09-14-48-217Z-browser.json` |
+| 実TDnet/PDF・実API | 初回11事実の期待値/表示/診断保存/表示切替/保存復元成功、再表示API追加0 | 要約API1回/61秒 | `bluememe-20260930-2026-10-02T09-15-37-097Z-browser.json` |
+
+固定経路は改変保存事実の後続API前拒否、追加分析での事実保持、比較不能採点での要約保持も成功。実API生成は38.1秒、入力78,796・出力5,404token、修復未発生。実API復元後診断再exportは通常経路に含めず固定APIの確認と区別する。2画面記録のartifact digest `3796d51d9bf3b243a048f0c39de6c4094b1fb5c985604f50d63acd769dfd4d74` と公開ソースdigest `b8aced679cb8b974465ae9f6bdfbf82b0ea5bd6cfbbdc379e3740524b1d72e37` が一致し、現在の公開ソースでも同値を確認。基準失敗・最終検証・K再判定・入力比較・画面/利用量を `results/local/summary-pr25-979-final-ledger.json` へ集約した。同条件の成功済み検証は新しい変更/失敗/疑問なしには繰り返していない。今回の実モデル修復、実API復元後診断再export、未知形式/OCR/多主張分解・smart生応答/実API比較採点等は未確認のまま残す。

@@ -1,13 +1,18 @@
 import type { FactSemantics } from './fact-contract';
 import { normalized } from './document-structure';
 
-const negativePredicate =
-  /しておりません|しておらず|行っておりません|行っておらず|行っていません|行っていない|していません|していない|しません|行いません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない/;
-// A negative bound can still be forecast; denial of a plan cannot prove a plan.
+const passiveForecast = /見込まれ(?:る|ます|て(?:いる|います|おります))/;
+const passiveForecastNegation =
+  /見込まれ(?:ません|ない|ず|て(?:おりません|いません|いない|おらず))/;
+const negativePredicate = new RegExp(
+  `(?:${passiveForecastNegation.source}|しておりません|しておらず|行っておりません|行っておらず|行っていません|行っていない|していません|していない|しません|行いません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない)`
+);
+// A negative forecast remains a forecast; denial of a plan cannot prove a plan.
 const negative = new RegExp(`${negativePredicate.source}|に(?:は)?(?:満たない|届かない|達しない)`);
-const finitePredicate =
-  /(?:しました|しています|しております|しておりません|しておらず|行っておりません|していません|していない|しません|ありません|ございません|です|であります|未実施|未締結)/;
-const predicateEnd = new RegExp(`(?:${finitePredicate.source}|${negativePredicate.source})$`);
+const finitePredicate = new RegExp(
+  `(?:しました|します|行います|行っています|行っております|しています|しております|です|であります|でした|となりました|となっております|となります|になります|見込(?:んでおります|んでいます|みます)|${passiveForecast.source}|${negativePredicate.source})`
+);
+const predicateEnd = new RegExp(`${finitePredicate.source}$`);
 /** Split proved contrasts, never parentheses or a subject followed by a comma. */
 function assertionClauses(text: string): string[] {
   const source = normalized(text);
@@ -31,7 +36,9 @@ function assertionClauses(text: string): string[] {
       continue;
     }
     if (depth) continue;
-    const conjunctive = source.slice(i).match(/^(?:しておらず|行っておらず)/)?.[0];
+    const conjunctive = source
+      .slice(i)
+      .match(/^(?:しておらず|行っておらず|見込まれず|見込まれておらず)/)?.[0];
     if (conjunctive) {
       const end = i + conjunctive.length;
       const rest = source.slice(end).split('。')[0];
@@ -69,8 +76,9 @@ export function verifyQuantityAssertion(suffix: string): void {
     .replace(/[()[\]「」『』]/g, '');
   // These are retained by sourceQualifiers and subsequently compared/displayed.
   const qualified = clause.replace(/^(?:上限|下限|概算額|概算|速報値)/, '');
-  const predicate =
-    /^(?:です|でした|であります|となりました|となっております|となります|になります|(?:の|となる)?見込み(?:です|であります)|(?:を|と)見込(?:んでおります|んでいます|みます)|と見込まれ(?:る|ます|て(?:いる|います|おります))|(?:を|と)予想(?:しております|しています)|を予定(?:しております|しています))?。?$/;
+  const predicate = new RegExp(
+    `^(?:です|でした|であります|となりました|となっております|となります|になります|(?:の|となる)?見込み(?:です|であります)|(?:を|と)見込(?:んでおります|んでいます|みます)|と${passiveForecast.source}|(?:を|と)予想(?:しております|しています)|を予定(?:しております|しています))?。?$`
+  );
   if (!predicate.test(qualified))
     throw new Error(
       'STRUCTURE:数量後の否定・置換・境界・変化量または未対応の述語を確定数量へ変換できません'
@@ -80,6 +88,7 @@ export function verifyQuantityAssertion(suffix: string): void {
 export function assertionStates(text: string): FactSemantics['state'][] {
   const states = new Set<FactSemantics['state']>();
   for (const clause of assertionClauses(text)) {
+    if (passiveForecastNegation.test(clause)) states.add('forecast');
     const positive = clause.replace(
       new RegExp(`[^、;]*(?:${negativePredicate.source})[^、;]*`, 'g'),
       ''
@@ -95,10 +104,9 @@ export function assertionStates(text: string): FactSemantics['state'][] {
     if (/決議(?:いた)?しました|決定(?:いた)?しました/.test(positive)) states.add('decided');
     if (/締結(?:いた)?しました|契約を結びました/.test(positive)) states.add('contracted');
     if (/取得しました|実施しました|完了しました/.test(positive)) states.add('completed');
-    if (
-      /計上(?:して)?おります|計上しました|(?<!予定)(?<!見込)(?<!見込み)となりました/.test(positive)
-    )
-      states.add('actual');
+    // Numeric financial results use their source-role validation. An event's
+    // generic となりました cannot prove realization of an action.
+    if (/計上(?:して)?おります|計上しました/.test(positive)) states.add('actual');
   }
   return [...states];
 }
