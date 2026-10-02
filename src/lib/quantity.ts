@@ -91,12 +91,11 @@ export function declaredQuantityUnit(raw: string): string | null {
  * Unknown units remain unverified.
  */
 export function isUncaptionedUnit(text: string): boolean {
-  const atom = (part: string) =>
-    /^(?:(?:十|百|千|万|百万|千万|億|兆)?(?:円|ドル|株|個|件|台|人|名|口|店|棟|社|回|本|枚|冊|箱|日|週|月|年|倍)|人日|人月|店舗|時間|か月|カ月|ヶ月|箇月|ポイント|トン|キログラム|メートル|リットル|JPY|USD|EUR|GBP|CNY|bps|pt|px|h|min|d|(?:[afpnumcdhkMGT]|da)?(?:m|g|s|A|K|mol|cd|Hz|N|Pa|J|Wh|W|C|V|F|S|Wb|T|H|L|l|B|bit)[23]?|[\p{Sc}%])$/u.test(
-      part
-    );
-  return isUnitToken(text) && text.split(/[/·]/).every(atom);
+  const atom =
+    /^(?:(?:十|百|千|万|百万|千万|億|兆)?(?:円|ドル|株|個|件|台|人|名|口|店|棟|社|回|本|枚|冊|箱|日|週|月|年|倍|人日|人月|店舗|時間|か月|カ月|ヶ月|箇月|ポイント|トン|キログラム|メートル|リットル|JPY|USD|EUR|GBP|CNY|(?:[afpnumcdhkMGT]|da)?(?:m|g|s|A|K|mol|cd|Hz|N|Pa|J|Wh|W|C|V|F|S|Wb|T|H|L|l|B|bit)[23]?)|bps|pt|px|h|min|d|[\p{Sc}%])$/u;
+  return isUnitToken(text) && text.split(/[/·]/).every((part) => atom.test(part));
 }
+
 function provedProseUnitLength(text: string): number {
   for (let length = text.length; length > 0; length--)
     if (isUncaptionedUnit(text.slice(0, length))) return length;
@@ -113,12 +112,14 @@ export function proseQuantities(block: { id: string; text: string }) {
   ].map((m) => ({ start: m.index, end: m.index + m[0].length }));
   const found = [
     ...source.matchAll(
-      /((?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*[～〜~]\s*(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)?\s*)([A-Za-z%/·]+\d+|(?:[\p{L}\p{Sc}%/·](?:[^\S\n]*[\p{L}\p{Sc}%/·])*))/gu
+      /((?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*[～〜~]\s*(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)?\s*)(円\s*\d{2}\s*銭|[A-Za-z%/·]+\d+|(?:[\p{L}\p{Sc}%/·](?:[^\S\n]*[\p{L}\p{Sc}%/·])*))/gu
     ),
   ].flatMap((m) => {
     if (calendar.some((c) => m.index < c.end && m.index + m[1].length > c.start)) return [];
     const unitRun = m[2];
     const compactUnit = unitRun.replace(/\s/g, '');
+    if (/^円\d{2}銭$/.test(compactUnit) && parseExactQuantity(m[0]))
+      return [{ raw: m[0], start: m.index }];
     const boundary = provedProseUnitLength(compactUnit);
     let count = 0,
       end = 0;

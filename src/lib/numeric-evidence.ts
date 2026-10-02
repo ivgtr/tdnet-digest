@@ -2,7 +2,13 @@ import { explicitCalendarAxisMatches, numericValueKind } from './period-semantic
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
 import { declaredQuantityUnit, isUncaptionedUnit } from './quantity';
-import { parseQuantity, parseExactRange, isUnitToken } from './quantity';
+import {
+  parseQuantity,
+  parseExactRange,
+  isUnitToken,
+  proseQuantities,
+  parseExactQuantity,
+} from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
 
@@ -597,24 +603,29 @@ export function verifyProsePeriod(claim: NumericClaim, source: string, context: 
 }
 
 /** 表と本文は別の根拠形式。本文でも指標・数値・単位の直接対応だけを採用する。 */
-export function verifyProseEvidence(
+export function verifyProseQuantity(
   page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
   quote: string,
   claim: NumericClaim
-): number {
+) {
   const escape = (text: string) => compact(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 複合助詞は語単位で認める。任意のひらがなは許さず、否定・概数の語を跨がない。
   const bridge = '((?:について|に関して|に対して|において|として|[はがをにでと、:()]){0,6})';
-  const binding = new RegExp(
-    `${escape(claim.label)}${bridge}(${claim.range ? '[△▲−-]?\\d+(?:\\.\\d+)?[～〜~][△▲−-]?\\d+(?:\\.\\d+)?' : '-?\\d+(?:\\.\\d+)?'})${escape(claim.unit)}(?![\\d.%/])`,
-    'u'
-  );
+  const scalar = '-?\\d+(?:\\.\\d+)?';
+  const amount = claim.range
+    ? `${scalar}[～〜~]${scalar}${escape(claim.unit)}`
+    : `${scalar}(?:${claim.unit === '円' ? '円\\d{2}銭|' : ''}${escape(claim.unit)})`;
+  const binding = new RegExp(`${escape(claim.label)}${bridge}(${amount})(?![\\d.%/])`, 'u');
+  const corresponds = (raw: string) =>
+    claim.range
+      ? parseExactRange(raw)?.unit === claim.unit
+      : parseExactQuantity(raw)?.unit === claim.unit &&
+        Number(parseExactQuantity(raw)?.decimal) === claim.value;
   // PDF paragraphs may merge consecutive numbered fields. Only a numbered
   // field at a physical line start is a new prefix boundary; a wrapped noun is not.
-  const normalized = compact(quote.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；')).replace(
-    /[△▲−](?=\d)/g,
-    '-'
-  );
+  const assertionText = (text: string) =>
+    compact(text.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；')).replace(/[△▲−](?=\d)/g, '-');
+  const normalized = assertionText(quote);
   const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
   const heads = [
     ...normalized.matchAll(new RegExp(`${escape(claim.label)}${bridge}(${token})`, 'gu')),
@@ -622,9 +633,7 @@ export function verifyProseEvidence(
   if (heads.length > 1)
     throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
   const match = [...normalized.matchAll(new RegExp(binding, 'gu'))].find(
-    (m) =>
-      m[1].length <= 6 &&
-      (claim.range ? parseExactRange(m[2]) !== null : Number(m[2]) === claim.value)
+    (m) => m[1].length <= 6 && corresponds(m[2])
   );
   if (match) {
     // Only explicit periods, resolved subject/scope and grammatical separators
@@ -640,7 +649,7 @@ export function verifyProseEvidence(
     ))
       prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
     prefix = prefix.replace(
-      /^20\d{2}年\d{1,2}月(?:期(?:第[1-4]四半期|中間期|通期)?|\d{1,2}日|度)?(?:の|は|における)?/,
+      /^20\d{2}年\d{1,2}月(?:期(?:(?:第[1-4]四半期|中間期)(?:\(?(?:累計|単独)\)?(?:期間)?)?|通期)?|\d{1,2}日|度)?(?:の|は|における)?/,
       ''
     );
     for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))
@@ -648,16 +657,15 @@ export function verifyProseEvidence(
     if (prefix) throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
     verifyQuantityAssertion(normalized.slice(match.index! + match[0].length));
   }
-  const lineIndex = [quote].findIndex((line) => {
-    const normalized = compact(line).replace(/[△▲−](?=\d)/g, '-');
-    return [...normalized.matchAll(new RegExp(binding, 'gu'))].some(
-      (match) =>
-        match[1].length <= 6 &&
-        (claim.range ? parseExactRange(match[2]) !== null : Number(match[2]) === claim.value)
-    );
-  });
-  if (!compact(page.text).includes(compact(quote)) || lineIndex < 0)
+  if (!compact(page.text).includes(compact(quote)) || !match)
     throw new Error('引用で数値・単位・指標・期間の対応を確認できません');
+  const quantity = proseQuantities({ id: 'prose', text: quote }).find(
+    (q) =>
+      compact(q.raw).replace(/[△▲−](?=\d)/g, '-') === match[2] &&
+      assertionText(quote.normalize('NFKC').slice(0, q.start)).length ===
+        match.index! + match[0].length - match[2].length
+  );
+  if (!quantity) throw new Error('QUANTITY:本文数量の全断片を原位置で確認できません');
   // 数量セルの並ぶ行を説明文として選んで、セル参照の検証を迂回させない。
   const cells = page.spans.filter((s) =>
     claim.range ? parseExactRange(s.text) !== null : numeric(s.text) === claim.value
@@ -670,5 +678,13 @@ export function verifyProseEvidence(
     )
   )
     throw new Error('表の数値には根拠セルIDが必要です');
-  return lineIndex;
+  return quantity;
+}
+export function verifyProseEvidence(
+  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
+  quote: string,
+  claim: NumericClaim
+): number {
+  verifyProseQuantity(page, quote, claim);
+  return 0;
 }

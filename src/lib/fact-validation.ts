@@ -9,10 +9,10 @@ import {
 } from './document-context';
 import { assertionPolarity, verifyAssertionState } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { parseExactQuantity, parseExactRange, quantityNumber, proseQuantities } from './quantity';
+import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
 import {
   verifyTableEvidence,
-  verifyProseEvidence,
+  verifyProseQuantity,
   verifyProsePeriod,
   compact,
   verifyPeriodAndKind,
@@ -419,43 +419,29 @@ export function validateFact(
         subject: fact.semantics.subject,
         scope: fact.semantics.scope,
       };
-      verifyProseEvidence(page, source, proseClaim);
+      const proved = verifyProseQuantity(page, source, proseClaim);
       verifyProsePeriod(proseClaim, source, context);
-      const escaped = normalized(fact.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const token = '[△▲−-]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?';
-      const match = normalized(source).match(
-        new RegExp(
-          `${escaped}(?:について|に関して|に対して|において|として|[はがをにでと、:()])*(${token}${fact.kind === 'range' ? `[～〜~]${token}` : ''})`
-        )
-      );
-      if (
-        !match ||
-        !proseQuantities(block).some(
-          (q) =>
-            normalized(q.raw) === normalized(match[1] + fact.unit) &&
-            normalized(source.normalize('NFKC').slice(0, q.start)).length ===
-              match.index! + match[0].length - match[1].length
-        )
-      )
-        fail('QUANTITY:本文数量の全断片を原位置で確認できません');
+      const raw = /円\d{2}銭$/.test(normalized(proved.raw))
+        ? normalized(proved.raw)
+        : normalized(proved.raw).slice(0, -normalized(fact.unit!).length);
       const sourceIds = block.spanIds.flatMap(
         (id) => page.spans.find((s) => s.id === id)!.sourceIds!
       );
       if (fact.kind === 'range') {
-        const parsed = match && parseExactRange(match[1]);
+        const parsed = parseExactRange(raw);
         if (!parsed) fail('QUANTITY:本文の範囲');
         quantity = {
-          raw: match![1],
+          raw,
           decimal: null,
           lower: parsed!.lower,
           upper: parsed!.upper,
           sourceIds,
         };
       } else {
-        const parsed = match && parseExactQuantity(match[1]);
+        const parsed = parseExactQuantity(raw);
         if (!parsed || quantityNumber(parsed.decimal)?.value !== fact.value)
           fail('QUANTITY:本文数量の不一致・精度不足');
-        quantity = { raw: match![1], decimal: parsed!.decimal, sourceIds };
+        quantity = { raw, decimal: parsed!.decimal, sourceIds };
       }
     } else {
       if (
@@ -486,9 +472,6 @@ export function validateFact(
     ),
     scopes
   );
-  const contextBlocks = pages
-    .flatMap((p) => p.blocks)
-    .filter((b) => binding.contextIds.some((id) => b.id === id || b.spanIds.includes(id)));
   const allowedContexts = new Set([
     ...binding.contextIds,
     ...page.blocks
@@ -497,8 +480,13 @@ export function validateFact(
   ]);
   if (
     contexts.some((id) => !allowedContexts.has(id)) ||
-    contextBlocks.some(
-      (b) => ![...contexts, ...scopes].some((id) => id === b.id || b.spanIds.includes(id))
+    binding.contextIds.some(
+      (required) =>
+        ![...contexts, ...scopes].some(
+          (id) =>
+            id === required ||
+            pages.flatMap((p) => p.blocks).some((b) => b.id === id && b.spanIds.includes(required))
+        )
     )
   )
     fail(`SCOPE:適用見出しの不一致。必要なcontextIds=${JSON.stringify(binding.contextIds)}`);
@@ -538,8 +526,7 @@ export function validateFact(
   const rowQualifiers = row ? sourceQualifiers(row.text) : [];
   if (rowQualifiers.some((q) => !sourceQualifiers(source + notes).includes(q)))
     fail('QUALIFIER:値の行の限定が未参照');
-  const local =
-    source + '\n' + context + '\n' + referenceText(pages, binding.contextIds) + '\n' + notes;
+  const local = source + '\n' + context + '\n' + notes;
   if (
     (fact.kind === 'number' || fact.kind === 'range') &&
     fact.semantics.state === 'planned' &&
@@ -608,7 +595,7 @@ export function validateFact(
           fail('PERIOD:日付の役割が不一致です');
       }
     }
-    if (fact.semantics.periodKind !== periodKind(fact.period, axis + context))
+    if (fact.semantics.periodKind !== periodKind(fact.period, (axis || source) + context))
       fail('PERIOD:期間区分の不一致');
     if (fact.semantics.metricKind !== metricKind(fact.label, fact.unit))
       fail('METRIC:量の種類の不一致');

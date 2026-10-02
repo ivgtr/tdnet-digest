@@ -109,6 +109,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       env: {
         XDG_CONFIG_HOME: profile,
         XDG_CACHE_HOME: profile,
+        TMPDIR: profile,
         PATH: '/usr/local/bin:/usr/bin:/bin',
       },
       args: [
@@ -288,7 +289,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v50:openai:fixture:full';
+          const fingerprint = 'v51:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -343,7 +344,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v50 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v51 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -551,6 +552,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
       }
       if (reviewCase === 'semantic-ownership') {
+        assert.equal(checked.facts.length, 12);
+        assert.equal(checked.facts.filter((f: VerifiedFact) => f.label === '販売台数').length, 1);
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.label === '中間配当金')?.quantity?.raw,
+          '10円50銭'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('取得できません'))?.semantics
+            .polarity,
+          'mixed'
+        );
         const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
         const bounded = checked.facts.find((f: VerifiedFact) =>
           f.quote.includes('取得価額は100百万円以内')

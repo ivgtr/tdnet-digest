@@ -76,7 +76,9 @@ export function explicitCalendarAxisMatches(axis: string, target: string): boole
 
 /** Facts have already proved their source period; coverage compares meaning, not spelling. */
 export function matchesReportingPeriod(
-  fact: VerifiedFact,
+  fact: Pick<VerifiedFact, 'period'> & {
+    semantics: Pick<VerifiedFact['semantics'], 'periodKind'>;
+  },
   period: string,
   quarter?: string
 ): boolean {
@@ -86,7 +88,6 @@ export function matchesReportingPeriod(
   if (!q) return fact.semantics.periodKind === 'fullYear';
   return (
     (text.match(/第([1-4])四半期/)?.[1] ?? (/中間期/.test(text) ? '2' : null)) === q &&
-    (fact.semantics.periodKind === `cumulativeQ${q}` ||
-      (quarter !== '中間期' && fact.semantics.periodKind === `standaloneQ${q}`))
+    fact.semantics.periodKind === `cumulativeQ${q}`
   );
 }

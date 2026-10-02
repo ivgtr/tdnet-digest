@@ -4,6 +4,7 @@ import {
   exact,
   record,
   checkSemantics,
+  canonicalJSON,
   type CandidateFact,
   type FactSemantics,
   type VerifiedFact,
@@ -77,9 +78,14 @@ export function factSourceKey(f: VerifiedFact): string {
           'prose',
           f.evidence.blockId,
           f.kind === 'event' || f.kind === 'status' ? 'assertion' : [f.label, f.quantity?.raw],
-          ...(f.kind === 'event' || f.kind === 'status' ? [] : [f.period]),
         ]
   );
+}
+/** Both facts have proved the same source quantity; spelling aliases cannot create another fact. */
+export function equivalentSourceFact(a: VerifiedFact, b: VerifiedFact): boolean {
+  const meaning = (f: VerifiedFact) =>
+    canonicalJSON({ ...f, id: null, importance: null, period: null });
+  return factSourceKey(a) === factSourceKey(b) && meaning(a) === meaning(b);
 }
 export function checkCandidate(item: unknown): asserts item is Candidate {
   if (
@@ -425,7 +431,7 @@ export function reviewCandidates(
         if (!result.diagnostics.slice(start).some((d) => d.status !== 'valid')) {
           const checked = validateFact(fact, pages, context);
           const previous = result.facts.find((f) => factSourceKey(f) === factSourceKey(checked));
-          if (previous && previous.id !== checked.id)
+          if (previous && previous.id !== checked.id && !equivalentSourceFact(previous, checked))
             throw new Error('SEMANTICS:同一原文単位の意味候補が競合します');
           if (!previous) result.facts.push(checked);
         }

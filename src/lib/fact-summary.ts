@@ -7,6 +7,7 @@ import {
   reviewCandidates,
   serializeCandidateSource,
   factSourceKey,
+  equivalentSourceFact,
   proseQuantities,
   type Diagnostic,
   type CandidateReview,
@@ -94,7 +95,7 @@ export function parseFactSummary(
     try {
       const fact = validateFact(item, pages, context);
       const previous = facts.find((f) => factSourceKey(f) === factSourceKey(fact));
-      if (previous && previous.id !== fact.id)
+      if (previous && previous.id !== fact.id && !equivalentSourceFact(previous, fact))
         throw new Error('SEMANTICS:同一原文単位の意味候補が競合します');
       if (!previous) facts.push(fact);
     } catch (error) {
@@ -272,7 +273,7 @@ export async function generateVerifiedFactSummary(
   for (const f of repaired.facts) {
     const key = factSourceKey(f),
       before = merged.get(key);
-    if (before && before.id !== f.id) {
+    if (before && before.id !== f.id && !equivalentSourceFact(before, f)) {
       failure = 'REPAIR:確定済み原文の意味を変更する候補は受け入れません';
       break;
     }

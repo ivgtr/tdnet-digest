@@ -1,4 +1,4 @@
-import { numericValueKind, matchesReportingPeriod } from './period-semantics';
+import { numericValueKind, matchesReportingPeriod, periodKind } from './period-semantics';
 import { NET_PROFIT_METRIC } from './metric-semantics';
 import { assertionStates } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
@@ -109,6 +109,13 @@ function isReportingMetricSource(
         /経営成績|損益計算書|連結業績|個別業績/.test(title);
 }
 /** Prose must prove a direct, complete amount at the reporting source and period. */
+function reportingPeriodSource(axis: string, context: string, period: string): boolean {
+  return matchesReportingPeriod(
+    { period, semantics: { periodKind: periodKind(period, axis + context) } },
+    period.match(/20\d{2}年\d{1,2}月期/)?.[0] ?? '',
+    period.match(/第[1-4]四半期|中間期/)?.[0]
+  );
+}
 function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, period: string) {
   return pages.flatMap((page) =>
     page.blocks.filter((block) => {
@@ -131,7 +138,7 @@ function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, 
           verifyProsePeriod(claim, block.text, sourceContext);
           verifyPeriodAndKind(claim, block.text, sourceContext, '');
           verifyProseEvidence(page, block.text, claim);
-          return true;
+          return reportingPeriodSource(block.text, sourceContext, period);
         } catch {
           return false;
         }
@@ -152,12 +159,20 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
       !isReportingMetricSource(h.valueId, 'actual', pages, context)
     )
       return false;
-    return provedMappedNumber(pages, h, {
-      label: '売上高営業利益率',
-      unit: '%',
-      period,
-      valueKind: 'actual',
-    });
+    if (
+      !provedMappedNumber(pages, h, {
+        label: '売上高営業利益率',
+        unit: '%',
+        period,
+        valueKind: 'actual',
+      })
+    )
+      return false;
+    try {
+      return reportingPeriodSource(text(h.periodIds), text(h.contextIds), period);
+    } catch {
+      return false;
+    }
   });
 }
 function earningsReportingPeriod(pages: ExtractedPage[]) {

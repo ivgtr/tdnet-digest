@@ -8,6 +8,7 @@ import { generateVerifiedFactSummary, renderFacts } from './fact-summary';
 import { verifyCoverage, coverageReport } from './fact-coverage';
 import { stableFactId } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
+import { verifyTableEvidence } from './numeric-evidence';
 import { generateText } from './llm-client';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
@@ -207,14 +208,16 @@ describe('数量の単位証明と報告対象の必須判定', () => {
       expect(saved([wrong], pages).facts).toEqual([]);
     }
   );
-  it.each(['台', '件/月'])('証明済み単位を候補・保存・表示で共有する: %s', (unit) => {
+  it.each(['台', '件/月', '千kWh'])('証明済み単位を候補・保存・表示で共有する: %s', (unit) => {
     const pages = [
       textPage(`会社名 株式会社テスト\n1. ${period} 販売状況\n販売数量は100 ${unit}です。`),
     ];
     const f = numberCandidate(pages[0], '販売数量', 100, period);
     f.unit = unit;
     f.semantics.scope = f.semantics.basis = null;
-    f.semantics.metricKind = ['口', '台', 'kg', 'm2', '人日', 'か月', '件/月'].includes(unit)
+    f.semantics.metricKind = ['口', '台', 'kg', 'm2', '人日', 'か月', '件/月', '千kWh'].includes(
+      unit
+    )
       ? 'other'
       : 'count';
     const qs = proseQuantities(pages[0].blocks[2]);
@@ -493,4 +496,201 @@ describe('数量の単位証明と報告対象の必須判定', () => {
       else expect(slot).toBeUndefined();
     }
   );
+});
+
+describe('原数量・期間・主張と保存根拠の同一性', () => {
+  it.each([2, 3])('単独Q%sは有効な補足だが累計の必須3指標を充足しない', (q) => {
+    const current = period + `第${q}四半期`;
+    const pages = [
+      textPage(
+        `${period} 第${q}四半期決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${current}単独 経営成績\n${['売上高', '営業利益', '当期純利益'].map((m) => `${m}は100百万円です。`).join('\n')}`
+      ),
+    ];
+    const fs = ['売上高', '営業利益', '当期純利益'].map((m) => {
+      const f = numberCandidate(pages[0], m, 100, current);
+      f.semantics.periodKind = `standaloneQ${q}` as typeof f.semantics.periodKind;
+      return f;
+    });
+    const r = reviewCandidates(candidateResponse(fs, pages, 'earnings'), 'earnings', pages);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(3);
+    expect(saved(r.facts, pages).facts).toEqual(r.facts);
+    expect(() => verifyCoverage('earnings', pages, r.facts)).toThrow('当年決算実績');
+    const cumulativePages = [textPage(pages[0].text.replace('単独', '累計'))];
+    const cumulative = fs.map((f) => ({
+      ...f,
+      semantics: { ...f.semantics, periodKind: `cumulativeQ${q}` as typeof f.semantics.periodKind },
+    }));
+    const good = reviewCandidates(
+      candidateResponse(cumulative, cumulativePages, 'earnings'),
+      'earnings',
+      cumulativePages
+    );
+    expect(good.unverified).toEqual([]);
+    expect(saved(good.facts, cumulativePages, 'earnings', true).facts).toEqual(good.facts);
+  });
+  it.each(['累計', '単独'])('Q3%s利益率の原文義務も報告対象に合わせる', (shape) => {
+    const current = period + '第3四半期';
+    const pages = [
+      textPage(
+        `${period} 第3四半期決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${current}累計 経営成績\n${['売上高', '営業利益', '当期純利益'].map((m) => `${m}は100百万円です。`).join('\n')}\n2. ${current}${shape} 経営成績\n売上高営業利益率は10%です。`
+      ),
+    ];
+    const fs = ['売上高', '営業利益', '当期純利益'].map((m) => {
+      const f = numberCandidate(pages[0], m, 100, current);
+      f.semantics.periodKind = 'cumulativeQ3';
+      return f;
+    });
+    const r = reviewCandidates(candidateResponse(fs, pages, 'earnings'), 'earnings', pages);
+    expect(r.unverified).toEqual([]);
+    const slot = coverageReport('earnings', pages, r.facts).find((s) =>
+      s.requirement.endsWith('当年営業利益率')
+    );
+    if (shape === '累計') expect(slot).toMatchObject({ status: 'absent' });
+    else expect(slot).toBeUndefined();
+  });
+  it.each(['累計', '単独'])('明示Q3%s期間の本文数量を検証する', (shape) => {
+    const current = period + '第3四半期';
+    const pages = [
+      textPage(
+        `会社名 株式会社テスト\n1. 経営成績\n${current}${shape}期間の売上高は100百万円です。`
+      ),
+    ];
+    const f = numberCandidate(pages[0], '売上高', 100, current);
+    f.semantics.scope = f.semantics.basis = null;
+    f.semantics.periodKind = shape === '累計' ? 'cumulativeQ3' : 'standaloneQ3';
+    const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(1);
+    expect(saved(r.facts, pages).facts).toEqual(r.facts);
+    const wrong = structuredClone(r.facts[0]);
+    wrong.semantics.periodKind = shape === '累計' ? 'standaloneQ3' : 'cumulativeQ3';
+    wrong.id = stableFactId(wrong);
+    expect(saved([wrong], pages).facts).toEqual([]);
+  });
+  it('中間期とQ2の別名を生成・修復・保存・表示で二重化しない', async () => {
+    const pages = [
+      textPage(
+        `会社名 株式会社テスト\n${period} 中間期決算短信\n1. ${period}中間期 経営成績\n売上高は100百万円です。\n営業利益は20百万円です。\n当期純利益は10百万円です。`
+      ),
+    ];
+    const f = numberCandidate(pages[0], '売上高', 100, period + '中間期');
+    f.semantics.scope = f.semantics.basis = null;
+    f.semantics.periodKind = 'cumulativeQ2';
+    const alias = structuredClone(f);
+    alias.period = period + '第2四半期';
+    const profit = structuredClone(f);
+    Object.assign(profit, numberCandidate(pages[0], '営業利益', 20, f.period!));
+    profit.semantics = { ...f.semantics };
+    const a = reviewCandidates(candidateResponse([f], pages), 'other', pages).facts[0];
+    const b = reviewCandidates(candidateResponse([alias], pages), 'other', pages).facts[0];
+    const together = reviewCandidates(candidateResponse([f, alias, profit], pages), 'other', pages);
+    expect(together.facts).toHaveLength(2);
+    expect(saved([a, b], pages).facts).toHaveLength(1);
+    const net = numberCandidate(pages[0], '当期純利益', 10, f.period!);
+    net.semantics = { ...f.semantics };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([f], pages, 'earnings'))
+      .mockResolvedValueOnce(candidateResponse([alias, profit, net], pages, 'earnings'));
+    const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(result.facts.facts).toHaveLength(3);
+    expect(renderFacts(result.facts).match(/売上高:/g)).toHaveLength(1);
+  });
+  it.each([
+    ['当社は自己株式を取得できません。', 'negative', 'unspecified'],
+    ['当社はAを取得できないが、Bを取得しました。', 'mixed', 'completed'],
+    ['当社はAを取得できませんが、Bを取得しました。', 'mixed', 'completed'],
+    ['当社は自己株式を取得しました。', 'affirmative', 'completed'],
+  ] as const)('不可能の否定と対比を候補・保存で照合する: %s', (body, polarity, state) => {
+    const pages = [textPage(`会社名 株式会社テスト\n1. 取引概要\n${body}`)];
+    const e = event(numberCandidate(pages[0], '当社'));
+    e.semantics.scope = e.semantics.basis = null;
+    e.semantics.polarity = polarity;
+    e.semantics.state = state;
+    const r = reviewCandidates(candidateResponse([e], pages), 'other', pages);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(1);
+    expect(saved(r.facts, pages).facts).toEqual(r.facts);
+    const wrong = structuredClone(r.facts[0]);
+    wrong.semantics.polarity = polarity === 'affirmative' ? 'negative' : 'affirmative';
+    wrong.id = stableFactId(wrong);
+    validateSavedFacts({ version: 4, documentType: 'other', facts: [wrong], unverified: [] });
+    expect(saved([wrong], pages).facts).toEqual([]);
+    expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
+  });
+  it('円銭を完全な配当額として候補・保存・表示へ渡す', () => {
+    const pages = [
+      textPage(`会社名 株式会社テスト\n1. ${period} 配当の状況\n年間配当金は10円50銭です。`),
+    ];
+    const f = numberCandidate(pages[0], '年間配当金', 10.5, period);
+    f.unit = '円';
+    f.semantics.metricKind = 'perShare';
+    f.semantics.scope = f.semantics.basis = null;
+    const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(1);
+    expect(r.facts[0].quantity).toMatchObject({ raw: '10円50銭', decimal: '10.50' });
+    expect(saved(r.facts, pages).facts).toEqual(r.facts);
+    expect(
+      renderFacts({ version: 4, documentType: 'other', facts: r.facts, unverified: [] })
+    ).toContain('10.50円');
+    const wrong = structuredClone(r.facts[0]);
+    wrong.value = 10;
+    wrong.quantity = { ...wrong.quantity!, raw: '10', decimal: '10' };
+    wrong.id = stableFactId(wrong);
+    validateSavedFacts({ version: 4, documentType: 'other', facts: [wrong], unverified: [] });
+    expect(saved([wrong], pages).facts).toEqual([]);
+  });
+  it('複数断片の見出しを保存根拠から一部分だけ落として受理しない', () => {
+    const pages = [
+      cells(
+        [
+          ['会社名 株式会社テスト', 0, 0, 200],
+          ['1. ', 0, 30, 20],
+          [period, 35, 30, 130],
+          ['業績予想', 180, 30, 80],
+          ['2026年3月期', 200, 60, 140],
+          [period, 420, 60, 140],
+          ['売上高', 0, 90, 80],
+          ['80百万円', 240, 90, 80],
+          ['100百万円', 460, 90, 80],
+        ],
+        1
+      ),
+    ];
+    const hint = buildDocumentContext(pages).tableMappings.find(
+      (h) => pages[0].quantities.find((q) => q.id === h.valueId)?.text === '100百万円'
+    )!;
+    const f = numberCandidate(pages[0], '売上高', 100, period);
+    f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+    f.valueKind = f.semantics.state = 'forecast';
+    f.semantics.scope = f.semantics.basis = null;
+    const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(1);
+    const good = r.facts[0];
+    expect(good.evidence.contextIds.length).toBeGreaterThan(1);
+    expect(saved([good], pages).facts).toEqual([good]);
+    const wrong = structuredClone(good);
+    wrong.evidence.contextIds = [good.evidence.contextIds[good.evidence.contextIds.length - 1]];
+    if (wrong.evidence.kind !== 'table') throw new Error('expected table');
+    const { valueId, metricIds, periodIds, unitIds, contextIds } = wrong.evidence;
+    wrong.quote = verifyTableEvidence(
+      pages[0],
+      { valueId, metricIds, periodIds, unitIds, contextIds },
+      {
+        label: wrong.label,
+        value: wrong.value,
+        unit: wrong.unit!,
+        period: wrong.period!,
+        valueKind: wrong.valueKind!,
+      },
+      false
+    ).quote;
+    wrong.id = stableFactId(wrong);
+    validateSavedFacts({ version: 4, documentType: 'other', facts: [wrong], unverified: [] });
+    expect(saved([wrong], pages).facts).toEqual([]);
+  });
 });
