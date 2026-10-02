@@ -68,6 +68,7 @@ export async function additionalReviewFixture(mode: string) {
       'cover-boundary',
       'cover-signs',
       'cover-ifrs-company',
+      'net-profit-passive',
       'assertion-conflict',
       'metric-repair',
     ].includes(mode)
@@ -185,6 +186,7 @@ async function latestReviewFixture(mode: string) {
     'cover-boundary',
     'cover-signs',
     'cover-ifrs-company',
+    'net-profit-passive',
     'assertion-conflict',
   ].includes(mode);
   const period = '2027年3月期';
@@ -201,8 +203,8 @@ async function latestReviewFixture(mode: string) {
   ];
   const texts = report
     ? [
-        `${period} 決算短信〔${mode === 'cover-ifrs-company' ? 'IFRS' : '日本基準'}〕（連結）\n${mode === 'cover-ifrs-company' ? '上場会社名：株式会社テスト' : '会社名 株式会社テスト'}\n${metrics.map((m) => `${period}の${m}は${mode === 'cover-signs' ? (m === '営業損失' ? '▲10' : m === '当期純損失' ? '−20' : '100') : '100'}百万円です。`).join('\n')}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
-        `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円の見込みです。`).join('\n')}`,
+        `${period} 決算短信〔${mode === 'cover-ifrs-company' ? 'IFRS' : '日本基準'}〕（連結）\n${mode === 'cover-ifrs-company' ? '上場会社名：株式会社テスト' : '会社名 株式会社テスト'}\n${metrics.map((m) => `${period}の${m}は${mode === 'cover-signs' ? (m === '営業損失' ? '▲10' : m === '当期純損失' ? '−20' : '100') : '100'}百万円です。`).join('\n')}${mode === 'net-profit-passive' ? `\n${period}の利益は5百万円です。` : ''}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
+        `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円${mode === 'net-profit-passive' ? 'と見込まれます' : 'の見込みです'}。`).join('\n')}`,
       ]
     : mode === 'semantics'
       ? ['会社名 株式会社テスト', ...bodies.map((body) => `1. 事業説明\n${body}`)]
@@ -292,6 +294,27 @@ async function latestReviewFixture(mode: string) {
   else wrong[0].semantics.scope = '連結';
   let initial = wrong;
   let repairFacts = report ? facts.slice(0, 3) : facts;
+  let ambiguous: VerifiedFact | undefined;
+  if (mode === 'net-profit-passive') {
+    const draft = numberCandidate(pages[0], '利益', 5, period);
+    if (draft.evidence.kind !== 'prose') throw Error('expected prose');
+    const block = pages[0].blocks.find((b) => b.text === `${period}の利益は5百万円です。`)!;
+    draft.evidence.blockId = block.id;
+    draft.quote = block.text;
+    draft.semantics.scope = draft.semantics.basis = null;
+    draft.evidence.contextIds = bindingFor(context, block.id).contextIds;
+    ambiguous = reviewCandidates(candidateResponse([draft], pages), 'other', pages).facts[0];
+    if (!ambiguous) throw Error('generic profit did not validate');
+    ambiguous.semantics.scope = '連結';
+    ambiguous.semantics.basis = '日本基準';
+    ambiguous.evidence.scopeIds = resolveScopeIds(
+      bindingFor(context, block.id),
+      ambiguous.semantics,
+      true
+    );
+    ambiguous.id = stableFactId(ambiguous);
+    initial = [...facts.slice(0, 2), ambiguous, ...facts.slice(3)];
+  }
   if (mode === 'assertion-conflict') {
     initial = facts.slice(1);
     const dated = structuredClone(facts[facts.length - 1]);
@@ -311,12 +334,14 @@ async function latestReviewFixture(mode: string) {
   }
   const first = JSON.parse(candidateResponse(initial, pages, documentType));
   const warnings =
-    mode === 'cover-boundary'
+    mode === 'cover-boundary' || mode === 'net-profit-passive'
       ? reviewCandidates(JSON.stringify(first), documentType, pages).unverified
       : [];
   if (mode === 'metric-repair') first.candidates[0].source.metric = '売上 高';
   const legacy = structuredClone(checked);
-  if (mode === 'assertion-conflict') {
+  if (mode === 'net-profit-passive') {
+    legacy.facts[2] = ambiguous!;
+  } else if (mode === 'assertion-conflict') {
     const dated = structuredClone(checked.facts[checked.facts.length - 1]);
     dated.period = '2027年3月1日';
     dated.semantics.periodKind = 'eventDate';

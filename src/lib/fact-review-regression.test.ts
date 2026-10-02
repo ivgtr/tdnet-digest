@@ -4,7 +4,7 @@ import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from './document-context';
 import { reviewCandidates, serializeCandidateSource } from './fact-candidates';
 import { generateVerifiedFactSummary, parseFactSummary, renderFacts } from './fact-summary';
-import { verifyCoverage, coverageReport } from './fact-coverage';
+import { verifyCoverage, coverageReport, standardMetric } from './fact-coverage';
 import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
 import { generateText } from './llm-client';
@@ -966,5 +966,184 @@ describe('9a55639再レビューのIFRS表紙と会社名欄', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
     expect(saved(r.facts.facts, pages, 'earnings', true).facts).toEqual(r.facts.facts);
     expect(renderFacts(r.facts)).toContain('株式会社テスト');
+  });
+});
+
+describe('17f5ca9再レビューの指標明示性と受動形予想', () => {
+  function report(label: string, extra = false) {
+    const pages = [
+      textPage(
+        `${period} 決算短信〔IFRS〕（連結）\n会社名 株式会社テスト\n${period}の売上高は100百万円です。\n${period}の営業利益は100百万円です。\n${period}の${label}は5百万円です。`
+      ),
+    ];
+    const facts = ['売上高', '営業利益', label].map((m, i) => {
+      const f = numberCandidate(pages[0], m, i === 2 ? 5 : 100, period);
+      if (f.evidence.kind !== 'prose') throw new Error('expected prose');
+      const block = pages[0].blocks.find((b) => b.text.startsWith(`${period}の${m}は`))!;
+      f.evidence.blockId = block.id;
+      f.quote = block.text;
+      f.semantics.basis = 'IFRS';
+      return f;
+    });
+    if (extra) pages.push(textPage(`1. 経営成績\n${period}の当期利益は100百万円です。`, 2));
+    return { pages, facts };
+  }
+  it.each(['利益', '損失'])('曖昧な%sで表紙属性や必須純利益を証明しない', async (label) => {
+    const { pages, facts } = report(label);
+    expect(standardMetric(facts[2])).toBeNull();
+    const r = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
+    expect(r.facts).toHaveLength(2);
+    const generic = structuredClone(facts[2]);
+    generic.semantics.scope = generic.semantics.basis = null;
+    const standalone = reviewCandidates(candidateResponse([generic], pages), 'other', pages);
+    expect(standalone.unverified).toEqual([]);
+    expect(standalone.facts).toHaveLength(1);
+    expect(saved(standalone.facts, pages).facts).toEqual(standalone.facts);
+    const forged = structuredClone(standalone.facts[0]);
+    forged.semantics.scope = '連結';
+    forged.semantics.basis = 'IFRS';
+    forged.evidence.scopeIds = resolveScopeIds(
+      bindingFor(
+        buildDocumentContext(pages),
+        forged.evidence.kind === 'prose' ? forged.evidence.blockId : ''
+      ),
+      forged.semantics,
+      true
+    );
+    forged.id = stableFactId(forged);
+    validateSavedFacts({
+      version: 4,
+      documentType: 'earnings',
+      facts: [...r.facts, forged],
+      unverified: [],
+    });
+    expect(saved([forged], pages).facts).toEqual([]);
+    expect(() => verifyCoverage('earnings', pages, [...r.facts, standalone.facts[0]])).toThrow(
+      'netProfit'
+    );
+    expect(() => saved([...r.facts, standalone.facts[0]], pages, 'earnings', true)).toThrow(
+      'netProfit'
+    );
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValue(candidateResponse(facts, pages, 'earnings'));
+    await expect(generateVerifiedFactSummary(config, 'earnings', 'source', pages)).rejects.toThrow(
+      'netProfit'
+    );
+    expect(generateText).toHaveBeenCalledTimes(2);
+  });
+  it.each(['利益', '損失'])('財務節でも%sだけでは必須純利益を満たさない', (label) => {
+    const source = localReport('経営成績');
+    const detail = textPage(source.pages[1].text.replace('当期純利益', label), 2);
+    const pages = [source.pages[0], detail];
+    const facts = ['売上高', '営業利益', label].map((m) => {
+      const f = numberCandidate(detail, m, 100, period);
+      if (f.evidence.kind !== 'prose') throw new Error('expected prose');
+      const block = detail.blocks.find((b) => b.text.startsWith(`${period}の${m}は`))!;
+      f.evidence.blockId = block.id;
+      f.quote = block.text;
+      f.semantics.scope = '個別';
+      f.semantics.basis = 'IFRS';
+      return f;
+    });
+    const r = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(3);
+    expect(saved(r.facts, pages).facts).toEqual(r.facts);
+    expect(() => verifyCoverage('earnings', pages, r.facts)).toThrow('netProfit');
+  });
+  it.each([
+    '当期利益',
+    '四半期損失',
+    '中間利益',
+    '親会社の所有者に帰属する利益',
+    '親会社株主に帰属する純損失',
+    '純利益',
+    '純損失',
+  ])('純損益の明示された正常指標を保持する: %s', (label) => {
+    const { pages, facts } = report(label);
+    expect(standardMetric(facts[2])).toBe('netProfit');
+    const good = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(3);
+    expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+  });
+  it('曖昧な利益を除外して明示された別原文の純利益で修復する', async () => {
+    const { pages, facts } = report('利益', true);
+    const replacement = numberCandidate(pages[1], '当期利益', 100, period);
+    replacement.semantics.basis = 'IFRS';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse(facts, pages, 'earnings'))
+      .mockResolvedValueOnce(candidateResponse([replacement], pages, 'earnings'));
+    const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+    expect(result.repairAttempted).toBe(true);
+    expect(result.facts.facts.map((f) => f.label)).toEqual(['売上高', '営業利益', '当期利益']);
+    expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
+    expect(result.facts.unverified).toEqual(
+      reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages).unverified
+    );
+  });
+  it.each(['と見込まれます。', 'と見込まれます'])(
+    '受動形の完結した予想を数量・状態・保存で受理する: %s',
+    (tail) => {
+      const { pages, f } = prose(`${period}の売上高は100百万円${tail}`);
+      const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+      expect(assertionStates(f.quote)).toEqual(['forecast']);
+      expect(r.unverified).toEqual([]);
+      expect(r.facts).toHaveLength(1);
+      expect(saved(r.facts, pages).facts).toEqual(r.facts);
+      expect(
+        renderFacts({ version: 4, documentType: 'other', facts: r.facts, unverified: [] })
+      ).toContain('売上高: 100百万円');
+    }
+  );
+  it.each([
+    'と見込まれますが確定していません。',
+    'と見込まれます。実際には100百万円に届かない見込みです。',
+    'とは見込まれません。',
+    'と見込まれない。',
+    'と見込まれますではなく200百万円です。',
+  ])('受動形でも未検査の否定・撤回・後続を通さない: %s', (tail) => {
+    const { pages, f } = prose(`${period}の売上高は100百万円${tail}`);
+    expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
+    // A complete positive saved fact is transplanted into the changed source;
+    // its quantity/source IDs and schema stay intact, so meaning must reject it.
+    const normal = prose(`${period}の売上高は100百万円と見込んでおります。`);
+    const base = reviewCandidates(
+      candidateResponse([normal.f], normal.pages),
+      'other',
+      normal.pages
+    ).facts[0];
+    base.quote = f.quote;
+    base.id = stableFactId(base);
+    validateSavedFacts({ version: 4, documentType: 'other', facts: [base], unverified: [] });
+    expect(saved([base], pages).facts).toEqual([]);
+  });
+  it('必須予想の受動形を差分修復して表示・保存する', async () => {
+    const actual = localReport('経営成績');
+    const future = textPage(
+      `1. ${period} 業績予想\n範囲 個別\n会計基準 IFRS\n${['売上高', '営業利益', '当期純利益'].map((m) => `${period}の${m}は100百万円と見込まれます。`).join('\n')}`,
+      3
+    );
+    const pages = [...actual.pages, future];
+    const forecast = ['売上高', '営業利益', '当期純利益'].map((m) => {
+      const f = numberCandidate(future, m, 100, period);
+      f.valueKind = f.semantics.state = 'forecast';
+      f.semantics.scope = '個別';
+      f.semantics.basis = 'IFRS';
+      return f;
+    });
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(
+        candidateResponse([...actual.facts, ...forecast.slice(1)], pages, 'earnings')
+      )
+      .mockResolvedValueOnce(candidateResponse([forecast[0]], pages, 'earnings'));
+    const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+    expect(result.repairAttempted).toBe(true);
+    expect(result.facts.facts).toHaveLength(6);
+    expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
+    expect(renderFacts(result.facts)).toContain('個別、IFRS');
   });
 });
