@@ -1,4 +1,9 @@
-import { periodKind, reportingPeriodShape, explicitCalendarAxisMatches } from './period-semantics';
+import {
+  periodKind,
+  reportingPeriodShape,
+  explicitCalendarAxisMatches,
+  calendarIntervalSeparator,
+} from './period-semantics';
 export { periodKind } from './period-semantics';
 import {
   declaredSubjectsIn,
@@ -221,9 +226,9 @@ export function datedStates(text: string): Array<{ date: string; state: string }
       matches[i + 1]?.index ?? source.length
     );
     const prefixRole = head.match(/(決議|決定|契約締結|締結|実行|基準)日[:：]?$/)?.[1];
-    const state = /^[～〜-]/.test(tail)
+    const state = new RegExp(`^${calendarIntervalSeparator}`).test(tail)
       ? 'periodStart'
-      : /^[～〜-]$/.test(head)
+      : new RegExp(`^${calendarIntervalSeparator}$`).test(head)
         ? 'periodEnd'
         : prefixRole === '決議' || prefixRole === '決定'
           ? 'decided'

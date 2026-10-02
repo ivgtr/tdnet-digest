@@ -534,6 +534,75 @@ describe('数量の単位証明と報告対象の必須判定', () => {
 });
 
 describe('原数量・期間・主張と保存根拠の同一性', () => {
+  it.each([
+    ['第2四半期', '第3四半期累計'],
+    ['第2四半期', '第2四半期累計'],
+    ['第3四半期', '第2四半期単独'],
+  ])('局所の%sへ継承%sの限定を貸さない', (local, inherited) => {
+    const pages = [
+      textPage(
+        `会社名 株式会社テスト\n1. ${period}${inherited} 経営成績\n${period}${local}の売上高は100百万円です。`
+      ),
+    ];
+    const f = numberCandidate(pages[0], '売上高', 100, period + local);
+    f.semantics.scope = f.semantics.basis = null;
+    f.semantics.periodKind = local.includes('2') ? 'cumulativeQ2' : 'standaloneQ3';
+    expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
+    evidence(f, pages);
+    f.id = stableFactId(f);
+    expect(saved([f], pages).facts).toEqual([]);
+    // When the quarter itself is inherited, its qualifier travels with it.
+    const normal = [textPage(pages[0].text.replace(`${period}${local}の売上高`, '売上高'))];
+    f.period = period + inherited;
+    f.semantics.periodKind = inherited.includes('単独')
+      ? 'standaloneQ2'
+      : inherited.includes('3')
+        ? 'cumulativeQ3'
+        : 'cumulativeQ2';
+    const r = reviewCandidates(candidateResponse([f], normal), 'other', normal);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(1);
+    expect(saved(r.facts, normal).facts).toEqual(r.facts);
+    const localKind = local.includes('2') ? 'cumulativeQ2' : 'standaloneQ3';
+    const qualifier = localKind === 'cumulativeQ2' ? '累計' : '単独';
+    const explicit = [
+      textPage(pages[0].text.replace(`${local}の売上高`, `${local}${qualifier}の売上高`)),
+    ];
+    f.period = period + local;
+    f.semantics.periodKind = localKind;
+    const proved = reviewCandidates(candidateResponse([f], explicit), 'other', explicit);
+    expect(proved.unverified).toEqual([]);
+    expect(proved.facts).toHaveLength(1);
+    expect(saved(proved.facts, explicit).facts).toEqual(proved.facts);
+  });
+  it.each(['を踏まえた特別損失について', 'を参照した損失の背景', 'についての検討状況'])(
+    '番号付き予想参照は必須3予想を作らず、予想自体の見出しは作る: %s',
+    async (suffix) => {
+      const { pages, amounts } = report(
+        `1. 2028年3月期業績予想${suffix}\n当社は本施策を実施しました。`
+      );
+      const r = reviewCandidates(candidateResponse(amounts, pages, 'earnings'), 'earnings', pages);
+      expect(() => verifyCoverage('earnings', pages, r.facts)).not.toThrow();
+      expect(saved(r.facts, pages, 'earnings', true).facts).toEqual(r.facts);
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse(amounts, pages, 'earnings'));
+      expect(
+        (await generateVerifiedFactSummary(config, 'earnings', 'source', pages)).repairAttempted
+      ).toBe(false);
+      const normal = report(
+        '1. 2028年3月期の通期連結業績予想について\n当社は本施策を実施しました。'
+      );
+      const checked = reviewCandidates(
+        candidateResponse(normal.amounts, normal.pages, 'earnings'),
+        'earnings',
+        normal.pages
+      );
+      expect(() => verifyCoverage('earnings', normal.pages, checked.facts)).toThrow(
+        '通期予想の重要指標'
+      );
+    }
+  );
   it.each([2, 3])('単独Q%sは有効な補足だが累計の必須3指標を充足しない', (q) => {
     const current = period + `第${q}四半期`;
     const pages = [
@@ -824,45 +893,74 @@ describe('報告節の責務と原文期間からの修復制約', () => {
     ['2028年3月期', 'fullYear', ''],
     ['2028年3月31日', 'eventDate', ''],
     ['翌連結会計年度', 'relativeYear', '2028年3月期の業績予想を参照しましたが、'],
-  ] as const)('計上予定の修復区分を原文期間から作る: %s', async (target, kind, prefix) => {
-    const body = `${prefix}当該額は${target}に特別損失に計上する予定です。`;
-    const { pages, amounts } = report(`1. 今後の予定\n${body}`);
-    const e = event(numberCandidate(pages[0], '特別損失', 100, period));
-    e.period = target;
-    e.semantics.periodKind = kind;
-    e.semantics.state = 'planned';
-    const first = reviewCandidates(
-      candidateResponse(amounts, pages, 'earnings'),
-      'earnings',
-      pages
-    );
-    const slot = coverageReport('earnings', pages, first.facts).find((s) =>
-      s.requirement.includes('損失の計上予定')
-    )!;
-    expect(slot).toMatchObject({
-      status: 'absent',
-      expected: { kind: 'event', state: 'planned', periodKind: kind },
-    });
-    vi.mocked(generateText)
-      .mockReset()
-      .mockResolvedValueOnce(candidateResponse(amounts, pages, 'earnings'))
-      .mockResolvedValueOnce(
-        candidateResponse(
-          [{ ...e, semantics: { ...e.semantics, periodKind: slot.expected.periodKind! } }],
-          pages,
-          'earnings'
-        )
+    ['2028年3月期', 'fullYear', '', '当社は当該額を'],
+    ['2028年3月期', 'fullYear', '', '当社が当該費用を'],
+    ['2028年3月1日～2028年3月31日', 'interval', '', '当社は当該額を'],
+    ['2028年3月1日から2028年3月31日', 'interval', '', ''],
+    ['2028年3月1日から2028年3月31日まで', 'interval', '', '当社は'],
+    ['2028年3月1日-2028年3月31日', 'interval', '', '当社は'],
+  ] as const)(
+    '計上予定の修復区分を原文期間から作る: %s',
+    async (target, kind, prefix, subject = '') => {
+      const body = `${prefix}当該額は${target}に${subject}特別損失に計上する予定です。`;
+      const { pages, amounts } = report(`1. 今後の予定\n${body}`);
+      const e = event(numberCandidate(pages[0], '特別損失', 100, period));
+      e.period = target.replace('から', '～').replace(/まで$/, '');
+      e.semantics.periodKind = kind;
+      e.semantics.state = 'planned';
+      const first = reviewCandidates(
+        candidateResponse(amounts, pages, 'earnings'),
+        'earnings',
+        pages
       );
-    const r = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
-    expect(generateText).toHaveBeenCalledTimes(2);
-    expect(r.facts.facts).toHaveLength(4);
-    expect(saved(r.facts.facts, pages, 'earnings', true).facts).toEqual(r.facts.facts);
-    expect(renderFacts(r.facts)).toContain(body);
-  });
+      const slot = coverageReport('earnings', pages, first.facts).find((s) =>
+        s.requirement.includes('損失の計上予定')
+      )!;
+      expect(slot).toMatchObject({
+        status: 'absent',
+        expected: { kind: 'event', state: 'planned', periodKind: kind },
+      });
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse(amounts, pages, 'earnings'))
+        .mockResolvedValueOnce(
+          candidateResponse(
+            [{ ...e, semantics: { ...e.semantics, periodKind: slot.expected.periodKind! } }],
+            pages,
+            'earnings'
+          )
+        );
+      const r = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(r.facts.facts).toHaveLength(4);
+      expect(saved(r.facts.facts, pages, 'earnings', true).facts).toEqual(r.facts.facts);
+      expect(renderFacts(r.facts)).toContain(body);
+      if (kind === 'interval')
+        expect(r.facts.facts[3].dateRoles?.map((d) => d.state)).toEqual([
+          'periodStart',
+          'periodEnd',
+        ]);
+      for (const omitted of kind === 'interval'
+        ? [null, '2028年3月1日', '2028年3月31日', '2028年3月31日～2028年3月1日']
+        : [null]) {
+        const wrong = structuredClone(r.facts.facts[3]);
+        wrong.period = omitted;
+        wrong.semantics.periodKind =
+          omitted === null ? 'none' : omitted.includes('～') ? 'interval' : 'eventDate';
+        wrong.id = stableFactId(wrong);
+        expect(saved([wrong], pages).facts).toEqual([]);
+        expect(
+          reviewCandidates(candidateResponse([wrong], pages), 'earnings', pages).facts
+        ).toEqual([]);
+      }
+    }
+  );
   it.each([
     '2028年3月期の業績予想を参照しましたが、当該額は特別損失に計上する予定です。',
     '2028年3月期の業績予想を参照し、当該額は特別損失に計上する予定です。',
     '翌連結会計年度の業績予想を参照しましたが、当該額は特別損失に計上する予定です。',
+    '2028年3月1日～2028年3月31日の業績予想を参照しましたが、当該額は特別損失に計上する予定です。',
+    '当該額は2028年3月31日までに特別損失に計上する予定です。',
   ])('参照した別主張の年度を計上予定へ貸さない: %s', async (body) => {
     const { pages, amounts } = report(`1. 今後の予定\n${body}`);
     const e = event(numberCandidate(pages[0], '特別損失', 100, period));
@@ -885,8 +983,16 @@ describe('報告節の責務と原文期間からの修復制約', () => {
     expect(all.facts).toHaveLength(4);
     expect(saved(all.facts, pages, 'earnings', true).facts).toEqual(all.facts);
     const wrong = structuredClone(all.facts[3]);
-    wrong.period = body.startsWith('翌') ? '翌連結会計年度' : '2028年3月期';
-    wrong.semantics.periodKind = body.startsWith('翌') ? 'relativeYear' : 'fullYear';
+    wrong.period = body.startsWith('翌')
+      ? '翌連結会計年度'
+      : body.includes('2028年3月31日')
+        ? '2028年3月31日'
+        : '2028年3月期';
+    wrong.semantics.periodKind = body.startsWith('翌')
+      ? 'relativeYear'
+      : body.includes('2028年3月31日')
+        ? 'eventDate'
+        : 'fullYear';
     wrong.id = stableFactId(wrong);
     expect(saved([wrong], pages).facts).toEqual([]);
     expect(

@@ -289,7 +289,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v53:openai:fixture:full';
+          const fingerprint = 'v54:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -344,7 +344,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v53 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v54 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -552,7 +552,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
       }
       if (reviewCase === 'semantic-ownership') {
-        assert.equal(checked.facts.length, 15);
+        assert.equal(checked.facts.length, 17);
         assert.equal(checked.facts.filter((f: VerifiedFact) => f.label === '販売台数').length, 1);
         assert.equal(
           checked.facts.find((f: VerifiedFact) => f.label === '中間配当金')?.quantity?.raw,
@@ -600,6 +600,22 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           checked.facts.find((f: VerifiedFact) => f.quote.includes('取得しないことを決定'))
             ?.semantics.state,
           'decided'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('2028年3月1日～2028年3月31日'))
+            ?.period,
+          '2028年3月1日～2028年3月31日'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('第2四半期の販売金額'))?.kind,
+          'event'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('第2四半期の販売金額'))?.period,
+          null
+        );
+        assert.ok(
+          !trace.attempts[0].slots.some((s: any) => s.requirement.includes('通期予想の重要指標'))
         );
         assert.ok(
           !trace.attempts[0].slots.some(

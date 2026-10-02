@@ -3,6 +3,7 @@ import {
   numericValueKind,
   reportingPeriodShape,
   reportingPeriodShapes,
+  reportingPeriodOwner,
 } from './period-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
@@ -580,10 +581,14 @@ export function verifyPeriodAndKind(
     fail('対象期間');
   if (!sourceShape && claimedShape && !(claimedShape === '通期' && fiscal.test(local)))
     fail('対象期間の根拠');
-  if ((/累計/.test(local) && /単独/.test(target)) || (/単独/.test(local) && /累計/.test(target)))
+  const qualifierOwner = reportingPeriodOwner(axis, context);
+  if (
+    (/累計|中間期/.test(qualifierOwner) && /単独/.test(target)) ||
+    (/単独/.test(qualifierOwner) && /累計/.test(target))
+  )
     fail('累計・単独期間');
-  if (/累計/.test(target) && !/累計/.test(local)) fail('累計期間');
-  if (/単独/.test(target) && !/単独/.test(local)) fail('単独期間');
+  if (/累計/.test(target) && !/累計|中間期/.test(qualifierOwner)) fail('累計期間');
+  if (/単独/.test(target) && !/単独/.test(qualifierOwner)) fail('単独期間');
   const kind = numericValueKind(axis, context, nearest);
   if (claim.valueKind !== kind) fail('実績・予想区分');
 }

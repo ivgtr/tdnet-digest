@@ -31,7 +31,7 @@ import {
   applicableDeclarations,
   type DocumentContext,
 } from './document-context';
-import { isPerformanceReportingTitle, reportingScopeHeading } from './document-structure';
+import { isPerformanceReportingTitle, forecastReportingTitle } from './document-structure';
 import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
@@ -110,7 +110,7 @@ function isReportingMetricSource(
   // This supplies a source role only; local scope/basis still resolve separately.
   if (state === 'actual' && isReportingCoverUnit(binding, pages)) return true;
   return state === 'forecast'
-    ? /業績予想|今後の見通し/.test(title)
+    ? !!forecastReportingTitle(title)
     : state === 'actual' && !/予想|見通し/.test(title) && isPerformanceReportingTitle(title);
 }
 /** Prose must prove a direct, complete amount at the reporting source and period. */
@@ -123,18 +123,12 @@ function reportingPeriodSource(axis: string, context: string, period: string): b
 }
 /** A forecast heading declares an obligation; a forecast mentioned in prose does not. */
 function declaredForecastPeriod(pages: ExtractedPage[]): string | null {
-  const title = new RegExp(
-    `(20\\d{2}年\\d{1,2}月期)(?:の)?(?:通期)?(?:${reportingScopeHeading})?業績予想`
-  );
   for (const block of pages.flatMap((p) => p.blocks)) {
     const text = compact(block.text);
-    if (
-      headingLevel(block) === null &&
-      !/^20\d{2}年\d{1,2}月期.*業績予想について説明(?:します|いたします)。?$/.test(text)
-    )
-      continue;
-    const match = text.match(title);
-    if (match) return match[1];
+    const explanation = text.match(/^(.*業績予想)について説明(?:します|いたします)。?$/);
+    const title = headingLevel(block) !== null ? text : explanation?.[1];
+    const period = title ? forecastReportingTitle(title)?.period : null;
+    if (period) return period;
   }
   return null;
 }

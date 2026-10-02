@@ -613,7 +613,10 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   const interval = '2026年4月1日～2026年4月30日';
   const bounded = '取得価額は100百万円以内です。';
   const modalStatement = '当社はAを取得しないことを決定しました。';
-  const lossPlan = '当該額は2028年3月期に特別損失に計上する予定です。';
+  const lossPlan = '2028年3月期に当社は当該額を特別損失に計上する予定です。';
+  const lossInterval = '2028年3月1日～2028年3月31日';
+  const lossIntervalPlan = `${lossInterval}に当社は当該額を特別損失に計上する予定です。`;
+  const ambiguousQuarter = `${period}第2四半期の販売金額は100万円です。`;
   const annualForecast = '2028年3月期通期の売上高は100万円を見込んでおります。';
   const incidentalPlan =
     '2029年3月期の業績予想を参照しましたが、当該額は特別損失に計上する予定です。';
@@ -639,8 +642,10 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
       `8. ${period} 配当の状況\n中間配当金は10円50銭です。`,
       `9. ${period}中間期 販売状況\n販売台数は100台です。`,
       `10. 今後の予定\n${lossPlan}`,
-      `11. 取引概要\n${annualForecast}`,
-      `12. 今後の予定\n${incidentalPlan}`
+      `11. 2028年3月期業績予想を踏まえた取引概要\n${annualForecast}`,
+      `12. 今後の予定\n${incidentalPlan}`,
+      `13. 今後の予定\n${lossIntervalPlan}`,
+      `14. ${period}第3四半期累計 販売状況\n${ambiguousQuarter}`
     );
     texts[3] = `3. ${period} 販売状況\n販売数量は100千kWhです。`;
   }
@@ -768,7 +773,22 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     incidental.semantics.metricKind = 'none';
     incidental.semantics.periodKind = 'none';
     incidental.semantics.state = 'planned';
-    facts.push(planned, forecast, incidental);
+    const plannedInterval = structuredClone(planned);
+    Object.assign(plannedInterval, numberCandidate(pages[15], '特別損失'));
+    plannedInterval.kind = 'event';
+    plannedInterval.label = plannedInterval.statement = plannedInterval.quote;
+    plannedInterval.value = plannedInterval.unit = plannedInterval.valueKind = null;
+    plannedInterval.period = lossInterval;
+    plannedInterval.semantics = { ...planned.semantics, periodKind: 'interval' };
+    const unclassified = numberCandidate(pages[16], '販売金額');
+    unclassified.kind = 'event';
+    unclassified.label = unclassified.statement = unclassified.quote;
+    unclassified.value = unclassified.unit = unclassified.valueKind = unclassified.period = null;
+    unclassified.semantics.metricKind = 'none';
+    unclassified.semantics.periodKind = 'none';
+    unclassified.semantics.state = 'unspecified';
+    unclassified.semantics.scope = unclassified.semantics.basis = null;
+    facts.push(planned, forecast, incidental, plannedInterval, unclassified);
   }
   facts.forEach((f, i) => {
     const binding = bindingFor(
@@ -804,6 +824,13 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     wrong[12].semantics.periodKind = 'relativeYear';
     wrong[14].period = '2029年3月期';
     wrong[14].semantics.periodKind = 'fullYear';
+    wrong[15].period = '2028年3月31日';
+    wrong[15].semantics.periodKind = 'eventDate';
+    const borrowed = numberCandidate(pages[16], '販売金額', 100, period + '第2四半期');
+    borrowed.unit = '万円';
+    borrowed.semantics.periodKind = 'cumulativeQ2';
+    borrowed.semantics.scope = borrowed.semantics.basis = null;
+    firstFacts[15] = borrowed;
     // firstFacts already shares wrong[9]; an equivalent period spelling adds no fact.
     const alias = structuredClone(facts[11]);
     alias.period = period + '第2四半期';
@@ -826,7 +853,9 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
         facts[0],
         facts[4],
         facts[6],
-        ...(semanticOwnership ? [facts[7], facts[9], facts[12], facts[14]] : []),
+        ...(semanticOwnership
+          ? [facts[7], facts[9], facts[12], facts[14], facts[15], facts[16]]
+          : []),
       ],
       pages,
       'earnings'
@@ -848,6 +877,8 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
             incidentalPlan,
             '販売台数: 100台',
             lossPlan,
+            lossIntervalPlan,
+            ambiguousQuarter,
             annualForecast.replace('の売上高は100万円を見込んでおります。', ''),
             '単体',
           ]

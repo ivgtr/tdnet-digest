@@ -7,6 +7,7 @@ import {
   reportingScope,
   reportingScopeHeading,
   isPerformanceReportingTitle,
+  forecastReportingTitle,
   type TextBlock,
 } from './document-structure';
 import { buildTableMappings, type TableMapping } from './source-mappings';
@@ -437,9 +438,11 @@ export function isFinancialUnit(
     .join('\n');
   return (
     isPerformanceReportingTitle(titles + reportingUnitTitle(binding, pages)) ||
-    /業績予想|今後の見通し|財政状態|貸借対照表|キャッシュ.*フロー/.test(
-      titles + reportingUnitTitle(binding, pages)
+    binding.sectionIds.some((id) =>
+      forecastReportingTitle(pages.flatMap((p) => p.blocks).find((b) => b.id === id)?.text ?? '')
     ) ||
+    !!forecastReportingTitle(reportingUnitTitle(binding, pages)) ||
+    /財政状態|貸借対照表|キャッシュ.*フロー/.test(titles + reportingUnitTitle(binding, pages)) ||
     (isReportingCoverUnit(binding, pages) &&
       new RegExp(
         `売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC}|総資産|純資産|資本金|キャッシュ.*フロー`

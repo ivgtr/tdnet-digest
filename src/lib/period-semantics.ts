@@ -1,5 +1,7 @@
 import type { VerifiedFact } from './fact-contract';
 const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，]/g, '');
+export const calendarIntervalSeparator = '(?:[～〜~-]|から)';
+export const calendarDatePattern = '20\\d{2}年\\d{1,2}月\\d{1,2}日';
 
 /** Supported source aliases share one meaning; generated fact periods remain canonical. */
 export function reportingPeriodText(text: string): string {
@@ -19,6 +21,11 @@ export function reportingPeriodShape(text: string): string | null {
   if (shapes.length > 1) throw new Error('PERIOD:異なる報告期間の形が混在しています');
   return shapes[0] ?? null;
 }
+export function reportingPeriodOwner(source: string, inherited: string): string {
+  return reportingPeriodShape(source)
+    ? reportingPeriodText(source)
+    : reportingPeriodText(inherited);
+}
 
 export function periodKind(
   period: string | null,
@@ -32,12 +39,16 @@ export function periodKind(
   if (/20\d{2}年\d{1,2}月\d{1,2}日/.test(text))
     return /[～〜~-]|から/.test(text) ? 'interval' : 'eventDate';
   if (/^20\d{2}年\d{1,2}月(?:度)?$/.test(text)) return 'month';
-  const shape =
-    reportingPeriodShape(text) ?? reportingPeriodShape(context) ?? reportingPeriodShape(inherited);
+  // The source that supplies the shape must also prove its qualifier. A claim
+  // cannot add a qualifier, and an unrelated heading cannot lend one.
+  const owner = reportingPeriodOwner(context, inherited);
+  const shape = reportingPeriodShape(text) ?? reportingPeriodShape(owner);
   if (shape === '通期') return 'fullYear';
   const q = shape?.match(/第([1-4])四半期/)?.[1];
   if (q) {
-    const qualified = /累計|単独|中間期/.test(context) ? context : compact(inherited);
+    const qualified = owner;
+    if (/累計|中間期/.test(qualified) && /単独/.test(qualified))
+      throw new Error('PERIOD:累計・単独が混在しています');
     if (/単独/.test(qualified)) return `standaloneQ${q}` as VerifiedFact['semantics']['periodKind'];
     if (/累計|中間期/.test(qualified) || q === '1')
       return `cumulativeQ${q}` as VerifiedFact['semantics']['periodKind'];
@@ -72,7 +83,7 @@ export function explicitCalendarAxisMatches(axis: string, target: string): boole
   const interval = (text: string, matches: RegExpMatchArray[]) => {
     if (matches.length !== 2 || !matches.every((m) => /日$/.test(m[0]))) return null;
     const between = compact(text).slice(matches[0].index! + matches[0][0].length, matches[1].index);
-    if (!/^[～〜~-]$|^から$/.test(between)) return null;
+    if (!new RegExp(`^${calendarIntervalSeparator}$`).test(between)) return null;
     const keys = matches.map((m) => {
       const [y, month, day] = m[0].match(/\d+/g)!.map(Number);
       const date = new Date(Date.UTC(y, month - 1, day));
@@ -87,7 +98,7 @@ export function explicitCalendarAxisMatches(axis: string, target: string): boole
   const ownInterval = interval(axis, source),
     claimedInterval = interval(target, claimed);
   const dateRange = (text: string) =>
-    /20\d{2}年\d{1,2}月\d{1,2}日(?:[～〜~-]|から)/.test(compact(text));
+    new RegExp(`20\\d{2}年\\d{1,2}月\\d{1,2}日${calendarIntervalSeparator}`).test(compact(text));
   if (ownInterval || claimedInterval || dateRange(axis) || dateRange(target))
     return (
       !!ownInterval && !!claimedInterval && ownInterval.every((n, i) => n === claimedInterval[i])

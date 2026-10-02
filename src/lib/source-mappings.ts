@@ -1,5 +1,10 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { normalized, tableReferenceHints, isPerformanceReportingTitle } from './document-structure';
+import {
+  normalized,
+  tableReferenceHints,
+  isPerformanceReportingTitle,
+  forecastReportingTitle,
+} from './document-structure';
 import { tableContinuations, continuationSpans } from './document-links';
 import { declaredQuantityUnit, parseExactQuantity, isUncaptionedUnit } from './quantity';
 export type TableMapping = ReturnType<typeof tableReferenceHints>[number];
@@ -71,7 +76,9 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
         .filter(
           (b) =>
             b.y < top &&
-            (isPerformanceReportingTitle(b.text) || /財政状態|業績予想/.test(normalized(b.text)))
+            (isPerformanceReportingTitle(b.text) ||
+              forecastReportingTitle(b.text) ||
+              /財政状態/.test(normalized(b.text)))
         )
         .sort((a, b) => b.y - a.y)[0];
       const context =

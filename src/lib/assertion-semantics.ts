@@ -1,6 +1,10 @@
 import type { FactSemantics } from './fact-contract';
 import { normalized } from './document-structure';
-import { reportingPeriodText } from './period-semantics';
+import {
+  reportingPeriodText,
+  calendarIntervalSeparator,
+  calendarDatePattern,
+} from './period-semantics';
 
 const passiveForecast = /見込まれ(?:る|ます|て(?:いる|います|おります))/;
 const outlookForecast = /(?:となる|の)見通し(?:です|であります|である)/;
@@ -128,13 +132,23 @@ export function assertionStates(text: string): FactSemantics['state'][] {
 
 /** A loss period must modify recording, not another assertion in the same block. */
 export function lossRecordingPeriods(text: string): string[] {
+  const date = calendarDatePattern;
+  const interval = `${date}${calendarIntervalSeparator}${date}`;
   const period =
     '(?:翌|次|当|前)連結会計年度|20\\d{2}年\\d{1,2}月(?:期(?:第[1-4]四半期|中間期|通期)?(?:\\((?:第[1-4]四半期|中間期)\\))?(?:\\(?(?:累計|単独)\\)?)?|\\d{1,2}日|度)?';
   const recording = new RegExp(
-    `(${period})(?:に(?:おいて)?|の(?:連結)?財務諸表において|の)(?:は|、)?(?:当該(?:額|費用)(?:を|は))?特別損失に計上(?:する)?予定`,
+    `(?:(${interval})(?:まで)?|(${period}))(?:に(?:おいて)?|の(?:連結)?財務諸表において|の)(?:は|、)?(?:(?:当社|当社グループ)(?:は|が))?(?:当該(?:額|費用)(?:を|は))?特別損失に計上(?:する)?予定`,
     'g'
   );
-  return [...new Set([...reportingPeriodText(text).matchAll(recording)].map((m) => m[1]))];
+  const source = reportingPeriodText(text);
+  return [
+    ...new Set(
+      [...source.matchAll(recording)]
+        // Never reclassify the end of an unsupported interval as a point.
+        .filter((m) => !/(?:[\d年月日期～〜~-]|から)$/.test(source.slice(0, m.index)))
+        .map((m) => m[1] ?? m[2])
+    ),
+  ];
 }
 export function isLossRecordingPlan(text: string): boolean {
   return (
