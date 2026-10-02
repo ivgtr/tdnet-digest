@@ -1,7 +1,7 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { normalized, tableReferenceHints } from './document-structure';
 import { tableContinuations, continuationSpans } from './document-links';
-import { declaredQuantityUnit, parseExactQuantity } from './quantity';
+import { declaredQuantityUnit, parseExactQuantity, isUncaptionedUnit } from './quantity';
 export type TableMapping = ReturnType<typeof tableReferenceHints>[number];
 function inlineMappings(page: ExtractedPage): TableMapping[] {
   const result: TableMapping[] = [];
@@ -10,7 +10,7 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
     const units = cells
       .flatMap((q) => {
         const inline = parseExactQuantity(q.text)?.unit;
-        if (inline && declaredQuantityUnit(inline)) return [{ q, unit: inline, unitIds: [q.id] }];
+        if (inline && isUncaptionedUnit(inline)) return [{ q, unit: inline, unitIds: [q.id] }];
         const suffix = page.spans.filter(
           (s) =>
             row.spanIds.includes(s.id) &&

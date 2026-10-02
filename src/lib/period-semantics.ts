@@ -1,0 +1,92 @@
+import type { VerifiedFact } from './fact-contract';
+const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，]/g, '');
+
+export function periodKind(
+  period: string | null,
+  source: string
+): VerifiedFact['semantics']['periodKind'] {
+  if (!period) return 'none';
+  const text = compact(period),
+    context = compact(source);
+  if (/^(?:翌|次|当|前)連結会計年度$/.test(text)) return 'relativeYear';
+  if (/20\d{2}年\d{1,2}月\d{1,2}日/.test(text))
+    return /[～〜~-]|から/.test(text) ? 'interval' : 'eventDate';
+  if (/^20\d{2}年\d{1,2}月(?:度)?$/.test(text)) return 'month';
+  const q =
+    (text + context).match(/第([1-4])四半期/)?.[1] ?? (/中間期/.test(text + context) ? '2' : null);
+  if (q) {
+    if (/単独/.test(context)) return `standaloneQ${q}` as VerifiedFact['semantics']['periodKind'];
+    if (/累計|中間期/.test(context) || q === '1')
+      return `cumulativeQ${q}` as VerifiedFact['semantics']['periodKind'];
+    throw new Error('PERIOD:累計・単独を確認できません');
+  }
+  if (/20\d{2}年\d{1,2}月期|\d{4}年通期/.test(text)) return 'fullYear';
+  throw new Error('PERIOD:未対応の期間形式');
+}
+/** Source axis owns revision state; ordinary forecast captions apply otherwise. */
+export function numericValueKind(axis: string, context: string, nearest = '') {
+  axis = compact(axis);
+  context = compact(context);
+  const local = axis + context;
+  if (/予定|取得する株式|買付けの委託を行う/.test(local)) return null;
+  const kindAxis = /前回|従来|修正前|直近の配当予想|今回|修正後|決定額/.test(axis) ? axis : context;
+  if (/前回|従来|修正前/.test(kindAxis) && /今回|修正後/.test(kindAxis)) return null;
+  return /前回|従来|修正前|直近の配当予想/.test(kindAxis)
+    ? 'forecastBefore'
+    : /今回|修正後|決定額/.test(kindAxis)
+      ? 'forecastAfter'
+      : /予想|見込|見通し/.test(local) || /業績予想/.test(compact(nearest))
+        ? 'forecast'
+        : 'actual';
+}
+
+/** Compare an explicit point or an ordered interval without borrowing a context year. */
+export function explicitCalendarAxisMatches(axis: string, target: string): boolean {
+  const calendar = /20\d{2}年\d{1,2}月期|20\d{2}年\d{1,2}月\d{1,2}日|20\d{2}年\d{1,2}月(?![\d期])/g;
+  const source = [...compact(axis).matchAll(calendar)];
+  if (!source.length) return true;
+  const claimed = [...compact(target).matchAll(calendar)];
+  const interval = (text: string, matches: RegExpMatchArray[]) => {
+    if (matches.length !== 2 || !matches.every((m) => /日$/.test(m[0]))) return null;
+    const between = compact(text).slice(matches[0].index! + matches[0][0].length, matches[1].index);
+    if (!/^[～〜~-]$|^から$/.test(between)) return null;
+    const keys = matches.map((m) => {
+      const [y, month, day] = m[0].match(/\d+/g)!.map(Number);
+      const date = new Date(Date.UTC(y, month - 1, day));
+      return date.getUTCFullYear() === y &&
+        date.getUTCMonth() === month - 1 &&
+        date.getUTCDate() === day
+        ? date.getTime()
+        : NaN;
+    });
+    return keys.every(Number.isFinite) && keys[0] <= keys[1] ? keys : null;
+  };
+  const ownInterval = interval(axis, source),
+    claimedInterval = interval(target, claimed);
+  const dateRange = (text: string) =>
+    /20\d{2}年\d{1,2}月\d{1,2}日(?:[～〜~-]|から)/.test(compact(text));
+  if (ownInterval || claimedInterval || dateRange(axis) || dateRange(target))
+    return (
+      !!ownInterval && !!claimedInterval && ownInterval.every((n, i) => n === claimedInterval[i])
+    );
+  const own = [...new Set(source.map((m) => m[0]))],
+    claim = [...new Set(claimed.map((m) => m[0]))];
+  return own.length === 1 && claimed.length === 1 && own[0] === claim[0];
+}
+
+/** Facts have already proved their source period; coverage compares meaning, not spelling. */
+export function matchesReportingPeriod(
+  fact: VerifiedFact,
+  period: string,
+  quarter?: string
+): boolean {
+  const text = compact(fact.period ?? '');
+  if (text.match(/20\d{2}年\d{1,2}月期/)?.[0] !== period) return false;
+  const q = quarter?.match(/第([1-4])四半期/)?.[1] ?? (quarter === '中間期' ? '2' : null);
+  if (!q) return fact.semantics.periodKind === 'fullYear';
+  return (
+    (text.match(/第([1-4])四半期/)?.[1] ?? (/中間期/.test(text) ? '2' : null)) === q &&
+    (fact.semantics.periodKind === `cumulativeQ${q}` ||
+      (quarter !== '中間期' && fact.semantics.periodKind === `standaloneQ${q}`))
+  );
+}

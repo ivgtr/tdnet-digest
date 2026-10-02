@@ -15,7 +15,7 @@ import { parseFactSummary, renderFacts } from '../../src/lib/fact-summary';
 import type { DocumentType } from '../../src/lib/document-type';
 
 /** Deterministic text PDF, not an offscreen mock: PDF.js must recover these physical pages. */
-function textPdf(texts: string[]): Uint8Array {
+function textPdf(texts: string[], columns = [30, 280, 500]): Uint8Array {
   const hex = (text: string) =>
     [...text].map((c) => c.charCodeAt(0).toString(16).padStart(4, '0')).join('');
   const objects: string[] = [
@@ -47,7 +47,7 @@ function textPdf(texts: string[]): Uint8Array {
               .split('\t')
               .map(
                 (cell, j) =>
-                  `BT /F1 10 Tf 1 0 0 1 ${[30, 280, 500][j]} ${800 - i * 24 + (/^\(2\)/.test(line) ? 4 : 0)} Tm <${hex(cell)}> Tj ET`
+                  `BT /F1 10 Tf 1 0 0 1 ${columns[j]} ${800 - i * 24 + (/^\(2\)/.test(line) ? 4 : 0)} Tm <${hex(cell)}> Tj ET`
               )
           )
           .join('\n')
@@ -70,6 +70,7 @@ function textPdf(texts: string[]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
+  if (mode === 'semantic-ownership') return periodOutlookUnitsFixture(true);
   if (mode === 'period-outlook-units') return periodOutlookUnitsFixture();
   if (mode === 'inherited-outlook-yen') return inheritedOutlookYenFixture();
   if (mode === 'prose-disclosures') return proseDisclosuresFixture();
@@ -605,12 +606,15 @@ async function inheritedOutlookYenFixture() {
   };
 }
 
-async function periodOutlookUnitsFixture() {
+async function periodOutlookUnitsFixture(semanticOwnership = false) {
   const period = '2027年3月期',
     historical = '2026年3月期';
+  const current = period + '第3四半期累計';
+  const interval = '2026年4月1日～2026年4月30日';
+  const bounded = '取得価額は100百万円以内です。';
   const metrics = ['売上高', '営業利益', '当期純利益'];
   const body = '親会社株主に帰属する当期純損失は概算額100万円となる見通しはありません。';
-  const pdf = textPdf([
+  const texts = [
     `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${metrics.map((m) => `${period}の${m}は100万円です。`).join('\n')}`,
     `1. ${historical} 経営成績\n範囲 個別\n会計基準 IFRS\n\t2025年3月期\t${historical}\n売上高営業利益率\t8%\t10%`,
     `2. 損失予想の背景\n範囲 個別\n会計基準 IFRS\n${body}`,
@@ -618,7 +622,17 @@ async function periodOutlookUnitsFixture() {
     `(1) 株式会社他社の概要\n経営成績\n\t2026年3月期\t2027年3月期\n売上高\t100百万円\t200百万円`,
     `営業利益\t10百万円\t20百万円\n当期純利益\t8百万円\t16百万円`,
     `4. 配当の状況\n\t年間配当金\t期末配当金\n\t円\t円\n2027年3月期(予想)\t12\t12`,
-  ]);
+  ];
+  if (semanticOwnership) {
+    texts[0] = `${period} 第3四半期決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${current} 経営成績\n${metrics.map((m) => `${m}は100万円です。`).join('\n')}`;
+    texts[1] = `1. ${current} 経営成績\n範囲 個別\n会計基準 IFRS\n\t2026年3月期第3四半期累計\t${current}\n売上高営業利益率\t8%\t10%`;
+    texts[6] = `4. 配当の状況（予想）\n\t年間配当金\t期末配当金\n\t円\t円\n${period}\t12\t12`;
+    texts.push(
+      `5. ${period} 取引概要\n${bounded}`,
+      `6. 経営成績\n\t販売件数\t人数\n\t件\t人\n${interval}\t100\t20`
+    );
+  }
+  const pdf = textPdf(texts, semanticOwnership ? [30, 360, 650] : undefined);
   const document = await getDocument({ data: pdf.slice(), disableFontFace: true }).promise;
   const pages = [];
   for (let n = 1; n <= document.numPages; n++) {
@@ -629,8 +643,9 @@ async function periodOutlookUnitsFixture() {
   await document.destroy();
   const context = buildDocumentContext(pages);
   const facts = metrics.map((m) => {
-    const f = numberCandidate(pages[0], m, 100, period);
+    const f = numberCandidate(pages[0], m, 100, semanticOwnership ? current : period);
     f.unit = '万円';
+    if (semanticOwnership) f.semantics.periodKind = 'cumulativeQ3';
     return f;
   });
   const tableFact = (
@@ -659,7 +674,15 @@ async function periodOutlookUnitsFixture() {
     f.evidence = { kind: 'table', ...h, scopeIds: [], qualifierIds: [] };
     return f;
   };
-  const rate = tableFact(1, '売上高営業利益率', 10, '%', 'actual', historical);
+  const rate = tableFact(
+    1,
+    '売上高営業利益率',
+    10,
+    '%',
+    'actual',
+    semanticOwnership ? current : historical
+  );
+  if (semanticOwnership) rate.semantics.periodKind = 'cumulativeQ3';
   rate.semantics.metricKind = 'rate';
   rate.semantics.scope = '個別';
   rate.semantics.basis = 'IFRS';
@@ -682,6 +705,20 @@ async function periodOutlookUnitsFixture() {
   dividend.semantics.metricKind = 'perShare';
   dividend.semantics.scope = dividend.semantics.basis = null;
   facts.push(rate, background, count, dividend);
+  if (semanticOwnership) {
+    const bound = numberCandidate(pages[7], '取得価額', 100, period);
+    bound.kind = 'event';
+    bound.label = bound.statement = bound.quote;
+    bound.value = bound.unit = bound.valueKind = bound.period = null;
+    bound.semantics.metricKind = 'none';
+    bound.semantics.periodKind = 'none';
+    bound.semantics.state = 'unspecified';
+    bound.semantics.scope = bound.semantics.basis = null;
+    const countInterval = tableFact(8, '販売件数', 100, '件', 'actual', interval);
+    countInterval.semantics.metricKind = 'count';
+    countInterval.semantics.periodKind = 'interval';
+    facts.push(bound, countInterval);
+  }
   facts.forEach((f, i) => {
     const binding = bindingFor(
       context,
@@ -702,13 +739,19 @@ async function periodOutlookUnitsFixture() {
     'earnings',
     pages
   );
-  if (checked.unverified.length || checked.facts.length !== 7)
+  if (checked.unverified.length || checked.facts.length !== facts.length)
     throw Error(JSON.stringify(checked.unverified));
   const wrong = structuredClone(facts);
   wrong[0].semantics.metricKind = 'count';
   wrong[4].semantics.state = 'unspecified';
-  const first = candidateResponse(wrong.slice(0, 6), pages, 'earnings');
-  if (reviewCandidates(first, 'earnings', pages).facts.length !== 4)
+  const firstFacts = wrong.filter((_, i) => i !== 6);
+  if (semanticOwnership) {
+    const f = numberCandidate(pages[7], '取得価額', 100, period);
+    f.semantics.scope = f.semantics.basis = null;
+    firstFacts[6] = f;
+  }
+  const first = candidateResponse(firstFacts, pages, 'earnings');
+  if (reviewCandidates(first, 'earnings', pages).facts.length !== (semanticOwnership ? 5 : 4))
     throw Error('initial wrong meaning was not rejected');
   const legacy = structuredClone(checked);
   legacy.facts[4].semantics.state = 'unspecified';
@@ -719,14 +762,19 @@ async function periodOutlookUnitsFixture() {
     documentType: 'earnings' as DocumentType,
     repairRequired: true,
     first,
-    repair: candidateResponse([facts[0], facts[4], facts[6]], pages, 'earnings'),
+    repair: candidateResponse(
+      [facts[0], facts[4], facts[6], ...(semanticOwnership ? [facts[7]] : [])],
+      pages,
+      'earnings'
+    ),
     legacy,
     legacyRendered: renderFacts(legacy),
     warnings: [],
     expected: [
       '売上高: 100万円',
       '売上高営業利益率: 10%',
-      historical,
+      semanticOwnership ? current : historical,
+      ...(semanticOwnership ? [bounded, interval, '販売件数: 100件'] : []),
       body,
       '販売数量: 100台',
       '年間配当金: 12円',

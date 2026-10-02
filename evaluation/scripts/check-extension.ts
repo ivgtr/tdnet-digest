@@ -288,7 +288,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v49:openai:fixture:full';
+          const fingerprint = 'v50:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -343,7 +343,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v49 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v50 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -548,6 +548,28 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         assert.equal(forecast?.semantics.polarity, 'negative');
         assert.ok(
           !trace.attempts[0].slots.some((s: any) => s.requirement.endsWith('当年営業利益率'))
+        );
+      }
+      if (reviewCase === 'semantic-ownership') {
+        const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
+        const bounded = checked.facts.find((f: VerifiedFact) =>
+          f.quote.includes('取得価額は100百万円以内')
+        );
+        const interval = checked.facts.find((f: VerifiedFact) => f.label === '販売件数');
+        const dividend = checked.facts.find((f: VerifiedFact) => f.label === '年間配当金');
+        assert.equal(rate?.semantics.periodKind, 'cumulativeQ3');
+        assert.equal(bounded?.kind, 'event');
+        assert.equal(bounded?.value, null);
+        assert.equal(interval?.period, '2026年4月1日～2026年4月30日');
+        assert.equal(interval?.semantics.periodKind, 'interval');
+        assert.equal(dividend?.semantics.state, 'forecast');
+        assert.ok(
+          !trace.attempts[0].slots.some(
+            (s: any) => s.requirement.endsWith('当年営業利益率') && s.status !== 'satisfied'
+          )
+        );
+        evidence.stages.push(
+          'unit proof, cumulative period, ordered interval and context forecast share generation/storage meaning'
         );
       }
       if (reviewCase === 'period-outlook-units') {

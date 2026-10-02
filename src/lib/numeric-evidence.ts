@@ -1,6 +1,7 @@
+import { explicitCalendarAxisMatches, numericValueKind } from './period-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
-import { declaredQuantityUnit } from './quantity';
+import { declaredQuantityUnit, isUncaptionedUnit } from './quantity';
 import { parseQuantity, parseExactRange, isUnitToken } from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
@@ -150,6 +151,8 @@ export function verifyTableEvidence(
     });
     if (omittedSuffix) fail('単位の続きになり得る隣接セルが未参照');
   }
+
+  if (!isUncaptionedUnit(unitText!)) fail('数量の単位を確認できません');
 
   const rowNumbers = page.spans.filter(
     (s) =>
@@ -516,18 +519,7 @@ export function verifyPeriodAndKind(
   const target = compact(claim.period),
     local = axis + context;
   // An explicit axis owns its period; a cover/context year cannot override it.
-  const ownPeriods = [
-    ...new Set(
-      axis.match(
-        /20\d{2}年\d{1,2}月期|20\d{2}年\d{1,2}月\d{1,2}日|20\d{2}年\d{1,2}月(?![\d期])/g
-      ) ?? []
-    ),
-  ];
-  const claimedPeriod = target.match(
-    /20\d{2}年\d{1,2}月期|20\d{2}年\d{1,2}月\d{1,2}日|20\d{2}年\d{1,2}月(?![\d期])/
-  )?.[0];
-  if (ownPeriods.length && (ownPeriods.length !== 1 || ownPeriods[0] !== claimedPeriod))
-    fail('対象年度・決算月の明示軸');
+  if (!explicitCalendarAxisMatches(axis, target)) fail('対象年度・決算月の明示軸');
 
   const fiscal = /20\d{2}年\d{1,2}月期/;
   const date = /20\d{2}年\d{1,2}月\d{1,2}日/;
@@ -583,18 +575,7 @@ export function verifyPeriodAndKind(
     fail('累計・単独期間');
   if (/累計/.test(target) && !/累計/.test(local)) fail('累計期間');
   if (/単独/.test(target) && !/単独/.test(local)) fail('単独期間');
-  if (/予定|取得する株式|買付けの委託を行う/.test(local))
-    fail('予定数量を財務実績・予想へ変換できません');
-  const kindAxis = /前回|従来|修正前|直近の配当予想|今回|修正後|決定額/.test(axis) ? axis : context;
-  if (/前回|従来|修正前/.test(kindAxis) && /今回|修正後/.test(kindAxis))
-    fail('修正前後の対応が曖昧');
-  const kind = /前回|従来|修正前|直近の配当予想/.test(kindAxis)
-    ? 'forecastBefore'
-    : /今回|修正後|決定額/.test(kindAxis)
-      ? 'forecastAfter'
-      : /予想|見込|見通し/.test(local) || /業績予想/.test(compact(nearest))
-        ? 'forecast'
-        : 'actual';
+  const kind = numericValueKind(axis, context, nearest);
   if (claim.valueKind !== kind) fail('実績・予想区分');
 }
 

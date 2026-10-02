@@ -43,6 +43,7 @@ const implementationFiles = [
   'src/lib/fact-candidates.ts',
   'src/lib/assertion-semantics.ts',
   'src/lib/quantity.ts',
+  'src/lib/period-semantics.ts',
   'src/lib/document-structure.ts',
   'src/lib/document-links.ts',
   'src/lib/pdf-layout.ts',

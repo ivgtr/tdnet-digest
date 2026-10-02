@@ -1,3 +1,4 @@
+import { numericValueKind, matchesReportingPeriod } from './period-semantics';
 import { NET_PROFIT_METRIC } from './metric-semantics';
 import { assertionStates } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
@@ -63,7 +64,8 @@ function reportedDividends(pages: ExtractedPage[], selected = pages) {
         if (!isPerShareDividend(text(hint.metricIds), unit)) return [];
         const axis = compact(text(hint.periodIds));
         const period = axis.match(/20\d{2}年\d{1,2}月期/)?.[0];
-        const state = /予想|見込/.test(axis) ? ('forecast' as const) : ('actual' as const);
+        const state = numericValueKind(axis, text(hint.contextIds));
+        if (state !== 'actual' && state !== 'forecast') return [];
         return period &&
           provedMappedNumber(pages, hint, {
             label: text(hint.metricIds),
@@ -226,10 +228,7 @@ export function verifyCoverage(
           standardMetric(f) === metric &&
           reportingMetric(f) &&
           f.valueKind === kind &&
-          compact(f.period ?? '').includes(target) &&
-          (!reportQuarter ||
-            kind !== 'actual' ||
-            compact(f.period ?? '').includes(reportQuarter)) &&
+          matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
           applicableMeaning(f) &&
           !!f.semantics.subject &&
           (!issuer || compact(issuer).includes(compact(f.semantics.subject)))
@@ -260,7 +259,7 @@ export function verifyCoverage(
           /営業利益率/.test(f.label) &&
           f.semantics.metricKind === 'rate' &&
           f.valueKind === 'actual' &&
-          compact(f.period ?? '') === marginPeriod &&
+          matchesReportingPeriod(f, period, reportQuarter) &&
           reportingMetric(f) &&
           applicableMeaning(f)
       )
