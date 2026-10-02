@@ -594,3 +594,23 @@ Kの保存9結果/45事実を厳密再判定し、全受理・拒否0・モデ�
 固定2経路は旧v41非表示、通常の保存意味照合、復元後の診断ID対応、改変保存事実の後続API前拒否、追加分析での事実保持、比較不能な採点での要約保持まで成功。実APIの生成は10.1秒、入力78,796・出力4,121token、実モデル修復は未発生。前回v41ビルドの一覧再読込失敗は記録を保持し、今回v42ビルドの独立した成功と区別する。実API復元後の診断ID再exportは今回の通常要約経路に含めず、固定APIの成功と分ける。
 
 全3画面記録のartifact digest `578764bda36b4556fefd1645ea6497741676a9792b5cb44d36352a0d1a4540b3`、公開ソースdigest `c3332b3cbb2d5b9ffa79d7170fa91e642462fde4c13b32f5e2a8d2ea8f83fb4d` は一致し、現在の公開ソースでも同値を確認した。全件検証・Kの厳密保存再判定・入力同一性・画面結果は `results/local/summary-pr25-428-final-ledger.json` へ集約。保存試験のslot出典期待値を修正した中間失敗と、評価fixtureのcontextIds不足によるpreflight失敗は実API試行や最終成功へ混ぜない。秘密値の直接取得/表示はしていない。未知の表紙配置・形式/OCR/多主張の分解・今回の実モデル修復・smart生応答・実API比較採点等は未確認のまま残す。
+
+#### PR #25再レビュー `8cabd2f` の最終検証条件（2026-10-02）
+
+対象3件 `4162473878` / `4162473891` / `4162473898`。恒久78件（従来66＋12）で、読点なしの「行っておらず」「しておらず」のmixed/completedと誤ったnegative/unspecifiedの拒否、表紙直下の△/▲/−/-の損失数量と後続値の属性・必須受理、event/statusの期間変更を両方向で拒否、同一再送の1件保持、整合した保存事実の二重主張拒否を確認する。期間省略と明示はそれぞれ単独では通常の意味照合を通す。レビュー基準を隔離した `/tmp/tdnet-pr25-8cab-baseline` で最終恒久テストを実行して78件中10件失敗（`/tmp/tdnet-pr25-8cab-baseline-final.log`）、修正後623テスト/26ファイル・type-check・lint・build成功（`/tmp/tdnet-pr25-8cab-final-{test,type,lint,build}.log`）。指紋v43で旧v38〜v42を表示しない。
+
+重点3資料のPDF/通常生成入力hashはKと同一（`results/local/summary-pr25-8cab-final-input.json`）。プロンプト/モデル/設定も変更しないため、K保存9結果/45事実を現行ソースで全受理できれば生成証拠を再利用し、新規9回は行わない。最終ビルドの画面条件を固定APIのsemantics（読点なしの否定接続の修復）、cover-signs（▲/−の属性・必須値受理）、assertion-conflict（必須不足の差分修復中に確定eventの期間変更を拒否して最終エラー）、実TDnet/実APIのBlueMeme通常要約の計4経路/各1回へ限定する。合成PDFは実Offscreen/PDF.jsを通し、旧v42非表示・表示/拒否・修復・保存復元・診断・後続利用を確認する。実APIは従来のOpenRouter/deepseek/deepseek-v4.1-flash・full・温度0・推論low・32,768token・修復最大1回/300秒と停止境界を維持し、成功まで追加しない。未知形式/OCR/多主張分解と今回の実モデル修復等の既存未確認事項は別に残す。
+
+
+最終結果: Kの厳密保存再判定は9/9・45事実全受理・拒否0・モデル0回（`results/local/summary-pr25-8cab-final-regrade.json`、checker digest `46e16a47789d176cdf625ae749abf8bf0c6f900c2beec7b9167b9d8bfbf74ed3`）。原PDF/通常入力は上記比較で全3資料がKと同一で、プロンプト/モデル/設定も変えずKを再利用。新規CLI生成0回。最終ビルドの4経路は事前条件どおり各1回で次の結果となった。
+
+| 画面経路 | 結果 | 呼出し/時間 | `results/local/` の証拠 |
+| --- | --- | --- | --- |
+| 固定API・semantics | 読点なしの否定接続の誤候補拒否→1回修復、2event表示/保存復元/診断対応 | 固定API5回/11秒 | `bluememe-20260930-review-semantics-2026-10-02T03-23-31-851Z-browser.json` |
+| 固定API・cover-signs | 属性欠落拒否→1回修復、▲/−の損失数量を保持した6事実、局所予想/保存復元/診断対応 | 固定API5回/11秒 | `bluememe-20260930-review-cover-signs-2026-10-02T03-23-32-012Z-browser.json` |
+| 固定API・assertion-conflict | 差分修復中の確定eventの期間変更を拒否→最終エラー表示、事実非表示、初回/修復の生応答・診断export | 固定API2回/10秒 | `bluememe-20260930-review-assertion-conflict-2026-10-02T03-23-31-013Z-browser.json` |
+| 実TDnet/PDF・実API | 初回11事実の期待値/表示/診断保存/表示切替/保存復元成功、再表示API追加0 | 要約API1回/45秒 | `bluememe-20260930-2026-10-02T03-24-05-657Z-browser.json` |
+
+固定3経路は正しい形とIDを持つ旧v42事実を種として非表示を確認し、合成PDFを実Offscreen/PDF.jsへ通した。固定成功2経路では現在の保存事実の通常意味照合、復元後の診断ID対応、改変事実の後続API前拒否、追加分析での事実保持、比較不能採点での要約保持も成功。拒否経路の期待値は `outcome=failure` であり、成功した生成と数えず拒否試験の成功として扱う。実APIの生成は23.6秒、入力78,796・出力4,070token、実モデル修復は未発生。実API復元後の診断再exportは通常経路に含めず、固定APIの確認と区別した。
+
+全4画面記録のartifact digest `83d05a97d03c218b22a332867b27db43b996e7ba9b487db4643b64a7d039df73`、公開ソースdigest `687919ef7e5ffdc480e648ccfecd948bae933c80df6fd741f4e1b298e83bab4e` は一致し、現在の公開ソースでも同値を確認。623件の全件/78件の対象検証、レビュー基準での10件失敗、K再判定、入力同一性、全画面結果は `results/local/summary-pr25-8cab-final-ledger.json` へ集約した。初期other試験では修復起動条件が成立せず、明示状態を欠いたstatus中間試験も通常検証で拒否されたため、最終の反例再現と修正成功には混ぜない。最終試験は独立して妥当な期間省略/明示の両形を持ち、必須実績欠落で実際に差分修復を起動する。隔離ツリーは削除し基準SHA/ログを保持。今回の反例の実モデル修復と、未知形式/OCR/多主張分解・smart生応答・実API比較採点等は未確認として残す。秘密値の直接取得/表示はしていない。

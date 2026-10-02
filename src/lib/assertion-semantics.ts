@@ -31,6 +31,17 @@ function assertionClauses(text: string): string[] {
       continue;
     }
     if (depth) continue;
+    const conjunctive = source.slice(i).match(/^(?:しておらず|行っておらず)/)?.[0];
+    if (conjunctive) {
+      const end = i + conjunctive.length;
+      const rest = source.slice(end).split('。')[0];
+      if (finitePredicate.test(rest) || negative.test(rest)) {
+        clauses.push(source.slice(start, end));
+        start = end;
+        i = end - 1;
+        continue;
+      }
+    }
     const connector = source.slice(i).match(/^(?:が、?|けれども、?|けれど、?|ものの、?|、|;)/)?.[0];
     if (!connector || !predicateEnd.test(source.slice(start, i))) continue;
     const rest = source.slice(i + connector.length).split('。')[0];

@@ -61,7 +61,16 @@ function textPdf(texts: string[]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
-  if (['semantics', 'cover-outlook', 'cover-boundary', 'metric-repair'].includes(mode))
+  if (
+    [
+      'semantics',
+      'cover-outlook',
+      'cover-boundary',
+      'cover-signs',
+      'assertion-conflict',
+      'metric-repair',
+    ].includes(mode)
+  )
     return latestReviewFixture(mode);
   if (!['reject', 'repair', 'attributes', 'boundary'].includes(mode))
     throw Error('未知の追加レビューケース');
@@ -170,17 +179,22 @@ export async function additionalReviewFixture(mode: string) {
 }
 
 async function latestReviewFixture(mode: string) {
-  const report = ['cover-outlook', 'cover-boundary'].includes(mode);
+  const report = ['cover-outlook', 'cover-boundary', 'cover-signs', 'assertion-conflict'].includes(
+    mode
+  );
   const period = '2027年3月期';
   const documentType: DocumentType = report ? 'earnings' : 'other';
-  const metrics = ['売上高', '営業利益', '当期純利益'];
+  const metrics =
+    mode === 'cover-signs'
+      ? ['売上高', '営業損失', '当期純損失']
+      : ['売上高', '営業利益', '当期純利益'];
   const bodies = [
     '当社は取得を行っていません。',
-    '当社はAの取得予定ではないが、別案件を取得しました。',
+    '当社はAの取得を行っておらず別案件を取得しました。',
   ];
   const texts = report
     ? [
-        `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${metrics.map((m) => `${period}の${m}は100百万円です。`).join('\n')}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
+        `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${metrics.map((m) => `${period}の${m}は${mode === 'cover-signs' ? (m === '営業損失' ? '▲10' : m === '当期純損失' ? '−20' : '100') : '100'}百万円です。`).join('\n')}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
         `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円の見込みです。`).join('\n')}`,
       ]
     : mode === 'semantics'
@@ -189,6 +203,7 @@ async function latestReviewFixture(mode: string) {
           '会社名 株式会社テスト',
           `1. ${period} 業績予想\n${period}の売上高は100百万円の見込みです。`,
         ];
+  if (mode === 'assertion-conflict') texts.push('1. 事業説明\n当社は2027年3月1日に決議しました。');
   const pdf = textPdf(texts);
   const document = await getDocument({ data: pdf.slice(), disableFontFace: true }).promise;
   const pages = [];
@@ -201,24 +216,45 @@ async function latestReviewFixture(mode: string) {
   const context = buildDocumentContext(pages);
   const facts: VerifiedFact[] = [];
   for (const page of report ? pages : pages.slice(1)) {
-    for (const metric of mode === 'semantics' ? ['当社'] : report ? metrics : ['売上高']) {
-      const f = numberCandidate(page, metric, 100, period);
+    const assertionMode =
+      mode === 'semantics' || (mode === 'assertion-conflict' && page.pageNumber === 3);
+    for (const metric of assertionMode ? ['当社'] : report ? metrics : ['売上高']) {
+      const value =
+        mode === 'cover-signs' && page.pageNumber === 1
+          ? metric === '営業損失'
+            ? -10
+            : metric === '当期純損失'
+              ? -20
+              : 100
+          : 100;
+      const f = numberCandidate(page, metric, value, period);
       f.semantics.scope = report ? (page.pageNumber === 1 ? '連結' : '個別') : null;
       f.semantics.basis = report ? (page.pageNumber === 1 ? '日本基準' : 'IFRS') : null;
-      if (mode === 'semantics') {
+      if (assertionMode) {
+        f.semantics.scope = f.semantics.basis = null;
         f.kind = 'event';
         f.label = f.statement = f.quote;
         f.value = f.unit = f.valueKind = null;
         f.period = null;
         f.semantics.periodKind = 'none';
         f.semantics.metricKind = 'none';
-        f.semantics.state = page.pageNumber === 2 ? 'unspecified' : 'completed';
-        f.semantics.polarity = page.pageNumber === 2 ? 'negative' : 'mixed';
+        f.semantics.state =
+          mode === 'assertion-conflict'
+            ? 'decided'
+            : page.pageNumber === 2
+              ? 'unspecified'
+              : 'completed';
+        f.semantics.polarity =
+          mode === 'assertion-conflict'
+            ? 'affirmative'
+            : page.pageNumber === 2
+              ? 'negative'
+              : 'mixed';
       } else
         f.valueKind = f.semantics.state = report && page.pageNumber === 1 ? 'actual' : 'forecast';
       const binding = bindingFor(context, f.evidence.kind === 'prose' ? f.evidence.blockId : '');
       f.evidence.contextIds = binding.contextIds;
-      f.evidence.scopeIds = resolveScopeIds(binding, f.semantics, report);
+      f.evidence.scopeIds = resolveScopeIds(binding, f.semantics, report && !assertionMode);
       f.id = `f${facts.length + 1}`;
       facts.push(f);
     }
@@ -242,7 +278,13 @@ async function latestReviewFixture(mode: string) {
   else wrong[0].semantics.scope = '連結';
   let initial = wrong;
   let repairFacts = report ? facts.slice(0, 3) : facts;
-  if (mode === 'cover-boundary') {
+  if (mode === 'assertion-conflict') {
+    initial = facts.slice(1);
+    const dated = structuredClone(facts[facts.length - 1]);
+    dated.period = '2027年3月1日';
+    dated.semantics.periodKind = 'eventDate';
+    repairFacts = [facts[0], dated];
+  } else if (mode === 'cover-boundary') {
     const late = numberCandidate(pages[0], '売上高', 200, period);
     const block = pages[0].blocks.find((b) => b.text.includes('売上高は200'))!;
     if (late.evidence.kind !== 'prose') throw Error('expected prose');
@@ -260,7 +302,13 @@ async function latestReviewFixture(mode: string) {
       : [];
   if (mode === 'metric-repair') first.candidates[0].source.metric = '売上 高';
   const legacy = structuredClone(checked);
-  if (mode === 'cover-boundary') {
+  if (mode === 'assertion-conflict') {
+    const dated = structuredClone(checked.facts[checked.facts.length - 1]);
+    dated.period = '2027年3月1日';
+    dated.semantics.periodKind = 'eventDate';
+    dated.id = stableFactId(dated);
+    legacy.facts.push(dated);
+  } else if (mode === 'cover-boundary') {
     const late = structuredClone(initial[initial.length - 1]);
     late.semantics.scope = late.semantics.basis = null;
     late.evidence.scopeIds = resolveScopeIds(

@@ -392,7 +392,7 @@ export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPa
   const metric =
     '(?:売上高|売上収益|営業収益|営業(?:利益|損失)|経常(?:利益|損失)|(?:親会社株主に帰属する|親会社の所有者に帰属する)?(?:当期|中間|四半期)純(?:利益|損失)|総資産|純資産|資本金)';
   const valueStart = new RegExp(
-    `^(?:20\\d{2}年\\d{1,2}月期(?:第[1-4]四半期|中間期|通期)?(?:の)?)?${metric}(?:は|:)?[+\\-△]?\\d`
+    `^(?:20\\d{2}年\\d{1,2}月期(?:第[1-4]四半期|中間期|通期)?(?:の)?)?${metric}(?:は|:)?[△▲−-]?\\d`
   );
   let valuesStarted = false;
   for (let i = cover + 1; i <= target; i++) {

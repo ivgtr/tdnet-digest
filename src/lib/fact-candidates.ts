@@ -84,7 +84,7 @@ export function factSourceKey(f: VerifiedFact): string {
           'prose',
           f.evidence.blockId,
           f.kind === 'event' || f.kind === 'status' ? 'assertion' : [f.label, f.quantity?.raw],
-          f.period,
+          ...(f.kind === 'event' || f.kind === 'status' ? [] : [f.period]),
         ]
   );
 }

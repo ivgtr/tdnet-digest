@@ -93,12 +93,9 @@ export function parseFactSummary(
     ids.add(item.id);
     try {
       const fact = validateFact(item, pages, context);
-      const previous = facts.find((f) => f.id === fact.id);
-      if (
-        previous &&
-        (previous.value !== fact.value || previous.quantity?.decimal !== fact.quantity?.decimal)
-      )
-        throw new Error('検証済み事実が矛盾します');
+      const previous = facts.find((f) => factSourceKey(f) === factSourceKey(fact));
+      if (previous && previous.id !== fact.id)
+        throw new Error('SEMANTICS:同一原文単位の意味候補が競合します');
       if (!previous) facts.push(fact);
     } catch (error) {
       unverified.push(

@@ -401,6 +401,8 @@ describe('e81d816再レビューの意味と報告単位', () => {
     '当社はAの取得を行わない、別案件を取得しました。',
     '当社はAの取得を行っていませんが、別案件を取得しました。',
     '当社はAの取得を行っておらず、別案件を取得しました。',
+    '当社はAの取得を行っておらず別案件を取得しました。',
+    '当社はAを取得しておらず別案件を取得しました。',
   ])('対比する肯定完了と否定をmixedで照合する: %s', (body) => {
     const { pages, f } = assertion(body, 'completed', 'mixed');
     expect(assertionPolarity(body)).toBe('mixed');
@@ -411,6 +413,9 @@ describe('e81d816再レビューの意味と報告単位', () => {
     expect(saved(good.facts, pages).facts).toEqual(good.facts);
     const wrong = structuredClone(f);
     wrong.semantics.polarity = 'negative';
+    expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
+    expect(saved([evidence(wrong, pages)], pages).facts).toEqual([]);
+    wrong.semantics.state = 'unspecified';
     expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
     expect(saved([evidence(wrong, pages)], pages).facts).toEqual([]);
   });
@@ -581,6 +586,106 @@ describe('428b325再レビューの表紙出典範囲', () => {
     expect(good.facts).toHaveLength(3);
     expect(() => verifyCoverage('earnings', pages, good.facts)).toThrow('revenue');
   });
+});
+
+describe('8cabd2f再レビューの負号と主張の同一性', () => {
+  it.each(['△', '▲', '−', '-'])('表紙直下の負号%sを数量解析と同じ意味で保持する', (sign) => {
+    const pages = [
+      textPage(
+        `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${period}の売上高は100百万円です。\n${period}の営業損失は${sign}10百万円です。\n${period}の当期純利益は100百万円です。`
+      ),
+    ];
+    const facts = ['売上高', '営業損失', '当期純利益'].map((label) =>
+      numberCandidate(pages[0], label, label === '営業損失' ? -10 : 100, period)
+    );
+    const good = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(3);
+    expect(good.facts[1].quantity?.decimal).toBe('-10');
+    expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+    expect(
+      renderFacts({ version: 4, documentType: 'earnings', facts: good.facts, unverified: [] })
+    ).toContain('営業損失: -10百万円');
+  });
+  function datedAssertion(kind: 'event' | 'status' = 'event') {
+    const source = localReport('経営成績');
+    const body =
+      kind === 'status'
+        ? '当社は2027年3月1日に業績予想未定とすることを決議しました。'
+        : '当社は2027年3月1日に決議しました。';
+    const pages = [...source.pages, textPage(`1. 事業説明\n${body}`, 3)];
+    const event = numberCandidate(pages[2], '当社');
+    event.kind = kind;
+    event.label = event.statement = event.quote;
+    event.value = event.unit = event.valueKind = null;
+    event.period = null;
+    event.semantics = {
+      ...event.semantics,
+      scope: null,
+      basis: null,
+      periodKind: 'none',
+      metricKind: 'none',
+      state: 'decided',
+    };
+    const dated = structuredClone(event);
+    dated.period = '2027年3月1日';
+    dated.semantics.periodKind = 'eventDate';
+    return { pages, number: source.facts[0], baseline: source.facts.slice(1), event, dated };
+  }
+  it.each([
+    ['event', false],
+    ['event', true],
+    ['status', false],
+    ['status', true],
+  ] as const)(
+    '差分修復で同じ%sの期間表記を変更できない（初回日付=%s）',
+    async (kind, initialDated) => {
+      const { pages, number, baseline, event, dated } = datedAssertion(kind);
+      const before = initialDated ? dated : event;
+      const after = initialDated ? event : dated;
+      for (const f of [before, after]) {
+        const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+        expect(good.unverified).toEqual([]);
+        expect(saved(good.facts, pages).facts).toEqual(good.facts);
+      }
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse([...baseline, before], pages, 'earnings'))
+        .mockResolvedValueOnce(candidateResponse([after, number], pages, 'earnings'));
+      await expect(
+        generateVerifiedFactSummary(config, 'earnings', 'source', pages)
+      ).rejects.toThrow('確定済み原文の意味');
+      expect(generateText).toHaveBeenCalledTimes(2);
+    }
+  );
+  it.each(['event', 'status'] as const)(
+    '同じ%sの期間別二重候補・保存を拒否し、同一再送は1件に保つ',
+    async (kind) => {
+      const { pages, number, baseline, event, dated } = datedAssertion(kind);
+      const conflicting = reviewCandidates(
+        candidateResponse([event, dated], pages),
+        'other',
+        pages
+      );
+      expect(conflicting.facts).toHaveLength(1);
+      expect(conflicting.unverified.join('\n')).toContain('同一原文単位');
+      const complete = [event, dated].map(
+        (f) => reviewCandidates(candidateResponse([f], pages), 'other', pages).facts[0]
+      );
+      validateSavedFacts({ version: 4, documentType: 'other', facts: complete, unverified: [] });
+      const rechecked = saved(complete, pages);
+      expect(rechecked.facts).toHaveLength(1);
+      expect(rechecked.unverified.join('\n')).toContain('同一原文単位');
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse([...baseline, event], pages, 'earnings'))
+        .mockResolvedValueOnce(candidateResponse([event, number], pages, 'earnings'));
+      const good = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+      expect(good.facts.facts).toHaveLength(4);
+      expect(good.facts.facts.find((f) => f.kind === kind)).toEqual(complete[0]);
+      expect(saved(good.facts.facts, pages, 'earnings', true).facts).toEqual(good.facts.facts);
+    }
+  );
 });
 
 describe('局所属性を持つ決算の必須事実と修復', () => {

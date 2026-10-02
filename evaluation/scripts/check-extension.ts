@@ -57,7 +57,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
-  const fixedFailure = args.includes('--fixed-failure') || reviewCase === 'reject';
+  const fixedFailure =
+    args.includes('--fixed-failure') ||
+    reviewCase === 'reject' ||
+    reviewCase === 'assertion-conflict';
   if (fixedFailure && !args.includes('--fixed-api'))
     throw new Error('拒否表示試験は固定API専用です');
   const smartFull = args.includes('--smart-full');
@@ -285,7 +288,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v41:openai:fixture:full';
+          const fingerprint = 'v42:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -340,7 +343,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v41 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v42 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -380,7 +383,15 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     evidence.stages.push('button → PDF → offscreen → API → facts → HTML');
     if (fixedFailure) {
       evidence.rendered = await summary.innerText();
-      assert.ok(evidence.rendered.includes(reviewFixture ? '数量後' : '形式が不正'));
+      assert.ok(
+        evidence.rendered.includes(
+          reviewCase === 'assertion-conflict'
+            ? '確定済み原文の意味'
+            : reviewFixture
+              ? '数量後'
+              : '形式が不正'
+        )
+      );
       if (reviewFixture) assert.ok(!evidence.rendered.includes('売上高: 100百万円'));
       const trace = await worker.evaluate(
         async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
@@ -396,7 +407,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const download = await downloadEvent;
       assert.deepEqual(JSON.parse(await readFile(await download.path(), 'utf8')), trace);
       assert.equal(apiCalls, 2);
-      evidence.stages.push('failed first/complete-repair → error HTML → raw diagnostic export');
+      evidence.stages.push(
+        reviewCase === 'assertion-conflict'
+          ? 'failed delta repair → error HTML → raw diagnostic export'
+          : 'failed first/complete-repair → error HTML → raw diagnostic export'
+      );
       await context.close();
       context = null;
       evidence.success = true;
