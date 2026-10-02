@@ -288,7 +288,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v42:openai:fixture:full';
+          const fingerprint = 'v43:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -343,7 +343,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v42 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v43 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;

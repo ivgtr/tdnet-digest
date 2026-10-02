@@ -1,6 +1,10 @@
 import type { FactSemantics } from './fact-contract';
 
 const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+// Shared net-profit label core for coverage and reporting-source classification.
+export const NET_PROFIT_METRIC =
+  '(?:親会社株主に帰属する|親会社の所有者に帰属する)?(?:当期|四半期|中間)?純?(?:利益|損失)';
+
 const perShare = /1株|一株|株当たり|EPS/i;
 const currency = /^(?:千|百万|億)?円$|^(?:ドル|USD|EUR)$/;
 

@@ -1,4 +1,5 @@
 import {
+  declaredSubjectsIn,
   buildDocumentContext,
   bindingFor,
   verifyScopeEvidence,
@@ -181,24 +182,7 @@ function declaredSubjects(pages: ExtractedPage[], refs: string[]): string[] {
   const blocks = pages.flatMap((page) =>
     page.blocks.filter((block) => refs.some((id) => block.id === id || block.spanIds.includes(id)))
   );
-  return [
-    ...new Set(
-      blocks.flatMap((block) =>
-        block.text.split('\n').flatMap((line) => {
-          const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
-          const field = text.match(/^(?:上場会社名|会社名|名称)(.+)$/)?.[1];
-          if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
-          if (
-            /^(?:株式会社|有限会社|合同会社|投資法人)[\p{L}\p{N}・&.-]+$|^[\p{L}\p{N}・&.-]+(?:株式会社|有限会社|合同会社|投資法人)$/u.test(
-              text
-            )
-          )
-            return [text];
-          return [];
-        })
-      )
-    ),
-  ].filter(Boolean);
+  return [...new Set(blocks.flatMap(declaredSubjectsIn))];
 }
 export function periodKind(
   period: string | null,

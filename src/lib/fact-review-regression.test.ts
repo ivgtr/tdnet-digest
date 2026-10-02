@@ -375,6 +375,10 @@ describe('e81d816再レビューの意味と報告単位', () => {
     '当社は取得を実施いたしません。',
     '当社は、取得を予定していません。',
     '当社は取得を予定（しておりません）。',
+    '当社は自己株式の取得を行いません。',
+    '当社は、取得を行いません。',
+    '当社は取得予定の変更を行いません。',
+    '当社は（自己株式の）取得を行いません。',
     '当社は取得を行っていません。',
     '当社は取得を行っていない。',
     '当社は取得を行っておらず、今後も取得を予定しておりません。',
@@ -392,7 +396,37 @@ describe('e81d816再レビューの意味と報告単位', () => {
     expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
     expect(saved([evidence(wrong, pages)], pages).facts).toEqual([]);
   });
+  it('行いますの肯定を保持し、行いませんの誤候補を1回修復する', async () => {
+    const positive = assertion('当社は自己株式の取得を行います。', 'unspecified', 'affirmative');
+    const good = reviewCandidates(
+      candidateResponse([positive.f], positive.pages),
+      'other',
+      positive.pages
+    );
+    expect(good.unverified).toEqual([]);
+    expect(saved(good.facts, positive.pages).facts).toEqual(good.facts);
+    const { pages, f } = assertion('当社は自己株式の取得を行いません。', 'unspecified', 'negative');
+    const wrong = structuredClone(f);
+    wrong.semantics.polarity = 'affirmative';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([wrong], pages))
+      .mockResolvedValueOnce(candidateResponse([f], pages));
+    const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
+    expect(result.repairAttempted).toBe(true);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
+    expect(renderFacts(result.facts)).toContain(f.quote);
+    const forged = structuredClone(result.facts.facts[0]);
+    forged.semantics.polarity = 'affirmative';
+    forged.id = stableFactId(forged);
+    validateSavedFacts({ version: 4, documentType: 'other', facts: [forged], unverified: [] });
+    expect(saved([forged], pages).facts).toEqual([]);
+  });
   it.each([
+    '当社はAの取得を行いませんが別案件を取得しました。',
+    '当社はAの取得を行いません、別案件を取得しました。',
+    '当社はAを取得しましたがBの取得を行いません。',
     '当社はAを取得しましたが、Bは取得していません。',
     '当社はAを取得しましたがBは取得していません。',
     '当社はAを取得しました、Bは取得していません。',
@@ -829,5 +863,108 @@ describe('局所属性を持つ決算の必須事実と修復', () => {
     ).rejects.toThrow('重要事実');
     expect(generateText).toHaveBeenCalledTimes(2);
     expect(saved([evidence(event, pages)], pages).facts).toEqual([]);
+  });
+});
+
+describe('9a55639再レビューのIFRS表紙と会社名欄', () => {
+  function cover(label: string, field = '上場会社名 株式会社テスト') {
+    const pages = [
+      textPage(
+        `${period} 決算短信〔IFRS〕（連結）\n${field}\n${period}の売上高は100百万円です。\n${period}の営業利益は100百万円です。\n${period}の${label}は100百万円です。\n${period}の総資産は200百万円です。`
+      ),
+    ];
+    const facts = ['売上高', '営業利益', label, '総資産'].map((m) => {
+      const f = numberCandidate(pages[0], m, m === '総資産' ? 200 : 100, period);
+      f.semantics.basis = 'IFRS';
+      return f;
+    });
+    return { pages, facts };
+  }
+  it.each([
+    '親会社の所有者に帰属する四半期利益',
+    '親会社の所有者に帰属する当期利益',
+    '親会社の所有者に帰属する中間損失',
+    '親会社の所有者に帰属する四半期純利益',
+  ])('純の有無で報告値と後続値の適用属性・必須判定を変えない: %s', (label) => {
+    const { pages, facts } = cover(label);
+    const good = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(4);
+    expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+    expect(() =>
+      verifyCoverage(
+        'earnings',
+        pages,
+        good.facts.filter((f) => f.label !== label)
+      )
+    ).toThrow('netProfit');
+    const wrong = structuredClone(good.facts.slice(2));
+    wrong.forEach((f) => {
+      f.semantics.scope = f.semantics.basis = null;
+      f.evidence.scopeIds = resolveScopeIds(
+        bindingFor(
+          buildDocumentContext(pages),
+          f.evidence.kind === 'prose' ? f.evidence.blockId : ''
+        ),
+        f.semantics,
+        false
+      );
+      f.id = stableFactId(f);
+    });
+    validateSavedFacts({ version: 4, documentType: 'other', facts: wrong, unverified: [] });
+    expect(reviewCandidates(candidateResponse(wrong, pages), 'other', pages).facts).toEqual([]);
+    expect(saved(wrong, pages).facts).toEqual([]);
+    expect(
+      renderFacts({ version: 4, documentType: 'earnings', facts: good.facts, unverified: [] })
+    ).toContain('連結、IFRS');
+  });
+  it.each(
+    ['上場会社名', '会社名', '名称'].flatMap((field) =>
+      [' ', ':', '：'].map((separator) => [field, separator])
+    )
+  )('会社名欄%sの区切り%sを主体へ混入しない', (field, separator) => {
+    const { pages, facts } = cover('当期純利益', `${field}${separator}株式会社テスト`);
+    const good = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(4);
+    expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+    const offered = buildDocumentContext(pages)
+      .bindings.flatMap((b) => b.declarations)
+      .filter((d) => d.role === 'subject')
+      .map((d) => d.value);
+    expect(offered).toContain('株式会社テスト');
+    expect(offered).not.toContain(':株式会社テスト');
+    const serialized = JSON.parse(serializeCandidateSource(pages, undefined, 'earnings'));
+    expect(
+      serialized.contextTemplates.flatMap(
+        (t: { meaningOptions: { subject: string[] } }) => t.meaningOptions.subject
+      )
+    ).not.toContain(':株式会社テスト');
+    const wrong = structuredClone(good.facts[0]);
+    wrong.semantics.subject = ':株式会社テスト';
+    wrong.id = stableFactId(wrong);
+    validateSavedFacts({ version: 4, documentType: 'other', facts: [wrong], unverified: [] });
+    expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
+    expect(saved([wrong], pages).facts).toEqual([]);
+    expect(
+      renderFacts({ version: 4, documentType: 'earnings', facts: good.facts, unverified: [] })
+    ).not.toContain(':株式会社テスト');
+  });
+  it('IFRS表紙の会社名区切りと利益名を1回修復して表示・保存する', async () => {
+    const { pages, facts } = cover(
+      '親会社の所有者に帰属する四半期利益',
+      '上場会社名：株式会社テスト'
+    );
+    const wrong = structuredClone(facts);
+    wrong[2].semantics.basis = null;
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse(wrong, pages, 'earnings'))
+      .mockResolvedValueOnce(candidateResponse([facts[2]], pages, 'earnings'));
+    const r = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+    expect(r.repairAttempted).toBe(true);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(saved(r.facts.facts, pages, 'earnings', true).facts).toEqual(r.facts.facts);
+    expect(renderFacts(r.facts)).toContain('株式会社テスト');
   });
 });

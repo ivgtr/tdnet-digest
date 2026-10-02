@@ -1,5 +1,6 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
+import { NET_PROFIT_METRIC } from './metric-semantics';
 import { normalized, type TextBlock } from './document-structure';
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import { continuationFor, noteLinks, paragraphNoteLinks } from './document-links';
@@ -35,7 +36,7 @@ export function declaredSubjectsIn(block: TextBlock): string[] {
   return unique(
     block.text.split('\n').flatMap((line) => {
       const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
-      const field = text.match(/^(?:上場会社名|会社名|名称)(.+)$/)?.[1];
+      const field = text.match(/^(?:上場会社名|会社名|名称):?([^:].*)$/)?.[1];
       if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
       return /^(?:株式会社|有限会社|合同会社|投資法人)[\p{L}\p{N}・&.-]+$|^[\p{L}\p{N}・&.-]+(?:株式会社|有限会社|合同会社|投資法人)$/u.test(
         text
@@ -389,8 +390,7 @@ export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPa
   if (cover < 0) return false;
   // Only a contiguous reporting-value area belongs to this cover. Unknown prose
   // or an unnumbered caption closes it; later values cannot reopen it.
-  const metric =
-    '(?:売上高|売上収益|営業収益|営業(?:利益|損失)|経常(?:利益|損失)|(?:親会社株主に帰属する|親会社の所有者に帰属する)?(?:当期|中間|四半期)純(?:利益|損失)|総資産|純資産|資本金)';
+  const metric = `(?:売上高|売上収益|営業収益|営業(?:利益|損失)|経常(?:利益|損失)|${NET_PROFIT_METRIC}|総資産|純資産|資本金)`;
   const valueStart = new RegExp(
     `^(?:20\\d{2}年\\d{1,2}月期(?:第[1-4]四半期|中間期|通期)?(?:の)?)?${metric}(?:は|:)?[△▲−-]?\\d`
   );
@@ -428,9 +428,9 @@ export function isFinancialUnit(
       titles + reportingUnitTitle(binding, pages)
     ) ||
     (isReportingCoverUnit(binding, pages) &&
-      /売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|(?:当期|中間|四半期).*純(?:利益|損失)|総資産|純資産|資本金|キャッシュ.*フロー/.test(
-        normalized(fact.label)
-      )) ||
+      new RegExp(
+        `売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC}|総資産|純資産|資本金|キャッシュ.*フロー`
+      ).test(normalized(fact.label))) ||
     /連結財務諸表|純損失|特別損失/.test(fact.quote)
   );
 }

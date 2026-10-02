@@ -67,6 +67,7 @@ export async function additionalReviewFixture(mode: string) {
       'cover-outlook',
       'cover-boundary',
       'cover-signs',
+      'cover-ifrs-company',
       'assertion-conflict',
       'metric-repair',
     ].includes(mode)
@@ -179,22 +180,28 @@ export async function additionalReviewFixture(mode: string) {
 }
 
 async function latestReviewFixture(mode: string) {
-  const report = ['cover-outlook', 'cover-boundary', 'cover-signs', 'assertion-conflict'].includes(
-    mode
-  );
+  const report = [
+    'cover-outlook',
+    'cover-boundary',
+    'cover-signs',
+    'cover-ifrs-company',
+    'assertion-conflict',
+  ].includes(mode);
   const period = '2027年3月期';
   const documentType: DocumentType = report ? 'earnings' : 'other';
   const metrics =
-    mode === 'cover-signs'
-      ? ['売上高', '営業損失', '当期純損失']
-      : ['売上高', '営業利益', '当期純利益'];
+    mode === 'cover-ifrs-company'
+      ? ['売上高', '営業利益', '親会社の所有者に帰属する四半期利益']
+      : mode === 'cover-signs'
+        ? ['売上高', '営業損失', '当期純損失']
+        : ['売上高', '営業利益', '当期純利益'];
   const bodies = [
-    '当社は取得を行っていません。',
-    '当社はAの取得を行っておらず別案件を取得しました。',
+    '当社は自己株式の取得を行いません。',
+    '当社はAの取得を行いませんが別案件を取得しました。',
   ];
   const texts = report
     ? [
-        `${period} 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n${metrics.map((m) => `${period}の${m}は${mode === 'cover-signs' ? (m === '営業損失' ? '▲10' : m === '当期純損失' ? '−20' : '100') : '100'}百万円です。`).join('\n')}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
+        `${period} 決算短信〔${mode === 'cover-ifrs-company' ? 'IFRS' : '日本基準'}〕（連結）\n${mode === 'cover-ifrs-company' ? '上場会社名：株式会社テスト' : '会社名 株式会社テスト'}\n${metrics.map((m) => `${period}の${m}は${mode === 'cover-signs' ? (m === '営業損失' ? '▲10' : m === '当期純損失' ? '−20' : '100') : '100'}百万円です。`).join('\n')}\n${period}の通期業績予想について説明します。${mode === 'cover-boundary' ? `\n事業概況\n${period}の売上高は200百万円です。` : ''}`,
         `1. 今後の見通し\n範囲 個別\n会計基準 IFRS\n${metrics.map((m) => `${period}の${m}は100百万円の見込みです。`).join('\n')}`,
       ]
     : mode === 'semantics'
@@ -229,7 +236,11 @@ async function latestReviewFixture(mode: string) {
           : 100;
       const f = numberCandidate(page, metric, value, period);
       f.semantics.scope = report ? (page.pageNumber === 1 ? '連結' : '個別') : null;
-      f.semantics.basis = report ? (page.pageNumber === 1 ? '日本基準' : 'IFRS') : null;
+      f.semantics.basis = report
+        ? page.pageNumber === 1 && mode !== 'cover-ifrs-company'
+          ? '日本基準'
+          : 'IFRS'
+        : null;
       if (assertionMode) {
         f.semantics.scope = f.semantics.basis = null;
         f.kind = 'event';
@@ -271,6 +282,9 @@ async function latestReviewFixture(mode: string) {
     wrong[0].semantics.state = 'unspecified';
     wrong[0].semantics.polarity = 'affirmative';
     wrong[1].semantics.polarity = 'negative';
+  } else if (mode === 'cover-ifrs-company') {
+    wrong[0].semantics.subject = ':株式会社テスト';
+    wrong[2].semantics.basis = null;
   } else if (report)
     wrong.slice(0, 3).forEach((f) => {
       f.semantics.scope = f.semantics.basis = null;
@@ -331,6 +345,9 @@ async function latestReviewFixture(mode: string) {
     );
     validLate.id = stableFactId(validLate);
     legacy.facts = [...checked.facts.slice(1), validLate];
+  } else if (mode === 'cover-ifrs-company') {
+    legacy.facts[0].semantics.subject = ':株式会社テスト';
+    legacy.facts[0].id = stableFactId(legacy.facts[0]);
   } else if (mode === 'semantics')
     legacy.facts.forEach((f, i) => {
       f.semantics = wrong[i].semantics;
@@ -362,7 +379,15 @@ async function latestReviewFixture(mode: string) {
       mode === 'semantics'
         ? bodies
         : report
-          ? ['連結', '日本基準', '個別', 'IFRS', '売上高: 100百万円']
+          ? mode === 'cover-ifrs-company'
+            ? [
+                '株式会社テスト',
+                '連結',
+                '個別',
+                'IFRS',
+                '親会社の所有者に帰属する四半期利益: 100百万円',
+              ]
+            : ['連結', '日本基準', '個別', 'IFRS', '売上高: 100百万円']
           : ['売上高: 100百万円'],
   };
 }

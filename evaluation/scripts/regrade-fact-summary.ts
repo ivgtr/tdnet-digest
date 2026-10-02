@@ -71,6 +71,7 @@ for (const file of process.argv.slice(2).filter((a) => a !== '--diagnostic-renum
     'src/lib/fact-summary.ts',
     'src/lib/fact-validation.ts',
     'src/lib/fact-coverage.ts',
+    'src/lib/metric-semantics.ts',
     'src/lib/numeric-evidence.ts',
     'evaluation/scripts/fact-summary-expectations.ts',
     'evaluation/fixtures/fact-summary-cases.json',

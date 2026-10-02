@@ -1,3 +1,4 @@
+import { NET_PROFIT_METRIC } from './metric-semantics';
 import { assertionStates } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { DocumentType } from './document-type';
@@ -51,12 +52,7 @@ export function standardMetric(fact: VerifiedFact): string | null {
   if (/調整|コア|EBITDA/i.test(label)) return null;
   if (/^(売上高|売上収益|営業収益)$/.test(label)) return 'revenue';
   if (/^営業(?:利益|損失)(?:\(△\))?$/.test(label)) return 'operatingProfit';
-  if (
-    /^(?:親会社株主に帰属する|親会社の所有者に帰属する)?(?:当期|四半期|中間)?純?(?:利益|損失)(?:又は.*)?(?:\(△\))?$/.test(
-      label
-    )
-  )
-    return 'netProfit';
+  if (new RegExp(`^${NET_PROFIT_METRIC}(?:又は.*)?(?:\\(△\\))?$`).test(label)) return 'netProfit';
   return null;
 }
 /** A same-named business metric is not a financial-reporting obligation. */
