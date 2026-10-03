@@ -395,6 +395,9 @@ export function renderFacts(summary: FactSummary): string {
           ? stateLabels[f.semantics.state] + (f.semantics.polarity === 'negative' ? '（否定）' : '')
           : null,
         ...f.semantics.qualifiers,
+        ...(f.provenance?.denominator?.value === 1 && !/1株当たり|１株当たり/.test(f.label)
+          ? ['1株当たり']
+          : []),
         ...(f.semantics.metricKind === 'perShare' &&
         /配当予想の変更はありません/.test(normalized(f.quote))
           ? ['配当予想の変更なし']

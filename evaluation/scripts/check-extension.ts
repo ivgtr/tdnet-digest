@@ -15,7 +15,11 @@ import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
 import { parseFactSummary } from '../../src/lib/fact-summary';
 import { ANALYSIS_SCHEMA_VERSION } from '../../src/lib/analysis-version';
 import { additionalReviewFixture } from './additional-review-fixture';
-import { expectedErrors, type Case as BrowserCase } from './fact-summary-expectations';
+import {
+  expectedErrors,
+  renderedFactErrors,
+  type Case as BrowserCase,
+} from './fact-summary-expectations';
 async function builtDigest(): Promise<string> {
   const digest = createHash('sha256');
   for (const directory of ['dist', 'dist/assets', 'dist/.vite']) {
@@ -293,7 +297,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await context.route('https://www.release.tdnet.info/inbs/fixture-list.html', (route: any) =>
         route.fulfill({
           contentType: 'text/html',
-          body: `<html><meta charset="utf-8"><table id="list-head"><tr><td class="header-R">表題</td></tr></table><table id="main-list-table"><tbody><tr><td class="kjTime oddnew-L">15:00</td><td class="kjCode oddnew-M">${item.id.startsWith('bluememe') ? '4069' : item.id.startsWith('buyback') ? '9313' : '3979'}</td><td class="kjName oddnew-M">公開PDF検証</td><td class="kjTitle oddnew-M"><a href="${pdfUrl}">${item.title}</a></td><td class="oddnew-R"></td></tr></tbody></table></html>`,
+          body: `<html><meta charset="utf-8"><table id="list-head"><tr><td class="header-R">表題</td></tr></table><table id="main-list-table"><tbody><tr><td class="kjTime oddnew-L">15:00</td><td class="kjCode oddnew-M">${item.code ?? (item.id.startsWith('bluememe') ? '4069' : item.id.startsWith('buyback') ? '9313' : '3979')}</td><td class="kjName oddnew-M">公開PDF検証</td><td class="kjTitle oddnew-M"><a href="${pdfUrl}">${item.title}</a></td><td class="oddnew-R"></td></tr></tbody></table></html>`,
         })
       );
     }
@@ -555,6 +559,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
+    const renderedLines = await summary.locator('li').allTextContents();
+    assert.deepEqual(renderedFactErrors(stored.value.facts.facts, renderedLines), []);
+    evidence.renderedLines = renderedLines;
     if (reviewSettingsChange) {
       assert.equal(
         await worker.evaluate(async () =>

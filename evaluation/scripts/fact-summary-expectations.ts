@@ -93,3 +93,53 @@ export function expectedErrors(
     errors.push(`未確認が残っています: ${result.unverified.join(' / ')}`);
   return errors;
 }
+/** A fact's value, metric and meaning must appear together in one rendered list item. */
+export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): string[] {
+  const stateLabels: Record<string, string> = {
+    actual: '実績',
+    forecast: '予想',
+    forecastBefore: '修正前予想',
+    forecastAfter: '修正後予想',
+    planned: '実施予定',
+    decided: '決議・決定',
+    contracted: '契約',
+    completed: '実施済み',
+    unspecified: '状態未特定',
+  };
+  const basisLabels = {
+    splitAdjusted: '株式分割調整済み',
+    beforeSplit: '株式分割前',
+    afterSplit: '株式分割後',
+  };
+  return facts.flatMap((f) => {
+    const value =
+      f.kind === 'number'
+        ? `${f.label}:${f.quantity!.decimal}${f.unit}`
+        : f.kind === 'range' && 'lower' in f.quantity!
+          ? `${f.label}:${f.quantity!.lower}～${f.quantity!.upper}${f.unit}`
+          : f.statement!;
+    const required = [
+      value,
+      f.semantics.subject,
+      f.semantics.scope,
+      f.semantics.basis,
+      f.period,
+      ...(f.kind === 'number' || f.kind === 'range'
+        ? [stateLabels[f.semantics.state], ...(f.semantics.polarity === 'negative' ? ['否定'] : [])]
+        : []),
+      `PDFp.${f.page}`,
+      ...f.semantics.qualifiers,
+      ...(f.provenance?.adjustments.map((a) => basisLabels[a.basis]) ?? []),
+      ...(f.provenance?.denominator ? ['1株当たり'] : []),
+      ...(/配当予想の変更はありません/.test(compact(f.quote)) &&
+      f.semantics.metricKind === 'perShare'
+        ? ['配当予想の変更なし']
+        : []),
+    ]
+      .filter((v): v is string => !!v)
+      .map(compact);
+    return lines.some((line) => required.every((term) => compact(line).includes(term)))
+      ? []
+      : [`表示の数値・指標・期間・意味が同一項目に揃いません: ${f.id} ${f.label}`];
+  });
+}

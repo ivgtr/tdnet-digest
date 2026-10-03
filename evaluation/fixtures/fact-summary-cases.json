@@ -1098,6 +1098,17 @@
           "polarity": "mixed"
         }
       }
+    ],
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b21",
+        "kind": "event",
+        "semantics": {
+          "subject": "IDEC株式会社",
+          "state": "forecast"
+        }
+      }
     ]
   },
   {
@@ -1356,6 +1367,28 @@
         "value": 250,
         "period": "2026年11月期第3四半期累計",
         "state": "actual"
+      }
+    ],
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b37",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "state": "unspecified",
+          "polarity": "negative"
+        }
+      },
+      {
+        "page": 1,
+        "blockId": "p1b46",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "state": "unspecified",
+          "polarity": "negative"
+        }
       }
     ]
   }

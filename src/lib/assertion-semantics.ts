@@ -103,6 +103,7 @@ export function planClauseBindings(text: string) {
   return bindings;
 }
 export function assertionPolarity(text: string): FactSemantics['polarity'] {
+  if (/修正の有無[:：]無$/.test(normalized(text))) return 'negative';
   const clauses = assertionClauses(text);
   const n = clauses.filter((c) => negative.test(c)).length;
   return n === 0 ? 'affirmative' : n === clauses.length ? 'negative' : 'mixed';

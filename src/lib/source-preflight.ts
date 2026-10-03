@@ -2,8 +2,15 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { DocumentType } from './document-type';
 import type { DocumentContext } from './document-context';
 import { coverageReport } from './fact-coverage';
-import { parseExactQuantity, quantityNumber, declaredQuantityUnit } from './quantity';
-import { verifyTableEvidence } from './numeric-evidence';
+import {
+  parseExactQuantity,
+  quantityNumber,
+  declaredQuantityUnit,
+  proseQuantities,
+} from './quantity';
+import { verifyTableEvidence, verifyProseQuantity, verifyProsePeriod } from './numeric-evidence';
+import { normalized } from './document-structure';
+import { NET_PROFIT_METRIC } from './metric-semantics';
 import { continuationSpans } from './document-links';
 /** Required source choices must survive serialization before spending a generation attempt. */
 export function preflightCandidateSource(
@@ -29,7 +36,57 @@ export function preflightCandidateSource(
           (p.quantities.some((q) => q.id === id) || p.blocks.some((b) => b.id === id))
       );
       if (!page) return `${id}:選択した原文がありません`;
-      if (page.blocks.some((b) => b.id === id && b.kind === 'paragraph')) return null;
+      const block = page.blocks.find((b) => b.id === id && b.kind === 'paragraph');
+      if (block) {
+        const serialized = source.pages
+          .find((p: { page: number }) => p.page === page.pageNumber)
+          ?.blocks.find((b: { id: string }) => b.id === id);
+        if (!serialized?.assertions?.length) return `${id}:入力に主張範囲がありません`;
+        if (slot.expected.kind !== 'number') return null;
+        const label =
+          slot.expected.label ??
+          normalized(block.text).match(
+            new RegExp(
+              `((?:売上高)?営業利益率|株式の取得価額の総額|取得価額の総額|取得する株式の総数|1株当たり(?:当期|四半期|中間)?純利益|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|MRR|ARR|${NET_PROFIT_METRIC})(?:は|が|について|[:：]|(?=[0-9]))`
+            )
+          )?.[1];
+        if (!label) return `${id}:必要な本文指標を確認できません`;
+        for (const quantity of proseQuantities(block)) {
+          const parsed = parseExactQuantity(quantity.raw),
+            value = parsed && quantityNumber(parsed.decimal)?.value;
+          if (
+            !parsed?.unit ||
+            value === null ||
+            value === undefined ||
+            !serialized.quantities.some((q: { id: string }) => q.id === quantity.id)
+          )
+            continue;
+          try {
+            const claim = {
+              label,
+              value,
+              unit: parsed.unit,
+              period: slot.expected.period ?? '',
+              valueKind: slot.expected.state ?? 'actual',
+              subject: slot.expected.subject ?? null,
+              scope: slot.expected.scope ?? null,
+            };
+            const binding = context.bindings.find((b) => b.anchorId === id)!;
+            const inherited = binding.contextIds
+              .map(
+                (id) =>
+                  pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!.text
+              )
+              .join('');
+            if (slot.expected.period) verifyProsePeriod(claim, block.text, inherited);
+            const proof = verifyProseQuantity(page, block.text, claim);
+            if (proof.start === quantity.start && proof.raw === quantity.raw) return null;
+          } catch {
+            /* Other quantities in this assertion may belong to another metric. */
+          }
+        }
+        return `${id}:必要な本文数量を検証可能な形で選択できません`;
+      }
       const mappings = context.tableMappings.filter((h) => h.valueId === id);
       if (mappings.length !== 1) return `${id}:表の根拠対応が一意ではありません`;
       const q = source.pages

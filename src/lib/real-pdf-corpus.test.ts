@@ -14,6 +14,42 @@ import { proseQuantities } from './quantity';
 import { assertionId } from './source-provenance';
 import { parseFactSummary, renderFacts } from './fact-summary';
 import { validateSavedFacts } from './fact-cache';
+import { verifyCoverage, coverageReport } from './fact-coverage';
+import { preflightCandidateSource } from './source-preflight';
+import { buildDocumentContext } from './document-context';
+function proseEvent(
+  blockId: string,
+  candidateId: string,
+  subject: string,
+  scope: string | null,
+  basis: string | null,
+  state = 'unspecified',
+  polarity = 'affirmative'
+) {
+  return {
+    candidateId,
+    importance: 'key',
+    kind: 'event',
+    source: {
+      kind: 'prose',
+      blockId,
+      assertionId: assertionId(blockId),
+      quantityId: null,
+      metric: null,
+      contextBindingId: `ctx:${blockId}`,
+    },
+    meaning: {
+      subject,
+      scope,
+      basis,
+      period: null,
+      periodKind: 'none',
+      metricKind: 'none',
+      state,
+      polarity,
+    },
+  };
+}
 
 describe('TDnet実PDFコーパスのタイトル分類', () => {
   it.each(cases)('$id $title', ({ title, expectedType }) => {
@@ -175,6 +211,47 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
     validateSavedFacts(summary);
     expect(parseFactSummary(JSON.stringify(summary), 'other', pages)).toEqual(summary);
     if (fixture.id === '140120260930543358') {
+      const events = reviewCandidates(
+        JSON.stringify({
+          candidateVersion: CANDIDATE_VERSION,
+          documentType: 'earnings',
+          candidates: [
+            proseEvent(
+              'p1b37',
+              'c12',
+              '株式会社エクスモーション',
+              null,
+              null,
+              'unspecified',
+              'negative'
+            ),
+            proseEvent(
+              'p1b46',
+              'c13',
+              '株式会社エクスモーション',
+              '連結',
+              '日本基準',
+              'unspecified',
+              'negative'
+            ),
+          ],
+          unverified: [],
+        }),
+        'earnings',
+        pages
+      );
+      expect(events.unverified).toEqual([]);
+      const complete = [...review.facts, ...events.facts];
+      expect(() => verifyCoverage('earnings', pages, complete)).not.toThrow();
+      for (const value of [160, 17.05, 206]) {
+        expect(() =>
+          verifyCoverage(
+            'earnings',
+            pages,
+            complete.filter((f) => f.value !== value)
+          )
+        ).toThrow('COVERAGE:');
+      }
       for (const [value, basis] of [
         [17.05, 'splitAdjusted'],
         [22.01, 'splitAdjusted'],
@@ -241,6 +318,71 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       [130, '円', 'planned', 'explicit'],
     ]);
     expect(r.facts.every((f) => f.quote === b.text)).toBe(true);
+    const source = JSON.parse(serializeCandidateSource([p]));
+    const tableCandidates = fixture.expected.map((e, i) => ({
+      candidateId: `c${i + 4}`,
+      importance: 'key',
+      kind: 'number',
+      source: {
+        kind: 'table',
+        valueId: e.valueId,
+        tableId: source.pages[0].quantities.find((q: { id: string }) => q.id === e.valueId).tableId,
+        contextBindingId: `ctx:${e.valueId}`,
+      },
+      meaning: {
+        subject: e.subject,
+        scope: e.scope,
+        basis: e.basis,
+        period: e.period,
+        periodKind: e.periodKind,
+        metricKind: e.metricKind,
+        state: e.state,
+        polarity: 'affirmative',
+      },
+    }));
+    const complete = reviewCandidates(
+      JSON.stringify({
+        candidateVersion: CANDIDATE_VERSION,
+        documentType: 'earningsRevision',
+        candidates: [
+          ...tableCandidates,
+          ...candidates,
+          proseEvent('p1b21', 'c14', 'IDEC株式会社', '連結', null, 'forecast'),
+        ],
+        unverified: [],
+      }),
+      'earningsRevision',
+      [p]
+    );
+    expect(complete.unverified).toEqual([]);
+    expect(() => verifyCoverage('earningsRevision', [p], complete.facts)).not.toThrow();
+    expect(() =>
+      verifyCoverage(
+        'earningsRevision',
+        [p],
+        complete.facts.filter((f) => /^(売上高|営業利益)$/.test(f.label))
+      )
+    ).toThrow('ordinaryProfit');
+    for (const value of [6000, 203.25, 130]) {
+      expect(() =>
+        verifyCoverage(
+          'earningsRevision',
+          [p],
+          complete.facts.filter((f) => f.value !== value)
+        )
+      ).toThrow('COVERAGE:');
+    }
+    expect(() =>
+      preflightCandidateSource(
+        'earningsRevision',
+        [p],
+        buildDocumentContext([p]),
+        serializeCandidateSource([p])
+      )
+    ).not.toThrow();
+    const slots = coverageReport('earningsRevision', [p], []);
+    expect(slots).toHaveLength(14);
+    expect(slots.every((s) => s.sourceIds.length > 0)).toBe(true);
     const wrong = structuredClone(candidates[0]);
     wrong.source.quantityId = proseQuantities(b).find(
       (q) => parseQuantity(q.raw)?.value === 130

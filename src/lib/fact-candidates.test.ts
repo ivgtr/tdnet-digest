@@ -669,7 +669,7 @@ describe('生成専用候補と原文文脈の契約', () => {
   it('参照群や全文をモデルに再記述させずBlueMemeの11事実を確定する', () => {
     const r = review(candidates);
     expect(r.unverified).toEqual([]);
-    expect(r.facts).toHaveLength(11);
+    expect(r.facts).toHaveLength(14);
     const background = r.facts.find(
       (f) => f.evidence.kind === 'prose' && f.evidence.blockId === 'p5b20'
     )!;
@@ -1078,23 +1078,24 @@ describe('生成専用候補と原文文脈の契約', () => {
       .mockResolvedValueOnce(raw(candidates));
     const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
     expect(result.repairAttempted).toBe(true);
-    expect(result.facts.facts).toHaveLength(11);
+    expect(result.facts.facts).toHaveLength(14);
     expect(vi.mocked(generateText).mock.calls[1][1][1].content).toContain('修復方式=complete');
   });
   it('修復で確定事実を消さず、ID付け替えによる重複も作らない', async () => {
-    const before = review(candidates.slice(0, 10)).facts;
+    const initial = candidates.filter((_, i) => i !== 10);
+    const before = review(initial).facts;
     const changed = structuredClone(candidates[9]);
     changed.candidateId = 'c15';
     changed.meaning.basis = null;
     vi.mocked(generateText)
       .mockReset()
-      .mockResolvedValueOnce(raw(candidates.slice(0, 10)))
+      .mockResolvedValueOnce(raw(initial))
       .mockResolvedValueOnce(
         raw([changed, { ...candidates[0], candidateId: 'c16' }, candidates[10]])
       );
     const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
-    expect(result.facts.facts).toHaveLength(11);
-    expect(result.facts.facts.filter((f) => before.some((b) => b.id === f.id))).toHaveLength(10);
+    expect(result.facts.facts).toHaveLength(14);
+    expect(result.facts.facts.filter((f) => before.some((b) => b.id === f.id))).toHaveLength(13);
     const attempts = vi.mocked(generateText).mock.calls;
     expect(attempts).toHaveLength(2);
     expect(attempts[1][1][1].content).toContain('修復方式=delta');
