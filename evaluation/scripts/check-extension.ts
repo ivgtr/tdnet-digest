@@ -289,7 +289,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v56:openai:fixture:full';
+          const fingerprint = 'v57:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -344,7 +344,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v56 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v57 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -553,6 +553,15 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       }
       if (reviewCase === 'semantic-ownership') {
         assert.equal(checked.facts.length, 20);
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.label === '営業利益')?.importance,
+          'key'
+        );
+        assert.ok(
+          JSON.parse(trace.attempts[0].response).candidates.every(
+            (c: any) => c.importance === 'detail'
+          )
+        );
         assert.ok(checked.unverified.some((d: string) => /STRUCTURE:数量後/.test(d)));
         assert.equal(
           checked.facts.find((f: VerifiedFact) => f.quote.includes('見込めません'))?.semantics

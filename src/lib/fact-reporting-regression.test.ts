@@ -1572,3 +1572,243 @@ it.each([
   wrong.id = stableFactId(wrong);
   expect(saved([wrong], pages).facts).toEqual([]);
 });
+
+describe('継承・取消・必須単位と修復メタデータの境界', () => {
+  it.each([
+    ['第3四半期累計', 'cumulativeQ3'],
+    ['3Q単独', 'standaloneQ3'],
+    ['中間期', 'cumulativeQ2'],
+  ] as const)('年度なしの%s見出しから本文・表へ形を継承する', (shape, kind) => {
+    const suffix = shape === '3Q単独' ? '第3四半期単独' : shape;
+    const target = period + suffix;
+    const pages = [
+      report().pages[0],
+      textPage(`1. ${shape} 経営成績\n${period}の売上高は100百万円です。`, 2),
+    ];
+    const f = numberCandidate(pages[1], '売上高', 100, target);
+    f.semantics.periodKind = kind;
+    const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(saved(good.facts, pages).facts).toEqual(good.facts);
+    const table = cells(
+      [
+        [`1. ${shape} 経営成績`, 0, 20, 240],
+        ['売上高', 350, 50, 80],
+        ['営業利益', 540, 50, 80],
+        ['百万円', 350, 80, 60],
+        ['百万円', 540, 80, 60],
+        [period, 0, 110, 220],
+        ['100', 350, 110, 30],
+        ['20', 540, 110, 30],
+      ],
+      2
+    );
+    const tablePages = [pages[0], table];
+    const hint = buildDocumentContext(tablePages).tableMappings.find((h) =>
+      h.metricIds.some((id) => table.spans.find((s) => s.id === id)?.text === '売上高')
+    )!;
+    expect(hint).toBeDefined();
+    f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+    const checked = reviewCandidates(candidateResponse([f], tablePages), 'other', tablePages);
+    expect(checked.unverified).toEqual([]);
+    expect(saved(checked.facts, tablePages).facts).toEqual(checked.facts);
+    const wrong = structuredClone(checked.facts[0]);
+    wrong.period = period;
+    wrong.semantics.periodKind = 'fullYear';
+    wrong.id = stableFactId(wrong);
+    expect(saved([wrong], tablePages).facts).toEqual([]);
+  });
+  it.each(['中止しましたが、', '撤回しました。', '取り消しましたが、'])(
+    '取消%sの後の新予定を候補・保存・日付で保持する',
+    (cancel) => {
+      const body = `当初の取得予定を${cancel}新たに株式を取得する予定です。`;
+      const pages = [textPage(`会社名 株式会社テスト\n1. 取引概要\n${body}`)];
+      const f = assertion(pages[0], '当初', 'planned');
+      const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+      expect(good.unverified).toEqual([]);
+      expect(saved(good.facts, pages).facts).toEqual(good.facts);
+      const wrong = structuredClone(good.facts[0]);
+      wrong.semantics.state = 'unspecified';
+      wrong.id = stableFactId(wrong);
+      expect(saved([wrong], pages).facts).toEqual([]);
+      const schedule = `譲渡実行日: 2027年1月1日。当初の譲渡予定を${cancel}新たな譲渡実行日: 2027年2月1日`;
+      expect(datedStates(schedule)).toEqual([
+        { date: '2027年1月1日', state: 'unspecified' },
+        { date: '2027年2月1日', state: 'planned' },
+      ]);
+      const source = [textPage(`会社名 株式会社テスト\n1. 取引概要\n${schedule}`)];
+      const e = assertion(source[0], '譲渡実行日', 'planned');
+      const r = reviewCandidates(candidateResponse([e], source), 'other', source);
+      expect(r.unverified).toEqual([]);
+      expect(saved(r.facts, source).facts).toEqual(r.facts);
+    }
+  );
+  it.each(['(1) 経営成績', '(1) 内訳\n① 経営成績'])(
+    '親の3局所属性を%sへ保持し、兄弟退出で戻す',
+    (child) => {
+      const pages = [
+        report().pages[0],
+        textPage(
+          `1. 対象会社の概要\n会社名 株式会社B\n範囲 個別\n会計基準 IFRS\n${child}\n${period}の売上高は200百万円です。\n(2) 経営成績\n${period}の当期純利益は200百万円です。\n2. 経営成績\n${period}の営業利益は100百万円です。`,
+          2
+        ),
+      ];
+      const local = numberCandidate(pages[1], '売上高', 200, period);
+      Object.assign(local.semantics, { subject: '株式会社B', scope: '個別', basis: 'IFRS' });
+      const sibling = numberCandidate(pages[1], '当期純利益', 200, period);
+      Object.assign(sibling.semantics, { subject: '株式会社B', scope: '個別', basis: 'IFRS' });
+      const issuer = numberCandidate(pages[1], '営業利益', 100, period);
+      const good = reviewCandidates(
+        candidateResponse([local, sibling, issuer], pages),
+        'other',
+        pages
+      );
+      expect(good.unverified).toEqual([]);
+      expect(saved(good.facts, pages).facts).toEqual(good.facts);
+      const wrong = structuredClone(good.facts[0]);
+      Object.assign(wrong.semantics, {
+        subject: '株式会社テスト',
+        scope: '連結',
+        basis: '日本基準',
+      });
+      wrong.id = stableFactId(wrong);
+      expect(saved([wrong], pages).facts).toEqual([]);
+    }
+  );
+  it.each(['subject', 'quarter', 'source'] as const)(
+    '予想EPSの%s違いは発行者通期の代替にしない',
+    async (variant) => {
+      const { pages, amounts } = report('1株当たり当期純利益');
+      const target = '2028年3月期';
+      pages.push(
+        textPage(
+          `1. ${target} 業績予想\n${['売上高', '営業利益', '当期純利益'].map((m) => `${target}の${m}は100百万円です。`).join('\n')}\n${target}の1株当たり当期純利益は100円です。`,
+          2
+        )
+      );
+      const forecasts = ['売上高', '営業利益', '当期純利益'].map((m) => {
+        const f = numberCandidate(pages[1], m, 100, target);
+        f.valueKind = f.semantics.state = 'forecast';
+        return f;
+      });
+      const other = textPage(
+        `${variant === 'subject' ? '会社名 株式会社他社\n' : ''}2. ${target} ${variant === 'source' ? '販売状況' : '業績予想'}\n${target}${variant === 'quarter' ? '第1四半期' : ''}の1株当たり当期純利益は100円${variant === 'source' ? 'を見込んでおります' : 'です'}。`,
+        3
+      );
+      pages.push(other);
+      const eps = numberCandidate(
+        other,
+        '1株当たり当期純利益',
+        100,
+        target + (variant === 'quarter' ? '第1四半期' : '')
+      );
+      eps.unit = '円';
+      eps.semantics.metricKind = 'perShare';
+      eps.valueKind = eps.semantics.state = 'forecast';
+      if (variant === 'quarter') eps.semantics.periodKind = 'cumulativeQ1';
+      if (variant === 'subject') {
+        eps.semantics.subject = '株式会社他社';
+        eps.semantics.scope = eps.semantics.basis = null;
+      }
+      if (variant === 'source') eps.semantics.scope = eps.semantics.basis = null;
+      const raw = candidateResponse([...amounts, ...forecasts, eps], pages, 'earnings');
+      const good = reviewCandidates(raw, 'earnings', pages);
+      expect(good.unverified).toEqual([]);
+      expect(() => verifyCoverage('earnings', pages, good.facts)).toThrow(
+        '通期予想の1株当たり利益'
+      );
+      const correct = numberCandidate(pages[1], '1株当たり当期純利益', 100, target);
+      correct.unit = '円';
+      correct.semantics.metricKind = 'perShare';
+      correct.valueKind = correct.semantics.state = 'forecast';
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(raw)
+        .mockResolvedValueOnce(candidateResponse([correct], pages, 'earnings'));
+      const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+      expect(result.repairAttempted).toBe(true);
+      expect(saved(result.facts.facts, pages, 'earnings', true).facts).toEqual(result.facts.facts);
+    }
+  );
+  it.each(['number', 'event', 'status'] as const)(
+    '同じ確定%sのdetail→key修復は意味とIDを維持する',
+    async (kind) => {
+      const body =
+        kind === 'status' ? '取得価額は未定です。' : `${period}の取得価額は100百万円です。`;
+      const pages = [textPage(`会社名 株式会社テスト\n1. 取引概要\n${body}`)];
+      let f = numberCandidate(pages[0], '取得価額', 100, period);
+      f.semantics.scope = f.semantics.basis = null;
+      if (kind !== 'number') {
+        f = event(f);
+        f.kind = kind;
+        f.semantics.state = 'unspecified';
+      }
+      f.importance = 'detail';
+      const raw = candidateResponse([f], pages);
+      const good = reviewCandidates(raw, 'other', pages);
+      expect(good.unverified).toEqual([]);
+      const promoted = { ...f, importance: 'key' as const };
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(raw)
+        .mockResolvedValueOnce(candidateResponse([promoted], pages));
+      const r = await generateVerifiedFactSummary(config, 'other', 'source', pages);
+      expect(r.facts.facts).toEqual([{ ...good.facts[0], importance: 'key' }]);
+      expect(saved(r.facts.facts, pages, 'other', true).facts).toEqual(r.facts.facts);
+      const duplicate = reviewCandidates(candidateResponse([f, promoted], pages), 'other', pages);
+      expect(duplicate.facts).toEqual(r.facts.facts);
+      expect(
+        reviewCandidates(candidateResponse([promoted, f], pages), 'other', pages).facts
+      ).toEqual(r.facts.facts);
+    }
+  );
+});
+
+it('子会社利益率は発行者利益率の義務を作らず、代替もできない', () => {
+  const { pages, amounts } = report();
+  const other = textPage(
+    `会社名 株式会社B\n1. ${period} 経営成績\n${period}の売上高営業利益率は10%です。`,
+    2
+  );
+  pages.push(other);
+  const f = numberCandidate(other, '売上高営業利益率', 10, period);
+  f.unit = '%';
+  f.semantics.metricKind = 'rate';
+  f.semantics.subject = '株式会社B';
+  f.semantics.scope = f.semantics.basis = null;
+  let good = reviewCandidates(
+    candidateResponse([...amounts, f], pages, 'earnings'),
+    'earnings',
+    pages
+  );
+  expect(good.unverified).toEqual([]);
+  expect(() => verifyCoverage('earnings', pages, good.facts)).not.toThrow();
+  pages.push(textPage(`1. ${period} 経営成績\n${period}の売上高営業利益率は10%です。`, 3));
+  good = reviewCandidates(candidateResponse([...amounts, f], pages, 'earnings'), 'earnings', pages);
+  expect(() => verifyCoverage('earnings', pages, good.facts)).toThrow('当年営業利益率');
+  const own = numberCandidate(pages[2], '売上高営業利益率', 10, period);
+  own.unit = '%';
+  own.semantics.metricKind = 'rate';
+  const complete = reviewCandidates(
+    candidateResponse([...amounts, f, own], pages, 'earnings'),
+    'earnings',
+    pages
+  );
+  expect(() => verifyCoverage('earnings', pages, complete.facts)).not.toThrow();
+  expect(saved(complete.facts, pages, 'earnings', true).facts).toEqual(complete.facts);
+});
+
+it.each([
+  [
+    '2027年1月1日に、吸収分割契約（以下「当該契約」といいます。）について承認を受けました。',
+    'unspecified',
+  ],
+  ['2027年1月1日に契約を締結しました。', 'contracted'],
+] as const)('日付状態は契約への言及ではなく対応する述語で証明する: %s', (body, state) => {
+  expect(datedStates(body)).toEqual([{ date: '2027年1月1日', state }]);
+  const pages = [textPage(`会社名 株式会社テスト\n1. 取引概要\n${body}`)];
+  const f = assertion(pages[0], body, state);
+  const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+  expect(good.unverified).toEqual([]);
+  expect(saved(good.facts, pages).facts).toEqual(good.facts);
+});

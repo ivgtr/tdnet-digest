@@ -18,7 +18,7 @@ import {
   isLossRecordingPlan,
   lossRecordingPeriods,
   activePlan,
-  cancelledPlan,
+  planClauseBindings,
 } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
@@ -217,15 +217,19 @@ export function sourceConditions(text: string): string[] {
 }
 export function datedStates(text: string): Array<{ date: string; state: string }> {
   const source = normalized(text),
-    matches = [...source.matchAll(/20\d{2}年\d{1,2}月\d{1,2}日/g)];
+    matches = [...source.matchAll(/20\d{2}年\d{1,2}月\d{1,2}日/g)],
+    clauses = planClauseBindings(source);
   return matches.map((match, i) => {
+    const clause = clauses.find(
+      (c) => c.start <= match.index! && c.end >= match.index! + match[0].length
+    )!;
     const head = source.slice(
-      i ? matches[i - 1].index! + matches[i - 1][0].length : 0,
+      Math.max(clause.start, i ? matches[i - 1].index! + matches[i - 1][0].length : 0),
       match.index!
     );
     const tail = source.slice(
       match.index! + match[0].length,
-      matches[i + 1]?.index ?? source.length
+      Math.min(clause.end, matches[i + 1]?.index ?? source.length)
     );
     const prefixRole = head.match(/(決議|決定|契約締結|締結|実行|基準)日[:：]?$/)?.[1];
     const state = new RegExp(`^${calendarIntervalSeparator}`).test(tail)
@@ -238,12 +242,12 @@ export function datedStates(text: string): Array<{ date: string; state: string }
             ? 'contracted'
             : prefixRole === '基準'
               ? 'reference'
-              : !cancelledPlan(source) &&
+              : clause.planned &&
                   activePlan((prefixRole === '実行' ? '実行日' : '') + match[0] + tail)
                 ? 'planned'
                 : /決議|決定/.test(tail)
                   ? 'decided'
-                  : /締結|契約/.test(tail)
+                  : /締結(?:いた)?しました|契約を結びました/.test(tail)
                     ? 'contracted'
                     : /時点|現在|終値/.test(tail)
                       ? 'reference'

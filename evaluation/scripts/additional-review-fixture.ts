@@ -618,7 +618,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   const lossIntervalPlan = `${lossInterval}に当社は当該額を特別損失に計上する予定です。`;
   const ambiguousQuarter = `${period}第2四半期の販売金額は100万円です。`;
   const annualForecast = '2028年3月期の売上高は100万円を見込んでおります。';
-  const executionDate = '譲渡実行日: 2027年1月1日';
+  const executionDate = '当初の譲渡予定を中止しましたが、新たな譲渡実行日: 2027年1月1日';
   const decisionAndStatus = '当社は株式取得を決議しましたが、取得価額は非開示です。';
   const incidentalPlan =
     '2029年3月期の業績予想を参照しましたが、当該額は特別損失に計上する予定です。';
@@ -637,7 +637,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   ];
   if (semanticOwnership) {
     texts[0] = `${period} 2Q（中間期）決算短信〔日本基準〕（連結）\n名称 株式会社テスト\n1. ${current} 経営成績\n${metrics.map((m) => `${current}期間の${m}は100万円です。`).join('\n')}\n2. 対象会社の概要\n会社名 株式会社他社`;
-    texts[1] = `1. ${current} 単体累計期間の業績\n範囲 単体\n会計基準 IFRS\n\t2026年3月期第2四半期累計\t${current}\n売上高営業利益率\t8%\t10%`;
+    texts[1] = `1. 業績概要\n範囲 単体\n会計基準 IFRS\n(1) 第2四半期累計 経営成績\n\t2026年3月期\t${period}\n売上高営業利益率\t8%\t10%`;
     texts[6] = `4. 配当の状況（予想）\n\t年間配当金\t期末配当金\n\t円\t円\n${period}\t12\t12`;
     texts.push(
       `5. ${period} 取引概要\n${bounded}`,
@@ -861,6 +861,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     alias.period = period + '第2四半期';
     firstFacts.push(alias);
   }
+  if (semanticOwnership) for (const f of firstFacts) f.importance = 'detail';
   const first = candidateResponse(firstFacts, pages, 'earnings');
   if (reviewCandidates(first, 'earnings', pages).facts.length !== (semanticOwnership ? 9 : 4))
     throw Error('initial wrong meaning was not rejected');
@@ -879,7 +880,17 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
         facts[4],
         facts[6],
         ...(semanticOwnership
-          ? [facts[7], facts[9], facts[12], facts[14], facts[15], facts[16], facts[17], facts[19]]
+          ? [
+              facts[1],
+              facts[7],
+              facts[9],
+              facts[12],
+              facts[14],
+              facts[15],
+              facts[16],
+              facts[17],
+              facts[19],
+            ]
           : []),
       ],
       pages,

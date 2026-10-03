@@ -368,7 +368,7 @@ describe('生成専用候補と原文文脈の契約', () => {
   });
   it('省略ページだけの営業利益率を選択ページの必須へ混入しない', () => {
     const selected = textPage(
-      '2026年3月期 決算短信〔日本基準〕（連結）\n上場会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n' +
+      '2026年3月期 決算短信〔日本基準〕（連結）\n上場会社名 株式会社BlueMeme | 会計基準 日本基準 | 範囲 連結\n' +
         '2026年3月期の売上高は100百万円です。\n' +
         '2026年3月期の営業利益は20百万円です。\n' +
         '2026年3月期の当期純利益は10百万円です。'
@@ -382,7 +382,11 @@ describe('生成専用候補と原文文脈の契約', () => {
       ['売上高', 100],
       ['営業利益', 20],
       ['当期純利益', 10],
-    ].map(([label, value]) => numberCandidate(selected, String(label), Number(value)));
+    ].map(([label, value]) => {
+      const f = numberCandidate(selected, String(label), Number(value));
+      f.semantics.subject = '株式会社BlueMeme';
+      return f;
+    });
     const r = reviewCandidates(candidateResponse(expected, source, 'earnings'), 'earnings', source);
     expect(r.unverified).toEqual([]);
     expect(r.facts).toHaveLength(3);

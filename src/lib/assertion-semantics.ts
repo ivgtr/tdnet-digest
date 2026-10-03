@@ -29,14 +29,11 @@ export function cancelledPlan(text: string): boolean {
     normalized(text)
   );
 }
+const planPredicate = new RegExp(
+  `予定(?:です|であります|である|しております|しています|している)|(?:する|行う)予定[。]?$|実行日[:：]?${calendarDatePattern}(?:\\(予定\\))?[。]?$|${calendarDatePattern}(?:(?:\\d{1,2}時(?:\\d{1,2}分)?)?\\(予定\\)|(?:取得|株式譲渡|実行)予定(?!を|は|が|の))|取得する株式|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります`
+);
 export function activePlan(text: string): boolean {
-  const source = normalized(text);
-  return (
-    !cancelledPlan(source) &&
-    new RegExp(
-      `予定(?:です|であります|である|しております|しています|している)|(?:する|行う)予定[。]?$|実行日[:：]?${calendarDatePattern}(?:\\(予定\\))?[。]?$|${calendarDatePattern}(?:(?:\\d{1,2}時(?:\\d{1,2}分)?)?\\(予定\\)|(?:取得|株式譲渡|実行)予定(?!を|は|が|の))|取得する株式|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります`
-    ).test(source)
-  );
+  return planClauseBindings(text).some((c) => c.planned);
 }
 /** Split proved contrasts, never parentheses or a subject followed by a comma. */
 function assertionClauses(text: string): string[] {
@@ -55,12 +52,12 @@ function assertionClauses(text: string): string[] {
     const char = source[i];
     if ('([「『'.includes(char)) depth++;
     if (')]」』'.includes(char)) depth = Math.max(0, depth - 1);
+    if (depth) continue;
     if (char === '。') {
       clauses.push(source.slice(start, i));
       start = i + 1;
       continue;
     }
-    if (depth) continue;
     const conjunctive = source
       .slice(i)
       .match(/^(?:しておらず|行っておらず|見込まれず|見込まれておらず)/)?.[0];
@@ -77,13 +74,30 @@ function assertionClauses(text: string): string[] {
     const connector = source.slice(i).match(/^(?:が、?|けれども、?|けれど、?|ものの、?|、|;)/)?.[0];
     if (!connector || !predicateEnd.test(source.slice(start, i))) continue;
     const rest = source.slice(i + connector.length).split('。')[0];
-    if (!finitePredicate.test(rest) && !negative.test(rest)) continue;
+    if (!finitePredicate.test(rest) && !negative.test(rest) && !planPredicate.test(rest)) continue;
     clauses.push(source.slice(start, i));
     i += connector.length - 1;
     start = i + 1;
   }
   clauses.push(source.slice(start));
   return clauses.filter(Boolean);
+}
+/** Cancellation closes prior planned clauses; a later explicit plan starts a new one.
+ * Offsets refer to normalized source, so date roles use the same clause boundaries.
+ */
+export function planClauseBindings(text: string) {
+  const source = normalized(text);
+  const bindings: Array<{ text: string; start: number; end: number; planned: boolean }> = [];
+  let offset = 0;
+  for (const clause of assertionClauses(source)) {
+    const start = source.indexOf(clause, offset);
+    const end = start + clause.length;
+    offset = end;
+    const cancelled = cancelledPlan(clause);
+    if (cancelled) for (const previous of bindings) previous.planned = false;
+    bindings.push({ text: clause, start, end, planned: !cancelled && planPredicate.test(clause) });
+  }
+  return bindings;
 }
 export function assertionPolarity(text: string): FactSemantics['polarity'] {
   const clauses = assertionClauses(text);
@@ -112,7 +126,8 @@ export function verifyQuantityAssertion(suffix: string): void {
 /** Proof is deliberately bounded to explicit predicates, never a role word anywhere in a heading. */
 export function assertionStates(text: string): FactSemantics['state'][] {
   const states = new Set<FactSemantics['state']>();
-  for (const clause of assertionClauses(text)) {
+  for (const binding of planClauseBindings(text)) {
+    const clause = binding.text;
     const negations = [...clause.matchAll(new RegExp(negativePredicate.source, 'g'))];
     const lastNegative = negations[negations.length - 1];
     // The embedded negative ends at its nominal/quoted complement. Only the
@@ -131,7 +146,7 @@ export function assertionStates(text: string): FactSemantics['state'][] {
       states.add('forecast');
     const positive = lastNegative ? (outer ?? '') : clause;
     if (!positive) continue;
-    if (!cancelledPlan(text) && activePlan(positive)) states.add('planned');
+    if (binding.planned && activePlan(positive)) states.add('planned');
     if (
       /見込まれ|見込んで|見込み|予想して|見込め|想定して/.test(positive) ||
       new RegExp(`${outlookForecast.source}$`).test(positive)

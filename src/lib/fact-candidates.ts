@@ -90,6 +90,12 @@ export function equivalentSourceFact(a: VerifiedFact, b: VerifiedFact): boolean 
     canonicalJSON({ ...f, id: null, importance: null, period: null });
   return factSourceKey(a) === factSourceKey(b) && meaning(a) === meaning(b);
 }
+/** Key promotion changes display priority, retaining the first proved fact and ID. */
+export function promoteSourceImportance(before: VerifiedFact, next: VerifiedFact): VerifiedFact {
+  return equivalentSourceFact(before, next) && next.importance === 'key'
+    ? { ...before, importance: 'key' }
+    : before;
+}
 export function checkCandidate(item: unknown): asserts item is Candidate {
   if (
     !record(item) ||
@@ -426,6 +432,11 @@ export function reviewCandidates(
           if (previous && previous.id !== checked.id && !equivalentSourceFact(previous, checked))
             throw new Error('SEMANTICS:同一原文単位の意味候補が競合します');
           if (!previous) result.facts.push(checked);
+          else
+            result.facts[result.facts.indexOf(previous)] = promoteSourceImportance(
+              previous,
+              checked
+            );
         }
       } catch (e) {
         result.diagnostics.push({

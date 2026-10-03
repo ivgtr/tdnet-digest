@@ -28,11 +28,12 @@ export function reportingPeriodOwner(source: string, inherited: string): string 
   const fiscal = /20\d{2}年\d{1,2}月期/g;
   const ownYears = [...new Set(local.match(fiscal) ?? [])],
     contextYears = [...new Set(context.match(fiscal) ?? [])];
-  // An explicit different fiscal axis is complete annual evidence. Only the
-  // same fiscal axis can inherit a quarter; never splice a future FY onto it.
+  // An explicit different fiscal axis cannot lend a quarter. A heading that
+  // supplies only the quarter has no fiscal axis conflicting with the value.
   if (
     ownYears.length &&
-    (ownYears.length !== 1 || contextYears.length !== 1 || ownYears[0] !== contextYears[0])
+    (ownYears.length !== 1 ||
+      (contextYears.length > 0 && (contextYears.length !== 1 || ownYears[0] !== contextYears[0])))
   )
     return local;
   return context;

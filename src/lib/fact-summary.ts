@@ -8,6 +8,7 @@ import {
   serializeCandidateSource,
   factSourceKey,
   equivalentSourceFact,
+  promoteSourceImportance,
   proseQuantities,
   type Diagnostic,
   type CandidateReview,
@@ -98,6 +99,7 @@ export function parseFactSummary(
       if (previous && previous.id !== fact.id && !equivalentSourceFact(previous, fact))
         throw new Error('SEMANTICS:同一原文単位の意味候補が競合します');
       if (!previous) facts.push(fact);
+      else facts[facts.indexOf(previous)] = promoteSourceImportance(previous, fact);
     } catch (error) {
       unverified.push(
         `${item.id} ${item.label}: ${error instanceof Error ? error.message : String(error)}`
@@ -276,6 +278,7 @@ export async function generateVerifiedFactSummary(
       break;
     }
     if (!before) merged.set(key, f);
+    else merged.set(key, promoteSourceImportance(before, f));
   }
   // Only an accepted correction of the same source resolves a first-pass diagnostic.
   // Model-reported uncertainties have no source identity and must remain visible.

@@ -209,14 +209,13 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
       ContextDeclaration[]
     >((previous, b) => replaceFields(previous, declarations(b, 'local')), []);
     const stack: TextBlock[] = [];
-    let fields: ContextDeclaration[] = [];
+    const fieldScopes = new Map<string | null, ContextDeclaration[]>();
     for (const block of page.blocks) {
       const level = headingLevel(block);
       if (level !== null) {
         while (stack.length && (headingLevel(stack[stack.length - 1]) ?? Infinity) >= level)
-          stack.pop();
+          fieldScopes.delete(stack.pop()!.id);
         stack.push(block);
-        fields = [];
       }
       if (
         declarations(block, 'local').length &&
@@ -225,8 +224,13 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
         !stack.includes(block)
       ) {
         const next = declarations(block, 'local').filter((d) => !d.selfOnly);
-        fields = replaceFields(fields, next);
+        const owner = stack[stack.length - 1]?.id ?? null;
+        fieldScopes.set(owner, replaceFields(fieldScopes.get(owner) ?? [], next));
       }
+      const fields = [null, ...stack.map((b) => b.id)].reduce<ContextDeclaration[]>(
+        (previous, owner) => replaceFields(previous, fieldScopes.get(owner) ?? []),
+        []
+      );
       const anchors = [
         block.id,
         ...page.quantities.filter((q) => block.spanIds.includes(q.id)).map((q) => q.id),

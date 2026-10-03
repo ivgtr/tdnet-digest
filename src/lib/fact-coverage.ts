@@ -147,11 +147,22 @@ function declaredForecastUnit(
   }
   return null;
 }
+function isIssuerSource(anchor: string, context: DocumentContext): boolean {
+  const owners = [
+    ...new Set(
+      applicableDeclarations(bindingFor(context, anchor), 'subject', true).map((d) =>
+        normalized(d.value)
+      )
+    ),
+  ];
+  return owners.length === 1 && owners[0] === documentSubject(context);
+}
 function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, period: string) {
   return pages.flatMap((page) =>
     page.blocks.filter((block) => {
       if (block.kind !== 'paragraph') return false;
       if (!isReportingMetricSource(block.id, 'actual', pages, context)) return false;
+      if (!isIssuerSource(block.id, context)) return false;
       const binding = bindingFor(context, block.id);
       const sourceContext = binding.contextIds
         .map(
@@ -187,7 +198,8 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
       !page ||
       page.selection !== 'selected' ||
       compact(text(h.metricIds)) !== '売上高営業利益率' ||
-      !isReportingMetricSource(h.valueId, 'actual', pages, context)
+      !isReportingMetricSource(h.valueId, 'actual', pages, context) ||
+      !isIssuerSource(h.valueId, context)
     )
       return false;
     if (
@@ -268,17 +280,15 @@ export function verifyCoverage(
       const scopeId = ds.find((d) => d.role === 'scope' && d.value === scope)?.id;
       return { scope, basis, scopeId };
     };
+    const matchesReport = (f: VerifiedFact, kind: string, target: string) =>
+      reportingMetric(f) &&
+      f.valueKind === kind &&
+      matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
+      applicableMeaning(f) &&
+      !!f.semantics.subject &&
+      issuer === normalized(f.semantics.subject ?? '');
     const has = (metric: string, kind: string, target: string) =>
-      facts.some(
-        (f) =>
-          standardMetric(f) === metric &&
-          reportingMetric(f) &&
-          f.valueKind === kind &&
-          matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
-          applicableMeaning(f) &&
-          !!f.semantics.subject &&
-          issuer === normalized(f.semantics.subject ?? '')
-      );
+      facts.some((f) => standardMetric(f) === metric && matchesReport(f, kind, target));
     for (const metric of ['revenue', 'operatingProfit', 'netProfit'])
       if (!has(metric, 'actual', period)) missing.push(`COVERAGE:当年決算実績の重要指標 ${metric}`);
     const forecastUnit = declaredForecastUnit(pages, context);
@@ -335,10 +345,7 @@ export function verifyCoverage(
           f.kind === 'number' &&
           /営業利益率/.test(f.label) &&
           f.semantics.metricKind === 'rate' &&
-          f.valueKind === 'actual' &&
-          matchesReportingPeriod(f, period, reportQuarter) &&
-          reportingMetric(f) &&
-          applicableMeaning(f)
+          matchesReport(f, 'actual', period)
       )
     )
       missing.push('COVERAGE:当年営業利益率');
@@ -350,8 +357,7 @@ export function verifyCoverage(
           f.kind === 'number' &&
           /^(?:1|１)株当たり当期純利益/.test(f.label) &&
           f.semantics.metricKind === 'perShare' &&
-          f.valueKind === 'forecast' &&
-          compact(f.period ?? '').includes(forecast)
+          matchesReport(f, 'forecast', forecast)
       )
     )
       missing.push('COVERAGE:通期予想の1株当たり利益');
