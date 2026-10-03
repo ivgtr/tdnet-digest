@@ -129,6 +129,8 @@ export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): stri
         : []),
       `PDFp.${f.page}`,
       ...f.semantics.qualifiers,
+      ...(f.semantics.periodKind.startsWith('cumulativeQ') ? ['累計'] : []),
+      ...(f.semantics.periodKind.startsWith('standaloneQ') ? ['単独'] : []),
       ...(f.provenance?.adjustments.map((a) => basisLabels[a.basis]) ?? []),
       ...(f.provenance?.denominator ? ['1株当たり'] : []),
       ...(/配当予想の変更はありません/.test(compact(f.quote)) &&

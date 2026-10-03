@@ -1064,6 +1064,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     expect(r.unverified).toEqual([]);
     expect(r.facts).toHaveLength(3);
     expect(saved(r.facts, pages).facts).toEqual(r.facts);
+    expect(renderFacts(saved(r.facts, pages))).toContain(`${current}単独`);
     expect(() => verifyCoverage('earnings', pages, r.facts)).toThrow('当年決算実績');
     const cumulativePages = [textPage(pages[0].text.replace('単独', '累計'))];
     const cumulative = fs.map((f) => ({
@@ -1077,6 +1078,9 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     );
     expect(good.unverified).toEqual([]);
     expect(saved(good.facts, cumulativePages, 'earnings', true).facts).toEqual(good.facts);
+    expect(renderFacts(saved(good.facts, cumulativePages, 'earnings', true))).toContain(
+      `${current}累計`
+    );
   });
   it.each(['累計', '単独'])('Q3%s利益率の原文義務も報告対象に合わせる', (shape) => {
     const current = period + '第3四半期';

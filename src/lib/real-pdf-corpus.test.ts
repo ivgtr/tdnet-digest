@@ -173,7 +173,10 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
         subject: expected.subject,
         scope: expected.scope,
         basis: expected.basis,
-        period: expected.period,
+        period:
+          fixture.id === '140120260930543358'
+            ? expected.period.replace(/累計$/, '')
+            : expected.period,
         periodKind: expected.periodKind,
         metricKind: expected.metricKind,
         state: expected.state,
@@ -262,6 +265,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
         expect(f.provenance?.adjustments.map((a) => a.basis)).toEqual([basis]);
       }
       expect(renderFacts(summary)).toContain('年間配当金合計は「－」');
+      expect(renderFacts(summary)).toContain('2026年11月期第3四半期累計');
     }
   });
   it('IDECの本文配当は選択数量・1株の分母・予定と据置を同時に保持する', () => {

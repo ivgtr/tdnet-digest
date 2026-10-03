@@ -386,8 +386,14 @@ export function renderFacts(summary: FactSummary): string {
   const lines = [...summary.facts]
     .sort((a, b) => (a.importance === b.importance ? 0 : a.importance === 'key' ? -1 : 1))
     .map((f) => {
+      const period =
+        f.period && f.semantics.periodKind.startsWith('cumulativeQ') && !/累計/.test(f.period)
+          ? `${f.period}累計`
+          : f.period && f.semantics.periodKind.startsWith('standaloneQ') && !/単独/.test(f.period)
+            ? `${f.period}単独`
+            : f.period;
       const context = [
-        f.period,
+        period,
         f.semantics.subject,
         f.semantics.scope,
         f.semantics.basis,
