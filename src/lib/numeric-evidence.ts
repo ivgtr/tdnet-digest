@@ -1,5 +1,6 @@
 import {
   explicitCalendarAxisMatches,
+  periodKind,
   numericValueKind,
   reportingPeriodShape,
   reportingPeriodShapes,
@@ -589,6 +590,9 @@ export function verifyPeriodAndKind(
     fail('累計・単独期間');
   if (/累計/.test(target) && !/累計|中間期/.test(qualifierOwner)) fail('累計期間');
   if (/単独/.test(target) && !/単独/.test(qualifierOwner)) fail('単独期間');
+  // Structural obligations and accepted facts must prove a period representable
+  // by the same current contract, rather than merely matching the source text.
+  periodKind(claim.period, axis, context);
   const kind = numericValueKind(axis, context, nearest);
   if (claim.valueKind !== kind) fail('実績・予想区分');
 }

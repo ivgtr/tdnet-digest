@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { evidence, saved, report, event, cells, period } from './fixtures/fact-review-source';
 import { candidateResponse } from './fixtures/candidate-test-source';
-import { buildDocumentContext } from './document-context';
+import { buildDocumentContext, bindingFor, resolveScopeIds } from './document-context';
 import { proseQuantities, reviewCandidates } from './fact-candidates';
 import { generateVerifiedFactSummary, renderFacts, parseFactSummary } from './fact-summary';
 import { verifyCoverage, coverageReport } from './fact-coverage';
@@ -2268,6 +2268,10 @@ it.each([
   ['当期純利益', '2026年3月期', period],
   ['従業員数', '2027年3月期', '2027年12月期'],
   ['従業員数', '2027年3月期通期', '2027年12月期通期'],
+  ['従業員数', '2026年3月期第3四半期累計', '2027年3月期第3四半期累計'],
+  ['従業員数', '2026年3月期第4四半期単独', '2027年3月期第4四半期単独'],
+  ['従業員数', '2026年3月期第4四半期累計', '2027年3月期第4四半期累計'],
+  ['従業員数', '2026年3月期第2四半期', '2027年3月期第2四半期'],
 ] as const)(
   'M&Aの継続表は証明した%s行に応じて義務・修復先を作る',
   async (secondRow, oldPeriod, latestPeriod) => {
@@ -2303,6 +2307,50 @@ it.each([
     const ctx = buildDocumentContext(pages);
     const slots = coverageReport('ma', pages, []);
     const metrics = slots.filter((s) => s.requirement.includes('対象会社の最近'));
+    if (latestPeriod.endsWith('第4四半期累計') || latestPeriod.endsWith('第2四半期')) {
+      // Unsupported source meanings cannot create an impossible repair slot or
+      // be relabelled as a full year by either candidates or saved facts.
+      expect(metrics).toEqual([]);
+      const hint = ctx.tableMappings.find((h) => h.valueId === pages[0].quantities[1].id)!;
+      const wrong = numberCandidate(pages[0], '売上高', 200, latestPeriod);
+      wrong.unit = '千円';
+      wrong.semantics.subject = '株式会社B';
+      wrong.semantics.scope = wrong.semantics.basis = null;
+      wrong.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+      wrong.evidence.scopeIds = resolveScopeIds(
+        bindingFor(ctx, hint.valueId),
+        wrong.semantics,
+        true
+      );
+      wrong.quote = verifyTableEvidence(
+        pages[0],
+        hint,
+        { label: '売上高', value: 200, unit: '千円', period: latestPeriod, valueKind: 'actual' },
+        false
+      ).quote;
+      const rejected = reviewCandidates(candidateResponse([wrong], pages, 'ma'), 'ma', pages);
+      expect(rejected.facts).toEqual([]);
+      expect(rejected.unverified.join(' ')).toContain('PERIOD:');
+      const restored = parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'ma', facts: [wrong], unverified: [] }),
+        'ma',
+        pages,
+        false
+      );
+      expect(restored.facts).toEqual([]);
+      expect(restored.unverified.join(' ')).toContain('PERIOD:');
+      const planned = assertion(pages[0], '当社', 'planned');
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse([planned], pages, 'ma'));
+      const result = await generateVerifiedFactSummary(config, 'ma', 'source', pages);
+      expect(result.repairAttempted).toBe(false);
+      expect(result.facts.facts).toHaveLength(1);
+      expect(parseFactSummary(JSON.stringify(result.facts), 'ma', pages, true)).toEqual(
+        result.facts
+      );
+      return;
+    }
     expect(
       metrics.map((s) => s.requirement.match(/revenue|operatingProfit|netProfit/)![0]).sort()
     ).toEqual(
@@ -2332,6 +2380,11 @@ it.each([
         f.unit = '千円';
         f.semantics.subject = '株式会社B';
         f.semantics.scope = f.semantics.basis = null;
+        f.semantics.periodKind = latestPeriod.endsWith('第3四半期累計')
+          ? 'cumulativeQ3'
+          : latestPeriod.endsWith('第4四半期単独')
+            ? 'standaloneQ4'
+            : 'fullYear';
         f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
         return f;
       })
@@ -2372,7 +2425,9 @@ it.each([
       );
     const repaired = await generateVerifiedFactSummary(config, 'ma', 'source', pages);
     expect(repaired.repairAttempted).toBe(true);
-    expect(parseFactSummary(JSON.stringify(repaired.facts), 'ma', pages, true)).toEqual(repaired.facts);
+    expect(parseFactSummary(JSON.stringify(repaired.facts), 'ma', pages, true)).toEqual(
+      repaired.facts
+    );
   }
 );
 

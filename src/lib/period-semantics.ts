@@ -61,9 +61,14 @@ export function periodKind(
     const qualified = owner;
     if (/累計|中間期/.test(qualified) && /単独/.test(qualified))
       throw new Error('PERIOD:累計・単独が混在しています');
-    if (/単独/.test(qualified)) return `standaloneQ${q}` as VerifiedFact['semantics']['periodKind'];
-    if (/累計|中間期/.test(qualified) || q === '1')
-      return `cumulativeQ${q}` as VerifiedFact['semantics']['periodKind'];
+    if (/単独/.test(qualified))
+      return (['standaloneQ1', 'standaloneQ2', 'standaloneQ3', 'standaloneQ4'] as const)[
+        Number(q) - 1
+      ];
+    if (/累計|中間期/.test(qualified) || q === '1') {
+      if (q === '4') throw new Error('PERIOD:未対応の累計第4四半期');
+      return (['cumulativeQ1', 'cumulativeQ2', 'cumulativeQ3'] as const)[Number(q) - 1];
+    }
     throw new Error('PERIOD:累計・単独を確認できません');
   }
   if (/20\d{2}年\d{1,2}月期|\d{4}年通期/.test(text)) return 'fullYear';

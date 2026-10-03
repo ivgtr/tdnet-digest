@@ -1103,3 +1103,19 @@ LLM通信・モデル/設定・プロンプトは変更せず、生成入力も�
 | review-rejected-url v61 | 外部URLのエラー表示→同じ失敗traceのダウンロード一致、PDF/API取得0 | 0回/16秒 | bluememe-20260930-2026-10-03T11-39-33-547Z-browser.json |
 
 公開runtime digest `52703e7f089155c3bd57e6bc9bc7d66932d07a644d0f5123b2506a5b919bd1f8`、artifact digest `a34354913e8b4c98cdb7d298fa4f11207b774eeef4edc6ff9c6817b3a85f0003` は最終2画面trace/成果物と一致。strict checker digest `14a3ea67534c4f36007b2ba22e215070e0ffbb181b71caa39def97ebf4329446`、summary-pr25-5ba-final-ledger.jsonへ集約。今回新buildの実API、今回反例の実モデル修復、未知形式/OCR/多主張等は未確認のまま。累計Q4の拡張、旧L停止、68既知拒否と過去の未実施は維持する。
+
+### PR #25 cfc552aレビューの検証条件（2026-10-03）
+
+基準HEADはcfc552ab0b2041b4bab28605bc1dedcf8e07825a、開始時差分なし。累計Q4のM&A継続表から充足不能な必須指標を作る1指摘を採用。期間軸の文字一致だけでは通常の期間区分証明が完了しないことが原因。`periodKind` は現行契約の区分だけを返し、共通の数量意味検証 `verifyPeriodAndKind` からも呼ぶ。義務生成・修復先・候補・保存の表現可能性を同じ処理へ揃え、分析指紋v62に分離する。累計Q4を通期へ読み替えたり、契約を拡張したりしない。
+
+既存M&A matrixへ、未対応の累計Q4と限定未証明のQ2は義務/修復先を作らず数量を候補/保存で拒否する2境界、累計Q3と単独Q4は正常生成/欠落拒否/1回修復/保存を維持する2境界を追加する。拒否側でも、証明済みの取得予定eventによる通常生成を不要な修復なしで完了できることを確認。新ファイル・履歴別テスト・各層の総当たりは増やさない。基準のM&A7例は累計Q4のみ失敗/正常6成功（test-cleanup-tmp/review-cfc-baseline.log）。
+
+最終test/type-check/lint/build、6資料29固定事実、重点3入力hash、9保存生応答の再生、56 strict保存結果の再判定を確認する。入力・事実・警告・期待値が一致した場合だけ既存実生成証拠を再利用し、新規実API0。入力が変わった資料は通常の事前固定3回/最大1修復/300秒/32,768出力tokenへ切り替える。最終buildの固定semantic-ownership画面で旧v61非表示・修復/表示/保存復元/診断/後続利用を1回確認。無関係なURL拒否経路は前回の証拠を再利用。未知形式/OCR/多主張・累計Q4対応拡張・実モデルによる今回反例の修復等は未確認として残す。
+
+結果: 最終877テスト/28ファイル成功（17.43秒）、type-check/lint/build成功、6資料29固定事実を維持。M&Aの8例は、拒否2境界で義務/修復先なし・候補/保存の期間拒否・証明済み取得予定だけで修復なしの通常生成成功、正常6例で義務の発生・欠落拒否・1回修復・保存一致を確認。テストファイルの整形による無関係な空白差分は除き、同条件の全件実行は繰り返さない。ログはtest-cleanup-tmp/review-cfc-{baseline,focused,ma,test-final,type-check-final,lint-final,build-final}.log（focusedには保存fixture調整中の引用不一致を記録、maの7例と最終全件は成功）。
+
+重点3原PDF/生成入力は不変（summary-pr25-cfc-input.json）、9生応答の再生は事実/警告/成否/期待値まで一致（summary-pr25-cfc-SUV-replay.json）。56 strict保存結果は325受理/68既知の日付役割拒否で不変（summary-pr25-cfc-regrade.json）。新規実API/評価token0。以前の生成成功を新規生成として数えない。
+
+最終固定semantic-ownership画面は20事実、5固定呼出し/14秒で成功。旧v61非表示、通常修復/表示、同じ確定事実の保存復元、診断ID対応、改変保存の後続利用拒否、追加分析/採点失敗時の要約保持を確認。証拠はbluememe-20260930-review-semantic-ownership-2026-10-03T12-57-32-802Z-browser.json。M&Aの今回反例は上記恒久テストの証拠であり、この代表画面で直接入力したものではない。URL拒否は前回ビルドの既存証拠を再利用する。
+
+最終runtime digest `261d5cfc03fdbc57674ab603ea6d89ea897ad120653de0ae7c1ba0fbbc7e764b`、artifact digest `a0fa007e13990e1e90bd674c7f6cd8911796254c3e13fc4b79a6058a48c8242f` は最終画面trace/成果物と一致。strict checker digest `07720667663c594c6e560665fbcd2a51da91dce541bd0bfdc4447f22345a7313`。summary-pr25-cfc-final-ledger.jsonに対応を集約。今回の新buildの実APIと今回反例の実モデル修復は未確認。未知形式/OCR/多主張、累計Q4対応の拡張、旧L停止、68既知拒否と過去の未実施を維持する。
