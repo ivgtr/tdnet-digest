@@ -4,14 +4,25 @@ import { evidence, saved, report, event, cells, period } from './fixtures/fact-r
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext } from './document-context';
 import { proseQuantities, reviewCandidates } from './fact-candidates';
-import { generateVerifiedFactSummary, renderFacts } from './fact-summary';
+import { generateVerifiedFactSummary, renderFacts, parseFactSummary } from './fact-summary';
 import { verifyCoverage, coverageReport } from './fact-coverage';
-import { stableFactId } from './fact-contract';
+import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
+import { datedStates } from './fact-validation';
 import { verifyTableEvidence } from './numeric-evidence';
 import { generateText } from './llm-client';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+function assertion(
+  page: ReturnType<typeof textPage>,
+  label: string,
+  state: VerifiedFact['semantics']['state']
+) {
+  const f = event(numberCandidate(page, label));
+  f.semantics.scope = f.semantics.basis = null;
+  f.semantics.state = state;
+  return f;
+}
 
 describe('数量の単位証明と報告対象の必須判定', () => {
   it.each(['以内', '未達', '強', '弱'])('境界・近似を本文単位へ吸収しない: %s', (tail) => {
@@ -535,6 +546,207 @@ describe('数量の単位証明と報告対象の必須判定', () => {
 
 describe('原数量・期間・主張と保存根拠の同一性', () => {
   it.each([
+    '当社は取得予定を中止しました。',
+    '当社は取得予定を撤回しました。',
+    '当社は取得予定の中止を決定しました。',
+    '当社は取得を予定していますが、取得を中止することとしました。',
+    '当社は取得予定を取り消しています。',
+    '当社は取得を予定していますが、取得予定を取り消しました。',
+    '当社は株式の取得価額を公表しました。',
+  ])('予定・取得価額という名詞をactiveな予定に変えない: %s', (body) => {
+    const pages = [textPage(`会社名 株式会社テスト\n1. 取引概要\n${body}`)];
+    const f = assertion(
+      pages[0],
+      '当社',
+      body.includes('決定しました') ? 'decided' : 'unspecified'
+    );
+    const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(good.facts).toHaveLength(1);
+    expect(saved(good.facts, pages).facts).toEqual(good.facts);
+    const wrong = structuredClone(good.facts[0]);
+    wrong.semantics.state = 'planned';
+    wrong.id = stableFactId(wrong);
+    expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
+    expect(saved([wrong], pages).facts).toEqual([]);
+  });
+  it.each([
+    '当社は取得を予定しています。',
+    '2026年7月15日取得予定',
+    '株式譲渡実行日 2026年7月15日（予定）',
+    '2026年7月15日12時（予定）',
+    '当社は取得を予定していますが、中止する可能性があります。',
+  ])('実行予定の述語・日程欄は候補と保存で保持する: %s', (body) => {
+    const pages = [textPage(`会社名 株式会社テスト\n1. 取引概要\n${body}`)];
+    const f = assertion(pages[0], body, 'planned');
+    const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(saved(good.facts, pages).facts).toEqual(good.facts);
+    if (body.includes('2026')) {
+      expect(datedStates(body)).toEqual([{ date: '2026年7月15日', state: 'planned' }]);
+      expect(datedStates(body + '。取得予定を取り消しました。')).toEqual([
+        { date: '2026年7月15日', state: 'unspecified' },
+      ]);
+    }
+  });
+  it.each(['会社名 株式会社他社', '上場会社名 株式会社他社', '株式会社他社'])(
+    '同じ物理ページの局所会社を表紙発行者にしない: %s',
+    async (field) => {
+      const pages = [
+        textPage(
+          `上場会社名 株式会社テスト\n1. 株式取得\n当社は株式取得を決議しました。\n2. 対象会社の概要\n${field}\n売上高は100百万円です。`
+        ),
+      ];
+      const decision = assertion(pages[0], '当社', 'decided');
+      const target = numberCandidate(pages[0], '売上高');
+      target.period = null;
+      target.semantics.periodKind = 'none';
+      target.semantics.subject = '株式会社他社';
+      target.semantics.scope = target.semantics.basis = null;
+      // A local metric without a declared period is retained as complete prose.
+      const overview = event(target);
+      overview.semantics.state = 'unspecified';
+      const raw = candidateResponse([decision, overview], pages, 'ma');
+      const good = reviewCandidates(raw, 'ma', pages);
+      expect(good.unverified).toEqual([]);
+      expect(good.facts.map((f) => f.semantics.subject)).toEqual([
+        '株式会社テスト',
+        '株式会社他社',
+      ]);
+      expect(
+        parseFactSummary(
+          JSON.stringify({ version: 4, documentType: 'ma', facts: good.facts, unverified: [] }),
+          'ma',
+          pages
+        ).facts
+      ).toEqual(good.facts);
+      vi.mocked(generateText).mockReset().mockResolvedValueOnce(raw);
+      expect(
+        (await generateVerifiedFactSummary(config, 'ma', 'source', pages)).repairAttempted
+      ).toBe(false);
+      const changed = structuredClone(good.facts[0]);
+      changed.semantics.subject = '株式会社他社';
+      changed.id = stableFactId(changed);
+      expect(saved([changed], pages).facts).toEqual([]);
+    }
+  );
+  it.each([false, true])(
+    '同じ段落の決議eventと非開示statusを順序%sでも保持する',
+    async (reverse) => {
+      const body = '当社は株式取得を決議しましたが、取得価額は非開示です。';
+      const pages = [textPage(`会社名 株式会社テスト\n1. 株式取得\n${body}`)];
+      const e = assertion(pages[0], '当社', 'decided');
+      const status = structuredClone(e);
+      status.kind = 'status';
+      const fs = reverse ? [status, e] : [e, status];
+      const good = reviewCandidates(candidateResponse([...fs, e], pages, 'ma'), 'ma', pages);
+      expect(good.unverified).toEqual([]);
+      expect(good.facts).toHaveLength(2);
+      expect(new Set(good.facts.map((f) => f.id)).size).toBe(2);
+      expect(
+        parseFactSummary(
+          JSON.stringify({ version: 4, documentType: 'ma', facts: good.facts, unverified: [] }),
+          'ma',
+          pages
+        ).facts
+      ).toEqual(good.facts);
+      expect(
+        renderFacts({ version: 4, documentType: 'ma', facts: good.facts, unverified: [] }).split(
+          body
+        )
+      ).toHaveLength(2);
+      // A delta adds the other kind without changing the confirmed assertion.
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse([fs[0]], pages, 'ma'))
+        .mockResolvedValueOnce(candidateResponse([fs[1]], pages, 'ma'));
+      const result = await generateVerifiedFactSummary(config, 'ma', 'source', pages);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(result.facts.facts).toHaveLength(2);
+      expect(result.facts.facts.some((f) => f.id === good.facts[0].id)).toBe(true);
+    }
+  );
+  it.each(['の修正について', 'の修正に関するお知らせ', 'の概要について'])(
+    '完全な予想修正見出しで前後の表候補・必須・保存を一致させる: %s',
+    async (suffix) => {
+      const target = '2028年3月期';
+      const pages = [
+        cells(
+          [
+            ['会社名 株式会社テスト', 0, 0, 210],
+            [`1. ${target}連結業績予想${suffix}`, 0, 30, 600],
+            ['売上高', 300, 60, 80],
+            ['営業利益', 500, 60, 80],
+            ['百万円', 310, 90, 60],
+            ['百万円', 510, 90, 60],
+            ['前回予想', 0, 120, 100],
+            ['100', 310, 120, 30],
+            ['10', 510, 120, 30],
+            ['今回予想', 0, 150, 100],
+            ['200', 310, 150, 30],
+            ['20', 510, 150, 30],
+          ],
+          1
+        ),
+      ];
+      const context = buildDocumentContext(pages);
+      expect(context.tableMappings).toHaveLength(4);
+      const fs = context.tableMappings.map((h) => {
+        const f = numberCandidate(pages[0], '売上高');
+        f.label = h.metricIds.map((id) => pages[0].spans.find((s) => s.id === id)!.text).join('');
+        f.value = Number(
+          pages[0].quantities.find((q) => q.id === h.valueId)!.text.replace('百万円', '')
+        );
+        f.period = target;
+        f.semantics.basis = null;
+        f.valueKind = f.semantics.state = h.periodIds.some((id) =>
+          pages[0].spans.find((s) => s.id === id)!.text.includes('前回')
+        )
+          ? 'forecastBefore'
+          : 'forecastAfter';
+        f.evidence = { kind: 'table', ...h, scopeIds: [], qualifierIds: [] };
+        return f;
+      });
+      const raw = candidateResponse(fs, pages, 'earningsRevision');
+      const good = reviewCandidates(raw, 'earningsRevision', pages);
+      expect(good.unverified).toEqual([]);
+      expect(good.facts).toHaveLength(4);
+      expect(
+        parseFactSummary(
+          JSON.stringify({
+            version: 4,
+            documentType: 'earningsRevision',
+            facts: good.facts,
+            unverified: [],
+          }),
+          'earningsRevision',
+          pages
+        ).facts
+      ).toEqual(good.facts);
+      vi.mocked(generateText).mockReset().mockResolvedValueOnce(raw);
+      expect(
+        (await generateVerifiedFactSummary(config, 'earningsRevision', 'source', pages))
+          .repairAttempted
+      ).toBe(false);
+    }
+  );
+  it('同じ段落のstatus修復で誤eventの診断を消さない', async () => {
+    const pages = [textPage('会社名 株式会社テスト\n1. 取引概要\n取得価額は非開示です。')];
+    const wrong = assertion(pages[0], '取得価額', 'planned');
+    const status = structuredClone(wrong);
+    status.kind = 'status';
+    status.semantics.state = 'unspecified';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([wrong], pages))
+      .mockResolvedValueOnce(candidateResponse([status], pages));
+    const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.facts.facts[0].kind).toBe('status');
+    expect(result.facts.unverified.join(' ')).toContain('STATE:');
+    expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
+  });
+  it.each([
     ['第2四半期', '第3四半期累計'],
     ['第2四半期', '第2四半期累計'],
     ['第3四半期', '第2四半期単独'],
@@ -872,7 +1084,7 @@ describe('報告節の責務と原文期間からの修復制約', () => {
     (target) => {
       const pages = [
         textPage(
-          `${period} 第3四半期決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n2028年3月期通期の売上高は100百万円を見込んでおります。`
+          `${period} 第3四半期決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${period}第3四半期 経営成績\n${target}の売上高は100百万円を見込んでおります。`
         ),
       ];
       const f = numberCandidate(pages[0], '売上高', 100, target);

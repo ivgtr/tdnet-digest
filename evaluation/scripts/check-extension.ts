@@ -289,7 +289,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v54:openai:fixture:full';
+          const fingerprint = 'v55:openai:fixture:full';
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -344,7 +344,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v54 cache ignored before generation');
+    if (reviewFixture) evidence.stages.push('v55 cache ignored before generation');
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -552,7 +552,19 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
       }
       if (reviewCase === 'semantic-ownership') {
-        assert.equal(checked.facts.length, 17);
+        assert.equal(checked.facts.length, 20);
+        assert.equal(checked.facts[0].semantics.subject, '株式会社テスト');
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('予定を中止'))?.semantics.state,
+          'unspecified'
+        );
+        assert.deepEqual(
+          checked.facts
+            .filter((f: VerifiedFact) => f.quote.includes('株式取得を決議しましたが'))
+            .map((f: VerifiedFact) => f.kind)
+            .sort(),
+          ['event', 'status']
+        );
         assert.equal(checked.facts.filter((f: VerifiedFact) => f.label === '販売台数').length, 1);
         assert.equal(
           checked.facts.find((f: VerifiedFact) => f.label === '中間配当金')?.quantity?.raw,
@@ -582,8 +594,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           'fullYear'
         );
         assert.equal(
-          checked.facts.find((f: VerifiedFact) => f.period === '2028年3月期通期')?.semantics
-            .periodKind,
+          checked.facts.find((f: VerifiedFact) => f.period === '2028年3月期' && f.kind === 'number')
+            ?.semantics.periodKind,
           'fullYear'
         );
         assert.equal(

@@ -17,6 +17,8 @@ import {
   verifyAssertionState,
   isLossRecordingPlan,
   lossRecordingPeriods,
+  activePlan,
+  cancelledPlan,
 } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
@@ -236,7 +238,7 @@ export function datedStates(text: string): Array<{ date: string; state: string }
             ? 'contracted'
             : prefixRole === '基準'
               ? 'reference'
-              : /予定|買付けの委託を行う/.test(tail)
+              : !cancelledPlan(source) && activePlan(match[0] + tail)
                 ? 'planned'
                 : /決議|決定/.test(tail)
                   ? 'decided'
@@ -250,9 +252,8 @@ export function datedStates(text: string): Array<{ date: string; state: string }
 }
 function stateSupported(state: VerifiedFact['semantics']['state'], text: string): boolean {
   const source = compact(text);
+  if (state === 'planned') return activePlan(source);
   const markers = {
-    planned:
-      /予定|取得する|買付けの委託を行う|計上する予定|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります/,
     decided: /決議|決定|決定額/,
     contracted: /締結|契約/,
     completed: /取得しました|取得した|実施しました|完了/,
@@ -261,7 +262,8 @@ function stateSupported(state: VerifiedFact['semantics']['state'], text: string)
     forecastAfter: /今回|修正後|決定額/,
     actual: /実績|経営成績|連結業績|損益計算書|当期|前期|月度|決算短信|時点|保有状況/,
   };
-  if (state === 'unspecified') return !Object.values(markers).some((re) => re.test(source));
+  if (state === 'unspecified')
+    return !activePlan(source) && !Object.values(markers).some((re) => re.test(source));
   return markers[state].test(source);
 }
 export function validateFact(

@@ -22,9 +22,20 @@ export function reportingPeriodShape(text: string): string | null {
   return shapes[0] ?? null;
 }
 export function reportingPeriodOwner(source: string, inherited: string): string {
-  return reportingPeriodShape(source)
-    ? reportingPeriodText(source)
-    : reportingPeriodText(inherited);
+  const local = reportingPeriodText(source),
+    context = reportingPeriodText(inherited);
+  if (reportingPeriodShape(local)) return local;
+  const fiscal = /20\d{2}年\d{1,2}月期/g;
+  const ownYears = [...new Set(local.match(fiscal) ?? [])],
+    contextYears = [...new Set(context.match(fiscal) ?? [])];
+  // An explicit different fiscal axis is complete annual evidence. Only the
+  // same fiscal axis can inherit a quarter; never splice a future FY onto it.
+  if (
+    ownYears.length &&
+    (ownYears.length !== 1 || contextYears.length !== 1 || ownYears[0] !== contextYears[0])
+  )
+    return local;
+  return context;
 }
 
 export function periodKind(

@@ -617,7 +617,9 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   const lossInterval = '2028年3月1日～2028年3月31日';
   const lossIntervalPlan = `${lossInterval}に当社は当該額を特別損失に計上する予定です。`;
   const ambiguousQuarter = `${period}第2四半期の販売金額は100万円です。`;
-  const annualForecast = '2028年3月期通期の売上高は100万円を見込んでおります。';
+  const annualForecast = '2028年3月期の売上高は100万円を見込んでおります。';
+  const cancelled = '当社は取得予定を中止しました。';
+  const decisionAndStatus = '当社は株式取得を決議しましたが、取得価額は非開示です。';
   const incidentalPlan =
     '2029年3月期の業績予想を参照しましたが、当該額は特別損失に計上する予定です。';
   const metrics = ['売上高', '営業利益', '当期純利益'];
@@ -632,7 +634,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     `4. 配当の状況\n\t年間配当金\t期末配当金\n\t円\t円\n2027年3月期(予想)\t12\t12`,
   ];
   if (semanticOwnership) {
-    texts[0] = `${period} 2Q（中間期）決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${current} 経営成績\n${metrics.map((m) => `${current}期間の${m}は100万円です。`).join('\n')}`;
+    texts[0] = `${period} 2Q（中間期）決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n1. ${current} 経営成績\n${metrics.map((m) => `${current}期間の${m}は100万円です。`).join('\n')}\n2. 対象会社の概要\n会社名 株式会社他社`;
     texts[1] = `1. ${current} 単体累計期間の業績\n範囲 単体\n会計基準 IFRS\n\t2026年3月期第2四半期累計\t${current}\n売上高営業利益率\t8%\t10%`;
     texts[6] = `4. 配当の状況（予想）\n\t年間配当金\t期末配当金\n\t円\t円\n${period}\t12\t12`;
     texts.push(
@@ -642,10 +644,12 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
       `8. ${period} 配当の状況\n中間配当金は10円50銭です。`,
       `9. ${period}中間期 販売状況\n販売台数は100台です。`,
       `10. 今後の予定\n${lossPlan}`,
-      `11. 2028年3月期業績予想を踏まえた取引概要\n${annualForecast}`,
+      `11. ${period}第3四半期累計 取引概要\n${annualForecast}`,
       `12. 今後の予定\n${incidentalPlan}`,
       `13. 今後の予定\n${lossIntervalPlan}`,
-      `14. ${period}第3四半期累計 販売状況\n${ambiguousQuarter}`
+      `14. ${period}第3四半期累計 販売状況\n${ambiguousQuarter}`,
+      `15. 取引概要\n${cancelled}`,
+      `16. 取引概要\n${decisionAndStatus}`
     );
     texts[3] = `3. ${period} 販売状況\n販売数量は100千kWhです。`;
   }
@@ -762,7 +766,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     planned.semantics.state = 'planned';
     planned.semantics.scope = '連結';
     planned.semantics.basis = '日本基準';
-    const forecast = numberCandidate(pages[13], '売上高', 100, '2028年3月期通期');
+    const forecast = numberCandidate(pages[13], '売上高', 100, '2028年3月期');
     forecast.unit = '万円';
     forecast.valueKind = forecast.semantics.state = 'forecast';
     forecast.semantics.scope = forecast.semantics.basis = null;
@@ -789,6 +793,23 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     unclassified.semantics.state = 'unspecified';
     unclassified.semantics.scope = unclassified.semantics.basis = null;
     facts.push(planned, forecast, incidental, plannedInterval, unclassified);
+    const cancellation = numberCandidate(pages[17], '当社');
+    cancellation.kind = 'event';
+    cancellation.label = cancellation.statement = cancellation.quote;
+    cancellation.value = cancellation.unit = cancellation.valueKind = cancellation.period = null;
+    cancellation.semantics.metricKind = 'none';
+    cancellation.semantics.periodKind = 'none';
+    cancellation.semantics.state = 'unspecified';
+    cancellation.semantics.scope = cancellation.semantics.basis = null;
+    const decision = structuredClone(cancellation);
+    Object.assign(decision, numberCandidate(pages[18], '当社'));
+    decision.kind = 'event';
+    decision.label = decision.statement = decision.quote;
+    decision.value = decision.unit = decision.valueKind = decision.period = null;
+    decision.semantics = { ...cancellation.semantics, state: 'decided' };
+    const status = structuredClone(decision);
+    status.kind = 'status';
+    facts.push(cancellation, decision, status);
   }
   facts.forEach((f, i) => {
     const binding = bindingFor(
@@ -815,7 +836,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   const wrong = structuredClone(facts);
   wrong[0].semantics.metricKind = 'count';
   wrong[4].semantics.state = 'unspecified';
-  const firstFacts = wrong.filter((_, i) => i !== 6);
+  const firstFacts = wrong.filter((_, i) => i !== 6 && i !== 19);
   if (semanticOwnership) {
     const f = numberCandidate(pages[7], '取得価額', 100, period);
     f.semantics.scope = f.semantics.basis = null;
@@ -826,6 +847,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     wrong[14].semantics.periodKind = 'fullYear';
     wrong[15].period = '2028年3月31日';
     wrong[15].semantics.periodKind = 'eventDate';
+    wrong[17].semantics.state = 'planned';
     const borrowed = numberCandidate(pages[16], '販売金額', 100, period + '第2四半期');
     borrowed.unit = '万円';
     borrowed.semantics.periodKind = 'cumulativeQ2';
@@ -837,7 +859,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
     firstFacts.push(alias);
   }
   const first = candidateResponse(firstFacts, pages, 'earnings');
-  if (reviewCandidates(first, 'earnings', pages).facts.length !== (semanticOwnership ? 8 : 4))
+  if (reviewCandidates(first, 'earnings', pages).facts.length !== (semanticOwnership ? 9 : 4))
     throw Error('initial wrong meaning was not rejected');
   const legacy = structuredClone(checked);
   legacy.facts[4].semantics.state = 'unspecified';
@@ -854,7 +876,7 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
         facts[4],
         facts[6],
         ...(semanticOwnership
-          ? [facts[7], facts[9], facts[12], facts[14], facts[15], facts[16]]
+          ? [facts[7], facts[9], facts[12], facts[14], facts[15], facts[16], facts[17], facts[19]]
           : []),
       ],
       pages,
@@ -879,6 +901,8 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
             lossPlan,
             lossIntervalPlan,
             ambiguousQuarter,
+            cancelled,
+            decisionAndStatus,
             annualForecast.replace('の売上高は100万円を見込んでおります。', ''),
             '単体',
           ]

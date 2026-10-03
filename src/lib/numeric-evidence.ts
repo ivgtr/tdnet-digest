@@ -571,7 +571,7 @@ export function verifyPeriodAndKind(
     )
       fail('対象年度・決算月');
   }
-  const sourceShape = reportingPeriodShape(axis) ?? reportingPeriodShape(context),
+  const sourceShape = reportingPeriodShape(reportingPeriodOwner(axis, context)),
     claimedShape = reportingPeriodShape(target);
   if (
     sourceShape &&

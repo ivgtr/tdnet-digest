@@ -159,14 +159,26 @@ function declarations(
 }
 export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   const first = pages.find((p) => p.pageNumber === 1);
-  const issuer =
-    first?.blocks.filter(
-      (b) => /^(?:会社名|上場会社名)/.test(normalized(b.text)) || declaredSubjectsIn(b).length > 0
-    ) ?? [];
+  const cover: TextBlock[] = [];
+  let issuerSeen = false;
+  for (const block of first?.blocks ?? []) {
+    // A document title may precede its company field. A numbered section or
+    // a heading after the company declaration ends the cover ownership.
+    if (
+      headingLevel(block) !== null &&
+      (issuerSeen || /^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/.test(normalized(block.text)))
+    )
+      break;
+    cover.push(block);
+    if (declaredSubjectsIn(block).length) issuerSeen = true;
+  }
+  const issuer = cover.filter(
+    (b) => /^(?:会社名|上場会社名)/.test(normalized(b.text)) || declaredSubjectsIn(b).length > 0
+  );
   // A cover consisting of one standalone company name is also a declaration.
   const namedIssuer = issuer.filter((b) => /会社名/.test(normalized(b.text)));
   const issuerBlocks = namedIssuer.length ? namedIssuer : issuer.length === 1 ? issuer : [];
-  const reporting = first?.blocks.filter((b) => isReportingCover(b) && b.text.length < 180) ?? [];
+  const reporting = cover.filter((b) => isReportingCover(b) && b.text.length < 180);
   const documentDeclarations = [...issuerBlocks, ...reporting].flatMap((b) =>
     declarations(b, 'document')
   );

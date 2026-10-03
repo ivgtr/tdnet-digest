@@ -21,6 +21,21 @@ const finitePredicate = new RegExp(
   `(?:しました|します|行います|行っています|行っております|しています|しております|です|であります|でした|となりました|となっております|となります|になります|見込(?:んでおります|んでいます|みます)|${passiveForecast.source}|${outlookForecast.source}|${negativePredicate.source})`
 );
 const predicateEnd = new RegExp(`${finitePredicate.source}$`);
+/** State belongs to the operative predicate, not a plan/price noun. */
+export function cancelledPlan(text: string): boolean {
+  return /(?:中止|撤回|取消し?|取り消)(?:(?:いた)?しました|して(?:います|おります)|(?:を|することを)(?:決定|決議)(?:いた)?しました|することと(?:いた)?しました)/.test(
+    normalized(text)
+  );
+}
+export function activePlan(text: string): boolean {
+  const source = normalized(text);
+  return (
+    !cancelledPlan(source) &&
+    new RegExp(
+      `予定(?:です|であります|である|しております|しています|している)|(?:する|行う)予定[。]?$|${calendarDatePattern}(?:(?:\\d{1,2}時(?:\\d{1,2}分)?)?\\(予定\\)|(?:取得|株式譲渡|実行)予定(?!を|は|が|の))|取得する株式|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります`
+    ).test(source)
+  );
+}
 /** Split proved contrasts, never parentheses or a subject followed by a comma. */
 function assertionClauses(text: string): string[] {
   const source = normalized(text);
@@ -109,12 +124,7 @@ export function assertionStates(text: string): FactSemantics['state'][] {
       states.add('forecast');
     const positive = lastNegative ? (outer ?? '') : clause;
     if (!positive) continue;
-    if (
-      /予定|取得する株式|株式の取得価額|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります/.test(
-        positive
-      )
-    )
-      states.add('planned');
+    if (!cancelledPlan(text) && activePlan(positive)) states.add('planned');
     if (
       /見込まれ|見込んで|見込み|予想して|見込め|想定して/.test(positive) ||
       new RegExp(`${outlookForecast.source}$`).test(positive)

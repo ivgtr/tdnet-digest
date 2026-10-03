@@ -286,7 +286,9 @@ export async function generateVerifiedFactSummary(
       if (source.kind === 'table')
         return f.evidence.kind === 'table' && f.evidence.valueId === source.valueId;
       if (f.evidence.kind !== 'prose' || f.evidence.blockId !== source.blockId) return false;
-      // A complete event/status proves the entire assertion. A quantity correction
+      const kind = first.candidateKinds.get(d.candidateId!);
+      if (kind === 'event' || kind === 'status') return f.kind === kind;
+      // A complete event/status can retain an unsupported quantity assertion. A quantity correction
       // only resolves its own metric and quantity, not other fields in that block.
       if (f.kind === 'event' || f.kind === 'status') return true;
       const block = pages.flatMap((p) => p.blocks).find((b) => b.id === source.blockId)!;

@@ -64,6 +64,7 @@ export interface CandidateReview {
   facts: VerifiedFact[];
   reportedUnverified: string[];
   candidateSources: Map<string, Candidate['source']>;
+  candidateKinds: Map<string, Candidate['kind']>;
   unverified: string[];
   diagnostics: Diagnostic[];
   envelopeValid: boolean;
@@ -77,7 +78,9 @@ export function factSourceKey(f: VerifiedFact): string {
       : [
           'prose',
           f.evidence.blockId,
-          f.kind === 'event' || f.kind === 'status' ? 'assertion' : [f.label, f.quantity?.raw],
+          f.kind === 'event' || f.kind === 'status'
+            ? ['assertion', f.kind]
+            : [f.label, f.quantity?.raw],
         ]
   );
 }
@@ -377,6 +380,7 @@ export function reviewCandidates(
     facts: [],
     reportedUnverified: [],
     candidateSources: new Map(),
+    candidateKinds: new Map(),
     unverified: [],
     diagnostics: [],
     envelopeValid: false,
@@ -413,6 +417,7 @@ export function reviewCandidates(
         }
         checkCandidate(item);
         result.candidateSources.set(item.candidateId, item.source);
+        result.candidateKinds.set(item.candidateId, item.kind);
         anchor = item.source.kind === 'table' ? item.source.valueId : item.source.blockId;
         const fact = compose(item, pages, context, result.diagnostics);
         if (!result.diagnostics.slice(start).some((d) => d.status !== 'valid')) {
