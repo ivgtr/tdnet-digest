@@ -2,6 +2,7 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
 import { reportingPeriodText } from './period-semantics';
+import { parseExactQuantity, proseQuantities } from './quantity';
 import {
   normalized,
   reportingScope,
@@ -56,7 +57,16 @@ export function declaredSubjectsIn(block: TextBlock): string[] {
 /** A numbered title is a boundary, not every body mention of a scope/period. */
 export function headingLevel(block: TextBlock): number | null {
   const text = normalized(block.text);
-  if (text.length > 180 || /[。；]|\d[\d,]*株|\d[\d,]*円/.test(text)) return null;
+  const quantities = proseQuantities({ id: block.id, text });
+  if (
+    text.length > 180 ||
+    /[。；]/.test(text) ||
+    quantities.some((q) =>
+      /^(?:十|百|千|万|百万|千万|億|兆)?(?:円|株)$/.test(parseExactQuantity(q.raw)?.unit ?? '')
+    ) ||
+    (/^20\d{2}年/.test(text) && quantities.length)
+  )
+    return null;
   if (/^■/.test(text)) return 1;
   if (/^20\d{2}年.*(?:経営成績|予想|配当|月度|実績|取得予定)/.test(text)) return 3;
   if (/^\d+[.．]/.test(text)) return 1;

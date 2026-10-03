@@ -242,6 +242,66 @@ describe('要約・採点・追加分析の分離', () => {
     }
   );
 
+  it.each(['success', 'failure', 'lateExtraction'] as const)(
+    '古い完了%sは新しい要求の診断を上書きしない',
+    async (stage) => {
+      const request = await setup(false);
+      let saved: SummaryTrace | undefined;
+      vi.mocked(chrome.storage.local.set).mockImplementation(
+        async (items: Record<string, unknown>) => {
+          saved = structuredClone(items.summaryLastRunV1) as SummaryTrace;
+        }
+      );
+      let release!: (value: string) => void;
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const first = new Promise<string>((resolve) => {
+        release = resolve;
+      });
+      const raw = candidateResponse(facts.facts, [nativePage], facts.documentType);
+      mocked.generateText
+        .mockImplementationOnce(() => {
+          entered();
+          return first;
+        })
+        .mockResolvedValue(raw);
+      let releaseExtraction!: () => void;
+      if (stage === 'lateExtraction') {
+        const extract = chrome.runtime.sendMessage;
+        vi.mocked(chrome.runtime.sendMessage).mockImplementationOnce(async (body) => {
+          entered();
+          await new Promise<void>((resolve) => {
+            releaseExtraction = resolve;
+          });
+          return extract(body);
+        });
+        mocked.generateText.mockReset().mockResolvedValue(raw);
+      }
+      const older = request({ action: 'summarize' });
+      await waiting;
+      chrome.storage.sync.get = vi.fn(async () => ({
+        provider: 'openai',
+        model: 'changed',
+        apiKey: 'test',
+        extractionMode: 'full',
+      })) as typeof chrome.storage.sync.get;
+      if (stage === 'failure')
+        mocked.generateText.mockRejectedValueOnce(new Error('newer API failed'));
+      const newer = await request({ action: 'summarize' });
+      expect(saved?.runId).toBe(newer.diagnosticRunId);
+      const newerTrace = structuredClone(saved);
+      if (stage === 'lateExtraction') releaseExtraction();
+      else release(raw);
+      expect((await older).error).toBeUndefined();
+      expect(saved).toEqual(newerTrace);
+      expect(
+        matchingSummaryTrace(saved, 'test.pdf', newer.diagnosticRunId, newer.resultId ?? null)
+      ).toEqual(saved);
+    }
+  );
+
   it('更新前から残る二段階要約設定を削除し、要約を続行する', async () => {
     mocked.generateText.mockResolvedValue(
       candidateResponse(facts.facts, [nativePage], facts.documentType)

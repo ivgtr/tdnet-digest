@@ -618,7 +618,8 @@ async function periodOutlookUnitsFixture(semanticOwnership = false) {
   const lossIntervalPlan = `${lossInterval}に当社は当該額を特別損失に計上する予定です。`;
   const ambiguousQuarter = `${period}第2四半期の販売金額は100万円です。`;
   const annualForecast = '2028年3月期の売上高は100万円を見込んでおります。';
-  const executionDate = '当初の譲渡予定を中止しましたが、新たな譲渡実行日: 2027年1月1日';
+  const executionDate =
+    '当初は株式を取得する予定です。これを取り消すこととしました。新たな譲渡実行日: 2027年1月1日';
   const decisionAndStatus = '当社は株式取得を決議しましたが、取得価額は非開示です。';
   const incidentalPlan =
     '2029年3月期の業績予想を参照しましたが、当該額は特別損失に計上する予定です。';

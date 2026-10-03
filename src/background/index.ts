@@ -66,9 +66,13 @@ chrome.runtime.onInstalled.addListener((details) => {
     })
     .catch((error) => console.error('旧ホスト権限の削除に失敗:', error));
 });
+// Request order, including extraction failures, owns the bounded last-run trace.
+let currentSummaryRunId: string | null = null;
+let traceWriteQueue: Promise<void> = Promise.resolve();
 chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
   if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
   const diagnosticRunId = request.action === 'summarize' ? crypto.randomUUID() : null;
+  if (diagnosticRunId) currentSummaryRunId = diagnosticRunId;
   const task =
     request.action === 'summarize'
       ? handleSummarize(request, diagnosticRunId!)
@@ -217,7 +221,14 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
   const saveTrace = async () => {
     trace.elapsedMs = Math.round(performance.now() - started);
     try {
-      await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: trace });
+      const snapshot = structuredClone(trace);
+      const write = traceWriteQueue.then(async () => {
+        if (currentSummaryRunId === runId)
+          await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: snapshot });
+      });
+      // A failed write belongs to its request, and cannot poison later requests.
+      traceWriteQueue = write.catch(() => {});
+      await write;
     } catch {
       throw new Error(
         `診断の保存に失敗しました。${trace.error ?? '直近実行を保存できませんでした'}`
@@ -249,14 +260,7 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     generationError = error;
   }
   trace.elapsedMs = Math.round(performance.now() - started);
-  // One bounded last-run record, with no configuration object/credentials/headers.
-  try {
-    await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: trace });
-  } catch {
-    throw new Error(
-      `診断の保存に失敗しました。${trace.error ?? '要約生成は成功しましたが診断を保存できませんでした'}`
-    );
-  }
+  await saveTrace();
   if (generationError) throw generationError;
   if (!facts || !id) throw new Error('要約結果を確認できません');
   const metadata: SummaryMetadata = {

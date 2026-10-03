@@ -344,7 +344,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
-    if (reviewFixture) evidence.stages.push('v57 cache ignored before generation');
+    if (reviewFixture)
+      evidence.stages.push(`v${ANALYSIS_SCHEMA_VERSION - 1} cache ignored before generation`);
     const summary = frame.locator('.tdnet-digest-summary-row');
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -365,7 +366,6 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const button = row.getByRole('button', { name: '要約', exact: true });
       await button.waitFor({ timeout: 10000 });
       assert.equal(await button.isEnabled(), true);
-      releaseFirstResponse();
       await button.click();
       evidence.stages.push('model changed while API pending → button enabled → new request');
     }
@@ -381,6 +381,21 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       {},
       { timeout: 330000 }
     );
+    if (reviewSettingsChange) {
+      const currentTrace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.equal(currentTrace.model, 'fixture-next');
+      assert.ok(['firstSuccess', 'repairSuccess'].includes(currentTrace.outcome));
+      releaseFirstResponse();
+      // The bounded settle window supplements the deterministic deferred-request integration tests.
+      await page.waitForTimeout(1000);
+      const afterOld = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.deepEqual(afterOld, currentTrace);
+      evidence.stages.push('new result finished before old response → current trace retained');
+    }
     evidence.stages.push('button → PDF → offscreen → API → facts → HTML');
     if (fixedFailure) {
       evidence.rendered = await summary.innerText();

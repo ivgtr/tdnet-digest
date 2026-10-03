@@ -25,9 +25,12 @@ const finitePredicate = new RegExp(
 const predicateEnd = new RegExp(`${finitePredicate.source}$`);
 /** State belongs to the operative predicate, not a plan/price noun. */
 export function cancelledPlan(text: string): boolean {
-  return /(?:中止|撤回|取消し?|取り消)(?:(?:いた)?しました|して(?:います|おります)|(?:を|することを)(?:決定|決議)(?:いた)?しました|することと(?:いた)?しました)/.test(
-    normalized(text)
-  );
+  const source = normalized(text);
+  const completed = /(?:中止|撤回|取消し?|取り消)(?:(?:いた)?しました|して(?:います|おります))/;
+  const decision = /(?:中止|撤回|取消し?|取り消し)(?:を)(?:決定|決議)(?:いた)?しました/;
+  const action =
+    /(?:中止する|撤回する|取消する|取消しする|取り消す)(?:ことを(?:決定|決議)|ことと)(?:いた)?しました/;
+  return completed.test(source) || decision.test(source) || action.test(source);
 }
 const planPredicate = new RegExp(
   `予定(?:です|であります|である|しております|しています|している)|(?:する|行う)予定[。]?$|実行日[:：]?${calendarDatePattern}(?:\\(予定\\))?[。]?$|${calendarDatePattern}(?:(?:\\d{1,2}時(?:\\d{1,2}分)?)?\\(予定\\)|(?:取得|株式譲渡|実行)予定(?!を|は|が|の))|取得する株式|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります`

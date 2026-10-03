@@ -1,6 +1,8 @@
 import { textPage, layoutPage, numberCandidate } from './v4-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from '../document-context';
 import { parseFactSummary } from '../fact-summary';
+import { parseExactQuantity, quantityNumber } from '../quantity';
+import type { TableMapping } from '../source-mappings';
 import type { VerifiedFact } from '../fact-contract';
 
 export const period = '2027年3月期';
@@ -61,4 +63,38 @@ export function cells(rows: [string, number, number, number][], n: number) {
     rows.map(([text, x, y, width], i) => ({ id: `x${i}`, text, x, y, width, height: 10 })),
     n
   );
+}
+
+/** Table amount fixtures read source geometry; expected reporting meaning stays explicit. */
+export function tableAmount(
+  pages: ReturnType<typeof textPage>[],
+  mapping: TableMapping,
+  meaning: {
+    period: string;
+    subject: string;
+    scope: string | null;
+    basis: string | null;
+    state: NonNullable<VerifiedFact['valueKind']>;
+  }
+): VerifiedFact {
+  const page = pages.find((p) => p.quantities.some((q) => q.id === mapping.valueId))!;
+  const quantity = parseExactQuantity(page.quantities.find((q) => q.id === mapping.valueId)!.text)!;
+  const text = (ids: string[]) =>
+    ids.map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text).join('');
+  const fact = numberCandidate(
+    page,
+    text(mapping.metricIds),
+    quantityNumber(quantity.decimal)!.value!,
+    meaning.period
+  );
+  fact.unit = quantity.unit ?? text(mapping.unitIds);
+  fact.valueKind = meaning.state;
+  Object.assign(fact.semantics, {
+    subject: meaning.subject,
+    scope: meaning.scope,
+    basis: meaning.basis,
+    state: meaning.state,
+  });
+  fact.evidence = { kind: 'table', ...mapping, scopeIds: [], qualifierIds: [] };
+  return fact;
 }

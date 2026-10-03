@@ -182,10 +182,14 @@ describe('本文数量の完結した意味照合', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
   });
 });
-function localReport(heading: string, fields = '範囲 個別\n会計基準 IFRS') {
+function localReport(heading: string, fields = '範囲 個別\n会計基準 IFRS', headline = false) {
   const forecast = heading.includes('予想') || heading === '今後の見通し';
   const pages = [
-    textPage('2027年3月期 決算短信〔日本基準〕（連結）\n上場会社名 株式会社テスト'),
+    textPage(
+      headline && fields
+        ? '2027年3月期 決算短信〔IFRS〕（個別）\n上場会社名 株式会社テスト'
+        : '2027年3月期 決算短信〔日本基準〕（連結）\n上場会社名 株式会社テスト'
+    ),
     textPage(
       `1. ${period} ${heading}\n${fields}\n${['売上高', '営業利益', '当期純利益'].map((label) => `${period}の${label}は100百万円${forecast ? 'の見込みです' : 'です'}。`).join('\n')}`,
       2
@@ -203,7 +207,7 @@ function localReport(heading: string, fields = '範囲 個別\n会計基準 IFRS
 }
 describe('局所属性と表紙宣言の適用', () => {
   it('事業節の予想値で通期予想を代替せず、正しい報告節の候補へ修復する', async () => {
-    const report = localReport('経営成績');
+    const report = localReport('経営成績', undefined, true);
     const future = textPage(localReport('業績予想').pages[1].text, 3);
     const business = textPage(`1. 事業説明\n${period}の売上高は200百万円の見込みです。`, 4);
     const pages = [...report.pages, future, business];
@@ -238,13 +242,13 @@ describe('局所属性と表紙宣言の適用', () => {
   it.each(['1. セグメント情報', '1. 経営成績\n(1) セグメント情報'])(
     '同名の事業数量で当年決算実績の必須値を代替しない: %s',
     (heading) => {
-      const report = localReport('経営成績');
+      const report = localReport('経営成績', undefined, true);
       const page = textPage(`${heading}\n${period}の売上高は200百万円です。`, 3);
       const pages = [...report.pages, page];
       const extra = numberCandidate(page, '売上高', 200, period);
       const financial = heading.includes('経営成績');
-      extra.semantics.scope = financial ? '連結' : null;
-      extra.semantics.basis = financial ? '日本基準' : null;
+      extra.semantics.scope = financial ? '個別' : null;
+      extra.semantics.basis = financial ? 'IFRS' : null;
       const r = reviewCandidates(
         candidateResponse([...report.facts.slice(1), extra], pages, 'earnings'),
         'earnings',
@@ -286,9 +290,9 @@ describe('局所属性と表紙宣言の適用', () => {
     }
   );
   it.each(['', '範囲 個別\n会計基準 IFRS'])(
-    '決算必須は適用属性を使い表紙へ付け直さない: %s',
+    '同じ報告属性の決算必須を満たし、局所属性を付け直さない: %s',
     (fields) => {
-      const { pages, facts } = localReport('経営成績', fields);
+      const { pages, facts } = localReport('経営成績', fields, true);
       const r = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
       expect(r.unverified).toEqual([]);
       expect(() => verifyCoverage('earnings', pages, r.facts)).not.toThrow();
@@ -299,7 +303,7 @@ describe('局所属性と表紙宣言の適用', () => {
   it.each(['scope', 'basis'] as const)(
     '局所属性の欠落・表紙への改変・ID再計算を拒否する: %s',
     (role) => {
-      const { pages, facts } = localReport('経営成績');
+      const { pages, facts } = localReport('経営成績', undefined, true);
       for (const value of [null, role === 'scope' ? '連結' : '日本基準']) {
         const f = structuredClone(facts[0]);
         f.semantics[role] = value;
@@ -441,7 +445,7 @@ describe('主張の意味と報告単位', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
   });
   it('今後の見通しの予想を必須として受理し、欠落時だけ1回修復する', async () => {
-    const report = localReport('経営成績');
+    const report = localReport('経営成績', undefined, true);
     report.pages[0] = textPage(
       `${report.pages[0].text}\n${period}の通期業績予想について説明します。`
     );
@@ -613,7 +617,7 @@ describe('負号と主張の同一性', () => {
     ).toContain('営業損失: -10百万円');
   });
   function datedAssertion(kind: 'event' | 'status' = 'event') {
-    const source = localReport('経営成績');
+    const source = localReport('経営成績', undefined, true);
     const body =
       kind === 'status'
         ? '当社は2027年3月1日に業績予想未定とすることを決議しました。'
@@ -695,7 +699,7 @@ describe('負号と主張の同一性', () => {
 
 describe('局所属性を持つ決算の必須事実と修復', () => {
   function earningsWithBackground() {
-    const actual = localReport('経営成績');
+    const actual = localReport('経営成績', undefined, true);
     const future = localReport('業績予想').pages[1];
     // A separate physical page keeps the two source periods/states independent.
     const forecastPage = textPage(future.text, 3);
@@ -747,7 +751,7 @@ describe('局所属性を持つ決算の必須事実と修復', () => {
         )
       ).toThrow('COVERAGE');
   });
-  it('局所属性を表紙へ誤変更した初回を1回修復し保存する', async () => {
+  it('局所属性を別の報告範囲へ誤変更した初回を1回修復し保存する', async () => {
     const { pages, facts } = earningsWithBackground();
     const wrong = structuredClone(facts);
     wrong[3].semantics.scope = '連結';
@@ -1004,7 +1008,7 @@ describe('指標の明示性と受動形予想', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
   });
   it.each(['利益', '損失'])('財務節でも%sだけでは必須純利益を満たさない', (label) => {
-    const source = localReport('経営成績');
+    const source = localReport('経営成績', undefined, true);
     const detail = textPage(source.pages[1].text.replace('当期純利益', label), 2);
     const pages = [source.pages[0], detail];
     const facts = ['売上高', '営業利益', label].map((m) => {
@@ -1106,7 +1110,7 @@ describe('指標の明示性と受動形予想', () => {
   it.each(['ます', 'る', 'ております', 'ています', 'ている'])(
     '必須予想の受動形「見込まれ%s」を差分修復して表示・保存する',
     async (ending) => {
-      const actual = localReport('経営成績');
+      const actual = localReport('経営成績', undefined, true);
       const future = textPage(
         `1. ${period} 業績予想\n範囲 個別\n会計基準 IFRS\n${['売上高', '営業利益', '当期純利益'].map((m) => `${period}の${m}は100百万円と見込まれ${ending}。`).join('\n')}`,
         3
@@ -1252,7 +1256,7 @@ describe('eventの極性と未完了の状態', () => {
     expect(saved(good.facts, pages).facts).toEqual(good.facts);
   });
   it('財務実績のとなりましたはnumberの意味検証で維持する', () => {
-    const source = localReport('経営成績');
+    const source = localReport('経営成績', undefined, true);
     const detail = textPage(source.pages[1].text.replace(/です。/g, 'となりました。'), 2);
     const pages = [source.pages[0], detail];
     const facts = ['売上高', '営業利益', '当期純利益'].map((m) => {
