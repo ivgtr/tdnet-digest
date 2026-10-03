@@ -15,6 +15,7 @@ export interface Case {
   expected: Expected[];
   publishedDate?: string;
   code?: string;
+  sourceHash?: string;
   forbidden?: Array<{ label: string; value: number; period: string; state: string }>;
   expectedEvidence?: {
     page: number;

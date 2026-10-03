@@ -70,6 +70,8 @@ for (const item of selected) {
     await readFile(path.join('evaluation/fixtures/real-pdfs', `${item.id}.pdf`))
   );
   const sourceHash = createHash('sha256').update(data).digest('hex');
+  if (item.sourceHash && sourceHash !== item.sourceHash)
+    throw new Error('固定した原PDFのhashと一致しません');
   const extractionStarted = performance.now();
   const pdf = await getDocument({ data }).promise;
   const pages = [];

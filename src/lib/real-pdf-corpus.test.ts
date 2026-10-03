@@ -109,6 +109,19 @@ describe('TDnet実PDFコーパスのタイトル分類', () => {
 });
 
 describe('原PDFから独立に固定した表紙の正常受理', () => {
+  it('未使用QPS表紙は主要3指標の受理だけでなく通常生成前の根拠検査も通る', () => {
+    const fixture = tables.find((f) => f.id === '140120260713591990')!;
+    const pages = fixture.pages.map((p) =>
+      extractPageLayout(
+        p.items as TextItem[],
+        p.pageNumber,
+        p.drawingOperations as DrawingOperation[]
+      )
+    );
+    const context = buildDocumentContext(pages);
+    const source = serializeCandidateSource(pages, context, 'earnings');
+    expect(() => preflightCandidateSource('earnings', pages, context, source)).not.toThrow();
+  });
   it.each(tables.filter((f) => 'forbiddenAnchors' in f))(
     '$id の包括利益注記を表本体へ貸さない',
     (fixture) => {

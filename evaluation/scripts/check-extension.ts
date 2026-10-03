@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +15,7 @@ import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
 import { parseFactSummary } from '../../src/lib/fact-summary';
 import { ANALYSIS_SCHEMA_VERSION } from '../../src/lib/analysis-version';
 import { additionalReviewFixture } from './additional-review-fixture';
+import { seedOldExtensionProfile } from './extension-upgrade-fixture';
 import {
   expectedErrors,
   renderedFactErrors,
@@ -35,6 +36,16 @@ async function builtDigest(): Promise<string> {
       digest.update(file).update(await readFile(file));
     }
   }
+  return digest.digest('hex');
+}
+/** Match the public source digest embedded by vite.config.ts in the running worker. */
+async function sourceBuildDigest(): Promise<string> {
+  const digest = createHash('sha256');
+  for (const directory of ['src/lib', 'src/background', 'src/offscreen'])
+    for (const file of (await readdir(directory))
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+      .sort())
+      digest.update(`${directory}/${file}`).update(await readFile(`${directory}/${file}`));
   return digest.digest('hex');
 }
 /** Called by the existing evaluator after its ordinary configuration load. No secrets are logged. */
@@ -72,6 +83,24 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     throw new Error('比較固定試験はBlueMemeの固定APIでのみ使用します');
   const fixed = args.includes('--fixed-api'),
     fixtureSource = args.includes('--fixture-source');
+  const reviewUpgrade = args.includes('--review-upgrade');
+  if (
+    reviewUpgrade &&
+    (!fixed ||
+      !fixtureSource ||
+      item.id !== 'bluememe-20260930' ||
+      smartFull ||
+      reviewCase ||
+      fixedFailure ||
+      withComparison ||
+      !args.includes('--baseline-dir'))
+  )
+    throw new Error('更新試験はBlueMeme・固定API・固定一覧と旧版ディレクトリが必要です');
+  const reference = args.includes('--same-input-as')
+    ? JSON.parse(await readFile(arg('--same-input-as'), 'utf8'))
+    : null;
+  if (reference && (fixed || fixtureSource || smartFull || args.includes('--live-followups')))
+    throw new Error('同条件試行の照合はfullの実PDF・通常生成専用です');
   const reviewRejectedUrl = args.includes('--review-rejected-url');
   if (reviewRejectedUrl && (!fixed || !fixtureSource || reviewCase || fixedFailure))
     throw new Error('拒否URLの診断試験は固定API・固定一覧専用です');
@@ -90,12 +119,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     releaseFirstResponse = resolve;
   });
   const buildDigest = await builtDigest();
-  const profile = await mkdtemp(path.join(tmpdir(), 'tdnet-ir-browser-'));
+  const sourceDigest = await sourceBuildDigest();
+  const profile = await mkdtemp(path.join(tmpdir(), 'ir-'));
   let context: any;
   let apiCalls = 0,
     pdfRequests = 0,
     pdfHash: string | null = null,
     failScore = false;
+  const requestSettings: any[] = [];
   const started = performance.now();
   const evidence: any = {
     caseId: item.id,
@@ -110,10 +141,33 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           ? 'fixture'
           : 'TDnet',
     buildDigest,
+    sourceBuildDigest: sourceDigest,
     stages: [],
     success: false,
   };
   try {
+    const oldProfile = reviewUpgrade
+      ? await seedOldExtensionProfile(
+          chromium,
+          arg('--browser-executable'),
+          profile,
+          arg('--baseline-dir')
+        )
+      : null;
+    const extensionDirectory = oldProfile?.extensionDirectory ?? path.resolve('dist');
+    if (oldProfile) {
+      // Update files at the registered unpacked path, preserving profile and ID.
+      await rm(extensionDirectory, { recursive: true });
+      await cp(path.resolve('dist'), extensionDirectory, { recursive: true });
+      // Chrome detects installed-version updates. Simulate that lifecycle in
+      // the disposable copy while all product scripts and the fixed key stay exact.
+      const manifestPath = path.join(extensionDirectory, 'manifest.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      assert.equal(manifest.version, '0.7.3');
+      manifest.version = '0.7.3.1';
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      evidence.upgradeManifestVersion = manifest.version;
+    }
     context = await chromium.launchPersistentContext(profile, {
       executablePath: arg('--browser-executable'),
       headless: true,
@@ -125,35 +179,54 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         PATH: '/usr/local/bin:/usr/bin:/bin',
       },
       args: [
-        `--disable-extensions-except=${path.resolve('dist')}`,
-        `--load-extension=${path.resolve('dist')}`,
+        `--disable-extensions-except=${extensionDirectory}`,
+        `--load-extension=${extensionDirectory}`,
         '--no-sandbox',
       ],
       viewport: { width: 1200, height: 900 },
     });
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+    if (oldProfile)
+      assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), '0.7.3.1');
+    evidence.loadedOffscreenHtml = await worker.evaluate(async () =>
+      (await fetch(chrome.runtime.getURL('offscreen.html'))).text()
+    );
 
     const credentials = fixed
       ? { provider: 'openai', model: 'fixture', apiKey: 'fixture', baseUrl: undefined }
       : config;
-    await worker.evaluate(
-      async (settings: any) => {
-        await chrome.storage.sync.set({
-          ...settings,
-          customUrl: settings.baseUrl ?? '',
-          extensionEnabled: true,
-          extractionMode: settings.extractionMode,
-          experimentalScoring: false,
-        });
-      },
-      {
-        extractionMode: smartFull ? 'smart' : 'full',
-        provider: credentials.provider,
-        model: credentials.model,
-        apiKey: credentials.apiKey,
-        baseUrl: credentials.baseUrl,
-      }
-    );
+    if (oldProfile) {
+      const restored = await worker.evaluate(
+        async (key: string) => ({
+          settings: await chrome.storage.sync.get(),
+          cache: (await chrome.storage.local.get(key))[key],
+        }),
+        oldProfile.key
+      );
+      assert.deepEqual(restored.settings, oldProfile.settings);
+      assert.deepEqual(restored.cache, oldProfile.value);
+      evidence.stages.push(
+        'real v0.7.3 cache displayed without API → same profile updated → settings and old cache retained'
+      );
+    } else
+      await worker.evaluate(
+        async (settings: any) => {
+          await chrome.storage.sync.set({
+            ...settings,
+            customUrl: settings.baseUrl ?? '',
+            extensionEnabled: true,
+            extractionMode: settings.extractionMode,
+            experimentalScoring: false,
+          });
+        },
+        {
+          extractionMode: smartFull ? 'smart' : 'full',
+          provider: credentials.provider,
+          model: credentials.model,
+          apiKey: credentials.apiKey,
+          baseUrl: credentials.baseUrl,
+        }
+      );
     if (fixed) {
       const source = expectations.find((e) => e.id === item.id);
       if (!source) throw new Error('固定候補がありません');
@@ -271,7 +344,16 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       });
     } else {
       context.on('request', (request: any) => {
-        if (request.method() === 'POST' && request.resourceType() === 'fetch') apiCalls++;
+        if (request.method() === 'POST' && request.resourceType() === 'fetch') {
+          apiCalls++;
+          const body = request.postDataJSON();
+          requestSettings.push({
+            model: body.model,
+            temperature: body.temperature,
+            maxOutputTokens: body.max_tokens,
+            reasoningEffort: body.reasoning?.effort,
+          });
+        }
       });
     }
     const pdfUrl = reviewRejectedUrl
@@ -359,6 +441,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     const row = frame
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
+    if (oldProfile) {
+      assert.equal(await frame.locator('.tdnet-digest-summary-row').count(), 0);
+      evidence.stages.push('old fingerprint result not displayed → new summary button available');
+    }
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
     if (reviewFixture)
       evidence.stages.push(`v${ANALYSIS_SCHEMA_VERSION - 1} cache ignored before generation`);
@@ -440,7 +526,18 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.deepEqual(afterOld, currentTrace);
       evidence.stages.push('new result finished before old response → current trace retained');
     }
-    evidence.stages.push('button → PDF → offscreen → API → facts → HTML');
+    evidence.stages.push('button → result/error HTML');
+    const completedTrace = await worker.evaluate(
+      async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+    );
+    evidence.trace = completedTrace;
+    assert.equal(
+      completedTrace?.buildDigest,
+      sourceDigest,
+      '実行Workerと現在の製品ソースが一致しません'
+    );
+    if (!fixedFailure && completedTrace.outcome === 'failure')
+      throw new Error(completedTrace.error);
     if (fixedFailure) {
       evidence.rendered = await summary.innerText();
       assert.ok(
@@ -581,8 +678,37 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     );
     evidence.trace = trace;
     assert.ok(trace?.attempts.length);
+    assert.equal(trace.buildDigest, sourceDigest, '実行Workerと現在の製品ソースが一致しません');
     assert.equal(trace.documentHash, stored.value.metadata.documentHash);
     assert.equal(trace.error, null);
+    evidence.stages.push('PDF → offscreen → API → verified facts → paired DOM meaning');
+    evidence.requestSettings = requestSettings;
+    if (reference) {
+      assert.equal(reference.success, true);
+      assert.equal(trace.documentHash, reference.sourceHash);
+      assert.equal(trace.inputHash, reference.inputHash);
+      assert.equal(trace.provider, reference.provider);
+      assert.equal(trace.model, reference.model);
+      assert.equal(trace.documentType, reference.item.documentType);
+      assert.equal(trace.extractionMode, 'full');
+      assert.equal(stored.value.facts.version, reference.schemaVersion);
+      assert.deepEqual(
+        requestSettings,
+        trace.attempts.map(() => ({
+          model: reference.model,
+          temperature: 0,
+          maxOutputTokens: reference.requestLimits.maxOutputTokens,
+          reasoningEffort: reference.requestLimits.reasoningEffort,
+        }))
+      );
+      evidence.sameConditionsAs = {
+        inputHash: reference.inputHash,
+        implementationDigest: reference.implementationDigest,
+      };
+      evidence.stages.push(
+        'real normal generation PDF/input/model/mode/contract/request limits match CLI conditions'
+      );
+    }
     const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
     await row.getByRole('button', { name: '診断を保存', exact: true }).click();
     const download = await downloadEvent;
@@ -758,6 +884,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .getByRole('heading', { name: '確認できた事実', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
+    assert.deepEqual(
+      renderedFactErrors(stored.value.facts.facts, await summary.locator('li').allTextContents()),
+      []
+    );
     evidence.stages.push('hide/show/cache without API');
     const listUrl = page
       .frames()
@@ -775,7 +905,25 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .getByRole('heading', { name: '確認できた事実', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
-    evidence.stages.push('page reload restores exact current facts without API');
+    const expectedRestored = smartFull ? evidence.smart.facts : stored.value.facts;
+    assert.deepEqual(
+      renderedFactErrors(expectedRestored.facts, await summary.locator('li').allTextContents()),
+      []
+    );
+    const restoredValue = await worker.evaluate(
+      async (request: any) => {
+        const settings = await chrome.storage.sync.get(['provider', 'model', 'extractionMode']);
+        const fingerprint = `v${request.version}:${encodeURIComponent(settings.provider)}:${encodeURIComponent(settings.model)}:${settings.extractionMode}`;
+        return (await chrome.storage.local.get(`summaryCacheV2:${fingerprint}:${request.pdfUrl}`))[
+          `summaryCacheV2:${fingerprint}:${request.pdfUrl}`
+        ];
+      },
+      { version: ANALYSIS_SCHEMA_VERSION, pdfUrl }
+    );
+    assert.deepEqual(restoredValue.facts, expectedRestored);
+    assert.equal(restoredValue.metadata.extractionMode, smartFull ? 'smart' : 'full');
+    evidence.restoredFacts = restoredValue.facts;
+    evidence.stages.push('page reload restores exact configured-mode facts without API');
 
     if (reviewDiagnostics) {
       // A cached result has no current request ID, but its exact result ID must match.
@@ -954,11 +1102,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: false }));
       await row.getByRole('button', { name: '非表示', exact: true }).click();
       await worker.evaluate(
-        async (entry: any) =>
-          chrome.storage.local.set({
+        async (request: any) => {
+          const settings = await chrome.storage.sync.get(['provider', 'model', 'extractionMode']);
+          const fingerprint = `v${request.version}:${encodeURIComponent(settings.provider)}:${encodeURIComponent(settings.model)}:${settings.extractionMode}`;
+          const key = `summaryCacheV2:${fingerprint}:${request.pdfUrl}`;
+          const entry = { key, value: (await chrome.storage.local.get(key))[key] };
+          if (!entry.value) throw new Error('現在の設定で復元したキャッシュがありません');
+          await chrome.storage.local.set({
             [entry.key]: { ...entry.value, facts: { ...entry.value.facts, version: 3 } },
-          }),
-        stored
+          });
+        },
+        { version: ANALYSIS_SCHEMA_VERSION, pdfUrl }
       );
       const previousCalls = apiCalls;
       await row.getByRole('button', { name: '表示', exact: true }).click();

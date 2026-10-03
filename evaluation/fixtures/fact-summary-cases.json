@@ -1391,5 +1391,207 @@
         }
       }
     ]
+  },
+  {
+    "id": "140120260713591990",
+    "title": "2026年５月期 決算短信〔日本基準〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www2.jpx.co.jp/disc/464A0/140120260713591990.pdf",
+    "publishedDate": "2026-07-14",
+    "code": "464A0",
+    "sourceHash": "343aa9d1ff34e539a2ccce148653a7345122b83596fb51af19a1ddba91c5a932",
+    "expected": [
+      {
+        "labels": ["売上高"],
+        "periods": ["2026年5月期"],
+        "variants": [
+          {
+            "value": 3803,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ＱＰＳホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": ["営業利益"],
+        "periods": ["2026年5月期"],
+        "variants": [
+          {
+            "value": -833,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ＱＰＳホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": ["親会社株主に帰属する当期純利益"],
+        "periods": ["2026年5月期"],
+        "variants": [
+          {
+            "value": 1152,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ＱＰＳホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      }
+    ]
+  },
+  {
+    "id": "140120260714593203",
+    "title": "通期業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://www.nse.or.jp/listing/search/files/140120260714593203.pdf",
+    "publishedDate": "2026-07-14",
+    "code": "62250",
+    "sourceHash": "c7463314f1490c420632bdd8c24cd3403e96579d7b35b37412b50a09bfebe3e7",
+    "expected": [
+      {
+        "labels": ["売上高"],
+        "periods": ["2026年7月期"],
+        "variants": [
+          {
+            "value": 2800,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": ["営業利益"],
+        "periods": ["2026年7月期"],
+        "variants": [
+          {
+            "value": 401,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": ["当期純利益"],
+        "periods": ["2026年7月期"],
+        "variants": [
+          {
+            "value": 288,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": ["売上高"],
+        "periods": ["2026年7月期"],
+        "variants": [
+          {
+            "value": 2650,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": ["営業利益"],
+        "periods": ["2026年7月期"],
+        "variants": [
+          {
+            "value": 488,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": ["当期純利益"],
+        "periods": ["2026年7月期"],
+        "variants": [
+          {
+            "value": 331,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      }
+    ]
   }
 ]
