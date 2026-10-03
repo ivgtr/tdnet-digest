@@ -13,6 +13,7 @@ import {
 } from './document-structure';
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import { continuationFor, noteLinks, paragraphNoteLinks } from './document-links';
+import { splitNotes } from './source-provenance';
 
 export type DeclarationRole = 'subject' | 'scope' | 'basis';
 export interface ContextDeclaration {
@@ -164,7 +165,11 @@ function declarations(
     result.push({ role: 'scope', value: namedScope, id: block.id, origin: 'local' });
   return result.map((d) => ({
     ...d,
-    financialOnly: origin === 'document' && /決算短信/.test(text) && d.role !== 'subject',
+    financialOnly:
+      d.role !== 'subject' &&
+      (/決算短信/.test(text) ||
+        isPerformanceReportingTitle(captionText(block)) ||
+        !!forecastReportingTitle(captionText(block))),
   }));
 }
 /** Later explicit fields replace prior fields of that role, retaining same-field ambiguity. */
@@ -277,9 +282,30 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
           continued?.contextIds ??
           hint?.contextIds ??
           semanticSections.slice(-1).flatMap((b) => (table ? b.spanIds : [b.id]));
-        const qualifiers = unique(
-          localNotes.filter((l) => l.blockId === block.id).map((l) => l.noteId)
-        );
+        const qualifiers = unique([
+          ...localNotes.filter((l) => l.blockId === block.id).map((l) => l.noteId),
+          ...(hint &&
+          /1株当たり.*純利益|配当/.test(
+            normalized(
+              hint.metricIds
+                .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+                .join('')
+            )
+          )
+            ? splitNotes(page, anchorId)
+                .filter((note) => {
+                  const metric = normalized(
+                    hint.metricIds
+                      .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+                      .join('')
+                  );
+                  return /配当/.test(metric)
+                    ? /配当/.test(note.text)
+                    : /1株当たり.*純利益/.test(normalized(note.text));
+                })
+                .map((note) => note.id)
+            : []),
+        ]);
         const binding: ContextBinding = {
           id: `ctx:${anchorId}`,
           page: page.pageNumber,
@@ -394,7 +420,7 @@ export function applicableDeclarations(
     (d) =>
       d.role === role &&
       !(role !== 'subject' && otherOwner && d.origin === 'document') &&
-      (d.origin === 'local' || !d.financialOnly || financial)
+      (!d.financialOnly || financial)
   );
   const local = candidates.filter((d) => d.origin === 'local');
   return local.length ? local : candidates;

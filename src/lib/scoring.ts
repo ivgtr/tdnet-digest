@@ -49,6 +49,7 @@ export interface ScoreSource {
   metric: string;
   basis: string | null;
   scope: string | null;
+  perShareBasis: Array<'splitAdjusted' | 'beforeSplit' | 'afterSplit'> | null;
 }
 export interface ScoreValue {
   value: number;
@@ -120,6 +121,7 @@ export function compatible(a: ScoreValue, b: ScoreValue, forecast = false): bool
     hasComparableScope(x.scope, x.metric, x.semantics.metricKind, a.unit) &&
     hasComparableScope(y.scope, y.metric, y.semantics.metricKind, b.unit) &&
     a.unit === b.unit &&
+    JSON.stringify(x.perShareBasis) === JSON.stringify(y.perShareBasis) &&
     x.semantics.polarity === y.semantics.polarity &&
     JSON.stringify(x.semantics.qualifiers) === JSON.stringify(y.semantics.qualifiers) &&
     JSON.stringify(x.semantics.conditions) === JSON.stringify(y.semantics.conditions) &&

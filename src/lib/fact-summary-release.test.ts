@@ -62,12 +62,13 @@ function table(
     },
     quantity: null,
     dateRoles: null,
+    provenance: null,
   };
 }
 const parse = (facts: VerifiedFact[], source = pages, coverage = false) =>
   parseFactSummary(
     JSON.stringify({
-      version: 4,
+      version: 5,
       documentType: 'earnings',
       facts: facts.map((f, i) => ({ ...f, id: `f${i + 1}` })),
       unverified: [],

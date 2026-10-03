@@ -1,7 +1,14 @@
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { isQuantityPrefix, parseExactQuantity, parseExactRange, isUnitToken } from './quantity';
+import { isQuantityPrefix, parseExactQuantity, parseExactRange } from './quantity';
 import { calendarDatePattern, calendarIntervalSeparator } from './period-semantics';
+import {
+  tableRowAxis,
+  tableColumnBand,
+  tableUnitRuns,
+  physicalRows,
+  type TableRegion,
+} from './table-layout';
 
 export interface SourceItem extends PdfSpan {
   transform: number[];
@@ -36,7 +43,7 @@ export function forecastReportingTitle(text: string): { period: string | null } 
   const title = normalized(text).replace(/^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/, '');
   const match = title.match(
     new RegExp(
-      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の)?(?:通期)?)?(?:${reportingScopeHeading})?業績予想(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
+      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の)?(?:通期)?)?(?:${reportingScopeHeading})?業績予想(?:数値)?(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
     )
   );
   if (match) return { period: match[1] ?? null };
@@ -118,7 +125,9 @@ export function lineRuns(spans: PdfSpan[], gapScale = 0.3): PdfSpan[][] {
   return runs;
 }
 
-export function buildBlocks(page: Pick<ExtractedPage, 'pageNumber' | 'spans'>): TextBlock[] {
+export function buildBlocks(
+  page: Pick<ExtractedPage, 'pageNumber' | 'spans'> & { tableRegions?: TableRegion[] }
+): TextBlock[] {
   const lines: PdfSpan[][] = [];
   for (const span of [...page.spans].sort((a, b) => a.y - b.y || a.x - b.x)) {
     const line = lines[lines.length - 1];
@@ -137,9 +146,12 @@ export function buildBlocks(page: Pick<ExtractedPage, 'pageNumber' | 'spans'>): 
       )
       .join('');
     const isRow =
-      quantityCells(line).length >= 2 &&
+      (quantityCells(line).length >= 2 ||
+        page.tableRegions?.some((t) => line.some((s) => t.valueIds.includes(s.id)))) &&
       !/[。；]|は、|で、|おいて|とおり|いたし|するこ/.test(text) &&
-      !/\d{4}年\d{1,2}月\d{1,2}日/.test(normalized(text));
+      !/^[(（]注[)）]|^※/.test(normalized(text)) &&
+      (!/\d{4}年\d{1,2}月\d{1,2}日/.test(normalized(text)) ||
+        page.tableRegions?.some((t) => line.some((s) => t.valueIds.includes(s.id))));
     const previous = blocks[blocks.length - 1];
     // Wrap a paragraph only when both lines share margins and the preceding sentence continues.
     if (
@@ -175,7 +187,23 @@ export function buildBlocks(page: Pick<ExtractedPage, 'pageNumber' | 'spans'>): 
 }
 
 /** Structural hints only: no values, periods, or semantics are confirmed here. */
-export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantities'>) {
+export function tableReferenceHints(
+  page: Pick<ExtractedPage, 'spans' | 'quantities' | 'tableRegions'>
+) {
+  return page.tableRegions.flatMap((region) =>
+    rawTableReferenceHints(
+      {
+        spans: page.spans.filter((s) => region.spanIds.includes(s.id)),
+        quantities: page.quantities.filter((q) => region.valueIds.includes(q.id)),
+      },
+      region
+    )
+  );
+}
+function rawTableReferenceHints(
+  page: Pick<ExtractedPage, 'spans' | 'quantities'>,
+  region: TableRegion
+) {
   const spans = page.spans,
     cells = page.quantities;
   const midpoint = (s: { x: number; width: number }) => s.x + s.width / 2;
@@ -186,12 +214,7 @@ export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantit
     unitIds: string[];
     contextIds: string[];
   }> = [];
-  const unitRows = lineRuns(
-    spans.filter((s) => isUnitToken(s.text.normalize('NFKC').replace(/\s/g, ''))),
-    0.6
-  ).flatMap((run) =>
-    isUnitToken(normalized(run.map((s) => s.text).join(''))) ? [run] : run.map((s) => [s])
-  );
+  const unitRows = tableUnitRuns(spans);
   const headers = unitRows.map((run) => ({
     id: run[0].id,
     ids: run.map((s) => s.id),
@@ -231,13 +254,17 @@ export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantit
     if (slots.length !== 1) continue;
     const i = slots[0],
       unit = peers[i];
-    const left = i
-      ? (midpoint(peers[i - 1]) + midpoint(unit)) / 2
-      : midpoint(unit) - (midpoint(peers[1]) - midpoint(unit)) / 2;
+    const drawnBand = tableColumnBand(region, unit.ids, value.height);
+    const left =
+      drawnBand?.[0] ??
+      (i
+        ? (midpoint(peers[i - 1]) + midpoint(unit)) / 2
+        : midpoint(unit) - (midpoint(peers[1]) - midpoint(unit)) / 2);
     const right =
-      i + 1 < peers.length
+      drawnBand?.[1] ??
+      (i + 1 < peers.length
         ? (midpoint(unit) + midpoint(peers[i + 1])) / 2
-        : midpoint(unit) + (midpoint(unit) - midpoint(peers[i - 1])) / 2;
+        : midpoint(unit) + (midpoint(unit) - midpoint(peers[i - 1])) / 2);
     const metricRight =
       peers[i + 1]?.text === '%' && unit.text !== '%'
         ? i + 2 < peers.length
@@ -293,12 +320,15 @@ export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantit
         Math.abs(s.y - value.y) <= Math.min(s.height, value.height) * 1.2 &&
         Math.abs(s.y - value.y) <= Math.min(...dataRows.map((y) => Math.abs(y - s.y))) + 0.1
     );
-    const axes = runs
-      .filter((run) => run.some((s) => axisParts.some((part) => part.id === s.id)))
-      .flat();
+    const cellAxis = tableRowAxis(region, spans, value);
+    const axes = cellAxis.length
+      ? cellAxis
+      : runs.filter((run) => run.some((s) => axisParts.some((part) => part.id === s.id))).flat();
     if (!/予想|実績|通期|四半期|月|20\d{2}年/.test(normalized(axes.map((s) => s.text).join(''))))
       continue;
-    const context = runs
+    const context = physicalRows(spans)
+      .map((row) => row.filter((s) => !/(?:%|％)表示は/.test(s.text)))
+      .filter((row) => row.length)
       .filter(
         (run) =>
           run[0].y < Math.min(...metrics.map((s) => s.y)) &&

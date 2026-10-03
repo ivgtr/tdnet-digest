@@ -18,6 +18,14 @@ import {
 } from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
+import {
+  physicalRows,
+  tableUnitRuns,
+  tableForValue,
+  tableColumnBand,
+  tableRowAxis,
+  type TableRegion,
+} from './table-layout';
 
 export interface TableEvidence {
   valueId: string;
@@ -82,7 +90,7 @@ function refs(value: unknown, spans: PdfSpan[], name: string, empty = false): Pd
 }
 
 export function verifyTableEvidence(
-  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
+  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'> & { tableRegions?: TableRegion[] },
   raw: unknown,
   claim: NumericClaim,
   checkMeaning = true
@@ -96,6 +104,26 @@ export function verifyTableEvidence(
   const value =
     quantityCells(page.spans).find((s) => s.id === object.valueId) ??
     fail('値の参照先・値・符号・数量の一部参照');
+  const ownRow = physicalRows(page.spans).find((row) => row.some((s) => s.id === value.id));
+  if (ownRow && /^(?:\(?注\)?|※)/.test(compact(ownRow.map((s) => s.text).join(''))))
+    fail('注記の数量を表本体の列へ対応できません');
+  const table = page.tableRegions
+    ? tableForValue({ tableRegions: page.tableRegions }, value.id)
+    : null;
+  const announcementIds = new Set(
+    lineRuns(page.spans)
+      .filter((run) =>
+        /20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(
+          compact(
+            [...run]
+              .sort((a, b) => a.x - b.x)
+              .map((s) => s.text)
+              .join('')
+          )
+        )
+      )
+      .flatMap((run) => run.map((s) => s.id))
+  );
   const parsedRange = parseExactRange(value.text);
   const parsedValue =
     claim.range && parsedRange
@@ -106,6 +134,8 @@ export function verifyTableEvidence(
   const periods = refs(object.periodIds, page.spans, '期間');
   const units = refs(object.unitIds, page.spans, '単位');
   const contexts = refs(object.contextIds, page.spans, '文脈', true);
+  if (table && [...metrics, ...periods, ...units].some((s) => !table.spanIds.includes(s.id)))
+    fail('別の表領域の根拠');
   const selected = [value, ...metrics, ...periods, ...units, ...contexts];
   if (selected.some((s) => ![s.x, s.y, s.width, s.height].every(Number.isFinite) || s.height <= 0))
     fail('座標');
@@ -170,6 +200,7 @@ export function verifyTableEvidence(
   const rowNumbers = page.spans.filter(
     (s) =>
       sameRow(s, value) &&
+      !announcementIds.has(s.id) &&
       ![...metrics, ...periods, ...contexts, ...units.filter((u) => u.id !== value.id)].some(
         (ref) => ref.id === s.id
       ) &&
@@ -204,21 +235,32 @@ export function verifyTableEvidence(
     if (incomplete) fail('行指標見出しの一部が未参照');
   }
   const singleValueRow = metricOnRow && rowNumbers.length === 1;
-  const allUnits = page.spans.filter(
-    (s) =>
-      isUnitToken(compact(s.text)) &&
-      s.y < value.y &&
-      ![...metrics, ...periods, ...contexts].some((ref) => ref.id === s.id)
-  );
+  const unitRuns = tableUnitRuns(page.spans);
+  const allUnits = unitRuns
+    .map((run) => ({
+      ...run[0],
+      text: joined(run),
+      width: run[run.length - 1].x + run[run.length - 1].width - run[0].x,
+    }))
+    .filter(
+      (s) =>
+        isUnitToken(compact(s.text)) &&
+        s.y < value.y &&
+        ![...metrics, ...periods, ...contexts].some((ref) => ref.id === s.id)
+    );
   const groupedUnit = [...units].sort((a, b) => a.x - b.x);
-  const contiguousUnit = groupedUnit.every(
-    (s, i) =>
-      !i ||
-      (sameRow(s, groupedUnit[0]) &&
-        s.x - groupedUnit[i - 1].x - groupedUnit[i - 1].width >= -0.5 &&
-        s.x - groupedUnit[i - 1].x - groupedUnit[i - 1].width <=
-          Math.min(s.height, groupedUnit[i - 1].height) * 0.6)
-  );
+  const contiguousUnit =
+    unitRuns.some(
+      (run) => run.length === units.length && run.every((s) => units.some((u) => u.id === s.id))
+    ) ||
+    groupedUnit.every(
+      (s, i) =>
+        !i ||
+        (sameRow(s, groupedUnit[0]) &&
+          s.x - groupedUnit[i - 1].x - groupedUnit[i - 1].width >= -0.5 &&
+          s.x - groupedUnit[i - 1].x - groupedUnit[i - 1].width <=
+            Math.min(s.height, groupedUnit[i - 1].height) * 0.6)
+    );
   const localUnit =
     contiguousUnit && isUnitToken(joined(groupedUnit))
       ? {
@@ -277,6 +319,14 @@ export function verifyTableEvidence(
     if (!/^\(?単位[:：]/.test(joined(units))) fail('共通単位の見出し');
   }
   const inBand = (s: PdfSpan) => center(s) > metricBand[0] && center(s) < metricBand[1];
+  const drawnBand = table
+    ? tableColumnBand(
+        table,
+        units.map((s) => s.id),
+        value.height
+      )
+    : null;
+  if (!metricOnRow && drawnBand) metricBand = drawnBand;
   const headerHeight = Math.max(...metrics.map((s) => s.height), value.height);
   const above = (s: PdfSpan) => s.y < value.y && value.y - s.y <= headerHeight * 18;
   if (
@@ -357,6 +407,8 @@ export function verifyTableEvidence(
     ),
   ];
   const onDataRow = (s: PdfSpan) => {
+    if (table && tableRowAxis(table, page.spans, value).some((axis) => axis.id === s.id))
+      return true;
     if (sameRow(s, value)) return true;
     if (Math.abs(s.y - value.y) > Math.min(s.height, value.height) * 1.2) return false;
     const distances = dataRows.map((y) => Math.abs(y - s.y));
@@ -371,6 +423,10 @@ export function verifyTableEvidence(
       (s) =>
         onDataRow(s) &&
         s.x + s.width < Math.min(...rowNumbers.map((n) => n.x)) &&
+        !physicalRows(page.spans.filter((p) => p.x + p.width < value.x)).some(
+          (run) =>
+            run.some((p) => p.id === s.id) && /20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(joined(run))
+        ) &&
         /予想|見込|見通し|前回|従来|修正|今回|通期|四半期|中間期|20\d{2}年/.test(compact(s.text))
     );
     if (axisFragments.some((s) => !periods.some((ref) => ref.id === s.id)))
@@ -470,7 +526,13 @@ export function verifyTableEvidence(
     fail('別セクションの文脈');
 
   if (checkMeaning)
-    verifyPeriodAndKind(claim, joined(periods), joined(contexts), nearest?.text ?? '');
+    verifyPeriodAndKind(
+      claim,
+      joined(periods),
+      joined(contexts),
+      nearest?.text ?? '',
+      table !== null
+    );
   const unique = [...new Map(selected.map((s) => [s.id, s])).values()].sort(
     (a, b) => a.y - b.y || a.x - b.x
   );
@@ -525,7 +587,8 @@ export function verifyPeriodAndKind(
   claim: NumericClaim,
   axis: string,
   context: string,
-  nearest: string
+  nearest: string,
+  tableCaption = false
 ) {
   axis = compact(axis);
   context = compact(context);
@@ -572,7 +635,7 @@ export function verifyPeriodAndKind(
     )
       fail('対象年度・決算月');
   }
-  const sourceShape = reportingPeriodShape(reportingPeriodOwner(axis, context)),
+  const sourceShape = reportingPeriodShape(reportingPeriodOwner(axis, context, tableCaption)),
     claimedShape = reportingPeriodShape(target);
   if (
     sourceShape &&
@@ -582,7 +645,7 @@ export function verifyPeriodAndKind(
     fail('対象期間');
   if (!sourceShape && claimedShape && !(claimedShape === '通期' && fiscal.test(local)))
     fail('対象期間の根拠');
-  const qualifierOwner = reportingPeriodOwner(axis, context);
+  const qualifierOwner = reportingPeriodOwner(axis, context, tableCaption);
   if (
     (/累計|中間期/.test(qualifierOwner) && /単独/.test(target)) ||
     (/単独/.test(qualifierOwner) && /累計/.test(target))
@@ -592,7 +655,7 @@ export function verifyPeriodAndKind(
   if (/単独/.test(target) && !/単独/.test(qualifierOwner)) fail('単独期間');
   // Structural obligations and accepted facts must prove a period representable
   // by the same current contract, rather than merely matching the source text.
-  periodKind(claim.period, axis, context);
+  periodKind(claim.period, axis, context, tableCaption);
   const kind = numericValueKind(axis, context, nearest);
   if (claim.valueKind !== kind) fail('実績・予想区分');
 }
@@ -620,12 +683,18 @@ export function verifyProseQuantity(
 ) {
   const escape = (text: string) => compact(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 複合助詞は語単位で認める。任意のひらがなは許さず、否定・概数の語を跨がない。
-  const bridge = '((?:について|に関して|に対して|において|として|[はがをにでと、:()]){0,6})';
+  const perShare = claim.unit === '円' && /配当金|1株当たり.*純利益/.test(compact(claim.label));
+  const sharedDividend =
+    perShare &&
+    ['中間配当金', '期末配当金'].includes(compact(claim.label)) &&
+    /中間配当金及び期末配当金は、?それぞれ1株当たり/.test(compact(quote));
+  const labelPattern = sharedDividend ? '中間配当金及び期末配当金' : escape(claim.label);
+  const bridge = `((?:について|に関して|に対して|において|として|[はがをにでと、:()]){0,6}${sharedDividend ? 'それぞれ' : ''}${perShare ? '(?:1株当たり)?' : ''})`;
   const scalar = '-?\\d+(?:\\.\\d+)?';
   const amount = claim.range
     ? `${scalar}[～〜~]${scalar}${escape(claim.unit)}`
     : `${scalar}(?:${claim.unit === '円' ? '円\\d{2}銭|' : ''}${escape(claim.unit)})`;
-  const binding = new RegExp(`${escape(claim.label)}${bridge}(${amount})(?![\\d.%/])`, 'u');
+  const binding = new RegExp(`${labelPattern}${bridge}(${amount})(?![\\d.%/])`, 'u');
   const corresponds = (raw: string) =>
     claim.range
       ? parseExactRange(raw)?.unit === claim.unit
@@ -637,13 +706,12 @@ export function verifyProseQuantity(
     compact(text.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；')).replace(/[△▲−](?=\d)/g, '-');
   const normalized = assertionText(quote);
   const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
-  const heads = [
-    ...normalized.matchAll(new RegExp(`${escape(claim.label)}${bridge}(${token})`, 'gu')),
-  ];
+  const heads = [...normalized.matchAll(new RegExp(`${labelPattern}${bridge}(${token})`, 'gu'))];
   if (heads.length > 1)
     throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
   const match = [...normalized.matchAll(new RegExp(binding, 'gu'))].find(
-    (m) => m[1].length <= 6 && corresponds(m[2])
+    (m) =>
+      m[1].replace(perShare ? /1株当たり|それぞれ/g : /$^/g, '').length <= 6 && corresponds(m[2])
   );
   if (match) {
     // Only explicit periods, resolved subject/scope and grammatical separators
@@ -665,7 +733,13 @@ export function verifyProseQuantity(
     for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))
       prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
     if (prefix) throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
-    verifyQuantityAssertion(normalized.slice(match.index! + match[0].length));
+    const suffix = normalized.slice(match.index! + match[0].length);
+    if (
+      sharedDividend &&
+      /^、年間配当金は1株当たり-?\d+(?:\.\d+)?円を予定しております。?$/.test(suffix)
+    )
+      verifyQuantityAssertion('を予定しております。');
+    else verifyQuantityAssertion(suffix);
   }
   if (!compact(page.text).includes(compact(quote)) || !match)
     throw new Error('引用で数値・単位・指標・期間の対応を確認できません');

@@ -17,7 +17,7 @@ import {
   checkExtractionQuality,
   type QualityCheckResult,
 } from '@/lib/section-detector';
-import { extractPageLayout } from '@/lib/pdf-layout';
+import { extractPdfPageLayout } from '@/lib/pdf-layout';
 import { validatePages } from '@/lib/fact-validation';
 import { buildDocumentContext } from '@/lib/document-context';
 import { tableContinuations, noteLinks } from '@/lib/document-links';
@@ -260,9 +260,7 @@ async function extractTextFromPDF(
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       try {
         const page = await pdf.getPage(pageNum);
-        const textContent = await page.getTextContent();
-
-        pages.push(extractPageLayout(textContent.items, pageNum));
+        pages.push(await extractPdfPageLayout(page, pageNum, pdfjsLib.OPS));
 
         // メモリ解放
         page.cleanup();
@@ -274,6 +272,9 @@ async function extractTextFromPDF(
           sourceItems: [],
           blocks: [],
           quantities: [],
+          drawingOperations: [],
+          drawingLines: [],
+          tableRegions: [],
           status: 'failed',
           selection: 'selected',
           text: '',

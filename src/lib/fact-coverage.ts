@@ -905,6 +905,45 @@ export function coverageReport(
     axis: normalized(h.periodIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
     context: normalized(h.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
   }));
+  for (const page of pages)
+    for (const block of page.blocks.filter((b) => b.kind === 'paragraph')) {
+      const label = normalized(block.text).match(
+        new RegExp(
+          `(1株当たり(?:当期|四半期|中間)?純利益|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`
+        )
+      )?.[1];
+      if (!label || !proseQuantities(block).length) continue;
+      const binding = bindingFor(context, block.id);
+      if (
+        !isReportingMetricSource(
+          block.id,
+          numericValueKind(
+            block.text,
+            binding.contextIds
+              .map(
+                (id) =>
+                  pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
+              )
+              .join('')
+          ) ?? '',
+          pages,
+          context
+        )
+      )
+        continue;
+      units.push({
+        anchor: block.id,
+        label,
+        axis: normalized(block.text),
+        context: normalized(
+          binding.contextIds
+            .map(
+              (id) => pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
+            )
+            .join('')
+        ),
+      });
+    }
   const sourceIds = (requirement: string): string[] => {
     if (type === 'ma') {
       const sources = maAssertionSources(pages, context);
@@ -933,7 +972,7 @@ export function coverageReport(
     const marker = {
       revenue: /^(売上高|売上収益|営業収益)$/,
       operatingProfit: /^営業(?:利益|損失)/,
-      netProfit: /(?:当期|四半期|中間).*純(?:利益|損失)/,
+      netProfit: new RegExp(`^${NET_PROFIT_METRIC}$`),
       '1株当たり利益': /株当たり.*利益/,
       営業利益率: /営業利益率/,
       配当: /配当/,
@@ -997,7 +1036,10 @@ export function coverageReport(
                         periodKind: periodKind(
                           target.period + (target.quarter ?? ''),
                           u.axis,
-                          u.context
+                          u.context,
+                          pages.some((p) =>
+                            p.tableRegions.some((t) => t.valueIds.includes(u.anchor))
+                          )
                         ),
                       },
                     },
@@ -1005,7 +1047,13 @@ export function coverageReport(
                     target.quarter
                   );
                 } catch {
-                  return false;
+                  // Retain a matching original fiscal/quarter role even when its
+                  // qualifier cannot be proved. Preflight reports the source defect.
+                  return (
+                    sourceFiscalPeriod(u.axis, u.context) === target.period &&
+                    (reportingPeriodShape(u.axis) ?? reportingPeriodShape(u.context)) ===
+                      (reportingPeriodShape(target.quarter ?? '') ?? null)
+                  );
                 }
               })()) &&
             (!targetPeriod || sourceFiscalPeriod(u.axis, u.context) === targetPeriod) &&

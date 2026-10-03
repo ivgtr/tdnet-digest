@@ -2,6 +2,8 @@ import type { SourceItem, TextBlock, QuantityCell } from '../lib/document-struct
 import type { PdfSpan } from '../lib/pdf-layout';
 import type { DocumentType } from '../lib/document-type';
 import type { FactSummary } from '../lib/fact-summary';
+import type { DrawingOperation, DrawingLine } from '../lib/pdf-drawing';
+import type { TableRegion } from '../lib/table-layout';
 
 export type ExtractionMode = 'smart' | 'full';
 
@@ -14,6 +16,9 @@ export interface ExtractedPage {
   selection: 'selected' | 'omitted';
   blocks: TextBlock[];
   quantities: QuantityCell[];
+  drawingOperations: DrawingOperation[];
+  drawingLines: DrawingLine[];
+  tableRegions: TableRegion[];
 }
 
 export interface EvidenceFact {

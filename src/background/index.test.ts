@@ -49,7 +49,7 @@ candidate.valueKind = 'forecastAfter';
 candidate.semantics.state = 'forecastAfter';
 const facts: FactSummary = parseFactSummary(
   JSON.stringify({
-    version: 4,
+    version: 5,
     documentType: 'earningsRevision',
     facts: [candidate],
     unverified: [],
@@ -231,12 +231,18 @@ describe('要約・採点・追加分析の分離', () => {
       expect(failure.diagnosticRunId).not.toBe(success.diagnosticRunId);
       expect(matchingSummaryTrace(saved, 'test.pdf', failure.diagnosticRunId, null)).toEqual(saved);
       expect(saved).toMatchObject({
-        outcome: 'failure', resultId: null, attempts: [], usage: [],
-        documentHash: null, inputHash: null,
+        outcome: 'failure',
+        resultId: null,
+        attempts: [],
+        usage: [],
+        documentHash: null,
+        inputHash: null,
       });
       expect(saved?.error).toBe(failure.error);
       expect(saved?.provider).toBe(stage === 'settings' ? null : 'openai');
-      expect(() => matchingSummaryTrace(saved, 'test.pdf', success.diagnosticRunId, null)).toThrow();
+      expect(() =>
+        matchingSummaryTrace(saved, 'test.pdf', success.diagnosticRunId, null)
+      ).toThrow();
       // Local failures before sendMessage and another same-PDF result also refuse it.
       expect(() => matchingSummaryTrace(saved, 'test.pdf', null, null)).toThrow();
       expect(() => matchingSummaryTrace(saved, 'test.pdf', null, 'different-result')).toThrow();
@@ -340,7 +346,9 @@ describe('要約・採点・追加分析の分離', () => {
     });
     expect(matchingSummaryTrace(trace, pdfUrl, result.diagnosticRunId, null)).toEqual(trace);
     expect(() => matchingSummaryTrace(trace, pdfUrl, 'other-run', null)).toThrow();
-    expect(() => matchingSummaryTrace(trace, 'another.pdf', result.diagnosticRunId, null)).toThrow();
+    expect(() =>
+      matchingSummaryTrace(trace, 'another.pdf', result.diagnosticRunId, null)
+    ).toThrow();
     expect(() => matchingSummaryTrace(trace, pdfUrl, null, 'cached-result')).toThrow();
     expect(() =>
       matchingSummaryTrace(
@@ -425,7 +433,7 @@ describe('要約・採点・追加分析の分離', () => {
       });
       const smartFacts = parseFactSummary(
         JSON.stringify({
-          version: 4,
+          version: 5,
           documentType: 'earnings',
           facts: expectations[0].facts.filter((f) => f.page !== 18),
           unverified: [],

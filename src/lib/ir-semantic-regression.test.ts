@@ -23,7 +23,7 @@ function parse(index: number, facts: unknown[], coverage = false) {
     ['earnings', 'shareRepurchase', 'businessUpdate', 'ma', 'earningsRevision', 'ma'] as const
   )[index];
   return parseFactSummary(
-    JSON.stringify({ version: 4, documentType, facts, unverified: [] }),
+    JSON.stringify({ version: 5, documentType, facts, unverified: [] }),
     documentType,
     sources[index],
     coverage
@@ -83,7 +83,7 @@ describe('実PDFの意味を保った利用経路', () => {
     const planPage = pages.find((page) => page.pageNumber === plan.page)!;
     planPage.selection = 'omitted';
     const raw = JSON.stringify({
-      version: 4,
+      version: 5,
       documentType: 'earnings',
       facts: expectations[0].facts.filter((f) => f.page !== plan.page),
       unverified: [],
@@ -425,7 +425,7 @@ describe('実PDFの意味を保った利用経路', () => {
     caption.evidence.contextIds = ['p1s80'];
     // The fiscal caption belongs to context, not the axis for a different row.
     expect(parse(4, [caption]).facts).toHaveLength(0);
-    expect(parse(4, [fact(4,2)]).unverified).toEqual([]);
+    expect(parse(4, [fact(4, 2)]).unverified).toEqual([]);
     const wrong = fact(4);
     if (wrong.evidence.kind !== 'table') throw new Error('table expected');
     wrong.evidence.periodIds = ['p1s80'];
@@ -461,7 +461,7 @@ describe('実PDFの意味を保った利用経路', () => {
     candidate.valueKind = 'forecast';
     candidate.semantics.state = 'forecast';
     const summary = parseFactSummary(
-      JSON.stringify({ version: 4, documentType: 'other', facts: [candidate], unverified: [] }),
+      JSON.stringify({ version: 5, documentType: 'other', facts: [candidate], unverified: [] }),
       'other',
       [page]
     );
@@ -555,7 +555,7 @@ describe('実PDFの意味を保った利用経路', () => {
               : 'ma';
       const summary = parseFactSummary(
         JSON.stringify({
-          version: 4,
+          version: 5,
           documentType: type,
           facts: expectations[index].facts,
           unverified: [],

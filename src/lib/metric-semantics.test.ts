@@ -40,7 +40,7 @@ describe('数量の指標区分と配当の分母', () => {
         return fact;
       });
       const raw = (facts: unknown[]) =>
-        JSON.stringify({ version: 4, documentType: 'other', facts, unverified: [] });
+        JSON.stringify({ version: 5, documentType: 'other', facts, unverified: [] });
       const facts = parseFactSummary(raw(candidates), 'other', pages);
       expect(facts.unverified).toEqual([]);
       expect(facts.facts).toHaveLength(2);
