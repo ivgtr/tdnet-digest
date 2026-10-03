@@ -2,15 +2,18 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { serializeCandidateSource } from '../../src/lib/fact-candidates';
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { extractPageLayout } from '../../src/lib/pdf-layout';
+import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { extractPdfPageLayout } from '../../src/lib/pdf-layout';
+import { FACT_SCHEMA_VERSION } from '../../src/lib/fact-contract';
 import { serializePagesForAnalysis } from '../../src/lib/page-text';
 import {
   FactSummaryGenerationError,
   generateVerifiedFactSummary,
   factSummaryRequestLimits,
   renderFacts,
+  parseFactSummary,
 } from '../../src/lib/fact-summary';
+import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
 import { getProvider } from '../../src/lib/llm-providers';
 
@@ -47,6 +50,10 @@ const implementationFiles = [
   'src/lib/document-structure.ts',
   'src/lib/document-links.ts',
   'src/lib/pdf-layout.ts',
+  'src/lib/pdf-drawing.ts',
+  'src/lib/table-layout.ts',
+  'src/lib/source-provenance.ts',
+  'src/lib/source-preflight.ts',
   'src/lib/numeric-evidence.ts',
   'src/lib/fact-validation.ts',
   'src/lib/fact-coverage.ts',
@@ -63,15 +70,19 @@ for (const item of selected) {
     await readFile(path.join('evaluation/fixtures/real-pdfs', `${item.id}.pdf`))
   );
   const sourceHash = createHash('sha256').update(data).digest('hex');
+  const extractionStarted = performance.now();
   const pdf = await getDocument({ data }).promise;
   const pages = [];
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    pages.push(extractPageLayout(content.items, pageNumber));
+    pages.push(await extractPdfPageLayout(page, pageNumber, OPS));
     page.cleanup();
   }
   await pdf.destroy();
+  const extractionMs = Math.round(performance.now() - extractionStarted);
+  const sourceInput = serializeCandidateSource(pages, undefined, item.documentType);
+  await writeFile(`evaluation/results/local/${item.id}-source-input.json`, sourceInput);
+  await writeFile(`evaluation/results/local/${item.id}-source-pages.json`, JSON.stringify(pages));
   const usage: Array<{
     inputTokens: number | null;
     outputTokens: number | null;
@@ -104,10 +115,16 @@ for (const item of selected) {
   }
   const elapsedSeconds = Number(((performance.now() - started) / 1000).toFixed(1));
   const result = attempt?.facts ?? null;
-  if (result) errors.push(...expectedErrors(item, result));
+  if (result) {
+    errors.push(...expectedErrors(item, result));
+    validateSavedFacts(result);
+    const restored = parseFactSummary(JSON.stringify(result), item.documentType, pages);
+    if (JSON.stringify(restored) !== JSON.stringify(result))
+      errors.push('保存再照合で確定結果が変わりました');
+  }
   const output = {
     item,
-    schemaVersion: 4,
+    schemaVersion: FACT_SCHEMA_VERSION,
     analysisFingerprint: buildAnalysisFingerprint({ provider, model, extractionMode: 'full' }),
     implementationDigest,
     requestLimits: factSummaryRequestLimits({ provider, model }),
@@ -116,6 +133,10 @@ for (const item of selected) {
       .update(serializeCandidateSource(pages, undefined, item.documentType))
       .digest('hex'),
     inputChars: serializeCandidateSource(pages, undefined, item.documentType).length,
+    extractionMs,
+    sourceBytes: Buffer.byteLength(JSON.stringify(pages)),
+    drawingOperations: pages.reduce((n, p) => n + p.drawingOperations.length, 0),
+    tableRegions: pages.reduce((n, p) => n + p.tableRegions.length, 0),
     usage,
     provider,
     model,

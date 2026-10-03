@@ -5,6 +5,7 @@ export interface Expected {
   periods: string[];
   variants: { value: number; unit: string; page: number }[];
   semantics: Partial<VerifiedFact['semantics']>;
+  adjustmentBasis?: 'splitAdjusted' | 'beforeSplit' | 'afterSplit';
 }
 export interface Case {
   id: string;
@@ -12,6 +13,9 @@ export interface Case {
   documentType: DocumentType;
   url: string;
   expected: Expected[];
+  publishedDate?: string;
+  code?: string;
+  forbidden?: Array<{ label: string; value: number; period: string; state: string }>;
   expectedEvidence?: {
     page: number;
     blockId: string;
@@ -33,7 +37,10 @@ const attributesMatch = (fact: VerifiedFact, expected: Partial<VerifiedFact['sem
       );
     return actual === value;
   });
-export function expectedErrors(item: Case, result: { facts: VerifiedFact[] }): string[] {
+export function expectedErrors(
+  item: Case,
+  result: { facts: VerifiedFact[]; unverified?: string[] }
+): string[] {
   const errors: string[] = [];
   for (const expected of item.expected) {
     if (
@@ -43,6 +50,9 @@ export function expectedErrors(item: Case, result: { facts: VerifiedFact[] }): s
           expected.labels.some((label) => compact(fact.label) === compact(label)) &&
           expected.periods.some((period) => compact(fact.period ?? '') === compact(period)) &&
           attributesMatch(fact, expected.semantics) &&
+          (!expected.adjustmentBasis ||
+            (fact.provenance?.denominator?.value === 1 &&
+              fact.provenance.adjustments.some((a) => a.basis === expected.adjustmentBasis))) &&
           expected.variants.some(
             (v) =>
               fact.value === v.value &&
@@ -68,5 +78,18 @@ export function expectedErrors(item: Case, result: { facts: VerifiedFact[] }): s
     )
       errors.push(`完結した原文の重要事項が不足: p.${expected.page} ${expected.blockId}`);
   }
+  for (const forbidden of item.forbidden ?? [])
+    if (
+      result.facts.some(
+        (f) =>
+          compact(f.label) === compact(forbidden.label) &&
+          f.value === forbidden.value &&
+          compact(f.period ?? '') === compact(forbidden.period) &&
+          f.semantics.state === forbidden.state
+      )
+    )
+      errors.push(`禁止する重要数値の対応: ${forbidden.label} ${forbidden.value}`);
+  if (result.unverified?.length)
+    errors.push(`未確認が残っています: ${result.unverified.join(' / ')}`);
   return errors;
 }

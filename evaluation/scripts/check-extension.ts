@@ -10,7 +10,7 @@ import { candidateResponse } from '../../src/lib/fixtures/candidate-test-source'
 import { extractPageLayout } from '../../src/lib/pdf-layout';
 import corpus from '../../src/lib/fixtures/ir-semantic-corpus.json';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
-import { stableFactId, type VerifiedFact } from '../../src/lib/fact-contract';
+import { stableFactId, FACT_SCHEMA_VERSION, type VerifiedFact } from '../../src/lib/fact-contract';
 import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
 import { parseFactSummary } from '../../src/lib/fact-summary';
 import { ANALYSIS_SCHEMA_VERSION } from '../../src/lib/analysis-version';
@@ -35,8 +35,6 @@ async function builtDigest(): Promise<string> {
 }
 /** Called by the existing evaluator after its ordinary configuration load. No secrets are logged. */
 export async function checkExtension(item: BrowserCase, config: LLMConfig, args: string[]) {
-  if (!['bluememe-20260930', 'buyback-20260714', 'monthly-20260714'].includes(item.id))
-    throw new Error('ブラウザー評価は重点3資料のIDを指定してください');
   const arg = (flag: string) => args[args.indexOf(flag) + 1];
   if (!args.includes('--browser-module') || !args.includes('--browser-executable'))
     throw new Error('既存PlaywrightモジュールとChromiumを指定してください');
@@ -337,7 +335,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       // Navigate within the actual day's published list until the exact PDF is found.
       const frameHandle = page.frames().find((f: any) => /I_list_/.test(f.url()));
       if (!frameHandle) throw new Error('実一覧のiframeがありません');
-      const date = item.id.match(/(20\d{6})$/)?.[1];
+      const date = item.publishedDate?.replace(/-/g, '') ?? item.id.match(/(20\d{6})$/)?.[1];
       if (date)
         await frameHandle.goto(`https://www.release.tdnet.info/inbs/I_list_001_${date}.html`);
       const links = await frameHandle
@@ -544,7 +542,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           ]
         : item.id.startsWith('buyback')
           ? ['200000', '206200000', '上限', '予定', '2026年7月15日', '可能性']
-          : ['2026年6月', '338214', 'NJSS', '速報', '修正する可能性'];
+          : item.id.startsWith('monthly')
+            ? ['2026年6月', '338214', 'NJSS', '速報', '修正する可能性']
+            : [];
     for (const term of expected) assert.ok(body.includes(term), `表示に必要な意味がない: ${term}`);
     const stored = await worker.evaluate(async (version: number) => {
       const data = await chrome.storage.local.get();
@@ -554,7 +554,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
-    assert.ok(stored?.value?.facts?.version === 4);
+    assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
     if (reviewSettingsChange) {
       assert.equal(
         await worker.evaluate(async () =>
