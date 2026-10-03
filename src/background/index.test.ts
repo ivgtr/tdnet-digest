@@ -229,9 +229,14 @@ describe('要約・採点・追加分析の分離', () => {
       const failure = await request({ action: 'summarize' });
       expect(failure.error).toBeTruthy();
       expect(failure.diagnosticRunId).not.toBe(success.diagnosticRunId);
-      expect(() => matchingSummaryTrace(saved, 'test.pdf', failure.diagnosticRunId, null)).toThrow(
-        '対応する診断がありません'
-      );
+      expect(matchingSummaryTrace(saved, 'test.pdf', failure.diagnosticRunId, null)).toEqual(saved);
+      expect(saved).toMatchObject({
+        outcome: 'failure', resultId: null, attempts: [], usage: [],
+        documentHash: null, inputHash: null,
+      });
+      expect(saved?.error).toBe(failure.error);
+      expect(saved?.provider).toBe(stage === 'settings' ? null : 'openai');
+      expect(() => matchingSummaryTrace(saved, 'test.pdf', success.diagnosticRunId, null)).toThrow();
       // Local failures before sendMessage and another same-PDF result also refuse it.
       expect(() => matchingSummaryTrace(saved, 'test.pdf', null, null)).toThrow();
       expect(() => matchingSummaryTrace(saved, 'test.pdf', null, 'different-result')).toThrow();
@@ -242,7 +247,7 @@ describe('要約・採点・追加分析の分離', () => {
     }
   );
 
-  it.each(['success', 'failure', 'lateExtraction'] as const)(
+  it.each(['success', 'failure', 'earlyFailure', 'lateExtraction'] as const)(
     '古い完了%sは新しい要求の診断を上書きしない',
     async (stage) => {
       const request = await setup(false);
@@ -289,6 +294,8 @@ describe('要約・採点・追加分析の分離', () => {
       })) as typeof chrome.storage.sync.get;
       if (stage === 'failure')
         mocked.generateText.mockRejectedValueOnce(new Error('newer API failed'));
+      if (stage === 'earlyFailure')
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('newer PDF failed'));
       const newer = await request({ action: 'summarize' });
       expect(saved?.runId).toBe(newer.diagnosticRunId);
       const newerTrace = structuredClone(saved);

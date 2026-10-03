@@ -445,6 +445,17 @@ export function reportingUnitTitle(binding: ContextBinding, pages: ExtractedPage
   );
 }
 export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPage[]): boolean {
+  return inReportingCover(binding, pages, true);
+}
+/** Explicit fields before the first value or section belong to the cover. */
+export function isReportingCoverField(binding: ContextBinding, pages: ExtractedPage[]): boolean {
+  return inReportingCover(binding, pages, false);
+}
+function inReportingCover(
+  binding: ContextBinding,
+  pages: ExtractedPage[],
+  requireValue: boolean
+): boolean {
   if (binding.page !== 1 || binding.sectionIds.length) return false;
   const blocks = pages.find((p) => p.pageNumber === 1)?.blocks ?? [];
   const target = blocks.findIndex((b) => b.id === binding.blockId);
@@ -474,7 +485,10 @@ export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPa
       )
     )
       return false;
-    if (i === target) return valuesStarted && valueStart.test(normalized(block.text));
+    if (i === target)
+      return requireValue
+        ? valuesStarted && valueStart.test(normalized(block.text))
+        : !valuesStarted;
   }
   return false;
 }

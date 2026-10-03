@@ -735,26 +735,31 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const restored = await restoredDownload;
       assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
       evidence.stages.push('cached result ID matches diagnostic export after reload');
-      let staleDownloads = 0;
-      page.on('download', () => staleDownloads++);
       await worker.evaluate(async () => chrome.storage.sync.set({ apiKey: '' }));
       await summary.getByRole('button', { name: '再要約', exact: true }).click();
       await summary
         .getByText('APIキーが設定されていません', { exact: false })
         .waitFor({ timeout: 10000 });
+      const failedDownload = page.waitForEvent('download', { timeout: 10000 });
       await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      await row
-        .getByRole('alert')
-        .filter({ hasText: 'この要約結果に対応する診断がありません' })
-        .waitFor({ timeout: 10000 });
-      assert.equal(staleDownloads, 0);
+      const failed = await failedDownload;
       assert.equal(apiCalls, callsBefore);
-      const unchanged = await worker.evaluate(
+      const failure = await worker.evaluate(
         async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
       );
-      assert.deepEqual(unchanged, trace);
+      assert.notEqual(failure.runId, trace.runId);
+      assert.equal(failure.outcome, 'failure');
+      assert.equal(failure.error, 'APIキーが設定されていません');
+      assert.equal(failure.resultId, null);
+      assert.equal(failure.provider, null);
+      assert.equal(failure.documentHash, null);
+      assert.equal(failure.inputHash, null);
+      assert.deepEqual(failure.attempts, []);
+      assert.deepEqual(failure.usage, []);
+      assert.deepEqual(JSON.parse(await readFile(await failed.path(), 'utf8')), failure);
+      evidence.earlyFailureTrace = failure;
       evidence.stages.push(
-        'same-PDF early failure refuses stale diagnostic with explicit UI error and no download'
+        'same-PDF settings failure exports its own trace without stale response or API call'
       );
       await context.close();
       context = null;

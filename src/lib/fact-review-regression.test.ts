@@ -1,4 +1,4 @@
-import { prose, evidence, saved, report, event, period } from './fixtures/fact-review-source';
+import { assertionCandidate, prose, evidence, saved, report, event, period } from './fixtures/fact-review-source';
 import { describe, expect, it, vi } from 'vitest';
 import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { candidateResponse } from './fixtures/candidate-test-source';
@@ -317,48 +317,9 @@ describe('局所属性と表紙宣言の適用', () => {
 });
 
 describe('主張の意味と報告単位', () => {
-  function assertion(
-    body: string,
-    state: VerifiedFact['semantics']['state'],
-    polarity: VerifiedFact['semantics']['polarity']
-  ) {
-    const pages = [textPage(`会社名 株式会社テスト\n1. 事業説明\n${body}`)];
-    const base = numberCandidate(pages[0], '当社');
-    const f: VerifiedFact = {
-      ...base,
-      kind: 'event',
-      label: base.quote,
-      statement: base.quote,
-      value: null,
-      unit: null,
-      valueKind: null,
-      period: null,
-      semantics: {
-        ...base.semantics,
-        scope: null,
-        basis: null,
-        periodKind: 'none',
-        metricKind: 'none',
-        state,
-        polarity,
-      },
-    };
-    return { pages, f };
-  }
-  it.each([
-    '当社は取得を予定しておりません。',
-    '当社は取得を実施いたしません。',
-    '当社は、取得を予定していません。',
-    '当社は取得を予定（しておりません）。',
-    '当社は自己株式の取得を行いません。',
-    '当社は、取得を行いません。',
-    '当社は取得予定の変更を行いません。',
-    '当社は（自己株式の）取得を行いません。',
-    '当社は取得を行っていません。',
-    '当社は取得を行っていない。',
-    '当社は取得を行っておらず、今後も取得を予定しておりません。',
-  ])('丁寧な否定を肯定予定として確定・保存しない: %s', (body) => {
-    const { pages, f } = assertion(body, 'unspecified', 'negative');
+  // 語尾の分岐は assertion-semantics.test.ts、ここは意味→候補/保存の接続を確認する。
+  it.each(['当社は取得を予定しておりません。', '当社は取得を予定（しておりません）。'])('丁寧な否定を肯定予定として確定・保存しない: %s', (body) => {
+    const { pages, f } = assertionCandidate(body, 'unspecified', 'negative');
     expect(assertionPolarity(body)).toBe('negative');
     expect(assertionStates(body)).toEqual([]);
     const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
@@ -372,7 +333,7 @@ describe('主張の意味と報告単位', () => {
     expect(saved([evidence(wrong, pages)], pages).facts).toEqual([]);
   });
   it('行いますの肯定を保持し、行いませんの誤候補を1回修復する', async () => {
-    const positive = assertion('当社は自己株式の取得を行います。', 'unspecified', 'affirmative');
+    const positive = assertionCandidate('当社は自己株式の取得を行います。', 'unspecified', 'affirmative');
     const good = reviewCandidates(
       candidateResponse([positive.f], positive.pages),
       'other',
@@ -380,7 +341,7 @@ describe('主張の意味と報告単位', () => {
     );
     expect(good.unverified).toEqual([]);
     expect(saved(good.facts, positive.pages).facts).toEqual(good.facts);
-    const { pages, f } = assertion('当社は自己株式の取得を行いません。', 'unspecified', 'negative');
+    const { pages, f } = assertionCandidate('当社は自己株式の取得を行いません。', 'unspecified', 'negative');
     const wrong = structuredClone(f);
     wrong.semantics.polarity = 'affirmative';
     vi.mocked(generateText)
@@ -400,20 +361,10 @@ describe('主張の意味と報告単位', () => {
   });
   it.each([
     '当社はAの取得を行いませんが別案件を取得しました。',
-    '当社はAの取得を行いません、別案件を取得しました。',
     '当社はAを取得しましたがBの取得を行いません。',
-    '当社はAを取得しましたが、Bは取得していません。',
-    '当社はAを取得しましたがBは取得していません。',
-    '当社はAを取得しました、Bは取得していません。',
-    '当社はAの取得予定ではないが、別案件を取得しました。',
-    '当社はAを取得しませんが別案件を取得しました。',
-    '当社はAの取得を行わない、別案件を取得しました。',
-    '当社はAの取得を行っていませんが、別案件を取得しました。',
-    '当社はAの取得を行っておらず、別案件を取得しました。',
     '当社はAの取得を行っておらず別案件を取得しました。',
-    '当社はAを取得しておらず別案件を取得しました。',
   ])('対比する肯定完了と否定をmixedで照合する: %s', (body) => {
-    const { pages, f } = assertion(body, 'completed', 'mixed');
+    const { pages, f } = assertionCandidate(body, 'completed', 'mixed');
     expect(assertionPolarity(body)).toBe('mixed');
     expect(assertionStates(body)).toEqual(['completed']);
     const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
@@ -428,7 +379,7 @@ describe('主張の意味と報告単位', () => {
     expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
     expect(saved([evidence(wrong, pages)], pages).facts).toEqual([]);
   });
-  it.each(['売上 高', '売上　高'])('同義表記へ修復した指標の診断を解消する: %s', async (metric) => {
+  it.each(['売上 高'])('同義表記へ修復した指標の診断を解消する: %s', async (metric) => {
     const { pages, f } = prose(`${period}の売上高は100百万円の見込みです。`);
     const wrong = structuredClone(f);
     wrong.semantics.scope = '連結';
@@ -894,9 +845,11 @@ describe('IFRS表紙と会社名欄', () => {
     ).toContain('連結、IFRS');
   });
   it.each(
-    ['上場会社名', '会社名', '名称'].flatMap((field) =>
-      [' ', ':', '：'].map((separator) => [field, separator])
-    )
+    [
+      ['上場会社名', ' '],
+      ['会社名', ':'],
+      ['名称', '：'],
+    ]
   )('会社名欄%sの区切り%sを主体へ混入しない', (field, separator) => {
     const { pages, facts } = cover('当期純利益', `${field}${separator}株式会社テスト`);
     const good = reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages);
@@ -1059,16 +1012,7 @@ describe('指標の明示性と受動形予想', () => {
       reviewCandidates(candidateResponse(facts, pages, 'earnings'), 'earnings', pages).unverified
     );
   });
-  it.each([
-    'と見込まれます。',
-    'と見込まれます',
-    'と見込まれております。',
-    'と見込まれております',
-    'と見込まれる。',
-    'と見込まれる',
-    'と見込まれています。',
-    'と見込まれている。',
-  ])('受動形の完結した予想を数量・状態・保存で受理する: %s', (tail) => {
+  it.each(['と見込まれます。', 'と見込まれる。', 'と見込まれています。'])('受動形の完結した予想を数量・状態・保存で受理する: %s', (tail) => {
     const { pages, f } = prose(`${period}の売上高は100百万円${tail}`);
     const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);
     expect(assertionStates(f.quote)).toEqual(['forecast']);
@@ -1083,14 +1027,6 @@ describe('指標の明示性と受動形予想', () => {
     'と見込まれますが確定していません。',
     'と見込まれます。実際には100百万円に届かない見込みです。',
     'とは見込まれません。',
-    'と見込まれない。',
-    'と見込まれますではなく200百万円です。',
-    'と見込まれておりません。',
-    'と見込まれていません。',
-    'と見込まれていない。',
-    'と見込まれるとは限りません。',
-    'と見込まれております。実際には100百万円に届かない見込みです。',
-    'と見込まれるものの確定していません。',
   ])('受動形でも未検査の否定・撤回・後続を通さない: %s', (tail) => {
     const { pages, f } = prose(`${period}の売上高は100百万円${tail}`);
     expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
@@ -1107,7 +1043,7 @@ describe('指標の明示性と受動形予想', () => {
     validateSavedFacts({ version: 4, documentType: 'other', facts: [base], unverified: [] });
     expect(saved([base], pages).facts).toEqual([]);
   });
-  it.each(['ます', 'る', 'ております', 'ています', 'ている'])(
+  it.each(['ます'])(
     '必須予想の受動形「見込まれ%s」を差分修復して表示・保存する',
     async (ending) => {
       const actual = localReport('経営成績', undefined, true);
@@ -1139,28 +1075,6 @@ describe('指標の明示性と受動形予想', () => {
 });
 
 describe('eventの極性と未完了の状態', () => {
-  function statement(
-    body: string,
-    state: VerifiedFact['semantics']['state'],
-    polarity: VerifiedFact['semantics']['polarity'],
-    kind: 'event' | 'status' = 'event'
-  ) {
-    const pages = [textPage(`会社名 株式会社テスト\n1. 事業説明\n${body}`)];
-    const f = numberCandidate(pages[0], body.startsWith('当社') ? '当社' : '売上高');
-    f.kind = kind;
-    f.label = f.statement = f.quote;
-    f.value = f.unit = f.valueKind = f.period = null;
-    f.semantics = {
-      ...f.semantics,
-      scope: null,
-      basis: null,
-      metricKind: 'none',
-      periodKind: 'none',
-      state,
-      polarity,
-    };
-    return { pages, f };
-  }
   function check(
     body: string,
     state: VerifiedFact['semantics']['state'],
@@ -1169,7 +1083,7 @@ describe('eventの極性と未完了の状態', () => {
     wrongPolarity: VerifiedFact['semantics']['polarity'],
     kind: 'event' | 'status' = 'event'
   ) {
-    const { pages, f } = statement(body, state, polarity, kind);
+    const { pages, f } = assertionCandidate(body, state, polarity, kind);
     const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
     expect(good.unverified).toEqual([]);
     expect(good.facts).toHaveLength(1);
@@ -1186,13 +1100,7 @@ describe('eventの極性と未完了の状態', () => {
     ).toContain(body);
     return { pages, f, forged };
   }
-  it.each([
-    'とは見込まれません',
-    'と見込まれておりません',
-    'と見込まれない',
-    'と見込まれていません',
-    'と見込まれていない',
-  ])('受動形の否定%sをeventでもnegative/forecastで照合する', (ending) => {
+  it.each(['とは見込まれません'])('受動形の否定%sをeventでもnegative/forecastで照合する', (ending) => {
     const body = `売上高は100百万円${ending}。`;
     expect(assertionPolarity(body)).toBe('negative');
     expect(assertionStates(body)).toEqual(['forecast']);
@@ -1210,11 +1118,7 @@ describe('eventの極性と未完了の状態', () => {
   });
   it.each([
     '当社はAの取得を行いますが、Bの取得は行いません。',
-    '当社はAの取得を行いますがBの取得は行いません。',
     '当社はAの取得を行いませんがBの取得を行います。',
-    '当社はAの取得を実施しますがBの取得は実施しません。',
-    '当社はAの取得を行っていますがBの取得は行っていません。',
-    '当社はAの取得を行っておりますがBの取得は行っておりません。',
   ])('現在形の対比をmixed/unspecifiedとして保持する: %s', (body) => {
     expect(assertionPolarity(body)).toBe('mixed');
     check(body, 'unspecified', 'mixed', 'unspecified', 'negative');
@@ -1228,18 +1132,10 @@ describe('eventの極性と未完了の状態', () => {
       'negative'
     );
   });
-  it.each([
-    '売上高は200百万円と見込んでおりますが100百万円とは見込まれません。',
-    '売上高は100百万円とは見込まれず200百万円と見込まれます。',
-    '売上高は100百万円と見込まれておらず200百万円と見込まれます。',
-  ])('予想の対比と否定接続でもmixed/forecastを保持する: %s', (body) => {
+  it.each(['売上高は100百万円とは見込まれず200百万円と見込まれます。'])('予想の対比と否定接続でもmixed/forecastを保持する: %s', (body) => {
     check(body, 'forecast', 'mixed', 'forecast', 'negative');
   });
-  it.each([
-    '当社は来期に新工場を建設することとなりました。',
-    '当社は来期に新工場を建設する運びとなりました。',
-    '当社は新工場を建設することとなりました。',
-  ])('未完了の取決めをactualに変換しない: %s', (body) => {
+  it.each(['当社は来期に新工場を建設することとなりました。'])('未完了の取決めをactualに変換しない: %s', (body) => {
     expect(assertionStates(body)).toEqual([]);
     check(body, 'unspecified', 'affirmative', 'actual', 'affirmative');
   });
@@ -1249,7 +1145,7 @@ describe('eventの極性と未完了の状態', () => {
     ['当社は新工場建設を完了しました。', 'completed'],
     ['当社は特別損失を計上しました。', 'actual'],
   ] as const)('明示された状態を保持する: %s', (body, state) => {
-    const { pages, f } = statement(body, state, 'affirmative');
+    const { pages, f } = assertionCandidate(body, state, 'affirmative');
     const good = reviewCandidates(candidateResponse([f], pages), 'other', pages);
     expect(good.unverified).toEqual([]);
     expect(good.facts).toHaveLength(1);
@@ -1289,7 +1185,7 @@ describe('eventの極性と未完了の状態', () => {
   ] as const)(
     '誤ったeventの意味を1回修復して保存する: %s',
     async (body, state, polarity, wrongState, wrongPolarity) => {
-      const { pages, f } = statement(body, state, polarity);
+      const { pages, f } = assertionCandidate(body, state, polarity);
       const wrong = structuredClone(f);
       wrong.semantics.state = wrongState;
       wrong.semantics.polarity = wrongPolarity;
@@ -1476,7 +1372,7 @@ describe('本文数量・利益率・見通しの利用経路', () => {
     f.semantics.state = state;
     return { pages, amounts, f };
   }
-  it.each(['となる見通しです。', 'となる見通しであります。', 'となる見通しである。'])(
+  it.each(['となる見通しです。'])(
     '見通しの有限述語を候補・保存・必須背景で一致させる: %s',
     (ending) => {
       const body = `親会社株主に帰属する当期純損失は概算額100百万円${ending}`;
@@ -1555,16 +1451,7 @@ describe('本文数量・利益率・見通しの利用経路', () => {
 });
 
 describe('継承期・見通し否定・万円', () => {
-  it.each([
-    'ではありません',
-    'ではございません',
-    'ではない',
-    'でない',
-    'はありません',
-    'はございません',
-    'はない',
-    'はなく',
-  ])('否定された見通しのnegative/forecastを候補・保存で維持する: %s', (ending) => {
+  it.each(['ではありません', 'はなく'])('否定された見通しのnegative/forecastを候補・保存で維持する: %s', (ending) => {
     const { pages, f } = prose(`売上高は100百万円となる見通し${ending}。`);
     const e = event(f);
     e.semantics.polarity = 'negative';

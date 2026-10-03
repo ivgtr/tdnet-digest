@@ -28,6 +28,7 @@ import {
   isFinancialUnit,
   reportingUnitTitle,
   isReportingCoverUnit,
+  isReportingCoverField,
   headingLevel,
   verifyScopeEvidence,
   applicableDeclarations,
@@ -60,13 +61,19 @@ function provedMappedNumber(
     return false;
   }
 }
-function reportedDividends(pages: ExtractedPage[], selected = pages) {
+function reportedDividends(
+  pages: ExtractedPage[],
+  selected = pages,
+  context = buildDocumentContext(pages)
+) {
   const spans = pages.flatMap((p) => p.spans);
   const mappings = buildTableMappings(pages);
   return selected.flatMap((page) => {
     const text = (ids: string[]) => ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
     return mappings
-      .filter((h) => page.quantities.some((q) => q.id === h.valueId))
+      .filter(
+        (h) => page.quantities.some((q) => q.id === h.valueId) && isIssuerSource(h.valueId, context)
+      )
       .flatMap((hint) => {
         if (!/配当の状況/.test(compact(text(hint.contextIds)))) return [];
         const unitText = compact(text(hint.unitIds));
@@ -161,6 +168,50 @@ function isIssuerSource(anchor: string, context: DocumentContext): boolean {
   ];
   return owners.length === 1 && owners[0] === documentSubject(context);
 }
+function factAnchor(fact: VerifiedFact): string {
+  return fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.evidence.blockId;
+}
+function isIssuerFact(fact: VerifiedFact, context: DocumentContext): boolean {
+  const issuer = documentSubject(context);
+  return (
+    !!issuer &&
+    normalized(fact.semantics.subject ?? '') === issuer &&
+    isIssuerSource(factAnchor(fact), context)
+  );
+}
+function issuerBlocks(pages: ExtractedPage[], context: DocumentContext) {
+  return pages.flatMap((p) => p.blocks).filter((b) => isIssuerSource(b.id, context));
+}
+/** One source set owns an issuer assertion's trigger, fulfillment and repair. */
+function maAssertionSources(pages: ExtractedPage[], context: DocumentContext) {
+  const blocks = issuerBlocks(pages, context);
+  return {
+    decision: blocks.filter(
+      (b) =>
+        /株式.*取得|子会社化/.test(normalized(b.text)) &&
+        /決議(?:いた)?しました/.test(normalized(b.text))
+    ),
+    undisclosed: blocks.filter((b) => /取得価額.*非開示/.test(normalized(b.text))),
+    schedule: blocks.filter(
+      (b) =>
+        /譲渡実行日/.test(normalized(b.text)) &&
+        datedStates(b.text).some((d) => d.state === 'planned')
+    ),
+    agreement: blocks.filter((b) => /基本合意書/.test(normalized(b.text))),
+  };
+}
+function linkedKpiSources(pages: ExtractedPage[], context: DocumentContext, noteId: string) {
+  return context.tableMappings
+    .filter((h) => {
+      const binding = bindingFor(context, h.valueId);
+      return (
+        pages.some((p) => p.quantities.some((q) => q.id === h.valueId)) &&
+        isIssuerSource(h.valueId, context) &&
+        binding.qualifierIds.includes(noteId)
+      );
+    })
+    .map((h) => h.valueId);
+}
 type ReportingAttributes = Pick<VerifiedFact['semantics'], 'subject' | 'scope' | 'basis'>;
 interface ReportingTarget {
   period: string;
@@ -202,8 +253,28 @@ function sameReportingAttributes(
 function earningsTargets(pages: ExtractedPage[], context: DocumentContext) {
   const report = earningsReportingPeriod(pages);
   const cover = context.bindings.find((b) => b.page === 1);
+  // Read only the cover's contiguous explicit fields, before values or sections.
+  // Later local attributes cannot redefine its required reporting unit.
+  const coverFields = context.bindings.filter(
+    (b) =>
+      b.anchorId === b.blockId &&
+      isReportingCoverField(b, pages) &&
+      isIssuerSource(b.anchorId, context)
+  );
+  const coverSource = coverFields[coverFields.length - 1];
+  const coverAttributes = cover ? reportingAttributesAt(cover, true) : null;
+  const fields = coverSource ? reportingAttributesAt(coverSource) : null;
   const actual: ReportingTarget | null =
-    report && cover ? { ...report, attributes: reportingAttributesAt(cover, true) } : null;
+    report && cover
+      ? {
+          ...report,
+          attributes: coverAttributes && {
+            subject: coverAttributes.subject ?? fields?.subject ?? null,
+            scope: coverAttributes.scope ?? fields?.scope ?? null,
+            basis: coverAttributes.basis ?? fields?.basis ?? null,
+          },
+        }
+      : null;
   const declaration = declaredForecastUnit(pages, context);
   let forecast: ReportingTarget | null = null;
   if (declaration) {
@@ -339,10 +410,17 @@ function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);
   const text = (ids: string[]) => ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
   return tableContinuations(pages).flatMap((link) => {
-    const latest = link.periodIds
-      .map((id) => normalized(text([id])))
-      .sort()
-      .slice(-1)[0];
+    const periods = link.periodIds.map((id) => normalized(text([id])));
+    const dated = periods.map((period) => {
+      const match = period.match(/^(20\d{2})年(\d{1,2})月期$/);
+      return match && +match[2] >= 1 && +match[2] <= 12
+        ? { period, key: +match[1] * 12 + +match[2] }
+        : null;
+    });
+    if (dated.some((p) => p === null)) return [];
+    dated.sort((a, b) => a!.key - b!.key);
+    const latest = dated[dated.length - 1]?.period;
+    if (!latest) return [];
     const heading = pages.flatMap((p) => p.blocks).find((b) => link.scopeIds.includes(b.id));
     if (!heading) return [];
     return context.tableMappings.flatMap((hint) => {
@@ -382,7 +460,8 @@ export function verifyCoverage(
   // 原文の整合性・根拠関係は全ページで検証し、必須判定はモデルの本文入力に揃える。
   const pages = allPages.filter((page) => page.selection === 'selected');
   const missing: string[] = [];
-  const source = compact(pages.map((p) => p.text).join('\n'));
+  const ownedBlocks = issuerBlocks(pages, context);
+  const source = compact(ownedBlocks.map((b) => b.text).join('\n'));
   if (type === 'earnings') {
     const first = pages.find((p) => p.pageNumber === 1);
     const report = earningsReportingPeriod(pages);
@@ -501,7 +580,7 @@ export function verifyCoverage(
     )
       missing.push('COVERAGE:通期予想の1株当たり利益');
     if (/配当の状況/.test(source)) {
-      const reported = reportedDividends(allPages, pages);
+      const reported = reportedDividends(allPages, pages, context);
       const relevant = reported.filter((d) => d.period === period || d.period === forecast);
       const forecasts = relevant.filter((d) => d.state === 'forecast');
       const targets = forecasts.length
@@ -527,14 +606,12 @@ export function verifyCoverage(
         )
           missing.push(`COVERAGE:配当の重要事実 対象期=${target.period} 区分=${target.state}`);
     }
-    const backgroundBlocks = pages
-      .flatMap((p) => p.blocks)
-      .filter(
-        (b) =>
-          /純損失/.test(b.text) &&
-          /概算額/.test(b.text) &&
-          assertionStates(b.text).includes('forecast')
-      );
+    const backgroundBlocks = ownedBlocks.filter(
+      (b) =>
+        /純損失/.test(b.text) &&
+        /概算額/.test(b.text) &&
+        assertionStates(b.text).includes('forecast')
+    );
     const backgroundAttributes = attributesFor(backgroundBlocks);
     if (
       backgroundBlocks.length > 0 &&
@@ -556,9 +633,7 @@ export function verifyCoverage(
       missing.push(
         `COVERAGE:損失予想の背景・限定。本文事実にも対象会社と報告範囲=${backgroundAttributes.scope}を保持し、scopeIdsへ決算短信の範囲見出し ${backgroundAttributes.scopeId} と会社名見出しを参照してください`
       );
-    const plannedLossBlocks = pages
-      .flatMap((p) => p.blocks)
-      .filter((b) => isLossRecordingPlan(b.text));
+    const plannedLossBlocks = ownedBlocks.filter((b) => isLossRecordingPlan(b.text));
     const plannedAttributes = attributesFor(plannedLossBlocks);
     if (
       plannedLossBlocks.length > 0 &&
@@ -638,36 +713,22 @@ export function verifyCoverage(
               f.semantics.metricKind === metric &&
               f.semantics.qualifiers.includes('上限') &&
               f.semantics.state === 'planned' &&
-              normalized(f.semantics.subject ?? '') === documentSubject(context) &&
-              isIssuerSource(
-                f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId,
-                context
-              )
+              isIssuerFact(f, context)
           )
         )
           missing.push(`COVERAGE:自己株取得の上限・予定 ${metric}`);
     if (
-      /可能性/.test(source) &&
+      ownedBlocks.some((b) => /取得.*可能性/.test(normalized(b.text))) &&
       !facts.some(
         (f) =>
-          normalized(f.semantics.subject ?? '') === documentSubject(context) &&
-          isIssuerSource(
-            f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId,
-            context
-          ) &&
+          isIssuerFact(f, context) &&
           f.semantics.conditions.some((c) => /取得.*可能性/.test(compact(c)))
       )
     )
       missing.push('COVERAGE:取得の条件');
   }
   if (type === 'businessUpdate') {
-    const issuerText = compact(
-      pages
-        .flatMap((p) => p.blocks)
-        .filter((b) => isIssuerSource(b.id, context))
-        .map((b) => b.text)
-        .join('\n')
-    );
+    const issuerText = source;
     const month = issuerText.match(/(20\d{2}年\d{1,2}月)(?:度)?(?:の|実績|月次)/)?.[1];
     if (
       month &&
@@ -693,7 +754,9 @@ export function verifyCoverage(
             f.kind === 'number' &&
             compact(f.label) === link.metric &&
             f.semantics.metricKind !== 'rate' &&
-            compact(f.period ?? '') === month
+            compact(f.period ?? '') === month &&
+            isIssuerFact(f, context) &&
+            linkedKpiSources(pages, context, link.noteId).includes(factAnchor(f))
         )
       )
         missing.push('COVERAGE:報告対象月の主要KPI');
@@ -712,32 +775,35 @@ export function verifyCoverage(
       missing.push('COVERAGE:速報値の限定');
   }
   if (type === 'ma' && /株式.*取得|子会社化/.test(source)) {
+    const asserted = maAssertionSources(pages, context);
     if (
-      /決議いたしました|決議しました/.test(source) &&
+      asserted.decision.length > 0 &&
       !facts.some(
         (f) =>
           f.kind === 'event' &&
           f.semantics.state === 'decided' &&
-          /株式.*取得|子会社化/.test(compact(f.quote))
+          isIssuerFact(f, context) &&
+          asserted.decision.some((b) => b.id === factAnchor(f))
       )
     )
       missing.push('COVERAGE:取得の決議');
     if (
-      /取得価額.*非開示/.test(source) &&
-      !facts.some((f) => f.kind === 'status' && /取得価額.*非開示/.test(compact(f.quote)))
+      asserted.undisclosed.length > 0 &&
+      !facts.some(
+        (f) =>
+          f.kind === 'status' &&
+          isIssuerFact(f, context) &&
+          asserted.undisclosed.some((b) => b.id === factAnchor(f))
+      )
     )
       missing.push('COVERAGE:取得価額の非開示');
     if (
-      pages.some((p) =>
-        p.blocks.some(
-          (b) =>
-            /譲渡実行日/.test(compact(b.text)) &&
-            datedStates(b.text).some((d) => d.state === 'planned')
-        )
-      ) &&
+      asserted.schedule.length > 0 &&
       !facts.some(
         (f) =>
-          f.dateRoles?.some((d) => d.state === 'planned') && /譲渡実行日/.test(compact(f.quote))
+          f.dateRoles?.some((d) => d.state === 'planned') &&
+          isIssuerFact(f, context) &&
+          asserted.schedule.some((b) => b.id === factAnchor(f))
       )
     )
       missing.push('COVERAGE:譲渡の実行予定・日付役割');
@@ -769,8 +835,13 @@ export function verifyCoverage(
   }
   if (
     type === 'ma' &&
-    /基本合意書/.test(source) &&
-    !facts.some((f) => f.kind === 'event' && /基本合意書/.test(f.quote))
+    maAssertionSources(pages, context).agreement.length > 0 &&
+    !facts.some(
+      (f) =>
+        f.kind === 'event' &&
+        isIssuerFact(f, context) &&
+        maAssertionSources(pages, context).agreement.some((b) => b.id === factAnchor(f))
+    )
   )
     missing.push('COVERAGE:提携の決定事項');
   if (missing.length) throw new Error(missing.join(' / '));
@@ -831,6 +902,27 @@ export function coverageReport(
     context: normalized(h.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
   }));
   const sourceIds = (requirement: string): string[] => {
+    if (type === 'ma') {
+      const sources = maAssertionSources(pages, context);
+      const blocks = /取得の決議/.test(requirement)
+        ? sources.decision
+        : /取得価額の非開示/.test(requirement)
+          ? sources.undisclosed
+          : /譲渡の実行/.test(requirement)
+            ? sources.schedule
+            : /提携の決定/.test(requirement)
+              ? sources.agreement
+              : null;
+      if (blocks) return blocks.map((b) => b.id);
+    }
+    if (type === 'businessUpdate' && /主要KPI/.test(requirement))
+      return [
+        ...new Set(
+          noteLinks(pages)
+            .filter((l) => isIssuerSource(l.headingId, context))
+            .flatMap((l) => linkedKpiSources(pages, context, l.noteId))
+        ),
+      ];
     const metric = requirement.match(
       /revenue|operatingProfit|netProfit|1株当たり利益|営業利益率|配当|KPI/
     )?.[0];
@@ -878,7 +970,7 @@ export function coverageReport(
       const targetPeriod =
         target?.period ?? requirement.match(/対象期=(20\d{2}年\d{1,2}月期)/)?.[1];
       if (type === 'earnings' && metric === '配当')
-        return reportedDividends(pages)
+        return reportedDividends(pages, pages, context)
           .filter(
             (d) => (!targetPeriod || d.period === targetPeriod) && (!kind || d.state === kind)
           )
@@ -960,7 +1052,10 @@ export function coverageReport(
           .filter(
             (b) =>
               predicate.test(normalized(b.text)) &&
-              (!['shareRepurchase', 'businessUpdate'].includes(type) ||
+              (!(
+                ['shareRepurchase', 'businessUpdate'].includes(type) ||
+                /損失の計上予定|損失予想の背景/.test(requirement)
+              ) ||
                 isIssuerSource(b.id, context)) &&
               (!/損失の計上予定/.test(requirement) || isLossRecordingPlan(b.text)) &&
               (!/損失予想の背景/.test(requirement) ||

@@ -32,18 +32,7 @@ function parse(index: number, facts: unknown[], coverage = false) {
 const fact = (index: number, n = 0) =>
   structuredClone(expectations[index].facts[n]) as VerifiedFact;
 describe('実PDFの意味を保った利用経路', () => {
-  it.each([0, 1, 2, 3, 4, 5])('資料 %i の原文・数量・限定を確定し保存後も再検証する', (index) => {
-    const summary = parse(index, expectations[index].facts, true);
-    expect(summary.unverified).toEqual([]);
-    expect(parse(index, summary.facts, true)).toEqual(summary);
-    for (const f of summary.facts.filter((f) => f.kind === 'number')) {
-      expect(
-        f.quantity?.sourceIds.every((id) =>
-          sources[index].some((p) => p.sourceItems.some((s) => s.id === id))
-        )
-      ).toBe(true);
-    }
-  });
+  // 6資料の候補→確定→保存と原数量の全参照は fact-candidates.test.ts に集約する。
   it('BlueMemeの実績・損失予想・率・EPS・概算・翌期計上予定を表示する', () => {
     const text = renderFacts(parse(0, expectations[0].facts, true));
     for (const term of [

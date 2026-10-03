@@ -15,6 +15,15 @@ const raw = (facts: VerifiedFact[], version = 4) =>
 const parse = (candidate: VerifiedFact, source = [page]) =>
   parseFactSummary(raw([candidate]), 'other', source, false);
 describe('v4の原文と意味の照合', () => {
+  it('本文の桁区切りを候補・生成・保存で保持する', async () => {
+    const source = [textPage('2027年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n売上高は1,000百万円です。\n営業利益は100百万円です。\n当期純利益は50百万円です。')];
+    const fs = [['売上高',1000],['営業利益',100],['当期純利益',50]].map(([m,v])=>numberCandidate(source[0],m as string,v as number,'2027年3月期'));
+    vi.mocked(generateText).mockReset().mockResolvedValueOnce(candidateResponse(fs,source,'earnings'));
+    const r = await generateVerifiedFactSummary({provider:'openai',model:'fixture',apiKey:'fixture'},'earnings','source',source);
+    expect(r.repairAttempted).toBe(false);
+    expect(r.facts.facts[0].quantity).toMatchObject({raw:'1,000',decimal:'1000'});
+    expect(parseFactSummary(JSON.stringify(r.facts),'earnings',source)).toEqual(r.facts);
+  });
   it('原数量・共通属性を保持し、保存した事実を再検証する', () => {
     const result = parse(fact);
     expect(result.unverified).toEqual([]);

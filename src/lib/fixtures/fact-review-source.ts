@@ -58,6 +58,21 @@ export function event(f: VerifiedFact) {
   return e;
 }
 
+export function assertionCandidate(
+  body: string,
+  state: VerifiedFact['semantics']['state'],
+  polarity: VerifiedFact['semantics']['polarity'],
+  kind: 'event' | 'status' = 'event'
+) {
+  const pages = [textPage(`会社名 株式会社テスト\n1. 事業説明\n${body}`)];
+  const f = event(numberCandidate(pages[0], body.startsWith('当社') ? '当社' : '売上高'));
+  f.kind = kind;
+  f.semantics.scope = f.semantics.basis = null;
+  f.semantics.state = state;
+  f.semantics.polarity = polarity;
+  return { pages, f };
+}
+
 export function cells(rows: [string, number, number, number][], n: number) {
   return layoutPage(
     rows.map(([text, x, y, width], i) => ({ id: `x${i}`, text, x, y, width, height: 10 })),

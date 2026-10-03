@@ -177,47 +177,28 @@ async function resultId(
 }
 
 async function handleSummarize(request: SummarizeRequest, runId: string) {
-  const settings = await getSettings();
-  const documentType = detectDocumentType(request.title);
-  const mode = request.forceExtractionMode ?? settings.extractionMode;
-  if (!['full', 'smart'].includes(mode)) throw new Error('抽出モードが不正です');
-  const data = await fetchPDF(request.pdfUrl);
-  await setupOffscreenDocument();
-  const extraction = await extractTextFromPDF(data, documentType, mode);
-  const config = configOf(settings);
-  const fingerprint = buildAnalysisFingerprint({
-    provider: settings.provider,
-    model: settings.model,
-    extractionMode: mode,
-  });
-  const documentHash = await hashPdf(data);
-  const inputBytes = new TextEncoder().encode(
-    serializeCandidateSource(extraction.pages, undefined, documentType)
-  );
+  const started = performance.now();
   const trace: SummaryTrace = {
     version: 1,
     runId,
     resultId: null,
     startedAt: new Date().toISOString(),
-    pdfUrl: fullUrl(request.pdfUrl),
-    documentType,
-    provider: settings.provider,
-    model: settings.model,
-    extractionMode: mode,
-    fingerprint,
+    pdfUrl: request.pdfUrl,
+    documentType: detectDocumentType(request.title),
+    provider: null,
+    model: null,
+    extractionMode: null,
+    fingerprint: null,
     buildDigest: summaryBuildDigest(),
-    documentHash,
-    inputHash: await hashPdf(inputBytes.buffer),
-    selectedPages: extraction.pages
-      .filter((p) => p.selection === 'selected')
-      .map((p) => p.pageNumber),
+    documentHash: null,
+    inputHash: null,
+    selectedPages: [],
     attempts: [],
     usage: [],
     elapsedMs: 0,
     outcome: 'running',
     error: null,
   };
-  const started = performance.now();
   const saveTrace = async () => {
     trace.elapsedMs = Math.round(performance.now() - started);
     try {
@@ -235,11 +216,44 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
       );
     }
   };
-  await saveTrace();
-  let facts: FactSummary | null = null;
-  let id: string | null = null;
-  let generationError: unknown = null;
+
   try {
+    trace.pdfUrl = fullUrl(request.pdfUrl);
+    await saveTrace();
+    const settings = await getSettings();
+    const documentType = detectDocumentType(request.title);
+    const mode = request.forceExtractionMode ?? settings.extractionMode;
+    if (!['full', 'smart'].includes(mode)) throw new Error('抽出モードが不正です');
+    Object.assign(trace, {
+      provider: settings.provider,
+      model: settings.model,
+      extractionMode: mode,
+    });
+    const data = await fetchPDF(request.pdfUrl);
+    await setupOffscreenDocument();
+    const extraction = await extractTextFromPDF(data, documentType, mode);
+    const config = configOf(settings);
+    const fingerprint = buildAnalysisFingerprint({
+      provider: settings.provider,
+      model: settings.model,
+      extractionMode: mode,
+    });
+    const documentHash = await hashPdf(data);
+    const inputBytes = new TextEncoder().encode(
+      serializeCandidateSource(extraction.pages, undefined, documentType)
+    );
+
+    Object.assign(trace, {
+      fingerprint,
+      documentHash,
+      inputHash: await hashPdf(inputBytes.buffer),
+      selectedPages: extraction.pages
+        .filter((p) => p.selection === 'selected')
+        .map((p) => p.pageNumber),
+    });
+    await saveTrace();
+    let facts: FactSummary;
+    let id: string;
     const generated = await generateVerifiedFactSummary(
       { ...config, signal: AbortSignal.timeout(300_000), onUsage: (u) => trace.usage.push(u) },
       documentType,
@@ -254,25 +268,24 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
     trace.resultId = id;
     trace.outcome = generated.repairAttempted ? 'repairSuccess' : 'firstSuccess';
+
+    await saveTrace();
+    const metadata: SummaryMetadata = {
+      ...extraction.metadata,
+      documentHash,
+      analysisSchemaVersion: FACT_SCHEMA_VERSION,
+      provider: settings.provider,
+      model: settings.model,
+      summaryMode: 'one-pass',
+      analysisFingerprint: fingerprint,
+    };
+    return { summary: renderFacts(facts), facts, resultId: id, metadata };
   } catch (error) {
     trace.outcome = 'failure';
     trace.error = error instanceof Error ? error.message : String(error);
-    generationError = error;
+    await saveTrace();
+    throw error;
   }
-  trace.elapsedMs = Math.round(performance.now() - started);
-  await saveTrace();
-  if (generationError) throw generationError;
-  if (!facts || !id) throw new Error('要約結果を確認できません');
-  const metadata: SummaryMetadata = {
-    ...extraction.metadata,
-    documentHash,
-    analysisSchemaVersion: FACT_SCHEMA_VERSION,
-    provider: settings.provider,
-    model: settings.model,
-    summaryMode: 'one-pass',
-    analysisFingerprint: fingerprint,
-  };
-  return { summary: renderFacts(facts), facts, resultId: id, metadata };
 }
 
 async function handleFollowup(

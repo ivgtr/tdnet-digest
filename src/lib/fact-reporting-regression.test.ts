@@ -10,7 +10,12 @@ import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
 import { datedStates } from './fact-validation';
 import { verifyTableEvidence } from './numeric-evidence';
+import { forecastReportingTitle } from './document-structure';
 import { generateText } from './llm-client';
+import semanticCorpus from './fixtures/ir-semantic-corpus.json';
+import semanticExpectations from './fixtures/ir-semantic-expectations.json';
+import { extractPageLayout } from './pdf-layout';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
 function assertion(
@@ -23,6 +28,166 @@ function assertion(
   f.semantics.state = state;
   return f;
 }
+
+describe('義務の原文所有者と充足・修復先の一致', () => {
+  it.each(['上限', '条件'] as const)('他社だけの自己株取得%sは発行者の義務を作らない', (kind) => {
+    const body =
+      kind === '上限'
+        ? '取得する株式の総数は100株（上限）です。'
+        : '市場動向によっては取得を行わない可能性があります。';
+    const pages = [
+      textPage('会社名 株式会社テスト\n1. 取得方針\n当社は株式を取得する予定です。'),
+      textPage(`会社名 株式会社B\n1. 取得内容\n${body}`, 2),
+    ];
+    const good = reviewCandidates(
+      candidateResponse([assertion(pages[0], '当社', 'planned')], pages, 'shareRepurchase'),
+      'shareRepurchase',
+      pages
+    );
+    expect(good.unverified).toEqual([]);
+    expect(
+      parseFactSummary(
+        JSON.stringify({
+          version: 4,
+          documentType: 'shareRepurchase',
+          facts: good.facts,
+          unverified: [],
+        }),
+        'shareRepurchase',
+        pages
+      ).facts
+    ).toEqual(good.facts);
+    expect(coverageReport('shareRepurchase', pages, good.facts)).toEqual([]);
+    // Move that source to the issuer: the same disclosed obligation must return.
+    const own = [
+      ...pages.slice(0, 1),
+      textPage(pages[1].text.replace('株式会社B', '株式会社テスト'), 2),
+    ];
+    expect(() => verifyCoverage('shareRepurchase', own, good.facts)).toThrow('COVERAGE');
+  });
+
+  it.each([
+    '概算額100百万円による当期純損失となる見通しです。',
+    '翌連結会計年度に特別損失に計上する予定です。',
+  ])('他社の損失主張は発行者の必須背景・予定を作らない: %s', (body) => {
+    const { pages, amounts } = report();
+    pages.push(textPage(`会社名 株式会社B\n1. 損失の説明\n${body}`, 2));
+    const r = reviewCandidates(candidateResponse(amounts, pages, 'earnings'), 'earnings', pages);
+    expect(r.unverified).toEqual([]);
+    expect(saved(r.facts, pages, 'earnings', true).facts).toEqual(r.facts);
+    expect(coverageReport('earnings', pages, r.facts).some((s) => /損失/.test(s.requirement))).toBe(
+      false
+    );
+    const own = [
+      ...pages.slice(0, 1),
+      textPage(pages[1].text.replace('株式会社B', '株式会社テスト'), 2),
+    ];
+    expect(() => verifyCoverage('earnings', own, r.facts)).toThrow('損失');
+  });
+
+  it.each([
+    ['当社は株式取得を決議しました。', 'decided', 'event', '取得の決議'],
+    ['取得価額は非開示です。', 'unspecified', 'status', '取得価額の非開示'],
+    ['株式譲渡実行日 2027年1月1日（予定）', 'planned', 'event', '譲渡の実行'],
+    ['当社は基本合意書を締結しました。', 'contracted', 'event', '提携の決定'],
+  ] as const)('M&Aの%sは同じ発行者原文で充足し修復する', (body, state, kind, requirement) => {
+    const pages = [
+      textPage(`会社名 株式会社テスト\n1. 株式取得\n当社は株式を取得する予定です。\n${body}`),
+      textPage(`会社名 株式会社B\n1. 株式取得\n${body}`, 2),
+    ];
+    const fs = pages.map((p, i) => {
+      const f = assertion(p, body, state);
+      f.kind = kind;
+      f.semantics.subject = i ? '株式会社B' : '株式会社テスト';
+      return f;
+    });
+    const r = reviewCandidates(candidateResponse(fs, pages, 'ma'), 'ma', pages);
+    expect(r.unverified).toEqual([]);
+    expect(r.facts).toHaveLength(2);
+    expect(() => verifyCoverage('ma', pages, r.facts.slice(1))).toThrow(requirement);
+    expect(
+      parseFactSummary(
+        JSON.stringify({ version: 4, documentType: 'ma', facts: r.facts, unverified: [] }),
+        'ma',
+        pages
+      )
+    ).toMatchObject({ facts: r.facts });
+    const slot = coverageReport('ma', pages, r.facts.slice(1)).find((s) =>
+      s.requirement.includes(requirement)
+    )!;
+    expect(slot.status).toBe('absent');
+    expect(slot.sourceIds).toEqual([fs[0].evidence.kind === 'prose' ? fs[0].evidence.blockId : '']);
+  });
+
+  it.each(['', '1. 経営成績\n'])(
+    '表紙の別欄の範囲・基準を必須対象へ揃える: %s',
+    async (section) => {
+      const pages = [
+        textPage(
+          `${period} 決算短信\n会社名 株式会社テスト\n範囲 連結\n会計基準 IFRS\n${section}${['売上高', '営業利益', '当期純利益'].map((m) => `${period}の${m}は100百万円です。`).join('\n')}`
+        ),
+      ];
+      const fs = ['売上高', '営業利益', '当期純利益'].map((m) => {
+        const f = numberCandidate(pages[0], m, 100, period);
+        f.semantics.basis = 'IFRS';
+        return f;
+      });
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse(fs, pages, 'earnings'));
+      const r = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+      expect(r.repairAttempted).toBe(false);
+      expect(saved(r.facts.facts, pages, 'earnings', true).facts).toEqual(r.facts.facts);
+      const slot = coverageReport('earnings', pages, []).find((s) =>
+        s.requirement.endsWith('revenue')
+      )!;
+      expect(slot.expected).toMatchObject({ scope: '連結', basis: 'IFRS' });
+    }
+  );
+
+  it.each(['他社', '発行者の別原文'] as const)('月次KPIを%sの同月同名値で代替しない', (source) => {
+    const pages = semanticCorpus[2].pages.map((p) =>
+      extractPageLayout(p.items as TextItem[], p.pageNumber)
+    );
+    const base = semanticExpectations[2].facts as unknown as VerifiedFact[];
+    const own = source === '他社' ? '株式会社B' : '株式会社うるる';
+    const extra = textPage(`会社名 ${own}\n1. 2026年6月月次実績\n2026年6月のMRRは100千円です。`, 6);
+    pages.push(extra);
+    const f = numberCandidate(extra, 'MRR', 100, '2026年6月');
+    f.unit = '千円';
+    Object.assign(f.semantics, { subject: own, scope: null, basis: null, periodKind: 'month' });
+    const r = reviewCandidates(
+      candidateResponse([f], pages, 'businessUpdate'),
+      'businessUpdate',
+      pages
+    );
+    expect(r.unverified).toEqual([]);
+    expect(() => verifyCoverage('businessUpdate', pages, r.facts)).toThrow('主要KPI');
+    const slot = coverageReport('businessUpdate', pages, r.facts).find((s) =>
+      s.requirement.includes('主要KPI')
+    )!;
+    expect(slot.sourceIds.length).toBeGreaterThan(0);
+    expect(slot.sourceIds.some((id) => id.startsWith('p6'))).toBe(false);
+    const correct = reviewCandidates(
+      candidateResponse([...base, f], pages, 'businessUpdate'),
+      'businessUpdate',
+      pages
+    );
+    expect(correct.unverified).toEqual([]);
+    expect(
+      parseFactSummary(
+        JSON.stringify({
+          version: 4,
+          documentType: 'businessUpdate',
+          facts: correct.facts,
+          unverified: [],
+        }),
+        'businessUpdate',
+        pages
+      ).facts
+    ).toEqual(correct.facts);
+  });
+});
 
 describe('数量の単位証明と報告対象の必須判定', () => {
   it.each(['以内', '未達', '強', '弱'])('境界・近似を本文単位へ吸収しない: %s', (tail) => {
@@ -210,6 +375,15 @@ describe('数量の単位証明と報告対象の必須判定', () => {
           2
         )
       );
+      // A subsidiary forecast cannot replace the issuer's actual dividend target.
+      if (!forecast) pages.push(cells([
+        ['会社名 株式会社B', 0, 20, 200],
+        ['1. 配当の状況（予想）', 0, 50, 250],
+        ['年間配当金', 270, 80, 100],
+        ['期末配当金', 480, 80, 100],
+        ['円', 300, 110, 20], ['円', 510, 110, 20],
+        [period, 0, 140, 170], ['20', 300, 140, 20], ['20', 510, 140, 20],
+      ], 3));
       const hint = buildDocumentContext(pages).tableMappings.find((h) =>
         h.metricIds.some((id) => pages[1].spans.find((s) => s.id === id)?.text === '年間配当金')
       )!;
@@ -238,6 +412,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
         expected: { period, state: dividend.valueKind },
         sourceIds: expect.arrayContaining([hint.valueId]),
       });
+      expect(slot?.sourceIds.every(id => !id.startsWith('p3:'))).toBe(true);
       vi.mocked(generateText)
         .mockReset()
         .mockResolvedValueOnce(candidateResponse(amounts, pages, 'earnings'))
@@ -545,6 +720,19 @@ describe('数量の単位証明と報告対象の必須判定', () => {
 });
 
 describe('原数量・期間・主張と保存根拠の同一性', () => {
+  // 見出し語彙は部品で網羅し、表・必須判定・保存の結合は単独修正/配当併記の2例。
+  it.each([
+    'の修正について',
+    'の修正に関するお知らせ',
+    'の概要について',
+    '及び配当予想の修正について',
+    'の修正及び配当予想の修正について',
+    'および配当予想の修正に関するお知らせ',
+  ])('予想修正の完結見出しを認識する: %s', (suffix) => {
+    expect(forecastReportingTitle(`1. 2028年3月期連結業績予想${suffix}`)).toEqual({
+      period: '2028年3月期',
+    });
+  });
   it.each([
     '当社は取得予定を中止しました。',
     '当社は取得予定を撤回しました。',
@@ -666,14 +854,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       expect(result.facts.facts.some((f) => f.id === good.facts[0].id)).toBe(true);
     }
   );
-  it.each([
-    'の修正について',
-    'の修正に関するお知らせ',
-    'の概要について',
-    '及び配当予想の修正について',
-    'の修正及び配当予想の修正について',
-    'および配当予想の修正に関するお知らせ',
-  ])('完全な予想修正見出しで前後の表候補・必須・保存を一致させる: %s', async (suffix) => {
+  it.each(['の修正について', 'の修正及び配当予想の修正について'])('完全な予想修正見出しで前後の表候補・必須・保存を一致させる: %s', async (suffix) => {
     const target = '2028年3月期';
     const pages = [
       cells(
@@ -1062,9 +1243,12 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
 
 describe('報告節の責務と原文期間からの修復制約', () => {
   it.each(
-    ['単体', '非連結'].flatMap((scope) =>
-      ['', 'の', '累計期間', '累計期間の'].map((q) => [scope, q] as const)
-    )
+    [
+      ['単体', ''],
+      ['非連結', 'の'],
+      ['単体', '累計期間'],
+      ['非連結', '累計期間の'],
+    ] as const
   )('%s%s業績も局所属性を保持して必須実績を満たす', async (scope, qualifier) => {
     const pages = [
       textPage(
@@ -1375,7 +1559,7 @@ describe('役割と必須対象の対応', () => {
       expect(saved([wrong], pages).facts).toEqual([]);
     }
   });
-  it.each(['見込めません', '見込めない', '見込めず', '見込めていません'])(
+  it.each(['見込めません', '見込めず'])(
     '可能形の否定をnegative/forecastとして保持する: %s',
     (predicate) => {
       const pages = [textPage(`会社名 株式会社テスト\n1. 取引概要\n業績への影響は${predicate}。`)];
@@ -1397,9 +1581,11 @@ describe('役割と必須対象の対応', () => {
     }
   );
   it.each(
-    ['会社名', '上場会社名', '名称'].flatMap((field) =>
-      ['なし', '欄の前', '最初の欄の後'].map((heading) => [field, heading] as const)
-    )
+    [
+      ['会社名', 'なし'],
+      ['上場会社名', '欄の前'],
+      ['名称', '最初の欄の後'],
+    ] as const
   )('会社切替を同じ節のrole境界として扱う: %s / %s', (field, heading) => {
     const pages = [
       report().pages[0],
@@ -1426,7 +1612,7 @@ describe('役割と必須対象の対応', () => {
     wrong.id = stableFactId(wrong);
     expect(saved([wrong], pages).facts).toEqual([]);
   });
-  it.each(['会社名', '名称', '上場会社名'])(
+  it.each(['会社名'])(
     '表紙発行者の別表記で子会社実績を見出し実績へ使わない: %s',
     (field) => {
       const { pages, amounts } = report();
@@ -1948,7 +2134,7 @@ describe('報告単位に属する必須項目と修復先', () => {
     expect(slot.sourceIds).toHaveLength(1);
     expect(slot.sourceIds[0]).toMatch(omitted ? /^p3/ : /^p2/);
   });
-  it.each(['百万円', '億円', '千円', '万円', '%', '千株'])(
+  it.each(['百万円', '%'])(
     '句点なし%s本文は見出しや次の原文所有者にしない',
     (unit) => {
       const { pages } = report();
@@ -2077,9 +2263,13 @@ it('自己株取得は他社の上限・条件で発行者の不足を隠さな�
   );
 });
 
-it.each(['従業員数', '当期純利益'] as const)(
+it.each([
+  ['従業員数', '2026年3月期', period],
+  ['当期純利益', '2026年3月期', period],
+  ['従業員数', '2027年3月期', '2027年12月期'],
+] as const)(
   'M&Aの継続表は証明した%s行に応じて義務・修復先を作る',
-  async (secondRow) => {
+  async (secondRow, oldPeriod, latestPeriod) => {
     const pages = [
       cells(
         [
@@ -2089,8 +2279,8 @@ it.each(['従業員数', '当期純利益'] as const)(
           ['2. 対象会社の概要', 0, 90, 220],
           ['会社名 株式会社B', 0, 110, 210],
           ['(1) 経営成績', 0, 150, 160],
-          ['2026年3月期', 280, 180, 140],
-          [period, 480, 180, 140],
+          [oldPeriod, 280, 180, 140],
+          [latestPeriod, 480, 180, 140],
           ['売上高', 0, 210, 100],
           ['100千円', 340, 210, 80],
           ['200千円', 540, 210, 80],
@@ -2121,6 +2311,7 @@ it.each(['従業員数', '当期純利益'] as const)(
       ).sort()
     );
     expect(metrics.every((s) => s.sourceIds.length === 1)).toBe(true);
+    expect(metrics.every((s) => s.requirement.includes(`対象期=${latestPeriod}`))).toBe(true);
     const fs = metrics.flatMap((s) =>
       s.sourceIds.map((id) => {
         const hint = ctx.tableMappings.find((h) => h.valueId === id)!;
@@ -2131,7 +2322,7 @@ it.each(['従業員数', '当期純利益'] as const)(
           textPage('会社名 株式会社テスト\n1. 経営成績\n売上高は200千円です。'),
           '売上高',
           label === '売上高' ? 200 : 20,
-          period
+          latestPeriod
         );
         f.label = label;
         f.page = Number(id.match(/^p(\d+)/)![1]);

@@ -258,27 +258,36 @@ describe('非財務単位を持つ表', () => {
     };
     expect(() => verifyTableEvidence(source, evidence, { ...claim, unit })).toThrow('単位');
   });
+  // 配置は正常断片/注記付き断片の2対、その他の語彙は片方の配置で確認する。
   it.each(
     [
       ['百', '万円', '百万円'],
       ['百', '万円※', '百万円'],
-      ['百', '万円(注1)', '百万円'],
-      ['百', '万円*1', '百万円'],
-      ['百', '万円¹', '百万円'],
-      ['百', '万円注1', '百万円'],
-      ['百', '注', '百万円'],
-      ['百', '注1万円', '百万円'],
-      ['百', '万円注1）', '百万円'],
-      ['百', '注1）万円', '百万円'],
-      ['百', '注1.5', '百万円'],
-      ['百', '注1...', '百万円'],
-      ['百', '注1%', '百万円'],
-      ['百', '注1/', '百万円'],
-      ['百', '注1·', '百万円'],
-      ['m', '2※', 'm2'],
-    ].flatMap(([prefix, suffix, unit]) =>
-      (['inline', 'adjacent'] as const).map((kind) => ({ kind, prefix, suffix, unit }))
-    )
+    ]
+      .flatMap(([prefix, suffix, unit]) =>
+        ['inline', 'adjacent'].map((kind) => ({ kind, prefix, suffix, unit })),
+      )
+      .concat(
+        [
+          ['百', '万円(注1)', '百万円'],
+          ['百', '万円*1', '百万円'],
+          ['百', '万円¹', '百万円'],
+          ['百', '万円注1', '百万円'],
+          ['百', '注', '百万円'],
+          ['百', '注1万円', '百万円'],
+          ['百', '注1.5', '百万円'],
+          ['百', '注1...', '百万円'],
+          ['百', '注1%', '百万円'],
+          ['百', '注1/', '百万円'],
+          ['百', '注1·', '百万円'],
+          ['m', '2※', 'm2'],
+        ].map(([prefix, suffix, unit], i) => ({
+          kind: i % 2 ? 'adjacent' : 'inline',
+          prefix,
+          suffix,
+          unit,
+        })),
+      )
   )('$kind単位$prefixの未参照の続き$suffixを省けない', ({ kind, prefix, suffix, unit }) => {
     const source = {
       ...page,
@@ -304,9 +313,18 @@ describe('非財務単位を持つ表', () => {
     }
   });
   it.each(
-    ['注1', '注12', '注１２', '注1）', '注1.', '注１．', '注1）。', '注1.)', '注1’'].flatMap(
-      (note) => (['inline', 'adjacent'] as const).map((kind) => ({ note, kind }))
-    )
+    [
+      { note: '注1', kind: 'inline' },
+      { note: '注1', kind: 'adjacent' },
+      { note: '注12', kind: 'inline' },
+      { note: '注１２', kind: 'adjacent' },
+      { note: '注1）', kind: 'inline' },
+      { note: '注1.', kind: 'adjacent' },
+      { note: '注１．', kind: 'inline' },
+      { note: '注1）。', kind: 'adjacent' },
+      { note: '注1.)', kind: 'inline' },
+      { note: '注1’', kind: 'adjacent' },
+    ]
   )('$kind単位の後の独立した注記参照$noteを単位に含めない', ({ note, kind }) => {
     for (const unit of ['百万円', 'kWh', 'm2']) {
       const source = {

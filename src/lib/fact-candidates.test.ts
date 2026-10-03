@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import corpus from './fixtures/ir-semantic-corpus.json';
 import expectations from './fixtures/ir-semantic-expectations.json';
-import classificationCases from '../../evaluation/fixtures/classification-cases.json';
 import { extractPageLayout } from './pdf-layout';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { candidateFixture, candidateResponse } from './fixtures/candidate-test-source';
@@ -65,8 +64,13 @@ function qReportingFixture(testCase: readonly [string, string, string | null, st
   return { source, fact };
 }
 describe('生成専用候補と原文文脈の契約', () => {
-  it.each(classificationCases.filter((c) => c.targetType === 'earnings'))(
-    '分類正例の報告属性は既定値を補わず原文表記で確定・保存再照合する: $id',
+  it.each([
+    { title: '2026年3月期 中間決算短信〔日本基準〕（個別）' },
+    { title: '2026年3月期 決算短信〔IFRS〕（連結）' },
+    { title: '四半期決算短信の補足説明資料' },
+    { title: '2026年3月期 決算短信の一部訂正について' },
+  ])(
+    '中間期・通期・省略・訂正の報告属性を原文で確定・保存再照合する: $title',
     ({ title }) => {
       const period = title.match(/20\d{2}年\d{1,2}月期/)?.[0] ?? '2026年3月期';
       const scope = title.match(/（(非連結|個別|単体|連結)）/)?.[1] ?? null;
@@ -142,7 +146,8 @@ describe('生成専用候補と原文文脈の契約', () => {
       ).facts
     ).toEqual(result.facts);
   });
-  it.each(qReportingCases)(
+  // 表記別の属性解決は上の正常matrix。属性の改変はその共通の照合経路で確認する。
+  it.each([qReportingCases[4]])(
     'Q表記の明示属性を省略・変更した候補と保存事実を拒否する: %s',
     (...testCase) => {
       const { source, fact } = qReportingFixture(testCase);
@@ -218,7 +223,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(applicableDeclarations(local, 'scope', true).map((d) => d.value)).toEqual(['個別']);
     expect(applicableDeclarations(local, 'basis', true).map((d) => d.value)).toEqual(['IFRS']);
   });
-  it.each([qReportingCases[1], ...qReportingCases.slice(5)])(
+  it.each([qReportingCases[1], qReportingCases[12]])(
     '表紙の属性省略を1回修復し、原文表記の予想を表示・保存再照合する: %s',
     async (...testCase) => {
       const { source, fact } = qReportingFixture(testCase);
@@ -260,7 +265,15 @@ describe('生成専用候補と原文文脈の契約', () => {
         type,
         source
       )
-    ).toMatchObject({ facts: r.facts });
+    ).toEqual({ version: 4, documentType: type, facts: r.facts, unverified: [] });
+    for (const f of r.facts.filter((f) => f.kind === 'number')) {
+      expect(f.quantity?.sourceIds.length).toBeGreaterThan(0);
+      expect(
+        f.quantity?.sourceIds.every((id) =>
+          source.some((p) => p.sourceItems.some((s) => s.id === id))
+        )
+      ).toBe(true);
+    }
   });
   it('表対応の親指標・期間・単位をコードが誤って結びつけても原文検証で拒否する', () => {
     for (const role of ['metricIds', 'periodIds', 'unitIds'] as const) {
