@@ -319,11 +319,37 @@ describe('要約・採点・追加分析の分離', () => {
     expect(chrome.storage.sync.remove).toHaveBeenCalledWith('twoPassMode');
   });
 
-  it('TDnet以外のPDF URLを取得しない', async () => {
+  it.each([
+    'https://example.com/report.pdf',
+    'http://[',
+    'https://www.release.tdnet.info/inbs/list.html',
+  ])('拒否URL %sは取得せず、同じ失敗要求の診断だけを出力する', async (pdfUrl) => {
     const request = await setup(false);
-    const result = await request({ action: 'summarize', pdfUrl: 'https://example.com/report.pdf' });
-    expect(result.error).toContain('TDnetのPDF URLではありません');
+    const result = await request({ action: 'summarize', pdfUrl });
+    expect(result.error).toBeTruthy();
+    if (pdfUrl !== 'http://[') expect(result.error).toContain('TDnetのPDF URLではありません');
     expect(fetch).not.toHaveBeenCalled();
+    expect(mocked.generateText).not.toHaveBeenCalled();
+    const calls = vi.mocked(chrome.storage.local.set).mock.calls;
+    const trace = (calls[calls.length - 1][0] as Record<string, SummaryTrace>).summaryLastRunV1;
+    expect(trace).toMatchObject({
+      runId: result.diagnosticRunId,
+      pdfUrl,
+      outcome: 'failure',
+      resultId: null,
+    });
+    expect(matchingSummaryTrace(trace, pdfUrl, result.diagnosticRunId, null)).toEqual(trace);
+    expect(() => matchingSummaryTrace(trace, pdfUrl, 'other-run', null)).toThrow();
+    expect(() => matchingSummaryTrace(trace, 'another.pdf', result.diagnosticRunId, null)).toThrow();
+    expect(() => matchingSummaryTrace(trace, pdfUrl, null, 'cached-result')).toThrow();
+    expect(() =>
+      matchingSummaryTrace(
+        { ...trace, outcome: 'firstSuccess', resultId: 'cached-result' },
+        pdfUrl,
+        result.diagnosticRunId,
+        'cached-result'
+      )
+    ).toThrow();
   });
 
   it('スコアOFFでも追加分析を明示操作で実行できる', async () => {

@@ -1078,3 +1078,28 @@ strict保存再判定は旧38＋Q3＋R3の44結果で243事実受理/68事実拒
 新規実APIは通常画面1回のみ、入力78,923/出力3,435token（reasoning2,390を内包）、API処理12,142ms。モデル/設定は前回と同じ。反例自体の実モデル修復や新しい一般成功率は主張しない。最初の固定画面は長いTMPDIRによるUnix socketパス長で起動失敗/API0、短い専用ディレクトリで解消。後の表紙修正前の固定成功も途中証拠に保持し、最終ソースの画面と混ぜない。
 
 公開runtime digest `cd165bf962ab65e742967a21a4f45d2b7a814e5e63cbb7efddedbec1d0601b5e`、artifact digest `9c40c17672bf8d037e834f22be54a22ea0c978a1059a9504738d85586e419c08` は最終3画面trace/成果物と一致。strict checker digest `a483b868e416edf3716417bd2e29e51b963b3db27360ca6541c6f12ba003cb78`。summary-pr25-bfd-final-ledger.jsonへ集約。旧L停止・68既知拒否・以前の診断差・未知形式/OCR/多主張等の未確認事項を保持する。累計Q4をfullYearへ黙って変換せず、現行形式の拒否を維持する。
+
+### PR #25 5ba3d3fレビューの検証条件（2026-10-03）
+
+基準HEADは5ba3d3f027ffb5705aad48feb0e432df31101b98、開始時差分なし。2指摘を採用する。M&Aの年月比較は既存の単一FY解決からキーを作り、原軸の通期等の限定を保持する。義務・充足・修復は同じ最新根拠を使い、通常検証で証明済みの期間を下流で表記だけ再判定しない。修復slotの期待期間もその根拠から渡す。不正URLの失敗診断は同じrunId・原URL・failure/null resultIdだけを照合し、取得許可・成功/保存復元のURL照合は維持する。
+
+恒久テストは既存M&A matrixへ通期限定1例、既存の外部URL拒否例を構文不正/非PDFの境界まで3例へ拡張する。別run・別URL・成功/復元への転用拒否を同じ例で確認し、正常な相対/絶対URLと最新診断の競合は既存例を維持する。指紋v61へ分離する。
+
+重点3原PDF/入力は基準と一致した（summary-pr25-5ba-input.json）。最終9生応答の入力・確定事実・警告・成否・期待値が一致する場合のみS/U/Vを再利用し、新規CLI実生成0回。旧50＋U/V6保存結果をstrictで再照合し、既知68日付役割拒否も比較する。最終buildは固定semantic-ownershipの通常修復/表示/保存復元/後続利用を1回、新規review-rejected-urlでエラー表示→同じ失敗traceのダウンロードを1回、PDF/API取得0を確認する。
+
+LLM通信・モデル/設定・プロンプトは変更せず、生成入力も不変のため新規実API0回。前回の実API成功は接続の既存証拠として保持し、新buildの画面確認に読み替えない。入力差分が出たら当該資料だけ事前固定の3回・通常停止境界へ切り替える。未知形式/OCR/多主張、累計Q4、今回反例の実モデル修復等は既存の未確認事項として残す。
+
+画面評価器の旧キャッシュseedがv57固定だった点も修正する。以前の画面は旧版拒否の証拠であり、直前v59の拒否を画面で証明したとは扱わない（直前版はhook恒久テストで証明済み）。今回のseedはANALYSIS_SCHEMA_VERSION-1に揃え、実画面で旧v60非表示を確認する。
+
+結果: 基準の重点7件は4失敗/正常3成功（test-cleanup-tmp/review-5ba-baseline.log）。修正後の対象200件成功、最終873件/28ファイル成功（18.27秒）、type-check/lint/build成功、6原PDF/29固定事実を維持。途中の診断テストの型注釈を修正後、該当3例と型/buildを再確認して成功。修復後の保存一致を明示したM&A4例も成功し、最後の型確認が成功。同じ条件の全件検証は繰り返さない。ログは同dirのreview-5ba-{focused,test-final,type-check-final,lint-final,build-final,diagnostic-final,ma-final}.log。
+
+通期限定の対では、原軸2027年3月期通期/2027年12月期通期から最新根拠の義務・修復sourceIds/expected.periodを作り、確定期間の同義FY表記を通常生成/1回修復/保存で受理する。営業利益を欠落させると拒否する正常例も維持。URLの3拒否例は取得/生成0・同じ失敗診断を受理し、別run/別URL・成功または保存復元への転用は拒否。既存の成功/設定失敗/取得失敗/抽出失敗・最新要求の競合も成功する。
+
+3入力/PDFは基準と一致、9生応答の再生は確定事実/警告/成否/期待値まで完全一致（summary-pr25-5ba-SUV-replay.json）。56 strict保存結果は325事実受理/68既知拒否、原ファイルhash・成否・エラーは前回と同じ（summary-pr25-5ba-regrade.json）。新規実API/評価token0、以前の生成時digestや成功率を今回の新規生成へ読み替えない。
+
+| 最終画面 | 結果 | 固定呼出し/時間 | results/local/の証拠 |
+| --- | --- | --- | --- |
+| semantic-ownership v61 | 20事実、実際の旧v60 seedを非表示、通常修復/表示/復元/診断/後続利用成功 | 5回/16秒 | bluememe-20260930-review-semantic-ownership-2026-10-03T11-39-35-116Z-browser.json |
+| review-rejected-url v61 | 外部URLのエラー表示→同じ失敗traceのダウンロード一致、PDF/API取得0 | 0回/16秒 | bluememe-20260930-2026-10-03T11-39-33-547Z-browser.json |
+
+公開runtime digest `52703e7f089155c3bd57e6bc9bc7d66932d07a644d0f5123b2506a5b919bd1f8`、artifact digest `a34354913e8b4c98cdb7d298fa4f11207b774eeef4edc6ff9c6817b3a85f0003` は最終2画面trace/成果物と一致。strict checker digest `14a3ea67534c4f36007b2ba22e215070e0ffbb181b71caa39def97ebf4329446`、summary-pr25-5ba-final-ledger.jsonへ集約。今回新buildの実API、今回反例の実モデル修復、未知形式/OCR/多主張等は未確認のまま。累計Q4の拡張、旧L停止、68既知拒否と過去の未実施は維持する。

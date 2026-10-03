@@ -2267,6 +2267,7 @@ it.each([
   ['従業員数', '2026年3月期', period],
   ['当期純利益', '2026年3月期', period],
   ['従業員数', '2027年3月期', '2027年12月期'],
+  ['従業員数', '2027年3月期通期', '2027年12月期通期'],
 ] as const)(
   'M&Aの継続表は証明した%s行に応じて義務・修復先を作る',
   async (secondRow, oldPeriod, latestPeriod) => {
@@ -2312,6 +2313,7 @@ it.each([
     );
     expect(metrics.every((s) => s.sourceIds.length === 1)).toBe(true);
     expect(metrics.every((s) => s.requirement.includes(`対象期=${latestPeriod}`))).toBe(true);
+    expect(metrics.every((s) => s.expected.period === latestPeriod)).toBe(true);
     const fs = metrics.flatMap((s) =>
       s.sourceIds.map((id) => {
         const hint = ctx.tableMappings.find((h) => h.valueId === id)!;
@@ -2322,7 +2324,8 @@ it.each([
           textPage('会社名 株式会社テスト\n1. 経営成績\n売上高は200千円です。'),
           '売上高',
           label === '売上高' ? 200 : 20,
-          latestPeriod
+          // Equivalent full-year spelling must keep ordinary source meaning.
+          latestPeriod.replace(/通期$/, '')
         );
         f.label = label;
         f.page = Number(id.match(/^p(\d+)/)![1]);
@@ -2369,6 +2372,7 @@ it.each([
       );
     const repaired = await generateVerifiedFactSummary(config, 'ma', 'source', pages);
     expect(repaired.repairAttempted).toBe(true);
+    expect(parseFactSummary(JSON.stringify(repaired.facts), 'ma', pages, true)).toEqual(repaired.facts);
   }
 );
 

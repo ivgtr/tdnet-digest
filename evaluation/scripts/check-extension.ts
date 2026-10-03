@@ -70,6 +70,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     throw new Error('比較固定試験はBlueMemeの固定APIでのみ使用します');
   const fixed = args.includes('--fixed-api'),
     fixtureSource = args.includes('--fixture-source');
+  const reviewRejectedUrl = args.includes('--review-rejected-url');
+  if (reviewRejectedUrl && (!fixed || !fixtureSource || reviewCase || fixedFailure))
+    throw new Error('拒否URLの診断試験は固定API・固定一覧専用です');
   const reviewDiagnostics = args.includes('--review-diagnostics');
   if (reviewDiagnostics && (!fixed || !fixtureSource || fixedFailure))
     throw new Error('診断対応の回帰は正常な固定API・固定原文ルートで実行してください');
@@ -88,6 +91,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
   const profile = await mkdtemp(path.join(tmpdir(), 'tdnet-ir-browser-'));
   let context: any;
   let apiCalls = 0,
+    pdfRequests = 0,
     pdfHash: string | null = null,
     failScore = false;
   const started = performance.now();
@@ -95,8 +99,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     caseId: item.id,
     additionalReviewCase: reviewCase,
     api: fixed ? 'fixed' : 'live',
-    expectedOutcome: fixedFailure ? 'failure' : 'success',
-    source: reviewFixture ? 'synthetic-PDF-through-offscreen' : fixtureSource ? 'fixture' : 'TDnet',
+    expectedOutcome: fixedFailure || reviewRejectedUrl ? 'failure' : 'success',
+    source: reviewRejectedUrl
+      ? 'rejected-link'
+      : reviewFixture
+        ? 'synthetic-PDF-through-offscreen'
+        : fixtureSource
+          ? 'fixture'
+          : 'TDnet',
     buildDigest,
     stages: [],
     success: false,
@@ -262,17 +272,20 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         if (request.method() === 'POST' && request.resourceType() === 'fetch') apiCalls++;
       });
     }
-    const pdfUrl = fixtureSource
-      ? `https://www.release.tdnet.info/inbs/fixture-${item.id}.pdf`
-      : item.url;
+    const pdfUrl = reviewRejectedUrl
+      ? 'https://example.com/fixture-rejected.pdf'
+      : fixtureSource
+        ? `https://www.release.tdnet.info/inbs/fixture-${item.id}.pdf`
+        : item.url;
     if (fixtureSource) {
       const pdf = reviewFixture
         ? Buffer.from(reviewFixture.pdf)
         : await readFile(`evaluation/fixtures/real-pdfs/${item.id}.pdf`);
       pdfHash = createHash('sha256').update(pdf).digest('hex');
-      await context.route(pdfUrl, (route: any) =>
-        route.fulfill({ contentType: 'application/pdf', body: pdf })
-      );
+      await context.route(pdfUrl, (route: any) => {
+        pdfRequests++;
+        return route.fulfill({ contentType: 'application/pdf', body: pdf });
+      });
       await context.route('https://www.release.tdnet.info/inbs/fixture-main.html', (route: any) =>
         route.fulfill({
           contentType: 'text/html',
@@ -289,7 +302,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture) {
       await worker.evaluate(
         async (seed: any) => {
-          const fingerprint = 'v57:openai:fixture:full';
+          const fingerprint = `v${seed.previousVersion}:openai:fixture:full`;
           await chrome.storage.local.set({
             [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
               summary: seed.summary,
@@ -305,6 +318,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           });
         },
         {
+          previousVersion: ANALYSIS_SCHEMA_VERSION - 1,
           pdfUrl,
           summary: reviewFixture.legacyRendered,
           facts: reviewFixture.legacy,
@@ -347,6 +361,34 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     if (reviewFixture)
       evidence.stages.push(`v${ANALYSIS_SCHEMA_VERSION - 1} cache ignored before generation`);
     const summary = frame.locator('.tdnet-digest-summary-row');
+    if (reviewRejectedUrl) {
+      await summary
+        .getByText('TDnetのPDF URLではありません', { exact: false })
+        .waitFor({ timeout: 10000 });
+      const trace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.equal(trace.pdfUrl, pdfUrl);
+      assert.equal(trace.outcome, 'failure');
+      assert.equal(trace.resultId, null);
+      assert.deepEqual(trace.attempts, []);
+      assert.deepEqual(trace.usage, []);
+      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const downloaded = await downloadEvent;
+      assert.deepEqual(JSON.parse(await readFile(await downloaded.path(), 'utf8')), trace);
+      assert.equal(apiCalls, 0);
+      assert.equal(pdfRequests, 0);
+      evidence.trace = trace;
+      evidence.pdfRequests = pdfRequests;
+      evidence.stages.push(
+        'rejected URL → own failed run → diagnostic download; PDF/API requests 0'
+      );
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
     if (reviewSettingsChange) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {

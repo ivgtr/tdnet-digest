@@ -47,13 +47,23 @@ export function matchingSummaryTrace(
     value.version !== 1 ||
     typeof value.runId !== 'string' ||
     !value.runId ||
-    value.pdfUrl !== normalizeTdnetPdfUrl(pdfUrl) ||
     (runId !== null
       ? value.runId !== runId
       : !resultId ||
         value.resultId !== resultId ||
         !['firstSuccess', 'repairSuccess'].includes(String(value.outcome)))
   )
+    throw new Error('この要約結果に対応する診断がありません');
+  // A rejected URL remains raw in its failed run. Exporting that diagnostic
+  // does not fetch the URL or admit it as a successful/cached result.
+  if (
+    runId !== null &&
+    value.outcome === 'failure' &&
+    value.resultId === null &&
+    value.pdfUrl === pdfUrl
+  )
+    return value as unknown as SummaryTrace;
+  if (value.pdfUrl !== normalizeTdnetPdfUrl(pdfUrl))
     throw new Error('この要約結果に対応する診断がありません');
   return value as unknown as SummaryTrace;
 }

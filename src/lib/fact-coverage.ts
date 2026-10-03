@@ -412,7 +412,10 @@ function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
   return tableContinuations(pages).flatMap((link) => {
     const periods = link.periodIds.map((id) => normalized(text([id])));
     const dated = periods.map((period) => {
-      const match = period.match(/^(20\d{2})年(\d{1,2})月期$/);
+      // A chronological key is not a constraint on the complete source axis.
+      // Ordinary numeric proof below still decides its qualified period meaning.
+      const fiscal = sourceFiscalPeriod(period, '');
+      const match = fiscal?.match(/^(20\d{2})年(\d{1,2})月期$/);
       return match && +match[2] >= 1 && +match[2] <= 12
         ? { period, key: +match[1] * 12 + +match[2] }
         : null;
@@ -822,9 +825,10 @@ export function verifyCoverage(
           (f) =>
             standardMetric(f) === source.metric &&
             f.valueKind === 'actual' &&
-            compact(f.period ?? '') === source.period &&
             normalized(f.semantics.subject ?? '') === source.subject &&
             f.evidence.kind === 'table' &&
+            // The exact latest value has already proved its period ordinarily;
+            // a second spelling comparison would reject equivalent full-year text.
             ids.includes(f.evidence.valueId)
         )
       )
@@ -1104,9 +1108,23 @@ export function coverageReport(
                   ? 'actual'
                   : null);
     const target = requirementTarget(requirement);
+    const maPeriods =
+      type === 'ma' && /対象会社の最近/.test(requirement)
+        ? [
+            ...new Set(
+              maMetricSources(pages, context)
+                .filter((s) => resolvedIds.includes(s.valueId))
+                .map((s) => s.period)
+            ),
+          ]
+        : null;
     const period = target
       ? target.period + (target.quarter ?? '')
-      : (requirement.match(/対象期=(20\d{2}年\d{1,2}月期)/)?.[1] ?? null);
+      : maPeriods
+        ? maPeriods.length === 1
+          ? maPeriods[0]
+          : null
+        : (requirement.match(/対象期=(20\d{2}年\d{1,2}月期)/)?.[1] ?? null);
     const dates = resolvedIds
       .flatMap((id) => sourceDateOptions(context.bindings.find((b) => b.anchorId === id)!, pages))
       .filter((d) => d.state === state);
