@@ -1,7 +1,23 @@
+import {
+  explicitCalendarAxisMatches,
+  periodKind,
+  numericValueKind,
+  reportingPeriodShape,
+  reportingPeriodShapes,
+  reportingPeriodOwner,
+} from './period-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { PdfSpan } from './pdf-layout';
-import { parseQuantity, parseExactRange, isUnitToken } from './quantity';
+import { declaredQuantityUnit, isUncaptionedUnit } from './quantity';
+import {
+  parseQuantity,
+  parseExactRange,
+  isUnitToken,
+  proseQuantities,
+  parseExactQuantity,
+} from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
+import { verifyQuantityAssertion } from './assertion-semantics';
 
 export interface TableEvidence {
   valueId: string;
@@ -17,6 +33,8 @@ export interface NumericClaim {
   unit: string;
   period: string;
   valueKind: string;
+  subject?: string | null;
+  scope?: string | null;
 }
 export const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，]/g, '');
 const center = (s: PdfSpan) => s.x + s.width / 2;
@@ -105,14 +123,13 @@ export function verifyTableEvidence(
   if (parsedValue.unit && !unitIncludesValue) fail('値セル内の単位が未参照');
   const inlineUnit = unitIncludesValue && orderedUnits.length === 0 ? parsedValue.unit : null;
   // 値セルに含まれる単位断片も参照を必須とし、隣接セルの断片と原文順に照合する。
-  const unitText = (
+  const unitText = declaredQuantityUnit(
     unitIncludesValue
       ? parsedValue.unit + orderedUnits.map((s) => compact(s.text)).join('')
       : joined(units)
-          .replace(/^\(?単位[:：]?/, '')
-          .replace(/\)$/, '')
-  ).replace(/^円銭$/, '円');
-  if (unitText !== expectedUnit || (unitIncludesValue && !isUnitToken(unitText))) fail('単位');
+  );
+  if (unitText === null) fail('単位宣言の形式');
+  if (unitText !== expectedUnit || (unitIncludesValue && !isUnitToken(unitText!))) fail('単位');
   const adjacentUnit =
     orderedUnits.length > 0 &&
     (parsedValue.unit === null || unitIncludesValue) &&
@@ -142,11 +159,13 @@ export function verifyTableEvidence(
         sameRow(s, value) &&
         gap >= -0.5 &&
         gap <= Math.min(s.height, last.height) * 0.6 &&
-        couldContinueUnit(unitText, compact(s.text))
+        couldContinueUnit(unitText!, compact(s.text))
       );
     });
     if (omittedSuffix) fail('単位の続きになり得る隣接セルが未参照');
   }
+
+  if (!isUncaptionedUnit(unitText!)) fail('数量の単位を確認できません');
 
   const rowNumbers = page.spans.filter(
     (s) =>
@@ -512,6 +531,9 @@ export function verifyPeriodAndKind(
   context = compact(context);
   const target = compact(claim.period),
     local = axis + context;
+  // An explicit axis owns its period; a cover/context year cannot override it.
+  if (!explicitCalendarAxisMatches(axis, target)) fail('対象年度・決算月の明示軸');
+
   const fiscal = /20\d{2}年\d{1,2}月期/;
   const date = /20\d{2}年\d{1,2}月\d{1,2}日/;
   const month = /20\d{2}年\d{1,2}月(?![\d期])/;
@@ -550,58 +572,110 @@ export function verifyPeriodAndKind(
     )
       fail('対象年度・決算月');
   }
-  const shape = (text: string) => text.match(/第[1-4]四半期|中間期|通期/)?.[0] ?? null;
-  const sourceShape = shape(axis) ?? shape(context),
-    claimedShape = shape(target);
+  const sourceShape = reportingPeriodShape(reportingPeriodOwner(axis, context)),
+    claimedShape = reportingPeriodShape(target);
   if (
     sourceShape &&
     sourceShape !== claimedShape &&
-    !(sourceShape === '通期' && !claimedShape && fiscal.test(target)) &&
-    !(sourceShape === '中間期' && claimedShape === '第2四半期')
+    !(sourceShape === '通期' && !claimedShape && fiscal.test(target))
   )
     fail('対象期間');
   if (!sourceShape && claimedShape && !(claimedShape === '通期' && fiscal.test(local)))
     fail('対象期間の根拠');
-  if ((/累計/.test(local) && /単独/.test(target)) || (/単独/.test(local) && /累計/.test(target)))
+  const qualifierOwner = reportingPeriodOwner(axis, context);
+  if (
+    (/累計|中間期/.test(qualifierOwner) && /単独/.test(target)) ||
+    (/単独/.test(qualifierOwner) && /累計/.test(target))
+  )
     fail('累計・単独期間');
-  if (/累計/.test(target) && !/累計/.test(local)) fail('累計期間');
-  if (/単独/.test(target) && !/単独/.test(local)) fail('単独期間');
-  const kindAxis = /前回|従来|修正前|直近の配当予想|今回|修正後|決定額/.test(axis) ? axis : context;
-  if (/前回|従来|修正前/.test(kindAxis) && /今回|修正後/.test(kindAxis))
-    fail('修正前後の対応が曖昧');
-  const kind = /前回|従来|修正前|直近の配当予想/.test(kindAxis)
-    ? 'forecastBefore'
-    : /今回|修正後|決定額/.test(kindAxis)
-      ? 'forecastAfter'
-      : /予想|見込|見通し/.test(local) || /業績予想/.test(compact(nearest))
-        ? 'forecast'
-        : 'actual';
+  if (/累計/.test(target) && !/累計|中間期/.test(qualifierOwner)) fail('累計期間');
+  if (/単独/.test(target) && !/単独/.test(qualifierOwner)) fail('単独期間');
+  // Structural obligations and accepted facts must prove a period representable
+  // by the same current contract, rather than merely matching the source text.
+  periodKind(claim.period, axis, context);
+  const kind = numericValueKind(axis, context, nearest);
   if (claim.valueKind !== kind) fail('実績・予想区分');
 }
 
+/** Prose has no row/column axis: a source period overrides inherited captions. */
+export function verifyProsePeriod(claim: NumericClaim, source: string, context: string): void {
+  const axes = (text: string) => [
+    ...new Set(compact(text).match(/20\d{2}年\d{1,2}月期|20\d{2}年\d{1,2}月(?![\d期])/g) ?? []),
+  ];
+  const own = axes(source);
+  const applicable = own.length ? own : axes(context);
+  const shapes = reportingPeriodShapes(own.length ? source : context);
+  if (applicable.length > 1 || shapes.length > 1)
+    throw new Error('STRUCTURE:本文数量に複数の期間があり対応を一意に証明できません');
+  const target = axes(claim.period);
+  if (own.length && (target.length !== 1 || target[0] !== own[0]))
+    throw new Error('PERIOD:本文の明示期間と数量の期間が不一致です');
+}
+
 /** 表と本文は別の根拠形式。本文でも指標・数値・単位の直接対応だけを採用する。 */
-export function verifyProseEvidence(
+export function verifyProseQuantity(
   page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
   quote: string,
   claim: NumericClaim
-): number {
+) {
   const escape = (text: string) => compact(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 複合助詞は語単位で認める。任意のひらがなは許さず、否定・概数の語を跨がない。
   const bridge = '((?:について|に関して|に対して|において|として|[はがをにでと、:()]){0,6})';
-  const binding = new RegExp(
-    `${escape(claim.label)}${bridge}(${claim.range ? '[△▲−-]?\\d+(?:\\.\\d+)?[～〜~][△▲−-]?\\d+(?:\\.\\d+)?' : '-?\\d+(?:\\.\\d+)?'})${escape(claim.unit)}(?![\\d.%/])`,
-    'u'
+  const scalar = '-?\\d+(?:\\.\\d+)?';
+  const amount = claim.range
+    ? `${scalar}[～〜~]${scalar}${escape(claim.unit)}`
+    : `${scalar}(?:${claim.unit === '円' ? '円\\d{2}銭|' : ''}${escape(claim.unit)})`;
+  const binding = new RegExp(`${escape(claim.label)}${bridge}(${amount})(?![\\d.%/])`, 'u');
+  const corresponds = (raw: string) =>
+    claim.range
+      ? parseExactRange(raw)?.unit === claim.unit
+      : parseExactQuantity(raw)?.unit === claim.unit &&
+        Number(parseExactQuantity(raw)?.decimal) === claim.value;
+  // PDF paragraphs may merge consecutive numbered fields. Only a numbered
+  // field at a physical line start is a new prefix boundary; a wrapped noun is not.
+  const assertionText = (text: string) =>
+    compact(text.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；')).replace(/[△▲−](?=\d)/g, '-');
+  const normalized = assertionText(quote);
+  const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
+  const heads = [
+    ...normalized.matchAll(new RegExp(`${escape(claim.label)}${bridge}(${token})`, 'gu')),
+  ];
+  if (heads.length > 1)
+    throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
+  const match = [...normalized.matchAll(new RegExp(binding, 'gu'))].find(
+    (m) => m[1].length <= 6 && corresponds(m[2])
   );
-  const lineIndex = [quote].findIndex((line) => {
-    const normalized = compact(line).replace(/[△▲−](?=\d)/g, '-');
-    return [...normalized.matchAll(new RegExp(binding, 'gu'))].some(
-      (match) =>
-        match[1].length <= 6 &&
-        (claim.range ? parseExactRange(match[2]) !== null : Number(match[2]) === claim.value)
+  if (match) {
+    // Only explicit periods, resolved subject/scope and grammatical separators
+    // may precede a metric. A suffix of an unproven parent metric is not proof.
+    let prefix =
+      normalized
+        .slice(0, match.index)
+        .split(/[。;；、:「」]/)
+        .slice(-1)[0] ?? '';
+    prefix = prefix.replace(/^\(\d+\)/, '').replace(/^\(+/, '');
+    for (const owner of [claim.subject, claim.scope, '当社', '当グループ'].filter(
+      (x): x is string => !!x
+    ))
+      prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
+    prefix = prefix.replace(
+      /^20\d{2}年\d{1,2}月(?:期(?:(?:第[1-4]四半期|[1-4]Q|中間期)(?:\(?(?:累計|単独)\)?(?:期間)?)?|通期)?|\d{1,2}日|度)?(?:の|は|における)?/i,
+      ''
     );
-  });
-  if (!compact(page.text).includes(compact(quote)) || lineIndex < 0)
+    for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))
+      prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
+    if (prefix) throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
+    verifyQuantityAssertion(normalized.slice(match.index! + match[0].length));
+  }
+  if (!compact(page.text).includes(compact(quote)) || !match)
     throw new Error('引用で数値・単位・指標・期間の対応を確認できません');
+  const quantity = proseQuantities({ id: 'prose', text: quote }).find(
+    (q) =>
+      compact(q.raw).replace(/[△▲−](?=\d)/g, '-') === match[2] &&
+      assertionText(quote.normalize('NFKC').slice(0, q.start)).length ===
+        match.index! + match[0].length - match[2].length
+  );
+  if (!quantity) throw new Error('QUANTITY:本文数量の全断片を原位置で確認できません');
   // 数量セルの並ぶ行を説明文として選んで、セル参照の検証を迂回させない。
   const cells = page.spans.filter((s) =>
     claim.range ? parseExactRange(s.text) !== null : numeric(s.text) === claim.value
@@ -614,5 +688,13 @@ export function verifyProseEvidence(
     )
   )
     throw new Error('表の数値には根拠セルIDが必要です');
-  return lineIndex;
+  return quantity;
+}
+export function verifyProseEvidence(
+  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
+  quote: string,
+  claim: NumericClaim
+): number {
+  verifyProseQuantity(page, quote, claim);
+  return 0;
 }

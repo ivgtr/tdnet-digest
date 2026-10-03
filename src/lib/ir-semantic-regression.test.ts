@@ -32,18 +32,7 @@ function parse(index: number, facts: unknown[], coverage = false) {
 const fact = (index: number, n = 0) =>
   structuredClone(expectations[index].facts[n]) as VerifiedFact;
 describe('実PDFの意味を保った利用経路', () => {
-  it.each([0, 1, 2, 3, 4, 5])('資料 %i の原文・数量・限定を確定し保存後も再検証する', (index) => {
-    const summary = parse(index, expectations[index].facts, true);
-    expect(summary.unverified).toEqual([]);
-    expect(parse(index, summary.facts, true)).toEqual(summary);
-    for (const f of summary.facts.filter((f) => f.kind === 'number')) {
-      expect(
-        f.quantity?.sourceIds.every((id) =>
-          sources[index].some((p) => p.sourceItems.some((s) => s.id === id))
-        )
-      ).toBe(true);
-    }
-  });
+  // 6資料の候補→確定→保存と原数量の全参照は fact-candidates.test.ts に集約する。
   it('BlueMemeの実績・損失予想・率・EPS・概算・翌期計上予定を表示する', () => {
     const text = renderFacts(parse(0, expectations[0].facts, true));
     for (const term of [
@@ -81,7 +70,9 @@ describe('実PDFの意味を保った利用経路', () => {
     const missingPeriod = fact(0, 10);
     missingPeriod.period = null;
     missingPeriod.semantics.periodKind = 'none';
-    expect(parse(0, [missingPeriod]).unverified.join(' ')).toContain('相対年度');
+    const rejectedPeriod = parse(0, [missingPeriod]);
+    expect(rejectedPeriod.facts).toHaveLength(0);
+    expect(rejectedPeriod.unverified.join(' ')).toContain('PERIOD:');
     const missingBasis = structuredClone(expectations[0].facts);
     missingBasis[10].semantics.basis = null;
     expect(() => parse(0, missingBasis, true)).toThrow('計上予定');
@@ -432,8 +423,9 @@ describe('実PDFの意味を保った利用経路', () => {
     if (caption.evidence.kind !== 'table') throw new Error('table expected');
     caption.evidence.periodIds.push('p1s46', 'p1s47');
     caption.evidence.contextIds = ['p1s80'];
-    expect(parse(4, [caption]).unverified).toEqual([]);
-    expect(parse(4, [caption]).facts).toHaveLength(1);
+    // The fiscal caption belongs to context, not the axis for a different row.
+    expect(parse(4, [caption]).facts).toHaveLength(0);
+    expect(parse(4, [fact(4,2)]).unverified).toEqual([]);
     const wrong = fact(4);
     if (wrong.evidence.kind !== 'table') throw new Error('table expected');
     wrong.evidence.periodIds = ['p1s80'];

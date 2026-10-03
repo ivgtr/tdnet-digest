@@ -181,6 +181,7 @@
             "p1s273"
           ],
           "contextIds": [
+            "p1s262",
             "p1s263"
           ],
           "scopeIds": [
@@ -230,6 +231,7 @@
             "p1s275"
           ],
           "contextIds": [
+            "p1s262",
             "p1s263"
           ],
           "scopeIds": [
@@ -280,6 +282,7 @@
             "p1s279"
           ],
           "contextIds": [
+            "p1s262",
             "p1s263"
           ],
           "scopeIds": [
@@ -380,6 +383,7 @@
             "p1s281"
           ],
           "contextIds": [
+            "p1s262",
             "p1s263"
           ],
           "scopeIds": [
@@ -430,10 +434,10 @@
             "p1s221"
           ],
           "contextIds": [
+            "p1s202",
             "p1s203"
           ],
           "scopeIds": [
-            "p1b1",
             "p1b3"
           ],
           "qualifierIds": []
@@ -456,7 +460,7 @@
         "id": "f10",
         "importance": "key",
         "kind": "event",
-        "label": "損失予想の背景",
+        "label": "しかしながら、調査関連費用394百万円（概算額）により当期純損失が見込まれ、その結果、親会社株主に帰\n属する当期純損失となる見込みです。",
         "value": null,
         "unit": null,
         "period": null,
@@ -497,7 +501,7 @@
         "id": "f11",
         "importance": "key",
         "kind": "event",
-        "label": "調査関連費用の計上予定",
+        "label": "当該調査費用及び過年度決算の訂正等に要する費用を翌連結会計年度の連結財務諸表において特別損失に計上す\nる予定です。",
         "value": null,
         "unit": null,
         "period": "翌連結会計年度",
@@ -752,7 +756,7 @@
         "id": "f2",
         "importance": "key",
         "kind": "status",
-        "label": "取得価額",
+        "label": "（３） 取 得 価 額 取得価額については、守秘義務により非開示とさせていただきます。",
         "value": null,
         "unit": null,
         "period": null,
@@ -788,7 +792,7 @@
         "id": "f3",
         "importance": "key",
         "kind": "event",
-        "label": "決議・契約・実行予定日",
+        "label": "（１） 取 締 役 会 決 議 日 2026 年７月 13 日\n（２） 契 約 締 結 日 2026 年７月 13 日\n（３） 株 式 譲 渡 実 行 日 2026 年７月 30 日（予定）",
         "value": null,
         "unit": null,
         "period": null,
@@ -927,7 +931,7 @@
         "id": "f6",
         "importance": "key",
         "kind": "event",
-        "label": "株式取得の決議",
+        "label": "当社は、2026 年７月 13 日開催の取締役会において、以下のとおり、株式会社富士設計の株式を取得し、子\n会社化することについて決議いたしましたので、お知らせいたします。",
         "value": null,
         "unit": null,
         "period": null,
@@ -1271,7 +1275,7 @@
         "id": "f1",
         "importance": "key",
         "kind": "event",
-        "label": "基本合意書（MOU）",
+        "label": "ティアンドエスグループ株式会社（本社：神奈川県横浜市西区、代表取締役：武川 義浩、以下「T&SG」）と\n株式会社TMH（本社：大分県大分市、代表取締役 榎並 大輔（コード番号：280A東証グロース市場・福証\nQ-Board上場）、以下「TMH」）は、両社の強みを相互に補完し半導体メーカーおよび装置メーカー向けのソ\nリューション提供を目的とした、業務提携に関する基本合意書（MOU）を締結いたしましたので、お知らせいた\nします。",
         "value": null,
         "unit": null,
         "period": null,
@@ -1307,7 +1311,7 @@
         "id": "f2",
         "importance": "key",
         "kind": "event",
-        "label": "提携・協業の取り組み内容",
+        "label": "現場ニーズに即応するため、以下のソフトウェアエンジニア派遣およびシステム保守運用サービスを優\n先的に展開いたします。",
         "value": null,
         "unit": null,
         "period": null,
@@ -1343,7 +1347,7 @@
         "id": "f3",
         "importance": "key",
         "kind": "event",
-        "label": "提携・協業の取り組み内容",
+        "label": "九州や東北地域をはじめとするFab（半導体工場）集積地域において、両社エンジニアの採用強化およ\nび顧客対応力向上を目的とした拠点連携・共同利用についても検討を進めてまいります。",
         "value": null,
         "unit": null,
         "period": null,

@@ -1,3 +1,7 @@
+import type { SummaryTrace } from '../lib/summary-trace';
+import { matchingSummaryTrace } from '../lib/summary-trace';
+import type { LLMConfig } from '../lib/llm-client';
+import { candidateResponse } from '../lib/fixtures/candidate-test-source';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { textPage, numberCandidate } from '../lib/fixtures/v4-test-source';
 import { parseFactSummary } from '../lib/fact-summary';
@@ -17,6 +21,7 @@ const mocked = vi.hoisted(() => ({
 }));
 interface TestResponse {
   error?: string;
+  diagnosticRunId: string;
   summary: string;
   metadata: { analysisFingerprint: string; score?: unknown };
   facts: FactSummary;
@@ -95,6 +100,7 @@ async function setup(
       }),
     },
     storage: {
+      local: { set: vi.fn(async () => {}) },
       sync: {
         get: async () => ({
           provider: 'openai',
@@ -150,8 +156,42 @@ describe('要約・採点・追加分析の分離', () => {
     });
   });
 
+  it('修復APIが失敗しても初回診断を先に保存し、未完と失敗を区別する', async () => {
+    const request = await setup(false);
+    const writes: SummaryTrace[] = [];
+    vi.mocked(chrome.storage.local.set).mockImplementation(
+      async (items: Record<string, unknown>) => {
+        writes.push(structuredClone(items.summaryLastRunV1) as SummaryTrace);
+      }
+    );
+    mocked.generateText
+      .mockImplementationOnce(async (config: LLMConfig) => {
+        expect(config.signal).toBeInstanceOf(AbortSignal);
+        expect(writes[writes.length - 1]).toMatchObject({ outcome: 'running', attempts: [] });
+        return 'malformed';
+      })
+      .mockImplementationOnce(async () => {
+        expect(writes[writes.length - 1].attempts).toEqual([
+          expect.objectContaining({ phase: 'first', response: 'malformed' }),
+        ]);
+        throw new Error('fixture API failure');
+      });
+    const result = await request({ action: 'summarize' });
+    expect(result.error).toContain('fixture API failure');
+    expect(writes[writes.length - 1]).toMatchObject({
+      outcome: 'failure',
+      error: 'fixture API failure',
+    });
+    expect(writes[writes.length - 1].attempts.map((a) => a.phase)).toEqual(['first', 'repair']);
+    expect(
+      matchingSummaryTrace(writes[writes.length - 1], 'test.pdf', result.diagnosticRunId, null)
+    ).toEqual(writes[writes.length - 1]);
+    expect(JSON.stringify(writes)).not.toMatch(/apiKey|headers|authorization/);
+  });
   it('要約は1回のLLM呼び出しで採点を待たずに返す', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     const request = await setup(true);
     const result = await request({ action: 'summarize' });
     expect(result.summary).toContain('1150百万円');
@@ -159,33 +199,172 @@ describe('要約・採点・追加分析の分離', () => {
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
+  it.each(['settings', 'download', 'extraction'])(
+    '同じPDFの次の実行が%sで失敗しても以前の診断を現在の結果として出力しない',
+    async (stage) => {
+      mocked.generateText.mockResolvedValue(
+        candidateResponse(facts.facts, [nativePage], facts.documentType)
+      );
+      const request = await setup(false);
+      let saved: SummaryTrace | undefined;
+      vi.mocked(chrome.storage.local.set).mockImplementation(
+        async (items: Record<string, unknown>) => {
+          saved = structuredClone(items.summaryLastRunV1) as SummaryTrace;
+        }
+      );
+      const success = await request({ action: 'summarize' });
+      expect(saved?.runId).toBe(success.diagnosticRunId);
+      expect(
+        matchingSummaryTrace(saved, 'test.pdf', success.diagnosticRunId, success.resultId)
+      ).toEqual(saved);
+      expect(matchingSummaryTrace(saved, 'test.pdf', null, success.resultId)).toEqual(saved);
+      if (stage === 'settings')
+        chrome.storage.sync.get = vi.fn(async () => ({
+          provider: 'invalid',
+        })) as typeof chrome.storage.sync.get;
+      if (stage === 'download')
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('download failed'));
+      if (stage === 'extraction')
+        vi.mocked(chrome.runtime.sendMessage).mockRejectedValueOnce(new Error('extraction failed'));
+      const failure = await request({ action: 'summarize' });
+      expect(failure.error).toBeTruthy();
+      expect(failure.diagnosticRunId).not.toBe(success.diagnosticRunId);
+      expect(matchingSummaryTrace(saved, 'test.pdf', failure.diagnosticRunId, null)).toEqual(saved);
+      expect(saved).toMatchObject({
+        outcome: 'failure', resultId: null, attempts: [], usage: [],
+        documentHash: null, inputHash: null,
+      });
+      expect(saved?.error).toBe(failure.error);
+      expect(saved?.provider).toBe(stage === 'settings' ? null : 'openai');
+      expect(() => matchingSummaryTrace(saved, 'test.pdf', success.diagnosticRunId, null)).toThrow();
+      // Local failures before sendMessage and another same-PDF result also refuse it.
+      expect(() => matchingSummaryTrace(saved, 'test.pdf', null, null)).toThrow();
+      expect(() => matchingSummaryTrace(saved, 'test.pdf', null, 'different-result')).toThrow();
+      expect(() =>
+        matchingSummaryTrace({ ...saved, runId: undefined }, 'test.pdf', null, success.resultId)
+      ).toThrow();
+      expect(mocked.generateText).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['success', 'failure', 'earlyFailure', 'lateExtraction'] as const)(
+    '古い完了%sは新しい要求の診断を上書きしない',
+    async (stage) => {
+      const request = await setup(false);
+      let saved: SummaryTrace | undefined;
+      vi.mocked(chrome.storage.local.set).mockImplementation(
+        async (items: Record<string, unknown>) => {
+          saved = structuredClone(items.summaryLastRunV1) as SummaryTrace;
+        }
+      );
+      let release!: (value: string) => void;
+      let entered!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const first = new Promise<string>((resolve) => {
+        release = resolve;
+      });
+      const raw = candidateResponse(facts.facts, [nativePage], facts.documentType);
+      mocked.generateText
+        .mockImplementationOnce(() => {
+          entered();
+          return first;
+        })
+        .mockResolvedValue(raw);
+      let releaseExtraction!: () => void;
+      if (stage === 'lateExtraction') {
+        const extract = chrome.runtime.sendMessage;
+        vi.mocked(chrome.runtime.sendMessage).mockImplementationOnce(async (body) => {
+          entered();
+          await new Promise<void>((resolve) => {
+            releaseExtraction = resolve;
+          });
+          return extract(body);
+        });
+        mocked.generateText.mockReset().mockResolvedValue(raw);
+      }
+      const older = request({ action: 'summarize' });
+      await waiting;
+      chrome.storage.sync.get = vi.fn(async () => ({
+        provider: 'openai',
+        model: 'changed',
+        apiKey: 'test',
+        extractionMode: 'full',
+      })) as typeof chrome.storage.sync.get;
+      if (stage === 'failure')
+        mocked.generateText.mockRejectedValueOnce(new Error('newer API failed'));
+      if (stage === 'earlyFailure')
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('newer PDF failed'));
+      const newer = await request({ action: 'summarize' });
+      expect(saved?.runId).toBe(newer.diagnosticRunId);
+      const newerTrace = structuredClone(saved);
+      if (stage === 'lateExtraction') releaseExtraction();
+      else release(raw);
+      expect((await older).error).toBeUndefined();
+      expect(saved).toEqual(newerTrace);
+      expect(
+        matchingSummaryTrace(saved, 'test.pdf', newer.diagnosticRunId, newer.resultId ?? null)
+      ).toEqual(saved);
+    }
+  );
 
   it('更新前から残る二段階要約設定を削除し、要約を続行する', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     const request = await setup(false, true, false, true);
     const result = await request({ action: 'summarize' });
     expect(result.summary).toContain('1150百万円');
     expect(chrome.storage.sync.remove).toHaveBeenCalledWith('twoPassMode');
   });
 
-  it('TDnet以外のPDF URLを取得しない', async () => {
+  it.each([
+    'https://example.com/report.pdf',
+    'http://[',
+    'https://www.release.tdnet.info/inbs/list.html',
+  ])('拒否URL %sは取得せず、同じ失敗要求の診断だけを出力する', async (pdfUrl) => {
     const request = await setup(false);
-    const result = await request({ action: 'summarize', pdfUrl: 'https://example.com/report.pdf' });
-    expect(result.error).toContain('TDnetのPDF URLではありません');
+    const result = await request({ action: 'summarize', pdfUrl });
+    expect(result.error).toBeTruthy();
+    if (pdfUrl !== 'http://[') expect(result.error).toContain('TDnetのPDF URLではありません');
     expect(fetch).not.toHaveBeenCalled();
+    expect(mocked.generateText).not.toHaveBeenCalled();
+    const calls = vi.mocked(chrome.storage.local.set).mock.calls;
+    const trace = (calls[calls.length - 1][0] as Record<string, SummaryTrace>).summaryLastRunV1;
+    expect(trace).toMatchObject({
+      runId: result.diagnosticRunId,
+      pdfUrl,
+      outcome: 'failure',
+      resultId: null,
+    });
+    expect(matchingSummaryTrace(trace, pdfUrl, result.diagnosticRunId, null)).toEqual(trace);
+    expect(() => matchingSummaryTrace(trace, pdfUrl, 'other-run', null)).toThrow();
+    expect(() => matchingSummaryTrace(trace, 'another.pdf', result.diagnosticRunId, null)).toThrow();
+    expect(() => matchingSummaryTrace(trace, pdfUrl, null, 'cached-result')).toThrow();
+    expect(() =>
+      matchingSummaryTrace(
+        { ...trace, outcome: 'firstSuccess', resultId: 'cached-result' },
+        pdfUrl,
+        result.diagnosticRunId,
+        'cached-result'
+      )
+    ).toThrow();
   });
 
   it('スコアOFFでも追加分析を明示操作で実行できる', async () => {
-    mocked.generateText.mockResolvedValueOnce(JSON.stringify(facts)).mockResolvedValueOnce(
-      JSON.stringify({
-        version: 2,
-        interpretation: { text: '判断不能', factIds: [] },
-        shortTerm: { text: '判断不能', factIds: [] },
-        mediumTerm: { text: '判断不能', factIds: [] },
-        longTerm: { text: '判断不能', factIds: [] },
-        watchPoints: [],
-      })
-    );
+    mocked.generateText
+      .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          version: 2,
+          interpretation: { text: '判断不能', factIds: [] },
+          shortTerm: { text: '判断不能', factIds: [] },
+          mediumTerm: { text: '判断不能', factIds: [] },
+          longTerm: { text: '判断不能', factIds: [] },
+          watchPoints: [],
+        })
+      );
     const request = await setup(false);
     const summary = await request({ action: 'summarize' });
     const analysis = await request({
@@ -199,7 +378,9 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('スコアONの採点は別要求で事実を起点にする', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({
       claims: [{ category: 'revenue' }],
       unverified: [],
@@ -252,16 +433,18 @@ describe('要約・採点・追加分析の分離', () => {
         'earnings',
         pages
       );
-      mocked.generateText.mockResolvedValueOnce(JSON.stringify(smartFacts)).mockResolvedValueOnce(
-        JSON.stringify({
-          version: 2,
-          interpretation: { text: '判断不能', factIds: [] },
-          shortTerm: { text: '判断不能', factIds: [] },
-          mediumTerm: { text: '判断不能', factIds: [] },
-          longTerm: { text: '判断不能', factIds: [] },
-          watchPoints: [],
-        })
-      );
+      mocked.generateText
+        .mockResolvedValueOnce(candidateResponse(smartFacts.facts, pages, smartFacts.documentType))
+        .mockResolvedValueOnce(
+          JSON.stringify({
+            version: 2,
+            interpretation: { text: '判断不能', factIds: [] },
+            shortTerm: { text: '判断不能', factIds: [] },
+            mediumTerm: { text: '判断不能', factIds: [] },
+            longTerm: { text: '判断不能', factIds: [] },
+            watchPoints: [],
+          })
+        );
       mocked.extractScoreInput.mockResolvedValue({
         claims: [{ category: 'coreForecast' }],
         unverified: [],
@@ -310,7 +493,9 @@ describe('要約・採点・追加分析の分離', () => {
   );
 
   it('過去資料の任意権限がない場合は別サイトを取得しない', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({
       claims: [{ category: 'revenue' }],
       unverified: [],
@@ -348,7 +533,9 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('検索API失敗は採点エラーとして返し、表示済み要約を保持する', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({ claims: [], unverified: [], searchStatus: '' });
     mocked.searchDisclosureCandidates.mockResolvedValue({
       urls: [],
@@ -372,7 +559,9 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('検索後も比較値を検証できなければ採点結果を作らない', async () => {
-    mocked.generateText.mockResolvedValue(JSON.stringify(facts));
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
     mocked.extractScoreInput.mockResolvedValue({
       claims: [],
       unverified: ['引用を確認できません'],

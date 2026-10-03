@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
+import { ANALYSIS_SCHEMA_VERSION, buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
 import { textPage, numberCandidate } from '@/lib/fixtures/v4-test-source';
 import { parseFactSummary, renderFacts } from '@/lib/fact-summary';
 import { useSummarize } from './useSummarize';
@@ -35,6 +35,36 @@ describe('要約モード別の表示とキャッシュ', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([1, ANALYSIS_SCHEMA_VERSION - 1])('旧v%sキャッシュを読み出して再表示しない', async (version) => {
+    const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
+    const oldKey = `summaryCacheV2:v${version}:openai:gpt-4o:full:${pdfUrl}`;
+    const currentKey = `summaryCacheV2:${buildSummaryCacheKey(pdfUrl, buildAnalysisFingerprint({ provider: 'openai', model: 'gpt-4o', extractionMode: 'full' }))}`;
+    const get = vi.fn(async () => ({ [oldKey]: { summary: '売上高: 100百万円（予想）' } }));
+    const sendMessage = vi.fn();
+    vi.stubGlobal('chrome', {
+      storage: {
+        sync: {
+          get: (_keys: string[], callback: (settings: unknown) => void) =>
+            callback({ provider: 'openai', model: 'gpt-4o', extractionMode: 'full' }),
+        },
+        local: { get },
+        onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
+      runtime: { sendMessage },
+    });
+    const hook = useSummarize({
+      pdfUrl,
+      title: '開示',
+      code: '1234',
+      companyName: '株式会社テスト',
+    });
+    await hook.showCached();
+    expect(currentKey).not.toBe(oldKey);
+    expect(get).toHaveBeenCalledWith(currentKey);
+    expect(stateSetters[1].mock.calls.every(([value]) => value === null)).toBe(true);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it('smart設定から全文で再要約した結果を表示し、通常の再要約にも戻れる', async () => {
     const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
     const keyFor = (mode: 'smart' | 'full') =>
@@ -47,6 +77,7 @@ describe('要約モード別の表示とキャッシュ', () => {
       summary: `${mode}の要約`,
       facts: { version: 4, documentType: 'other', facts: [], unverified: [] },
       resultId: (mode === 'full' ? 'a' : 'b').repeat(64),
+      diagnosticRunId: `${mode}-run`,
       metadata: {
         analysisFingerprint: buildAnalysisFingerprint({
           provider: 'openai',
@@ -76,7 +107,7 @@ describe('要約モード別の表示とキャッシュ', () => {
     const hook = useSummarize({ pdfUrl, title: '開示', code: '1234', companyName: '会社' });
     await hook.summarize('full');
     expect(stateSetters[1]).toHaveBeenLastCalledWith(
-      expect.objectContaining({ summary: 'fullの要約' })
+      expect.objectContaining({ summary: 'fullの要約', diagnosticRunId: 'full-run' })
     );
     expect(saved).toHaveBeenCalledWith(
       expect.objectContaining({ [`summaryCacheV2:${keyFor('full')}`]: expect.any(Object) })
@@ -87,11 +118,88 @@ describe('要約モード別の表示とキャッシュ', () => {
 
     await hook.summarize();
     expect(stateSetters[1]).toHaveBeenLastCalledWith(
-      expect.objectContaining({ summary: 'smartの要約' })
+      expect.objectContaining({ summary: 'smartの要約', diagnosticRunId: 'smart-run' })
     );
     expect(saved).toHaveBeenCalledWith(
       expect.objectContaining({ [`summaryCacheV2:${keyFor('smart')}`]: expect.any(Object) })
     );
+  });
+
+  it.each(['background', 'transport', 'local'])(
+    '%sの失敗を別実行の診断へ結び付けない',
+    async (stage) => {
+      const sendMessage = vi.fn();
+      if (stage === 'background')
+        sendMessage.mockResolvedValue({ error: 'PDF取得失敗', diagnosticRunId: 'failed-run' });
+      if (stage === 'transport') sendMessage.mockRejectedValue(new Error('通信失敗'));
+      const saved = vi.fn();
+      vi.stubGlobal('chrome', {
+        storage: {
+          sync: {
+            get: (_keys: string[], callback: (settings: unknown) => void) => {
+              if (stage !== 'local')
+                callback({ provider: 'openai', model: 'fixture', extractionMode: 'full' });
+            },
+          },
+          local: { set: saved },
+          onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+        },
+        runtime: { sendMessage },
+      });
+      const hook = useSummarize({
+        pdfUrl: 'test.pdf',
+        title: '開示',
+        code: '1234',
+        companyName: '会社',
+      });
+      await hook.summarize();
+      expect(stateSetters[1]).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          summary: null,
+          resultId: null,
+          diagnosticRunId: stage === 'background' ? 'failed-run' : null,
+          error: expect.any(String),
+        })
+      );
+      expect(sendMessage).toHaveBeenCalledTimes(stage === 'local' ? 0 : 1);
+      expect(saved).not.toHaveBeenCalled();
+    }
+  );
+
+  it('要約の応答待ちにモデルを変更しても操作可能へ戻り、古い応答を表示・保存しない', async () => {
+    let model = 'before';
+    let resolveResponse: (response: unknown) => void = () => {};
+    const pending = new Promise((resolve) => {
+      resolveResponse = resolve;
+    });
+    const changed = vi.fn();
+    const saved = vi.fn();
+    vi.stubGlobal('chrome', {
+      storage: {
+        sync: {
+          get: (_keys: string[], callback: (settings: unknown) => void) =>
+            callback({ provider: 'openai', model, extractionMode: 'full' }),
+        },
+        local: { set: saved },
+        onChanged: { addListener: changed, removeListener: vi.fn() },
+      },
+      runtime: { sendMessage: vi.fn(() => pending) },
+    });
+    const hook = useSummarize({
+      pdfUrl: 'test.pdf',
+      title: '開示',
+      code: '1234',
+      companyName: '会社',
+    });
+    const run = hook.summarize();
+    expect(stateSetters[0]).toHaveBeenLastCalledWith(true);
+    model = 'after';
+    changed.mock.calls[0][0]({ model: { newValue: model } }, 'sync');
+    expect(stateSetters[0]).toHaveBeenLastCalledWith(false);
+    resolveResponse({ error: '古い応答', diagnosticRunId: 'before-run' });
+    await run;
+    expect(stateSetters[1]).toHaveBeenLastCalledWith(null);
+    expect(saved).not.toHaveBeenCalled();
   });
 
   it('算出不能の採点応答は要約を保ったままエラーにし、保存しない', async () => {

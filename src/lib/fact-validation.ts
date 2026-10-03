@@ -1,8 +1,31 @@
+import {
+  periodKind,
+  reportingPeriodShape,
+  explicitCalendarAxisMatches,
+  calendarIntervalSeparator,
+} from './period-semantics';
+export { periodKind } from './period-semantics';
+import {
+  declaredSubjectsIn,
+  buildDocumentContext,
+  bindingFor,
+  verifyScopeEvidence,
+  isFinancialUnit,
+} from './document-context';
+import {
+  assertionPolarity,
+  verifyAssertionState,
+  isLossRecordingPlan,
+  lossRecordingPeriods,
+  activePlan,
+  planClauseBindings,
+} from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
 import {
   verifyTableEvidence,
-  verifyProseEvidence,
+  verifyProseQuantity,
+  verifyProsePeriod,
   compact,
   verifyPeriodAndKind,
 } from './numeric-evidence';
@@ -173,46 +196,7 @@ function declaredSubjects(pages: ExtractedPage[], refs: string[]): string[] {
   const blocks = pages.flatMap((page) =>
     page.blocks.filter((block) => refs.some((id) => block.id === id || block.spanIds.includes(id)))
   );
-  return [
-    ...new Set(
-      blocks.flatMap((block) =>
-        block.text.split('\n').flatMap((line) => {
-          const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
-          const field = text.match(/^(?:上場会社名|会社名|名称)(.+)$/)?.[1];
-          if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
-          if (
-            /^(?:株式会社|有限会社|合同会社|投資法人)[\p{L}\p{N}・&.-]+$|^[\p{L}\p{N}・&.-]+(?:株式会社|有限会社|合同会社|投資法人)$/u.test(
-              text
-            )
-          )
-            return [text];
-          return [];
-        })
-      )
-    ),
-  ].filter(Boolean);
-}
-export function periodKind(
-  period: string | null,
-  source: string
-): VerifiedFact['semantics']['periodKind'] {
-  if (!period) return 'none';
-  const text = compact(period),
-    context = compact(source);
-  if (/^(?:翌|次|当|前)連結会計年度$/.test(text)) return 'relativeYear';
-  if (/20\d{2}年\d{1,2}月\d{1,2}日/.test(text))
-    return /～|〜|~|から/.test(text) ? 'interval' : 'eventDate';
-  if (/^20\d{2}年\d{1,2}月(?:度)?$/.test(text)) return 'month';
-  const q =
-    (text + context).match(/第([1-4])四半期/)?.[1] ?? (/中間期/.test(text + context) ? '2' : null);
-  if (q) {
-    if (/単独/.test(context)) return `standaloneQ${q}` as VerifiedFact['semantics']['periodKind'];
-    if (/累計|中間期/.test(context) || q === '1')
-      return `cumulativeQ${q}` as VerifiedFact['semantics']['periodKind'];
-    return fail('PERIOD:累計・単独を確認できません');
-  }
-  if (/20\d{2}年\d{1,2}月期|\d{4}年通期/.test(text)) return 'fullYear';
-  return fail('PERIOD:未対応の期間形式');
+  return [...new Set(blocks.flatMap(declaredSubjectsIn))];
 }
 export function sourceQualifiers(text: string): string[] {
   return [
@@ -233,20 +217,24 @@ export function sourceConditions(text: string): string[] {
 }
 export function datedStates(text: string): Array<{ date: string; state: string }> {
   const source = normalized(text),
-    matches = [...source.matchAll(/20\d{2}年\d{1,2}月\d{1,2}日/g)];
+    matches = [...source.matchAll(/20\d{2}年\d{1,2}月\d{1,2}日/g)],
+    clauses = planClauseBindings(source);
   return matches.map((match, i) => {
+    const clause = clauses.find(
+      (c) => c.start <= match.index! && c.end >= match.index! + match[0].length
+    )!;
     const head = source.slice(
-      i ? matches[i - 1].index! + matches[i - 1][0].length : 0,
+      Math.max(clause.start, i ? matches[i - 1].index! + matches[i - 1][0].length : 0),
       match.index!
     );
     const tail = source.slice(
       match.index! + match[0].length,
-      matches[i + 1]?.index ?? source.length
+      Math.min(clause.end, matches[i + 1]?.index ?? source.length)
     );
     const prefixRole = head.match(/(決議|決定|契約締結|締結|実行|基準)日[:：]?$/)?.[1];
-    const state = /^[～〜-]/.test(tail)
+    const state = new RegExp(`^${calendarIntervalSeparator}`).test(tail)
       ? 'periodStart'
-      : /^[～〜-]$/.test(head)
+      : new RegExp(`^${calendarIntervalSeparator}$`).test(head)
         ? 'periodEnd'
         : prefixRole === '決議' || prefixRole === '決定'
           ? 'decided'
@@ -254,11 +242,12 @@ export function datedStates(text: string): Array<{ date: string; state: string }
             ? 'contracted'
             : prefixRole === '基準'
               ? 'reference'
-              : /予定|買付けの委託を行う/.test(tail)
+              : clause.planned &&
+                  activePlan((prefixRole === '実行' ? '実行日' : '') + match[0] + tail)
                 ? 'planned'
                 : /決議|決定/.test(tail)
                   ? 'decided'
-                  : /締結|契約/.test(tail)
+                  : /締結(?:いた)?しました|契約を結びました/.test(tail)
                     ? 'contracted'
                     : /時点|現在|終値/.test(tail)
                       ? 'reference'
@@ -268,9 +257,8 @@ export function datedStates(text: string): Array<{ date: string; state: string }
 }
 function stateSupported(state: VerifiedFact['semantics']['state'], text: string): boolean {
   const source = compact(text);
+  if (state === 'planned') return activePlan(source);
   const markers = {
-    planned:
-      /予定|取得する|買付けの委託を行う|計上する予定|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります/,
     decided: /決議|決定|決定額/,
     contracted: /締結|契約/,
     completed: /取得しました|取得した|実施しました|完了/,
@@ -279,10 +267,15 @@ function stateSupported(state: VerifiedFact['semantics']['state'], text: string)
     forecastAfter: /今回|修正後|決定額/,
     actual: /実績|経営成績|連結業績|損益計算書|当期|前期|月度|決算短信|時点|保有状況/,
   };
-  if (state === 'unspecified') return !Object.values(markers).some((re) => re.test(source));
+  if (state === 'unspecified')
+    return !activePlan(source) && !Object.values(markers).some((re) => re.test(source));
   return markers[state].test(source);
 }
-export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFact {
+export function validateFact(
+  value: unknown,
+  pages: ExtractedPage[],
+  documentContext = buildDocumentContext(pages)
+): VerifiedFact {
   if (
     !record(value) ||
     !exact(value, FACT_KEYS) ||
@@ -433,39 +426,39 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
         fact.statement !== null
       )
         fail('SCHEMA:本文の数量');
-      verifyProseEvidence(page, source, {
+      const proseClaim = {
         label: fact.label,
         value: fact.value,
         range: fact.kind === 'range',
         unit: fact.unit!,
         period: fact.period ?? '',
         valueKind: fact.valueKind ?? 'actual',
-      });
-      const escaped = normalized(fact.label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const token = '[△▲−-]?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?';
-      const match = normalized(source).match(
-        new RegExp(
-          `${escaped}(?:について|に関して|に対して|において|として|[はがをにでと、:()])*(${token}${fact.kind === 'range' ? `[～〜~]${token}` : ''})`
-        )
-      );
+        subject: fact.semantics.subject,
+        scope: fact.semantics.scope,
+      };
+      const proved = verifyProseQuantity(page, source, proseClaim);
+      verifyProsePeriod(proseClaim, source, context);
+      const raw = /円\d{2}銭$/.test(normalized(proved.raw))
+        ? normalized(proved.raw)
+        : normalized(proved.raw).slice(0, -normalized(fact.unit!).length);
       const sourceIds = block.spanIds.flatMap(
         (id) => page.spans.find((s) => s.id === id)!.sourceIds!
       );
       if (fact.kind === 'range') {
-        const parsed = match && parseExactRange(match[1]);
+        const parsed = parseExactRange(raw);
         if (!parsed) fail('QUANTITY:本文の範囲');
         quantity = {
-          raw: match![1],
+          raw,
           decimal: null,
           lower: parsed!.lower,
           upper: parsed!.upper,
           sourceIds,
         };
       } else {
-        const parsed = match && parseExactQuantity(match[1]);
+        const parsed = parseExactQuantity(raw);
         if (!parsed || quantityNumber(parsed.decimal)?.value !== fact.value)
           fail('QUANTITY:本文数量の不一致・精度不足');
-        quantity = { raw: match![1], decimal: parsed!.decimal, sourceIds };
+        quantity = { raw, decimal: parsed!.decimal, sourceIds };
       }
     } else {
       if (
@@ -475,81 +468,45 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
         normalized(fact.statement ?? '') !== normalized(source)
       )
         fail('SEMANTICS:主語・否定・条件を含む完結した原文が必要です');
+      if (normalized(fact.label) !== normalized(source))
+        fail('SEMANTICS:出来事のlabelも完結した原文です。自由な主張文へ変更できません');
       if (fact.kind === 'status' && !/非開示|未定|該当.*なし|該当事項.*ございません/.test(source))
         fail('SEMANTICS:明示状態がありません');
     }
   }
-  // Scope/context references must be ancestors of this block, not unrelated later sections.
-  for (const id of [...contexts, ...scopes]) {
-    const span = page.spans.find((s) => s.id === id);
-    const block = page.blocks.find((b) => b.id === id);
-    const inherited = pages.find(
-      (p) =>
-        p.pageNumber < page.pageNumber &&
-        (p.spans.some((s) => s.id === id) || p.blocks.some((b) => b.id === id))
-    );
-    const ancestor = inherited?.blocks.find((b) => b.id === id || b.spanIds.includes(id));
-    const coverCompanies =
-      inherited?.pageNumber === 1
-        ? inherited.blocks.filter((b) =>
-            /^(?:株式会社[\p{L}\p{N}・&]+|[\p{L}\p{N}・&]+株式会社)$/u.test(normalized(b.text))
-          )
-        : [];
-    const documentHeading =
-      ancestor &&
-      inherited?.pageNumber === 1 &&
-      (/決算短信|上場会社名|会社名/.test(normalized(ancestor.text)) ||
-        (coverCompanies.length === 1 && coverCompanies[0].id === ancestor.id));
-    const continued =
-      continuation && [...continuation.contextIds, ...continuation.scopeIds].includes(id);
-    const transactionTarget =
-      scopes.includes(id) &&
-      fact.semantics.scope &&
-      fact.semantics.subject !== fact.semantics.scope &&
-      ancestor &&
-      /概要|名称/.test(normalized(ancestor.text)) &&
-      normalized(ancestor.text).includes(normalized(fact.semantics.scope)) &&
-      inherited?.pageNumber === 1 &&
-      inherited.blocks.some(
-        (b) =>
-          normalized(b.text).includes(normalized(fact.semantics.scope!)) &&
-          /株式.*取得|子会社化/.test(normalized(b.text))
-      ) &&
-      page.blocks.some((b) => b.y < atY && /取得.*価額|日程/.test(normalized(b.text)));
-    if (
-      (!span && !block && !documentHeading && !continued && !transactionTarget) ||
-      (span?.y ?? block?.y ?? -Infinity) > atY
-    )
-      fail(`SCOPE:別の段落・表の見出し ${id}。contextIds/scopeIdsは後段の参照を認めません`);
-  }
-  // A subsequent local section overrides an earlier context; never borrow its basis/scope.
-  const nearest = page.blocks
-    .filter(
-      (b) =>
-        b.y < atY &&
-        b.text.length < 180 &&
-        /^(?:[0-9]+[.．]|[（(][0-9]+[）)]|20[0-9]{2}年|今後の見通し)/.test(normalized(b.text)) &&
-        /経営成績|業績予想|当期.*月期|異動する子会社|今後の見通し|配当の状況/.test(
-          normalized(b.text)
-        )
-    )
-    .sort((a, b) => b.y - a.y)[0];
+  const anchor = ev.kind === 'table' ? ev.valueId : ev.blockId;
+  const binding = bindingFor(documentContext, anchor);
+  const nearest = page.blocks.find(
+    (b) => b.id === binding.sectionIds[binding.sectionIds.length - 1]
+  );
+  verifyScopeEvidence(
+    binding,
+    fact.semantics,
+    isFinancialUnit(
+      { ...fact, semantics: { ...fact.semantics, qualifiers: [], conditions: [] } },
+      binding,
+      pages
+    ),
+    scopes
+  );
+  const allowedContexts = new Set([
+    ...binding.contextIds,
+    ...page.blocks
+      .filter((b) => binding.sectionIds.includes(b.id))
+      .flatMap((b) => [b.id, ...b.spanIds]),
+  ]);
   if (
-    nearest &&
-    ![...contexts, ...scopes].some((id) => nearest.spanIds.includes(id) || id === nearest.id) &&
-    nearest.y >
-      Math.max(
-        ...contexts.map(
+    contexts.some((id) => !allowedContexts.has(id)) ||
+    binding.contextIds.some(
+      (required) =>
+        ![...contexts, ...scopes].some(
           (id) =>
-            page.spans.find((s) => s.id === id)?.y ??
-            page.blocks.find((b) => b.id === id)?.y ??
-            Infinity
+            id === required ||
+            pages.flatMap((p) => p.blocks).some((b) => b.id === id && b.spanIds.includes(required))
         )
-      )
+    )
   )
-    fail(
-      `SCOPE:直近見出し ${nearest.id} が未参照。contextIdsにはspanIds=${JSON.stringify(nearest.spanIds)}から適用する断片を入れます。原文=${nearest.text}`
-    );
+    fail(`SCOPE:適用見出しの不一致。必要なcontextIds=${JSON.stringify(binding.contextIds)}`);
   // Cross-page notes need a shared named metric series; adjacency alone is insufficient.
   for (const link of noteLinks(pages).filter(
     (link) => link.fromPage === page.pageNumber && link.metric === normalized(fact.label)
@@ -609,6 +566,19 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
   }
 
   if (fact.kind === 'number' || fact.kind === 'range') {
+    const plannedDates = [
+      ...new Set(
+        datedStates(local)
+          .filter((d) => d.state === 'planned')
+          .map((d) => d.date)
+      ),
+    ];
+    if (
+      fact.semantics.state === 'planned' &&
+      fact.semantics.periodKind === 'eventDate' &&
+      plannedDates.length > 1
+    )
+      fail('PERIOD:適用する予定日が曖昧です');
     if (!fact.period && pages.some((p) => /20\d{2}年\d{1,2}月/.test(normalized(p.text))))
       fail(
         `PERIOD:原文の対象期間が欠落しています。日付の役割候補=${JSON.stringify(datedStates(local))}`
@@ -642,7 +612,7 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
           fail('PERIOD:日付の役割が不一致です');
       }
     }
-    if (fact.semantics.periodKind !== periodKind(fact.period, axis + context))
+    if (fact.semantics.periodKind !== periodKind(fact.period, axis || source, context))
       fail('PERIOD:期間区分の不一致');
     if (fact.semantics.metricKind !== metricKind(fact.label, fact.unit))
       fail('METRIC:量の種類の不一致');
@@ -656,23 +626,48 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
         'STATE:planned/decided/contracted/completed/unspecifiedではvalueKind=null。財務実績・予想だけはstateと同じvalueKindが必要です'
       );
   } else {
-    const relativePeriods = [
-      ...new Set(normalized(source).match(/(?:翌|次|当|前)連結会計年度/g) ?? []),
-    ];
-    if (relativePeriods.length > 1)
-      fail('PERIOD:複数の相対年度を含む段落は単一期間として確定できません');
-    if (relativePeriods.length === 1 && normalized(fact.period ?? '') !== relativePeriods[0])
-      fail(
-        `PERIOD:原文の相対年度が欠落・不一致です。period=${relativePeriods[0]}、periodKind=relativeYearが必要です`
-      );
-    if (fact.period && new Set(datedStates(source).map((d) => d.date)).size > 1)
-      fail('PERIOD:複数の日付役割を含む段落はperiod=nullとし、全日付をdateRolesへ保持します');
-    if (fact.period && !normalized(local).includes(normalized(fact.period)))
-      fail('PERIOD:出来事の対象期間の根拠がありません');
-    if (fact.semantics.periodKind !== periodKind(fact.period, local))
-      fail(
-        `PERIOD:出来事の期間区分が不一致。period=${fact.period}に対応する区分=${periodKind(fact.period, local)}`
-      );
+    const recordingPeriods = isLossRecordingPlan(source) ? lossRecordingPeriods(source) : null;
+    if (recordingPeriods !== null) {
+      if (recordingPeriods.length > 1)
+        fail('PERIOD:計上予定に複数の対象期間があり単一期間を確定できません');
+      const target = recordingPeriods[0];
+      if (target) {
+        const kind = periodKind(target, target);
+        const sameAxis =
+          kind === 'relativeYear'
+            ? normalized(fact.period ?? '') === target
+            : !!fact.period && explicitCalendarAxisMatches(target, fact.period);
+        const sameShape =
+          kind === 'fullYear' ||
+          reportingPeriodShape(fact.period ?? '') === reportingPeriodShape(target);
+        if (
+          !sameAxis ||
+          !sameShape ||
+          fact.semantics.periodKind !== kind ||
+          periodKind(fact.period, target) !== kind
+        )
+          fail('PERIOD:計上する述語に対応する対象期間が欠落・不一致です');
+      } else if (fact.period !== null || fact.semantics.periodKind !== 'none')
+        fail('PERIOD:計上予定との対応を証明できない期間を付与できません');
+    } else {
+      const relativePeriods = [
+        ...new Set(normalized(source).match(/(?:翌|次|当|前)連結会計年度/g) ?? []),
+      ];
+      if (relativePeriods.length > 1)
+        fail('PERIOD:複数の相対年度を含む段落は単一期間として確定できません');
+      if (relativePeriods.length === 1 && normalized(fact.period ?? '') !== relativePeriods[0])
+        fail(
+          `PERIOD:原文の相対年度が欠落・不一致です。period=${relativePeriods[0]}、periodKind=relativeYearが必要です`
+        );
+      if (fact.period && new Set(datedStates(source).map((d) => d.date)).size > 1)
+        fail('PERIOD:複数の日付役割を含む段落はperiod=nullとし、全日付をdateRolesへ保持します');
+      if (fact.period && !normalized(local).includes(normalized(fact.period)))
+        fail('PERIOD:出来事の対象期間の根拠がありません');
+      if (fact.semantics.periodKind !== periodKind(fact.period, source, context + notes))
+        fail(
+          `PERIOD:出来事の期間区分が不一致。period=${fact.period}に対応する区分=${periodKind(fact.period, source, context + notes)}`
+        );
+    }
     if (fact.semantics.metricKind !== 'none') fail('METRIC:出来事を数量の種類へ変換できません');
     if (fact.period && fact.semantics.periodKind === 'eventDate') {
       const date = normalized(fact.period).match(/20\d{2}年\d{1,2}月\d{1,2}日/)?.[0];
@@ -680,7 +675,12 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
         fail('PERIOD:出来事の日付の役割と状態が不一致です');
     }
   }
-  if (!stateSupported(fact.semantics.state, local + '\n' + scope))
+  if (fact.kind === 'event' || fact.kind === 'status')
+    verifyAssertionState(fact.semantics.state, source);
+  else if (
+    !['actual', 'forecast', 'forecastBefore', 'forecastAfter'].includes(fact.semantics.state) &&
+    !stateSupported(fact.semantics.state, local)
+  )
     fail(
       'STATE:状態の根拠がありません。取得予定は取得方法・予定日の段落をcontextIdsで参照してください'
     );
@@ -707,21 +707,7 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
       JSON.stringify(conditions.map(normalized).sort())
   )
     fail(`CONDITION:条件の欠落・不一致。原文の条件文全体=${JSON.stringify(conditions)}`);
-  const fragments = source
-    .split(/[。()（）]/)
-    .map(normalized)
-    .filter(Boolean);
-  const negatives = fragments.filter((text) =>
-    /していません|しません|行わない|行われない|ありません|ございません|未実施|締結していない/.test(
-      text
-    )
-  );
-  const polarity =
-    negatives.length === 0
-      ? 'affirmative'
-      : negatives.length === fragments.length
-        ? 'negative'
-        : 'mixed';
+  const polarity = assertionPolarity(source);
   if (fact.semantics.polarity !== polarity)
     fail(`POLARITY:否定の不一致。完結した原文の区分=${polarity}（混在する文はmixed）`);
   for (const k of ['subject', 'scope', 'basis'] as const) {
@@ -751,12 +737,6 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
       !continuation.scopeIds.every((id) => scopes.includes(id)))
   )
     fail('SCOPE:継続表の対象会社が不一致');
-  const localScope = scope + context;
-  if (
-    (/非連結|個別/.test(localScope) && fact.semantics.scope === '連結') ||
-    (/日本基準/.test(localScope) && fact.semantics.basis === 'IFRS')
-  )
-    fail('SCOPE:会計基準・範囲の競合');
   const issuerHeading = pages
     .find((p) => p.pageNumber === 1)
     ?.blocks.find((b) => /上場会社名|会社名/.test(normalized(b.text)));
@@ -765,31 +745,6 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
   const reportingHeading = pages
     .find((p) => p.pageNumber === 1)
     ?.blocks.find((b) => /決算短信/.test(b.text));
-  if (
-    (fact.kind === 'number' || fact.kind === 'range') &&
-    reportingHeading &&
-    /経営成績|業績予想/.test(nearest?.text ?? '') &&
-    !/配当/.test(fact.label)
-  ) {
-    const heading = normalized(reportingHeading.text);
-    const expectedScope = /非連結/.test(heading)
-      ? '非連結'
-      : /個別/.test(heading)
-        ? '個別'
-        : /連結/.test(heading)
-          ? '連結'
-          : null;
-    const expectedBasis = /日本基準/.test(heading)
-      ? '日本基準'
-      : /IFRS/.test(heading)
-        ? 'IFRS'
-        : null;
-    if (
-      (expectedScope && fact.semantics.scope !== expectedScope) ||
-      (expectedBasis && fact.semantics.basis !== expectedBasis)
-    )
-      fail('SCOPE:報告見出しの範囲・会計基準が欠落・不一致');
-  }
   // Per-share dividends belong to the issuer's shares. A consolidation caption
   // from the financial statements does not establish their security scope.
   if (
@@ -856,6 +811,7 @@ export function validateFact(value: unknown, pages: ExtractedPage[]): VerifiedFa
     dateRoles,
     semantics: { ...fact.semantics, qualifiers: allQualifiers, conditions },
   };
+  checkSemantics(checked.semantics);
   const id = stableFactId(checked);
   if (fact.id.startsWith('fact-') && fact.id !== id)
     fail('REFERENCE:保存した確定IDが根拠・意味と一致しません');

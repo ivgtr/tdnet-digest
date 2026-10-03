@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
+import { SUMMARY_TRACE_KEY, matchingSummaryTrace } from '@/lib/summary-trace';
 import { BUTTON_STYLES } from './constants/styles';
 
 interface RowData {
@@ -97,6 +98,29 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     if (result?.summary && scoringEnabled) startScore();
   }, [score, analysis, scoringEnabled, result, updateStages, startScore]);
 
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+  const exportDiagnostic = async () => {
+    try {
+      const saved = await chrome.storage.local.get(SUMMARY_TRACE_KEY);
+      const trace = matchingSummaryTrace(
+        saved[SUMMARY_TRACE_KEY],
+        rowData.pdfUrl,
+        result?.diagnosticRunId ?? null,
+        result?.resultId ?? null
+      );
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(trace, null, 2)], { type: 'application/json' })
+      );
+      const a = iframeDoc.createElement('a');
+      a.href = url;
+      a.download = 'tdnet-summary-diagnostic.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      setDiagnosticError(null);
+    } catch (e) {
+      setDiagnosticError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const handleClick = () => {
     if (loading) return;
 
@@ -161,6 +185,16 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           {buttonText}
         </button>
       </div>
+      {result && (
+        <button type="button" onClick={() => void exportDiagnostic()} style={{ fontSize: 10 }}>
+          診断を保存
+        </button>
+      )}
+      {diagnosticError && (
+        <span role="alert" style={{ fontSize: 10 }}>
+          {diagnosticError}
+        </span>
+      )}
     </div>
   );
 };

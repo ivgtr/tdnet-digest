@@ -1,3 +1,5 @@
+import { candidateResponse } from './fixtures/candidate-test-source';
+import type { VerifiedFact } from './fact-contract';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { generateText, type LLMConfig } from './llm-client';
@@ -24,8 +26,7 @@ const response = (text: unknown, stopReason = 'end_turn', outputTokens = 6000) =
 const pages = corpus[0].pages.map((page) =>
   extractPageLayout(page.items as TextItem[], page.pageNumber)
 );
-const raw = (facts: unknown[]) =>
-  JSON.stringify({ version: 4, documentType: 'earnings', facts, unverified: [] });
+const raw = (facts: unknown[]) => candidateResponse(facts as VerifiedFact[], pages, 'earnings');
 
 afterEach(() => {
   vi.unstubAllGlobals();

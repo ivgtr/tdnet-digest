@@ -96,6 +96,11 @@ export function canonicalJSON(value: unknown): string {
 }
 export function stableFactId(fact: Omit<VerifiedFact, 'id'>): string {
   const text = canonicalJSON([
+    fact.kind,
+    fact.value,
+    fact.unit,
+    fact.valueKind,
+    fact.statement,
     fact.page,
     fact.label,
     fact.period,

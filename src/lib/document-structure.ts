@@ -1,6 +1,7 @@
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { isQuantityPrefix, parseExactQuantity, parseExactRange, isUnitToken } from './quantity';
+import { calendarDatePattern, calendarIntervalSeparator } from './period-semantics';
 
 export interface SourceItem extends PdfSpan {
   transform: number[];
@@ -28,6 +29,26 @@ export interface QuantityCell {
   height: number;
 }
 export const normalized = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+export const reportingScope = '非連結|個別|単体|連結';
+export const reportingScopeHeading = `(${reportingScope})(?:累計期間)?(?:の)?`;
+/** Whole supported reporting titles, never a forecast used as a noun modifier. */
+export function forecastReportingTitle(text: string): { period: string | null } | null {
+  const title = normalized(text).replace(/^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/, '');
+  const match = title.match(
+    new RegExp(
+      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の)?(?:通期)?)?(?:${reportingScopeHeading})?業績予想(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
+    )
+  );
+  if (match) return { period: match[1] ?? null };
+  return /^(?:20\d{2}年\d{1,2}月期(?:の)?)?今後の見通し(?:について)?$/.test(title)
+    ? { period: null }
+    : null;
+}
+export function isPerformanceReportingTitle(text: string): boolean {
+  return new RegExp(`経営成績|損益計算書|${reportingScopeHeading}業績(?!予想)`).test(
+    normalized(text)
+  );
+}
 export const sameLine = (a: PdfSpan, b: PdfSpan) =>
   Math.abs(a.y - b.y) <= Math.min(a.height, b.height) * 0.3;
 
@@ -240,7 +261,8 @@ export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantit
       .filter((run) => {
         const text = normalized(run.map((s) => s.text).join(''));
         return (
-          !/20\d{2}年|経営成績|業績予想|配当の状況|決算短信|表示は|未満(?:切捨て|四捨五入)|単位[:：]|^(?:\(?連結\)?|\(?個別\)?)$/.test(
+          !isPerformanceReportingTitle(text) &&
+          !/20\d{2}年|業績予想|配当の状況|決算短信|表示は|未満(?:切捨て|四捨五入)|単位[:：]|^(?:\(?連結\)?|\(?個別\)?)$/.test(
             text
           ) &&
           (text === '年間配当金' ||
@@ -281,9 +303,9 @@ export function tableReferenceHints(page: Pick<ExtractedPage, 'spans' | 'quantit
         (run) =>
           run[0].y < Math.min(...metrics.map((s) => s.y)) &&
           value.y - run[0].y < value.height * 32 &&
-          /経営成績|連結業績|業績予想|配当(?:の状況|予想)|損益計算書/.test(
-            normalized(run.map((s) => s.text).join(''))
-          )
+          (isPerformanceReportingTitle(run.map((s) => s.text).join('')) ||
+            forecastReportingTitle(run.map((s) => s.text).join('')) ||
+            /配当(?:の状況|予想)/.test(normalized(run.map((s) => s.text).join(''))))
       )
       .sort((a, b) => b[0].y - a[0].y)[0];
     if (!axes.length || !context) continue;

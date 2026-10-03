@@ -1,3 +1,5 @@
+import { SUMMARY_TRACE_KEY, summaryBuildDigest, type SummaryTrace } from '@/lib/summary-trace';
+import { serializeCandidateSource } from '@/lib/fact-candidates';
 import type { LLMConfig } from '@/lib/llm-client';
 import { detectDocumentType, type DocumentType } from '@/lib/document-type';
 import {
@@ -64,13 +66,26 @@ chrome.runtime.onInstalled.addListener((details) => {
     })
     .catch((error) => console.error('旧ホスト権限の削除に失敗:', error));
 });
+// Request order, including extraction failures, owns the bounded last-run trace.
+let currentSummaryRunId: string | null = null;
+let traceWriteQueue: Promise<void> = Promise.resolve();
 chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
   if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
-  const task = request.action === 'summarize' ? handleSummarize(request) : handleFollowup(request);
+  const diagnosticRunId = request.action === 'summarize' ? crypto.randomUUID() : null;
+  if (diagnosticRunId) currentSummaryRunId = diagnosticRunId;
+  const task =
+    request.action === 'summarize'
+      ? handleSummarize(request, diagnosticRunId!)
+      : handleFollowup(request);
   task
-    .then(sendResponse)
+    .then((response) =>
+      sendResponse({ ...response, ...(diagnosticRunId ? { diagnosticRunId } : {}) })
+    )
     .catch((error) =>
-      sendResponse({ error: error instanceof Error ? error.message : String(error) })
+      sendResponse({
+        error: error instanceof Error ? error.message : String(error),
+        ...(diagnosticRunId ? { diagnosticRunId } : {}),
+      })
     );
   return true;
 });
@@ -161,38 +176,116 @@ async function resultId(
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function handleSummarize(request: SummarizeRequest) {
-  const settings = await getSettings();
-  const documentType = detectDocumentType(request.title);
-  const mode = request.forceExtractionMode ?? settings.extractionMode;
-  if (!['full', 'smart'].includes(mode)) throw new Error('抽出モードが不正です');
-  const data = await fetchPDF(request.pdfUrl);
-  await setupOffscreenDocument();
-  const extraction = await extractTextFromPDF(data, documentType, mode);
-  const config = configOf(settings);
-  const { facts } = await generateVerifiedFactSummary(
-    config,
-    documentType,
-    extraction.text,
-    extraction.pages
-  );
-  const fingerprint = buildAnalysisFingerprint({
-    provider: settings.provider,
-    model: settings.model,
-    extractionMode: mode,
-  });
-  const documentHash = await hashPdf(data);
-  const id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
-  const metadata: SummaryMetadata = {
-    ...extraction.metadata,
-    documentHash,
-    analysisSchemaVersion: FACT_SCHEMA_VERSION,
-    provider: settings.provider,
-    model: settings.model,
-    summaryMode: 'one-pass',
-    analysisFingerprint: fingerprint,
+async function handleSummarize(request: SummarizeRequest, runId: string) {
+  const started = performance.now();
+  const trace: SummaryTrace = {
+    version: 1,
+    runId,
+    resultId: null,
+    startedAt: new Date().toISOString(),
+    pdfUrl: request.pdfUrl,
+    documentType: detectDocumentType(request.title),
+    provider: null,
+    model: null,
+    extractionMode: null,
+    fingerprint: null,
+    buildDigest: summaryBuildDigest(),
+    documentHash: null,
+    inputHash: null,
+    selectedPages: [],
+    attempts: [],
+    usage: [],
+    elapsedMs: 0,
+    outcome: 'running',
+    error: null,
   };
-  return { summary: renderFacts(facts), facts, resultId: id, metadata };
+  const saveTrace = async () => {
+    trace.elapsedMs = Math.round(performance.now() - started);
+    try {
+      const snapshot = structuredClone(trace);
+      const write = traceWriteQueue.then(async () => {
+        if (currentSummaryRunId === runId)
+          await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: snapshot });
+      });
+      // A failed write belongs to its request, and cannot poison later requests.
+      traceWriteQueue = write.catch(() => {});
+      await write;
+    } catch {
+      throw new Error(
+        `診断の保存に失敗しました。${trace.error ?? '直近実行を保存できませんでした'}`
+      );
+    }
+  };
+
+  try {
+    trace.pdfUrl = fullUrl(request.pdfUrl);
+    await saveTrace();
+    const settings = await getSettings();
+    const documentType = detectDocumentType(request.title);
+    const mode = request.forceExtractionMode ?? settings.extractionMode;
+    if (!['full', 'smart'].includes(mode)) throw new Error('抽出モードが不正です');
+    Object.assign(trace, {
+      provider: settings.provider,
+      model: settings.model,
+      extractionMode: mode,
+    });
+    const data = await fetchPDF(request.pdfUrl);
+    await setupOffscreenDocument();
+    const extraction = await extractTextFromPDF(data, documentType, mode);
+    const config = configOf(settings);
+    const fingerprint = buildAnalysisFingerprint({
+      provider: settings.provider,
+      model: settings.model,
+      extractionMode: mode,
+    });
+    const documentHash = await hashPdf(data);
+    const inputBytes = new TextEncoder().encode(
+      serializeCandidateSource(extraction.pages, undefined, documentType)
+    );
+
+    Object.assign(trace, {
+      fingerprint,
+      documentHash,
+      inputHash: await hashPdf(inputBytes.buffer),
+      selectedPages: extraction.pages
+        .filter((p) => p.selection === 'selected')
+        .map((p) => p.pageNumber),
+    });
+    await saveTrace();
+    let facts: FactSummary;
+    let id: string;
+    const generated = await generateVerifiedFactSummary(
+      { ...config, signal: AbortSignal.timeout(300_000), onUsage: (u) => trace.usage.push(u) },
+      documentType,
+      extraction.text,
+      extraction.pages,
+      async (a) => {
+        trace.attempts.push(a);
+        await saveTrace();
+      }
+    );
+    facts = generated.facts;
+    id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
+    trace.resultId = id;
+    trace.outcome = generated.repairAttempted ? 'repairSuccess' : 'firstSuccess';
+
+    await saveTrace();
+    const metadata: SummaryMetadata = {
+      ...extraction.metadata,
+      documentHash,
+      analysisSchemaVersion: FACT_SCHEMA_VERSION,
+      provider: settings.provider,
+      model: settings.model,
+      summaryMode: 'one-pass',
+      analysisFingerprint: fingerprint,
+    };
+    return { summary: renderFacts(facts), facts, resultId: id, metadata };
+  } catch (error) {
+    trace.outcome = 'failure';
+    trace.error = error instanceof Error ? error.message : String(error);
+    await saveTrace();
+    throw error;
+  }
 }
 
 async function handleFollowup(

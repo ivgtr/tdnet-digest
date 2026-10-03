@@ -19,6 +19,7 @@ import {
 } from '@/lib/section-detector';
 import { extractPageLayout } from '@/lib/pdf-layout';
 import { validatePages } from '@/lib/fact-validation';
+import { buildDocumentContext } from '@/lib/document-context';
 import { tableContinuations, noteLinks } from '@/lib/document-links';
 import {
   selectExtractedPages,
@@ -114,9 +115,12 @@ async function extractSmartMode(
 
     const closure = new Set(extractedPages);
     closure.add(1);
+    const context = buildDocumentContext(allPages);
     let changed = true;
     while (changed) {
       const size = closure.size;
+      for (const binding of context.bindings)
+        if (closure.has(binding.page)) binding.requiredPages.forEach((p) => closure.add(p));
       for (const link of tableContinuations(allPages))
         if (closure.has(link.fromPage) || closure.has(link.toPage)) {
           closure.add(link.fromPage);

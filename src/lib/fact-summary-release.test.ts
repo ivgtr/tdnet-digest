@@ -165,7 +165,7 @@ describe('既存の実PDF形式のv4回帰', () => {
     {
       index: 1,
       period: '2027年2月期第1四半期',
-      context: [42, 43, 44],
+      context: [42, 43, 44, 45],
       row: [67, 68],
       subject: '株式会社クリエイト・レストランツ・ホールディングス',
       basis: 'IFRS',
@@ -258,7 +258,7 @@ const blueProfit = table(
   [265, 271],
   [282, 283],
   [279],
-  [263],
+  [262, 263],
   ['p1b1', 'p1b3'],
   { subject: '株式会社BlueMeme' }
 );

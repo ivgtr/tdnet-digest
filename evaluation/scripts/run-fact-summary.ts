@@ -1,7 +1,7 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { serializeLayout } from '../../src/lib/pdf-layout';
+import { serializeCandidateSource } from '../../src/lib/fact-candidates';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { extractPageLayout } from '../../src/lib/pdf-layout';
 import { serializePagesForAnalysis } from '../../src/lib/page-text';
@@ -37,7 +37,13 @@ if (process.argv.includes('--browser')) {
 await mkdir('evaluation/results/local', { recursive: true });
 const implementationFiles = [
   'src/lib/fact-contract.ts',
+  'src/lib/document-context.ts',
+  'src/lib/source-mappings.ts',
+  'src/lib/source-periods.ts',
+  'src/lib/fact-candidates.ts',
+  'src/lib/assertion-semantics.ts',
   'src/lib/quantity.ts',
+  'src/lib/period-semantics.ts',
   'src/lib/document-structure.ts',
   'src/lib/document-links.ts',
   'src/lib/pdf-layout.ts',
@@ -81,6 +87,7 @@ for (const item of selected) {
       {
         provider,
         model,
+        signal: AbortSignal.timeout(300_000),
         apiKey,
         baseUrl: process.env.TDNET_DIGEST_BASE_URL || undefined,
         onUsage: (item) => usage.push(item),
@@ -105,14 +112,16 @@ for (const item of selected) {
     implementationDigest,
     requestLimits: factSummaryRequestLimits({ provider, model }),
     sourceHash,
-    inputHash: createHash('sha256').update(serializeLayout(pages)).digest('hex'),
-    inputChars: serializeLayout(pages).length,
+    inputHash: createHash('sha256')
+      .update(serializeCandidateSource(pages, undefined, item.documentType))
+      .digest('hex'),
+    inputChars: serializeCandidateSource(pages, undefined, item.documentType).length,
     usage,
     provider,
     model,
     elapsedSeconds,
     pages: pages.length,
-    repairAttempted: attempt?.repairAttempted ?? null,
+    repairAttempted: attempt?.repairAttempted ?? attempts.some((a) => a.phase === 'repair'),
     success: errors.length === 0,
     errors,
     result,

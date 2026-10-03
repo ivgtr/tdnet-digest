@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { parseQuantity } from './quantity';
+import { parseQuantity, proseQuantities } from './quantity';
 
 it.each([
   ['120店舗', 120, '店舗'],
@@ -25,3 +25,49 @@ it.each(['120店舗500人', '－', '未定', '2026年7月14日', '10円123銭', 
     expect(parseQuantity(text)).toBeNull();
   }
 );
+
+it('本文の単位証明は構文と後続の述語を区別する', () => {
+  for (const unit of [
+    '台',
+    '口',
+    '件/月',
+    'kg',
+    'm2',
+    '人日',
+    'か月',
+    '店舗',
+    'kWh',
+    'トン',
+    '百万ドル',
+    '千kWh',
+    '百万kWh',
+    '千トン',
+  ]) {
+    const block = { id: 'b', text: `数量は100 ${unit}です。` };
+    expect(proseQuantities(block)).toEqual([{ id: 'b:q1', raw: `100 ${unit}`, start: 3 }]);
+  }
+  for (const suffix of [
+    '以内',
+    '未達',
+    '強',
+    '弱',
+    '以上',
+    '未満',
+    '程度',
+    '増加しました',
+    'ではありません',
+    'に満たない',
+  ]) {
+    expect(proseQuantities({ id: 'b', text: `取得価額は100百万円${suffix}です。` })[0].raw).toBe(
+      '100百万円'
+    );
+  }
+  for (const unit of ['独自数量単位', '超', '強', '弱', 'not'])
+    expect(proseQuantities({ id: 'b', text: `数量は100${unit}です。` })).toEqual([]);
+});
+
+it.each(['10円50銭', '１０円５０銭', '-0円05銭'])('円銭の本文原数量を分断しない: %s', (raw) => {
+  expect(proseQuantities({ id: 'b', text: `配当金は${raw}です。` })).toEqual([
+    { id: 'b:q1', raw: raw.normalize('NFKC'), start: 4 },
+  ]);
+});

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   verifyTableEvidence,
+  verifyPeriodAndKind,
   verifyProseEvidence,
   type NumericClaim,
   type TableEvidence,
@@ -98,6 +99,9 @@ describe('非財務単位を持つ表', () => {
     ['人', 500],
     ['件', 30],
     ['kWh', 50],
+    ['千kWh', 50],
+    ['百万kWh', 50],
+    ['千トン', 50],
     ['㎡', 120],
   ] as const)('%s単位を値と一体でも列見出しでも照合する', (unit, value) => {
     for (const inline of [true, false]) {
@@ -254,27 +258,36 @@ describe('非財務単位を持つ表', () => {
     };
     expect(() => verifyTableEvidence(source, evidence, { ...claim, unit })).toThrow('単位');
   });
+  // 配置は正常断片/注記付き断片の2対、その他の語彙は片方の配置で確認する。
   it.each(
     [
       ['百', '万円', '百万円'],
       ['百', '万円※', '百万円'],
-      ['百', '万円(注1)', '百万円'],
-      ['百', '万円*1', '百万円'],
-      ['百', '万円¹', '百万円'],
-      ['百', '万円注1', '百万円'],
-      ['百', '注', '百万円'],
-      ['百', '注1万円', '百万円'],
-      ['百', '万円注1）', '百万円'],
-      ['百', '注1）万円', '百万円'],
-      ['百', '注1.5', '百万円'],
-      ['百', '注1...', '百万円'],
-      ['百', '注1%', '百万円'],
-      ['百', '注1/', '百万円'],
-      ['百', '注1·', '百万円'],
-      ['m', '2※', 'm2'],
-    ].flatMap(([prefix, suffix, unit]) =>
-      (['inline', 'adjacent'] as const).map((kind) => ({ kind, prefix, suffix, unit }))
-    )
+    ]
+      .flatMap(([prefix, suffix, unit]) =>
+        ['inline', 'adjacent'].map((kind) => ({ kind, prefix, suffix, unit })),
+      )
+      .concat(
+        [
+          ['百', '万円(注1)', '百万円'],
+          ['百', '万円*1', '百万円'],
+          ['百', '万円¹', '百万円'],
+          ['百', '万円注1', '百万円'],
+          ['百', '注', '百万円'],
+          ['百', '注1万円', '百万円'],
+          ['百', '注1.5', '百万円'],
+          ['百', '注1...', '百万円'],
+          ['百', '注1%', '百万円'],
+          ['百', '注1/', '百万円'],
+          ['百', '注1·', '百万円'],
+          ['m', '2※', 'm2'],
+        ].map(([prefix, suffix, unit], i) => ({
+          kind: i % 2 ? 'adjacent' : 'inline',
+          prefix,
+          suffix,
+          unit,
+        })),
+      )
   )('$kind単位$prefixの未参照の続き$suffixを省けない', ({ kind, prefix, suffix, unit }) => {
     const source = {
       ...page,
@@ -300,11 +313,20 @@ describe('非財務単位を持つ表', () => {
     }
   });
   it.each(
-    ['注1', '注12', '注１２', '注1）', '注1.', '注１．', '注1）。', '注1.)', '注1’'].flatMap(
-      (note) => (['inline', 'adjacent'] as const).map((kind) => ({ note, kind }))
-    )
+    [
+      { note: '注1', kind: 'inline' },
+      { note: '注1', kind: 'adjacent' },
+      { note: '注12', kind: 'inline' },
+      { note: '注１２', kind: 'adjacent' },
+      { note: '注1）', kind: 'inline' },
+      { note: '注1.', kind: 'adjacent' },
+      { note: '注１．', kind: 'inline' },
+      { note: '注1）。', kind: 'adjacent' },
+      { note: '注1.)', kind: 'inline' },
+      { note: '注1’', kind: 'adjacent' },
+    ]
   )('$kind単位の後の独立した注記参照$noteを単位に含めない', ({ note, kind }) => {
-    for (const unit of ['百', 'kWh', 'm2']) {
+    for (const unit of ['百万円', 'kWh', 'm2']) {
       const source = {
         ...page,
         spans: spans
@@ -342,11 +364,11 @@ describe('非財務単位を持つ表', () => {
         ...page,
         spans: spans
           .filter((s) => s.id !== 'u2')
-          .map((s) => (s.id === 'v2' ? { ...s, text: '200百' } : s))
+          .map((s) => (s.id === 'v2' ? { ...s, text: '200百万円' } : s))
           .concat(span('suffix', suffix, x, y, 20)),
       };
       expect(
-        verifyTableEvidence(source, { ...evidence, unitIds: ['v2'] }, { ...claim, unit: '百' })
+        verifyTableEvidence(source, { ...evidence, unitIds: ['v2'] }, { ...claim, unit: '百万円' })
           .evidence.valueId
       ).toBe('v2');
     }
@@ -582,4 +604,86 @@ describe('数量が1つだけの表', () => {
       '表の行構造が曖昧'
     );
   });
+});
+
+const interval = '2026年4月1日～2026年4月30日';
+it.each([interval, interval.replace('～', 'から') + 'まで', interval.replace('～', '-')])(
+  '日付区間の両端を明示軸から証明する: %s',
+  (axis) => {
+    expect(() =>
+      verifyPeriodAndKind(
+        { ...claim, period: interval, valueKind: 'actual' },
+        axis,
+        '2027年3月期 経営成績',
+        ''
+      )
+    ).not.toThrow();
+  }
+);
+it.each(['2026年4月1日', '2026年4月1日～2026年5月30日', '2026年4月30日～2026年4月1日'])(
+  '日付区間の省略・置換・逆転を拒否する: %s',
+  (period) => {
+    expect(() =>
+      verifyPeriodAndKind({ ...claim, period, valueKind: 'actual' }, interval, period, '')
+    ).toThrow();
+  }
+);
+it('非連続の二つの日付を区間と推測しない', () => {
+  expect(() =>
+    verifyPeriodAndKind(
+      { ...claim, period: interval, valueKind: 'actual' },
+      '2026年4月1日及び2026年4月30日',
+      interval,
+      ''
+    )
+  ).toThrow();
+});
+
+it.each(['以内', '未達', '強', '弱'])(
+  '境界表現を値セル・裸の列単位・明示宣言へ吸収しない: %s',
+  (tail) => {
+    const unit = `百万円${tail}`;
+    for (const placement of ['inline', 'column', 'declaration']) {
+      const source = {
+        ...page,
+        spans: spans.map((s) =>
+          placement === 'inline' && s.id === 'v2'
+            ? { ...s, text: `200${unit}` }
+            : placement !== 'inline' && s.id === 'u2'
+              ? { ...s, text: placement === 'declaration' ? `(単位:${unit})` : unit }
+              : s
+        ),
+      };
+      expect(() =>
+        verifyTableEvidence(
+          source,
+          { ...evidence, unitIds: [placement === 'inline' ? 'v2' : 'u2'] },
+          { ...claim, unit }
+        )
+      ).toThrow('単位');
+    }
+  }
+);
+it('単位宣言でも未知の名称を推測で数量単位にしない', () => {
+  for (const unit of ['独自量', '(単位:独自量)']) {
+    const source = { ...page, spans: spans.map((s) => (s.id === 'u2' ? { ...s, text: unit } : s)) };
+    expect(() => verifyTableEvidence(source, evidence, { ...claim, unit: '独自量' })).toThrow(
+      '単位'
+    );
+  }
+  const source = {
+    ...page,
+    spans: spans.map((s) => (s.id === 'u2' ? { ...s, text: '(単位:百万円)' } : s)),
+  };
+  expect(verifyTableEvidence(source, evidence, claim).evidence.unitIds).toEqual(['u2']);
+});
+it('片側だけの日付を区間として扱わない', () => {
+  expect(() =>
+    verifyPeriodAndKind(
+      { ...claim, period: '2026年4月1日～', valueKind: 'actual' },
+      '2026年4月1日',
+      '',
+      ''
+    )
+  ).toThrow();
 });

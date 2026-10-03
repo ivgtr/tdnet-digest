@@ -72,3 +72,61 @@ export function isQuantityPrefix(text: string): boolean {
     text.normalize('NFKC').replace(/\s/g, '')
   );
 }
+
+/** Explicit unit-caption grammar shared by composition and verification. */
+export function declaredQuantityUnit(raw: string): string | null {
+  const text = raw.normalize('NFKC').replace(/\s/g, '');
+  let unit = text;
+  if (text.startsWith('(単位')) {
+    const caption = text.match(/^\(単位[:：]?([^()]+)\)$/);
+    if (!caption) return null;
+    unit = caption[1];
+  } else if (text.startsWith('単位')) unit = text.replace(/^単位[:：]?/, '');
+  if (unit === '円銭') return '円';
+  return isUnitToken(unit) ? unit : null;
+}
+/** A bare prose token needs unit evidence, not merely letters that could form a unit.
+ * Currency scales, counters and measurement notation are closed lexical forms.
+ * A caption identifies the token but cannot turn a bound into a unit.
+ * Unknown units remain unverified.
+ */
+export function isUncaptionedUnit(text: string): boolean {
+  const atom =
+    /^(?:(?:十|百|千|万|百万|千万|億|兆)?(?:円|ドル|株|個|件|台|人|名|口|店|棟|社|回|本|枚|冊|箱|日|週|月|年|倍|人日|人月|店舗|時間|か月|カ月|ヶ月|箇月|ポイント|トン|キログラム|メートル|リットル|JPY|USD|EUR|GBP|CNY|(?:[afpnumcdhkMGT]|da)?(?:m|g|s|A|K|mol|cd|Hz|N|Pa|J|Wh|W|C|V|F|S|Wb|T|H|L|l|B|bit)[23]?)|bps|pt|px|h|min|d|[\p{Sc}%])$/u;
+  return isUnitToken(text) && text.split(/[/·]/).every((part) => atom.test(part));
+}
+
+function provedProseUnitLength(text: string): number {
+  for (let length = text.length; length > 0; length--)
+    if (isUncaptionedUnit(text.slice(0, length))) return length;
+  return 0;
+}
+/** Keep offsets in the NFKC source; whitespace separates quantity tokens, never digits. */
+export function proseQuantities(block: { id: string; text: string }) {
+  const source = block.text.normalize('NFKC');
+  // Calendar references are period/date options, not scalar quantity candidates.
+  const calendar = [
+    ...source.matchAll(
+      /20\d{2}年\s*\d{1,2}月(?:\s*\d{1,2}日|期(?:第[1-4]四半期|中間期|通期)?|度)?/g
+    ),
+  ].map((m) => ({ start: m.index, end: m.index + m[0].length }));
+  const found = [
+    ...source.matchAll(
+      /((?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*[～〜~]\s*(?:[△▲−-]\s*)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)?\s*)(円\s*\d{2}\s*銭|[A-Za-z%/·]+\d+|(?:[\p{L}\p{Sc}%/·](?:[^\S\n]*[\p{L}\p{Sc}%/·])*))/gu
+    ),
+  ].flatMap((m) => {
+    if (calendar.some((c) => m.index < c.end && m.index + m[1].length > c.start)) return [];
+    const unitRun = m[2];
+    const compactUnit = unitRun.replace(/\s/g, '');
+    if (/^円\d{2}銭$/.test(compactUnit) && parseExactQuantity(m[0]))
+      return [{ raw: m[0], start: m.index }];
+    const boundary = provedProseUnitLength(compactUnit);
+    let count = 0,
+      end = 0;
+    for (; end < unitRun.length && count < boundary; end++) if (!/\s/.test(unitRun[end])) count++;
+    const rawUnit = unitRun.slice(0, end);
+    if (!isUnitToken(rawUnit.replace(/\s/g, ''))) return [];
+    return [{ raw: m[1] + rawUnit, start: m.index }];
+  });
+  return found.map((q, i) => ({ id: `${block.id}:q${i + 1}`, ...q }));
+}

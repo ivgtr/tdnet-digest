@@ -6,7 +6,15 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import type { LLMConfig } from '../../src/lib/llm-client';
 import type { CandidateFact } from '../../src/lib/fact-contract';
+import { candidateResponse } from '../../src/lib/fixtures/candidate-test-source';
+import { extractPageLayout } from '../../src/lib/pdf-layout';
+import corpus from '../../src/lib/fixtures/ir-semantic-corpus.json';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { stableFactId, type VerifiedFact } from '../../src/lib/fact-contract';
 import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
+import { parseFactSummary } from '../../src/lib/fact-summary';
+import { ANALYSIS_SCHEMA_VERSION } from '../../src/lib/analysis-version';
+import { additionalReviewFixture } from './additional-review-fixture';
 import { expectedErrors, type Case as BrowserCase } from './fact-summary-expectations';
 async function builtDigest(): Promise<string> {
   const digest = createHash('sha256');
@@ -33,22 +41,72 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
   if (!args.includes('--browser-module') || !args.includes('--browser-executable'))
     throw new Error('既存PlaywrightモジュールとChromiumを指定してください');
   const { chromium } = await import(pathToFileURL(arg('--browser-module')).href);
+  const reviewCase = args.includes('--additional-review-case')
+    ? arg('--additional-review-case')
+    : null;
+  if (reviewCase && (!args.includes('--fixed-api') || !args.includes('--fixture-source')))
+    throw new Error('追加レビューは固定API・合成PDF専用です');
+  const reviewFixture = reviewCase ? await additionalReviewFixture(reviewCase) : null;
+  if (reviewFixture)
+    item = {
+      ...item,
+      documentType: reviewFixture.documentType,
+      title:
+        reviewFixture.documentType === 'earnings'
+          ? '2027年3月期 決算短信〔日本基準〕（連結）'
+          : '追加セルフレビュー用開示',
+    };
   const withComparison = args.includes('--with-comparison');
+  const fixedFailure =
+    args.includes('--fixed-failure') ||
+    reviewCase === 'reject' ||
+    reviewCase === 'assertion-conflict';
+  if (fixedFailure && !args.includes('--fixed-api'))
+    throw new Error('拒否表示試験は固定API専用です');
+  const smartFull = args.includes('--smart-full');
+  if (smartFull && item.id !== 'bluememe-20260930')
+    throw new Error('smart/full比較はBlueMemeに限定します');
   if (withComparison && (!args.includes('--fixed-api') || item.id !== 'bluememe-20260930'))
     throw new Error('比較固定試験はBlueMemeの固定APIでのみ使用します');
   const fixed = args.includes('--fixed-api'),
     fixtureSource = args.includes('--fixture-source');
+  const reviewRejectedUrl = args.includes('--review-rejected-url');
+  if (reviewRejectedUrl && (!fixed || !fixtureSource || reviewCase || fixedFailure))
+    throw new Error('拒否URLの診断試験は固定API・固定一覧専用です');
+  const reviewDiagnostics = args.includes('--review-diagnostics');
+  if (reviewDiagnostics && (!fixed || !fixtureSource || fixedFailure))
+    throw new Error('診断対応の回帰は正常な固定API・固定原文ルートで実行してください');
+  const reviewSettingsChange = args.includes('--review-settings-change');
+  if (reviewSettingsChange && (!fixed || !fixtureSource || fixedFailure))
+    throw new Error('応答待ちの設定変更試験は正常な固定API・固定原文ルートで実行してください');
+  let signalFirstRequest = () => {},
+    releaseFirstResponse = () => {};
+  const firstRequest = new Promise<void>((resolve) => {
+    signalFirstRequest = resolve;
+  });
+  const firstResponse = new Promise<void>((resolve) => {
+    releaseFirstResponse = resolve;
+  });
   const buildDigest = await builtDigest();
   const profile = await mkdtemp(path.join(tmpdir(), 'tdnet-ir-browser-'));
   let context: any;
   let apiCalls = 0,
+    pdfRequests = 0,
     pdfHash: string | null = null,
     failScore = false;
   const started = performance.now();
   const evidence: any = {
     caseId: item.id,
+    additionalReviewCase: reviewCase,
     api: fixed ? 'fixed' : 'live',
-    source: fixtureSource ? 'fixture' : 'TDnet',
+    expectedOutcome: fixedFailure || reviewRejectedUrl ? 'failure' : 'success',
+    source: reviewRejectedUrl
+      ? 'rejected-link'
+      : reviewFixture
+        ? 'synthetic-PDF-through-offscreen'
+        : fixtureSource
+          ? 'fixture'
+          : 'TDnet',
     buildDigest,
     stages: [],
     success: false,
@@ -61,6 +119,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       env: {
         XDG_CONFIG_HOME: profile,
         XDG_CACHE_HOME: profile,
+        TMPDIR: profile,
         PATH: '/usr/local/bin:/usr/bin:/bin',
       },
       args: [
@@ -81,11 +140,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           ...settings,
           customUrl: settings.baseUrl ?? '',
           extensionEnabled: true,
-          extractionMode: 'full',
+          extractionMode: settings.extractionMode,
           experimentalScoring: false,
         });
       },
       {
+        extractionMode: smartFull ? 'smart' : 'full',
         provider: credentials.provider,
         model: credentials.model,
         apiKey: credentials.apiKey,
@@ -106,6 +166,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         previous.evidence.periodIds = ['p1s78', 'p1s79'];
         fixedFacts.push(previous);
       }
+      const fixture = corpus.find((c) => c.id === item.id)!;
+      const sourcePages = fixture.pages.map((p) =>
+        extractPageLayout(p.items as TextItem[], p.pageNumber)
+      );
       await context.route('https://api.openai.com/**', async (route: any) => {
         const prompt = route
           .request()
@@ -113,7 +177,45 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           .messages.map((m: any) => m.content)
           .join('\n');
         apiCalls++;
+        if (reviewSettingsChange && apiCalls === 1) {
+          signalFirstRequest();
+          await firstResponse;
+        }
         let result: any;
+        if (reviewFixture && !prompt.includes('"interpretation"')) {
+          await route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [
+                {
+                  message: { content: apiCalls === 1 ? reviewFixture.first : reviewFixture.repair },
+                  finish_reason: 'stop',
+                },
+              ],
+            }),
+          });
+          return;
+        }
+        if (fixedFailure) {
+          await route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      candidateVersion: 0,
+                      documentType: item.documentType,
+                      candidates: [],
+                      unverified: [],
+                    }),
+                  },
+                },
+              ],
+            }),
+          });
+          return;
+        }
         if (prompt.includes('"claims"') && failScore) {
           await route.fulfill({ status: 429, body: 'fixed score failure' });
           return;
@@ -157,12 +259,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
             watchPoints: [],
           };
         } else
-          result = {
-            version: 4,
-            documentType: item.documentType,
-            facts: fixedFacts,
-            unverified: [],
-          };
+          result = JSON.parse(
+            candidateResponse(fixedFacts as VerifiedFact[], sourcePages, item.documentType)
+          );
         await route.fulfill({
           contentType: 'application/json',
           body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }),
@@ -173,15 +272,20 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         if (request.method() === 'POST' && request.resourceType() === 'fetch') apiCalls++;
       });
     }
-    const pdfUrl = fixtureSource
-      ? `https://www.release.tdnet.info/inbs/fixture-${item.id}.pdf`
-      : item.url;
+    const pdfUrl = reviewRejectedUrl
+      ? 'https://example.com/fixture-rejected.pdf'
+      : fixtureSource
+        ? `https://www.release.tdnet.info/inbs/fixture-${item.id}.pdf`
+        : item.url;
     if (fixtureSource) {
-      const pdf = await readFile(`evaluation/fixtures/real-pdfs/${item.id}.pdf`);
+      const pdf = reviewFixture
+        ? Buffer.from(reviewFixture.pdf)
+        : await readFile(`evaluation/fixtures/real-pdfs/${item.id}.pdf`);
       pdfHash = createHash('sha256').update(pdf).digest('hex');
-      await context.route(pdfUrl, (route: any) =>
-        route.fulfill({ contentType: 'application/pdf', body: pdf })
-      );
+      await context.route(pdfUrl, (route: any) => {
+        pdfRequests++;
+        return route.fulfill({ contentType: 'application/pdf', body: pdf });
+      });
       await context.route('https://www.release.tdnet.info/inbs/fixture-main.html', (route: any) =>
         route.fulfill({
           contentType: 'text/html',
@@ -193,6 +297,33 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           contentType: 'text/html',
           body: `<html><meta charset="utf-8"><table id="list-head"><tr><td class="header-R">表題</td></tr></table><table id="main-list-table"><tbody><tr><td class="kjTime oddnew-L">15:00</td><td class="kjCode oddnew-M">${item.id.startsWith('bluememe') ? '4069' : item.id.startsWith('buyback') ? '9313' : '3979'}</td><td class="kjName oddnew-M">公開PDF検証</td><td class="kjTitle oddnew-M"><a href="${pdfUrl}">${item.title}</a></td><td class="oddnew-R"></td></tr></tbody></table></html>`,
         })
+      );
+    }
+    if (reviewFixture) {
+      await worker.evaluate(
+        async (seed: any) => {
+          const fingerprint = `v${seed.previousVersion}:openai:fixture:full`;
+          await chrome.storage.local.set({
+            [`summaryCacheV2:${fingerprint}:${seed.pdfUrl}`]: {
+              summary: seed.summary,
+              facts: seed.facts,
+              resultId: 'a'.repeat(64),
+              metadata: {
+                analysisFingerprint: fingerprint,
+                analysisSchemaVersion: 4,
+                documentHash: seed.hash,
+                extractionMode: 'full',
+              },
+            },
+          });
+        },
+        {
+          previousVersion: ANALYSIS_SCHEMA_VERSION - 1,
+          pdfUrl,
+          summary: reviewFixture.legacyRendered,
+          facts: reviewFixture.legacy,
+          hash: pdfHash,
+        }
       );
     }
     const page = await context.newPage();
@@ -227,7 +358,59 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .locator(`a[href$="${pdfUrl.split('/').pop()}"]`)
       .locator('xpath=ancestor::tr[1]');
     await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
+    if (reviewFixture)
+      evidence.stages.push(`v${ANALYSIS_SCHEMA_VERSION - 1} cache ignored before generation`);
     const summary = frame.locator('.tdnet-digest-summary-row');
+    if (reviewRejectedUrl) {
+      await summary
+        .getByText('TDnetのPDF URLではありません', { exact: false })
+        .waitFor({ timeout: 10000 });
+      const trace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.equal(trace.pdfUrl, pdfUrl);
+      assert.equal(trace.outcome, 'failure');
+      assert.equal(trace.resultId, null);
+      assert.deepEqual(trace.attempts, []);
+      assert.deepEqual(trace.usage, []);
+      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const downloaded = await downloadEvent;
+      assert.deepEqual(JSON.parse(await readFile(await downloaded.path(), 'utf8')), trace);
+      assert.equal(apiCalls, 0);
+      assert.equal(pdfRequests, 0);
+      evidence.trace = trace;
+      evidence.pdfRequests = pdfRequests;
+      evidence.stages.push(
+        'rejected URL → own failed run → diagnostic download; PDF/API requests 0'
+      );
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
+    if (reviewSettingsChange) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          firstRequest,
+          new Promise<void>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('応答待ちの初回要求を確認できません')),
+              10000
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      await worker.evaluate(async () => chrome.storage.sync.set({ model: 'fixture-next' }));
+      const button = row.getByRole('button', { name: '要約', exact: true });
+      await button.waitFor({ timeout: 10000 });
+      assert.equal(await button.isEnabled(), true);
+      await button.click();
+      evidence.stages.push('model changed while API pending → button enabled → new request');
+    }
     // The product inserts its result row after generation, not while the API is pending.
     await page.waitForFunction(
       () => {
@@ -235,52 +418,332 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           document
             .querySelector<HTMLIFrameElement>('#main_list')
             ?.contentDocument?.querySelector('.tdnet-digest-summary-row')?.textContent ?? '';
-        return (
-          text.includes('確認できた事実') ||
-          text.includes('要約エラー') ||
-          text.includes('COVERAGE:') ||
-          text.includes('APIレスポンス') ||
-          text.includes('出力上限')
-        );
+        return text.trim().length > 0;
       },
       {},
-      { timeout: 900000 }
+      { timeout: 330000 }
     );
+    if (reviewSettingsChange) {
+      const currentTrace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.equal(currentTrace.model, 'fixture-next');
+      assert.ok(['firstSuccess', 'repairSuccess'].includes(currentTrace.outcome));
+      releaseFirstResponse();
+      // The bounded settle window supplements the deterministic deferred-request integration tests.
+      await page.waitForTimeout(1000);
+      const afterOld = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.deepEqual(afterOld, currentTrace);
+      evidence.stages.push('new result finished before old response → current trace retained');
+    }
     evidence.stages.push('button → PDF → offscreen → API → facts → HTML');
+    if (fixedFailure) {
+      evidence.rendered = await summary.innerText();
+      assert.ok(
+        evidence.rendered.includes(
+          reviewCase === 'assertion-conflict'
+            ? '確定済み原文の意味'
+            : reviewFixture
+              ? '数量後'
+              : '形式が不正'
+        )
+      );
+      if (reviewFixture) assert.ok(!evidence.rendered.includes('売上高: 100百万円'));
+      const trace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      evidence.trace = trace;
+      assert.equal(trace.outcome, 'failure');
+      assert.deepEqual(
+        trace.attempts.map((a: any) => a.phase),
+        ['first', 'repair']
+      );
+      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const download = await downloadEvent;
+      assert.deepEqual(JSON.parse(await readFile(await download.path(), 'utf8')), trace);
+      assert.equal(apiCalls, 2);
+      evidence.stages.push(
+        reviewCase === 'assertion-conflict'
+          ? 'failed delta repair → error HTML → raw diagnostic export'
+          : 'failed first/complete-repair → error HTML → raw diagnostic export'
+      );
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
+
+    if (smartFull) {
+      const before = await worker.evaluate(async () => {
+        const entries = await chrome.storage.local.get();
+        return Object.entries(entries).find(
+          ([k, v]: [string, any]) =>
+            k.startsWith('summaryCacheV2:') && v.metadata?.extractionMode === 'smart'
+        )?.[1];
+      });
+      assert.ok(before?.facts?.facts.length, 'smart事実が確定しませんでした');
+      evidence.smart = before;
+      // Re-fetch through the built extension's offscreen route, then recheck exactly
+      // the same confirmed facts without generation or addition of full-page facts.
+      const fullExtraction = await worker.evaluate(async (url: string) => {
+        const data = await (await fetch(url)).arrayBuffer();
+        return chrome.runtime.sendMessage({
+          action: 'extractPdfText',
+          pdfData: Array.from(new Uint8Array(data)),
+          extractionMode: 'full',
+          documentType: 'earnings',
+        });
+      }, pdfUrl);
+      assert.ok(fullExtraction.success);
+      const checked = parseFactSummary(
+        JSON.stringify(before.facts),
+        'earnings',
+        fullExtraction.pages,
+        false
+      );
+      assert.deepEqual(
+        checked.facts.map((f) => f.id),
+        before.facts.facts.map((f: any) => f.id)
+      );
+      evidence.stages.push('smart facts retain IDs after extension full PDF retrieval');
+      const priorCalls = apiCalls;
+      await summary.getByRole('button', { name: '全文で再要約', exact: true }).click();
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector<HTMLIFrameElement>('#main_list')
+            ?.contentDocument?.querySelector('.tdnet-digest-summary-row')
+            ?.textContent?.includes('全文抽出'),
+        {},
+        { timeout: 330000 }
+      );
+      assert.ok(apiCalls > priorCalls);
+      evidence.stages.push('smart → full regenerates with the same candidate contract');
+    }
     const body = await summary.innerText();
     evidence.rendered = body;
-    const expected = item.id.startsWith('bluememe')
-      ? [
-          '3298',
-          '47',
-          '24',
-          '2600',
-          '30',
-          '-400',
-          '1.4',
-          '-119.53',
-          '概算',
-          '翌連結会計年度',
-          '特別損失',
-          '予定',
-        ]
-      : item.id.startsWith('buyback')
-        ? ['200000', '206200000', '上限', '予定', '2026年7月15日', '可能性']
-        : ['2026年6月', '338214', 'NJSS', '速報', '修正する可能性'];
+    const expected = reviewFixture
+      ? reviewFixture.expected
+      : item.id.startsWith('bluememe')
+        ? [
+            '3298',
+            '47',
+            '24',
+            '2600',
+            '30',
+            '-400',
+            '1.4',
+            '-119.53',
+            '概算',
+            '翌連結会計年度',
+            '特別損失',
+            '予定',
+          ]
+        : item.id.startsWith('buyback')
+          ? ['200000', '206200000', '上限', '予定', '2026年7月15日', '可能性']
+          : ['2026年6月', '338214', 'NJSS', '速報', '修正する可能性'];
     for (const term of expected) assert.ok(body.includes(term), `表示に必要な意味がない: ${term}`);
-    const stored = await worker.evaluate(async () => {
+    const stored = await worker.evaluate(async (version: number) => {
       const data = await chrome.storage.local.get();
-      const entry = Object.entries(data).find(([key]) => key.startsWith('summaryCacheV2:'));
+      const entry = Object.entries(data).find(
+        ([key, value]: [string, any]) =>
+          key.startsWith(`summaryCacheV2:v${version}:`) && value.metadata?.extractionMode === 'full'
+      );
       return entry ? { key: entry[0], value: entry[1] } : null;
-    });
+    }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === 4);
+    if (reviewSettingsChange) {
+      assert.equal(
+        await worker.evaluate(async () =>
+          Object.keys(await chrome.storage.local.get()).some(
+            (key) => key.startsWith('summaryCacheV2:') && key.includes(':fixture:full:')
+          )
+        ),
+        false
+      );
+      assert.equal(stored.value.metadata.model, 'fixture-next');
+      evidence.stages.push('stale first-model response never displayed or cached');
+    }
     assert.match(stored.value.metadata.documentHash, /^[a-f0-9]{64}$/);
     if (pdfHash) assert.equal(stored.value.metadata.documentHash, pdfHash);
+    const trace = await worker.evaluate(
+      async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+    );
+    evidence.trace = trace;
+    assert.ok(trace?.attempts.length);
+    assert.equal(trace.documentHash, stored.value.metadata.documentHash);
+    assert.equal(trace.error, null);
+    const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
+    await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+    const download = await downloadEvent;
+    const exported = JSON.parse(await readFile(await download.path(), 'utf8'));
+    assert.deepEqual(exported, trace);
+    evidence.stages.push('phase/raw/diagnostics/hash/usage trace exported from UI');
     evidence.sourceHash = stored.value.metadata.documentHash;
     evidence.facts = stored.value.facts;
     evidence.metadata = stored.value.metadata;
     evidence.rendered = body;
-    assert.deepEqual(expectedErrors(item, stored.value.facts), []);
+    if (reviewFixture) {
+      const checked = parseFactSummary(
+        JSON.stringify(stored.value.facts),
+        reviewFixture.documentType,
+        reviewFixture.pages
+      );
+      assert.deepEqual(checked, stored.value.facts);
+      assert.equal(trace.attempts.length, reviewFixture.repairRequired ? 2 : 1);
+      assert.equal(stored.value.facts.facts.length, reviewFixture.legacy.facts.length);
+      assert.deepEqual(stored.value.facts.unverified, reviewFixture.warnings);
+      if (reviewCase === 'inherited-outlook-yen' || reviewCase === 'period-outlook-units') {
+        const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
+        const revenue = checked.facts.find((f: VerifiedFact) => f.label === '売上高');
+        const forecast = checked.facts.find((f: VerifiedFact) => f.kind === 'event');
+        assert.equal(rate?.period, '2026年3月期');
+        assert.equal(revenue?.unit, '万円');
+        assert.equal(forecast?.semantics.state, 'forecast');
+        assert.equal(forecast?.semantics.polarity, 'negative');
+        assert.ok(
+          !trace.attempts[0].slots.some((s: any) => s.requirement.endsWith('当年営業利益率'))
+        );
+      }
+      if (reviewCase === 'semantic-ownership') {
+        assert.equal(checked.facts.length, 20);
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.label === '営業利益')?.importance,
+          'key'
+        );
+        assert.ok(
+          JSON.parse(trace.attempts[0].response).candidates.every(
+            (c: any) => c.importance === 'detail'
+          )
+        );
+        assert.ok(checked.unverified.some((d: string) => /STRUCTURE:数量後/.test(d)));
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('見込めません'))?.semantics
+            .polarity,
+          'negative'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('譲渡実行日'))?.dateRoles[0]
+            .state,
+          'planned'
+        );
+        assert.equal(checked.facts[0].semantics.subject, '株式会社テスト');
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('譲渡実行日'))?.semantics.state,
+          'planned'
+        );
+        assert.deepEqual(
+          checked.facts
+            .filter((f: VerifiedFact) => f.quote.includes('株式取得を決議しましたが'))
+            .map((f: VerifiedFact) => f.kind)
+            .sort(),
+          ['event', 'status']
+        );
+        assert.equal(checked.facts.filter((f: VerifiedFact) => f.label === '販売台数').length, 1);
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.label === '中間配当金')?.quantity?.raw,
+          '10円50銭'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('取得しない'))?.semantics
+            .polarity,
+          'negative'
+        );
+        const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
+        const bounded = checked.facts.find((f: VerifiedFact) =>
+          f.quote.includes('取得価額は100百万円以内')
+        );
+        const interval = checked.facts.find((f: VerifiedFact) => f.label === '販売件数');
+        const dividend = checked.facts.find((f: VerifiedFact) => f.label === '年間配当金');
+        assert.equal(rate?.semantics.periodKind, 'cumulativeQ2');
+        assert.equal(bounded?.kind, 'event');
+        assert.equal(bounded?.value, null);
+        assert.equal(interval?.period, '2026年4月1日～2026年4月30日');
+        assert.equal(interval?.semantics.periodKind, 'interval');
+        assert.equal(dividend?.semantics.state, 'forecast');
+        assert.equal(rate?.semantics.scope, '単体');
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('特別損失に計上する予定'))
+            ?.semantics.periodKind,
+          'fullYear'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.period === '2028年3月期' && f.kind === 'number')
+            ?.semantics.periodKind,
+          'fullYear'
+        );
+        assert.equal(
+          trace.attempts[0].slots.find((s: any) => s.requirement.includes('損失の計上予定'))
+            ?.expected.periodKind,
+          undefined
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('2029年3月期の業績予想を参照'))
+            ?.period,
+          null
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('取得しないことを決定'))
+            ?.semantics.state,
+          'decided'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('2028年3月1日～2028年3月31日'))
+            ?.period,
+          '2028年3月1日～2028年3月31日'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('第2四半期の販売金額'))?.kind,
+          'event'
+        );
+        assert.equal(
+          checked.facts.find((f: VerifiedFact) => f.quote.includes('第2四半期の販売金額'))?.period,
+          null
+        );
+        assert.ok(
+          !trace.attempts[0].slots.some((s: any) => s.requirement.includes('通期予想の重要指標'))
+        );
+        assert.ok(
+          !trace.attempts[0].slots.some(
+            (s: any) => s.requirement.endsWith('当年営業利益率') && s.status !== 'satisfied'
+          )
+        );
+        evidence.stages.push(
+          'unit proof, cumulative period, ordered interval and context forecast share generation/storage meaning'
+        );
+      }
+      if (reviewCase === 'period-outlook-units') {
+        const rate = checked.facts.find((f: VerifiedFact) => f.label === '売上高営業利益率');
+        const count = checked.facts.find((f: VerifiedFact) => f.label === '販売数量');
+        const dividend = checked.facts.find((f: VerifiedFact) => f.label === '年間配当金');
+        assert.equal(rate?.evidence.kind, 'table');
+        assert.equal(count?.unit, '台');
+        assert.equal(dividend?.semantics.state, 'forecast');
+        assert.equal(dividend?.period, '2027年3月期');
+        assert.ok(
+          trace.attempts[0].slots.some(
+            (s: any) => s.requirement.includes('配当の重要事実') && s.expected.state === 'forecast'
+          )
+        );
+        evidence.stages.push('cross-page financial mappings coexist with forecast dividend repair');
+      }
+      if (reviewCase === 'prose-disclosures') {
+        assert.equal(checked.facts[4].semantics.state, 'forecast');
+        assert.equal(checked.facts[3].semantics.metricKind, 'rate');
+      }
+      if (reviewCase === 'repair')
+        assert.ok(stored.value.facts.facts.every((f: VerifiedFact) => f.kind === 'event'));
+      else if (reviewCase === 'attributes')
+        assert.ok(
+          stored.value.facts.facts.every(
+            (f: VerifiedFact) => f.semantics.scope === '個別' && f.semantics.basis === 'IFRS'
+          )
+        );
+      evidence.stages.push('current stored facts pass ordinary source meaning verification');
+    } else assert.deepEqual(expectedErrors(item, stored.value.facts), []);
     await row.getByRole('button', { name: '非表示', exact: true }).click();
     const callsBefore = apiCalls;
     await row.getByRole('button', { name: '表示', exact: true }).click();
@@ -289,7 +752,102 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
     evidence.stages.push('hide/show/cache without API');
-    if (!fixed && args.includes('--live-followups')) {
+    const listUrl = page
+      .frames()
+      .find((f: any) => /I_list_|fixture-list/.test(f.url()))!
+      .url();
+    await page.reload();
+    // Reload resets the list date. Restore the tested date before waiting for its table.
+    await page.locator('#main_list').waitFor({ state: 'attached', timeout: 20000 });
+    const listFrame = await (await page.locator('#main_list').elementHandle()).contentFrame();
+    assert.ok(listFrame, 'reloaded disclosure iframe is available');
+    await listFrame.goto(listUrl);
+    await frame.locator('#main-list-table').waitFor({ timeout: 20000 });
+    await row.getByRole('button', { name: '表示', exact: true }).click({ timeout: 20000 });
+    await summary
+      .getByRole('heading', { name: '確認できた事実', exact: true })
+      .waitFor({ timeout: 10000 });
+    assert.equal(apiCalls, callsBefore);
+    evidence.stages.push('page reload restores exact current facts without API');
+
+    if (reviewDiagnostics) {
+      // A cached result has no current request ID, but its exact result ID must match.
+      const restoredDownload = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const restored = await restoredDownload;
+      assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
+      evidence.stages.push('cached result ID matches diagnostic export after reload');
+      await worker.evaluate(async () => chrome.storage.sync.set({ apiKey: '' }));
+      await summary.getByRole('button', { name: '再要約', exact: true }).click();
+      await summary
+        .getByText('APIキーが設定されていません', { exact: false })
+        .waitFor({ timeout: 10000 });
+      const failedDownload = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const failed = await failedDownload;
+      assert.equal(apiCalls, callsBefore);
+      const failure = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.notEqual(failure.runId, trace.runId);
+      assert.equal(failure.outcome, 'failure');
+      assert.equal(failure.error, 'APIキーが設定されていません');
+      assert.equal(failure.resultId, null);
+      assert.equal(failure.provider, null);
+      assert.equal(failure.documentHash, null);
+      assert.equal(failure.inputHash, null);
+      assert.deepEqual(failure.attempts, []);
+      assert.deepEqual(failure.usage, []);
+      assert.deepEqual(JSON.parse(await readFile(await failed.path(), 'utf8')), failure);
+      evidence.earlyFailureTrace = failure;
+      evidence.stages.push(
+        'same-PDF settings failure exports its own trace without stale response or API call'
+      );
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
+
+    if (reviewFixture) {
+      const priorCalls = apiCalls;
+      const restoredDownload = page.waitForEvent('download', { timeout: 10000 });
+      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
+      const restored = await restoredDownload;
+      assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
+      evidence.stages.push('restored result ID matches exported diagnostic');
+      const altered = structuredClone(reviewFixture.legacy);
+      if (reviewCase === 'attributes') {
+        altered.facts[0].semantics.scope = '連結';
+        altered.facts[0].semantics.basis = '日本基準';
+        altered.facts[0].id = stableFactId(altered.facts[0]);
+      } else {
+        altered.facts[0].semantics.polarity =
+          altered.facts[0].semantics.polarity === 'affirmative' ? 'negative' : 'affirmative';
+        altered.facts[0].id = stableFactId(altered.facts[0]);
+      }
+      const extensionPage = await context.newPage();
+      await extensionPage.goto(await worker.evaluate(() => chrome.runtime.getURL('options.html')));
+      const invalid = await extensionPage.evaluate(
+        async (request: any) => chrome.runtime.sendMessage(request),
+        {
+          action: 'analyze',
+          pdfUrl,
+          title: item.title,
+          code: '1234',
+          companyName: '株式会社テスト',
+          facts: altered,
+          resultId: stored.value.resultId,
+          fingerprint: stored.value.metadata.analysisFingerprint,
+        }
+      );
+      await extensionPage.close();
+      assert.equal(typeof invalid.error, 'string');
+      assert.ok(invalid.error.includes('識別子'));
+      assert.equal(apiCalls, priorCalls);
+      evidence.stages.push('altered saved facts refused before followup API');
+    }
+    if ((!fixed || reviewFixture) && args.includes('--live-followups')) {
       await summary.getByRole('button', { name: '追加分析', exact: true }).click();
       await page.waitForFunction(
         () => {
@@ -299,7 +857,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           return !!result?.querySelector('h5') || !!result?.textContent?.includes('追加分析失敗');
         },
         {},
-        { timeout: 300000 }
+        { timeout: 330000 }
       );
       const analysis = await worker.evaluate(async () => {
         const entries = await chrome.storage.local.get();
@@ -309,7 +867,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.ok(analysis, '実API追加分析の現行キャッシュがありません');
       assert.equal(analysis.version, 2);
       assert.ok((await summary.innerText()).includes('確認できた事実'));
-      evidence.stages.push('live additional analysis preserves facts');
+      evidence.stages.push(
+        reviewFixture
+          ? 'fixed additional analysis preserves rechecked facts'
+          : 'live additional analysis preserves facts'
+      );
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: true }));
       await page.waitForFunction(
         () => {
@@ -320,7 +882,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           return text.includes('採点を再試行') || text.includes('材料スコア:');
         },
         {},
-        { timeout: 300000 }
+        { timeout: 330000 }
       );
       evidence.followupRendered = await summary.innerText();
       assert.ok(evidence.followupRendered.includes('確認できた事実'));
@@ -331,11 +893,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.score = score ?? null;
       evidence.stages.push(
         score
-          ? 'live scoring returns native score'
-          : 'live scoring refuses unverifiable comparison; summary retained'
+          ? 'scoring returns native score'
+          : 'scoring refuses unverifiable comparison; summary retained'
       );
     }
-    if (fixed) {
+    if (fixed && !reviewFixture) {
       await summary.getByRole('button', { name: '追加分析', exact: true }).click();
       await page.waitForFunction(
         () =>
@@ -411,8 +973,16 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     evidence.success = true;
   } catch (error) {
     evidence.error = error instanceof Error ? error.message : String(error);
+    if (context) {
+      const w = context.serviceWorkers()[0];
+      if (w)
+        evidence.trace = await w.evaluate(
+          async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+        );
+    }
     throw error;
   } finally {
+    releaseFirstResponse();
     if (context) await context.close();
     await rm(profile, { recursive: true, force: true });
     evidence.elapsedSeconds = Math.round((performance.now() - started) / 1000);
@@ -420,7 +990,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     await mkdir('evaluation/results/local', { recursive: true });
     const runId = new Date().toISOString().replace(/[:.]/g, '-');
     await writeFile(
-      `evaluation/results/local/${item.id}-${runId}-browser.json`,
+      `evaluation/results/local/${item.id}${reviewCase ? `-review-${reviewCase}` : ''}-${runId}-browser.json`,
       JSON.stringify(evidence, null, 2)
     );
     console.log(
