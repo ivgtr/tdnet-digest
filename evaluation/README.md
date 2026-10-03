@@ -1119,3 +1119,13 @@ LLM通信・モデル/設定・プロンプトは変更せず、生成入力も�
 最終固定semantic-ownership画面は20事実、5固定呼出し/14秒で成功。旧v61非表示、通常修復/表示、同じ確定事実の保存復元、診断ID対応、改変保存の後続利用拒否、追加分析/採点失敗時の要約保持を確認。証拠はbluememe-20260930-review-semantic-ownership-2026-10-03T12-57-32-802Z-browser.json。M&Aの今回反例は上記恒久テストの証拠であり、この代表画面で直接入力したものではない。URL拒否は前回ビルドの既存証拠を再利用する。
 
 最終runtime digest `261d5cfc03fdbc57674ab603ea6d89ea897ad120653de0ae7c1ba0fbbc7e764b`、artifact digest `a0fa007e13990e1e90bd674c7f6cd8911796254c3e13fc4b79a6058a48c8242f` は最終画面trace/成果物と一致。strict checker digest `07720667663c594c6e560665fbcd2a51da91dce541bd0bfdc4447f22345a7313`。summary-pr25-cfc-final-ledger.jsonに対応を集約。今回の新buildの実APIと今回反例の実モデル修復は未確認。未知形式/OCR/多主張、累計Q4対応の拡張、旧L停止、68既知拒否と過去の未実施を維持する。
+
+### v0.7.3公開時の検証境界（2026-10-03）
+
+利用者のpatchリリース指示を受け、最終HEAD f43443f9aba11bc4d5ac936a51530443349a9a6aの[Codex再レビューで新しい指摘なし](https://github.com/ivgtr/tdnet-digest/pull/25#issuecomment-5969443774)を確認。PR #25へrelease:patchだけを付け、UTC13:14:26にabbb49ee34b2e38194d4d821964ea0a358e22cebへsquashマージした。マージ後のソースは最終検証済みHEADと一致する。手元で版を重複更新せずRelease workflowへ委ねた。
+
+[Actions #37125501341](https://github.com/ivgtr/tdnet-digest/actions/runs/37125501341)はNode 20/npm ciで877テスト/28ファイル・型チェック・lint・buildを成功させ、検証後にpackage.json/lockの版だけを更新したコミット4af76bbe5d5ee8571ed1182d679227f59c3981adとタグv0.7.3を一括push。UTC2026-10-03 13:16:24に[Release v0.7.3](https://github.com/ivgtr/tdnet-digest/releases/tag/v0.7.3)を公開した。
+
+公開ZIP tdnet-digest-v0.7.3.zipは570,833 bytes、SHA-256 `7faaa8791a245be2892dbd43046223c21d0c2292c13d9d4327c78b7ca104b0ea` で公開assetのdigestと一致。CRC検査、Manifest=0.7.3、LICENSE一致を確認し、Manifestは前回の最終ローカルbuildからversion以外不変（権限・固定キーも同一）。公開JSには最終runtime digest `261d5cfc03fdbc57674ab603ea6d89ea897ad120653de0ae7c1ba0fbbc7e764b` が含まれる。公開metadata/ZIP/検証結果はresults/local/release-v0.7.3/、Actionsログはtest-cleanup-tmp/release-v0.7.3-actions.logに保存。
+
+これは配布成果物の検証であり、公開ZIPを利用者の既存Chromeプロファイルへ差し替えた更新試験や新規実API生成を兼ねない。最終ソースの既存画面証拠を再利用し、配布検証後に同条件のローカル全件テストや実APIを追加しない。設定保持・既存読み込み先での更新、今回反例の実モデル修復、未知形式/OCR/多主張・累計Q4拡張等の未確認、旧L停止・68既知拒否を解消したとは扱わない。公開後の正本更新は文書だけでタグを動かさない。
