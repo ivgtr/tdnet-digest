@@ -157,6 +157,14 @@ function declarations(
     financialOnly: origin === 'document' && /決算短信/.test(text) && d.role !== 'subject',
   }));
 }
+/** Later explicit fields replace prior fields of that role, retaining same-field ambiguity. */
+function replaceFields(
+  previous: ContextDeclaration[],
+  next: ContextDeclaration[]
+): ContextDeclaration[] {
+  const roles = new Set(next.map((d) => d.role));
+  return [...previous.filter((d) => !roles.has(d.role)), ...next];
+}
 export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   const first = pages.find((p) => p.pageNumber === 1);
   const cover: TextBlock[] = [];
@@ -176,7 +184,7 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
     (b) => /^(?:会社名|上場会社名)/.test(normalized(b.text)) || declaredSubjectsIn(b).length > 0
   );
   // A cover consisting of one standalone company name is also a declaration.
-  const namedIssuer = issuer.filter((b) => /会社名/.test(normalized(b.text)));
+  const namedIssuer = issuer.filter((b) => /^(?:上場会社名|会社名|名称)/.test(normalized(b.text)));
   const issuerBlocks = namedIssuer.length ? namedIssuer : issuer.length === 1 ? issuer : [];
   const reporting = cover.filter((b) => isReportingCover(b) && b.text.length < 180);
   const documentDeclarations = [...issuerBlocks, ...reporting].flatMap((b) =>
@@ -189,16 +197,19 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   for (const page of [...pages].sort((a, b) => a.pageNumber - b.pageNumber)) {
     const hints = tableMappings.filter((h) => page.quantities.some((q) => q.id === h.valueId));
     const firstHeading = page.blocks.find((b) => headingLevel(b) !== null);
-    const pageDeclarations = page.blocks
-      .filter(
-        (b) =>
-          (!firstHeading || b.y < firstHeading.y) &&
-          /^(?:上場会社名|会社名)/.test(normalized(b.text)) &&
-          !issuerBlocks.includes(b)
-      )
-      .flatMap((b) => declarations(b, 'local'));
+    const pageFields = page.blocks.filter(
+      (b) =>
+        (!firstHeading || b.y < firstHeading.y) &&
+        /^(?:上場会社名|会社名|名称)/.test(normalized(b.text)) &&
+        !issuerBlocks.includes(b)
+    );
+    // A lone page field declares the page owner. Multiple fields without a
+    // heading are sequential units, resolved as they are encountered.
+    const pageDeclarations = (!firstHeading && pageFields.length > 1 ? [] : pageFields).reduce<
+      ContextDeclaration[]
+    >((previous, b) => replaceFields(previous, declarations(b, 'local')), []);
     const stack: TextBlock[] = [];
-    let fields: TextBlock[] = [];
+    let fields: ContextDeclaration[] = [];
     for (const block of page.blocks) {
       const level = headingLevel(block);
       if (level !== null) {
@@ -212,8 +223,10 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
         !reporting.includes(block) &&
         !issuerBlocks.includes(block) &&
         !stack.includes(block)
-      )
-        fields.push(block);
+      ) {
+        const next = declarations(block, 'local').filter((d) => !d.selfOnly);
+        fields = replaceFields(fields, next);
+      }
       const anchors = [
         block.id,
         ...page.quantities.filter((q) => block.spanIds.includes(q.id)).map((q) => q.id),
@@ -223,8 +236,9 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
         const continued = table ? continuationFor(pages, page, anchorId) : undefined;
         const sectionBlocks = stack.filter((b) => b.id !== block.id);
         const ownDeclarations = [
-          ...pageDeclarations,
-          ...[...sectionBlocks, ...fields, block].flatMap((b) =>
+          ...pageDeclarations.filter((d) => !fields.some((f) => f.role === d.role)),
+          ...fields,
+          ...[...sectionBlocks, block].flatMap((b) =>
             declarations(b, 'local').filter((d) => !d.selfOnly || b === block)
           ),
         ];
@@ -330,6 +344,17 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
       }
     }
   return { bindings, tableMappings };
+}
+/** Document subject is resolved from the same cover declarations as validation. */
+export function documentSubject(context: DocumentContext): string | null {
+  const values = unique(
+    context.bindings.flatMap((b) =>
+      b.declarations
+        .filter((d) => d.origin === 'document' && d.role === 'subject')
+        .map((d) => normalized(d.value))
+    )
+  );
+  return values.length === 1 ? values[0] : null;
 }
 export function bindingFor(context: DocumentContext, anchorId: string): ContextBinding {
   const binding = context.bindings.find((b) => b.anchorId === anchorId);

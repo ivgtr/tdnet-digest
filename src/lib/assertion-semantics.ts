@@ -12,8 +12,10 @@ const outlookForecastNegation =
   /(?:となる|の)見通し(?:では(?:ありません|ございません|ない|なく)|で(?:ない|なく)|は(?:ありません|ございません|ない|なく))/;
 const passiveForecastNegation =
   /見込まれ(?:ません|ない|ず|て(?:おりません|いません|いない|おらず))/;
+const potentialForecastNegation =
+  /見込め(?:ません|ない|ず|て(?:おりません|いません|いない|おらず))/;
 const negativePredicate = new RegExp(
-  `(?:${passiveForecastNegation.source}|${outlookForecastNegation.source}|できない|できません|しておりません|しておらず|行っておりません|行っておらず|行っていません|行っていない|していません|していない|しない|しません|行いません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない)`
+  `(?:${passiveForecastNegation.source}|${potentialForecastNegation.source}|${outlookForecastNegation.source}|できない|できません|しておりません|しておらず|行っておりません|行っておらず|行っていません|行っていない|していません|していない|しない|しません|行いません|行わない|行われない|ありません|ございません|未実施|未締結|ではない|ではなく|でなく|でない)`
 );
 // A negative forecast remains a forecast; denial of a plan cannot prove a plan.
 const negative = new RegExp(`${negativePredicate.source}|に(?:は)?(?:満たない|届かない|達しない)`);
@@ -32,7 +34,7 @@ export function activePlan(text: string): boolean {
   return (
     !cancelledPlan(source) &&
     new RegExp(
-      `予定(?:です|であります|である|しております|しています|している)|(?:する|行う)予定[。]?$|${calendarDatePattern}(?:(?:\\d{1,2}時(?:\\d{1,2}分)?)?\\(予定\\)|(?:取得|株式譲渡|実行)予定(?!を|は|が|の))|取得する株式|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります`
+      `予定(?:です|であります|である|しております|しています|している)|(?:する|行う)予定[。]?$|実行日[:：]?${calendarDatePattern}(?:\\(予定\\))?[。]?$|${calendarDatePattern}(?:(?:\\d{1,2}時(?:\\d{1,2}分)?)?\\(予定\\)|(?:取得|株式譲渡|実行)予定(?!を|は|が|の))|取得する株式|買付けの委託を行う|(?:展開|拡大|推進|検討|実施|開始|目指)(?:を)?(?:して)?(?:いきます|まいります|いたします)|進めてまいります`
     ).test(source)
   );
 }
@@ -120,7 +122,12 @@ export function assertionStates(text: string): FactSemantics['state'][] {
           .slice(lastNegative.index! + lastNegative[0].length)
           .match(/^(?:ことを|ことに|方針を|と)(.+)$/)?.[1]
       : undefined;
-    if (!outer && (passiveForecastNegation.test(clause) || outlookForecastNegation.test(clause)))
+    if (
+      !outer &&
+      (passiveForecastNegation.test(clause) ||
+        potentialForecastNegation.test(clause) ||
+        outlookForecastNegation.test(clause))
+    )
       states.add('forecast');
     const positive = lastNegative ? (outer ?? '') : clause;
     if (!positive) continue;

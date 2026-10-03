@@ -4,7 +4,7 @@ import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from './document-context';
 import { proseQuantities, reviewCandidates, serializeCandidateSource } from './fact-candidates';
-import { generateVerifiedFactSummary, renderFacts } from './fact-summary';
+import { generateVerifiedFactSummary, renderFacts, parseFactSummary } from './fact-summary';
 import { verifyCoverage, coverageReport, standardMetric } from './fact-coverage';
 import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
@@ -121,7 +121,7 @@ describe('本文数量の完結した意味照合', () => {
         statement: f.quote,
         semantics: { state: 'forecast', polarity: event.semantics.polarity },
       });
-      expect(saved(r.facts.facts, pages, 'other', true)).toEqual(r.facts);
+      expect(parseFactSummary(JSON.stringify(r.facts), 'other', pages)).toEqual(r.facts);
       const html = buildSummaryHtml(renderFacts(r.facts), null, {
         companyName: '株式会社テスト',
         title: '業績予想',

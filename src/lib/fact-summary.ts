@@ -282,15 +282,16 @@ export async function generateVerifiedFactSummary(
   const diagnosticResolved = (d: Diagnostic) => {
     const source = d.candidateId === null ? undefined : first.candidateSources.get(d.candidateId);
     if (!source) return false;
+    const kind = first.candidateKinds.get(d.candidateId!);
     return repaired.facts.some((f) => {
+      if ((kind === 'number' || kind === 'range') && (f.kind === 'event' || f.kind === 'status'))
+        return false;
       if (source.kind === 'table')
         return f.evidence.kind === 'table' && f.evidence.valueId === source.valueId;
       if (f.evidence.kind !== 'prose' || f.evidence.blockId !== source.blockId) return false;
-      const kind = first.candidateKinds.get(d.candidateId!);
       if (kind === 'event' || kind === 'status') return f.kind === kind;
-      // A complete event/status can retain an unsupported quantity assertion. A quantity correction
-      // only resolves its own metric and quantity, not other fields in that block.
-      if (f.kind === 'event' || f.kind === 'status') return true;
+      // Retaining complete prose does not prove a rejected quantity. A numeric
+      // correction resolves only its own metric/quantity, not other fields.
       const block = pages.flatMap((p) => p.blocks).find((b) => b.id === source.blockId)!;
       return (
         normalized(source.metric ?? '') === normalized(f.label) &&

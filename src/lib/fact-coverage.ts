@@ -19,9 +19,11 @@ import {
 } from './numeric-evidence';
 import { parseExactQuantity, proseQuantities, quantityNumber } from './quantity';
 import { sourceDateOptions } from './source-periods';
+import { datedStates } from './fact-validation';
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import {
   buildDocumentContext,
+  documentSubject,
   bindingFor,
   isFinancialUnit,
   reportingUnitTitle,
@@ -122,13 +124,26 @@ function reportingPeriodSource(axis: string, context: string, period: string): b
   );
 }
 /** A forecast heading declares an obligation; a forecast mentioned in prose does not. */
-function declaredForecastPeriod(pages: ExtractedPage[]): string | null {
+function declaredForecastUnit(
+  pages: ExtractedPage[],
+  context: DocumentContext
+): { period: string; blockId: string } | null {
   for (const block of pages.flatMap((p) => p.blocks)) {
     const text = compact(block.text);
     const explanation = text.match(/^(.*業績予想)について説明(?:します|いたします)。?$/);
     const title = headingLevel(block) !== null ? text : explanation?.[1];
     const period = title ? forecastReportingTitle(title)?.period : null;
-    if (period) return period;
+    if (period) {
+      const owners = [
+        ...new Set(
+          applicableDeclarations(bindingFor(context, block.id), 'subject', true).map((d) =>
+            normalized(d.value)
+          )
+        ),
+      ];
+      if (owners.length === 1 && owners[0] === documentSubject(context))
+        return { period, blockId: block.id };
+    }
   }
   return null;
 }
@@ -216,7 +231,7 @@ export function verifyCoverage(
     if (!report) throw new Error('COVERAGE:報告対象の決算期を確認できません');
     const period = report.period,
       reportQuarter = report.quarter;
-    const issuer = first?.blocks.find((b) => /上場会社名/.test(compact(b.text)))?.text;
+    const issuer = documentSubject(context);
     const applicableMeaning = (f: VerifiedFact) => {
       try {
         const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId;
@@ -262,18 +277,49 @@ export function verifyCoverage(
           matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
           applicableMeaning(f) &&
           !!f.semantics.subject &&
-          (!issuer || compact(issuer).includes(compact(f.semantics.subject)))
+          issuer === normalized(f.semantics.subject ?? '')
       );
     for (const metric of ['revenue', 'operatingProfit', 'netProfit'])
       if (!has(metric, 'actual', period)) missing.push(`COVERAGE:当年決算実績の重要指標 ${metric}`);
-    const forecast = declaredForecastPeriod(pages);
+    const forecastUnit = declaredForecastUnit(pages, context);
+    const forecast = forecastUnit?.period;
     if (
       forecast &&
       !facts.some(
         (f) =>
           f.kind === 'status' &&
+          f.semantics.polarity === 'affirmative' &&
           /業績予想/.test(compact(f.quote)) &&
-          /未定|非開示/.test(compact(f.quote))
+          /未定|非開示/.test(compact(f.quote)) &&
+          issuer === normalized(f.semantics.subject ?? '') &&
+          applicableMeaning(f) &&
+          (() => {
+            const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId;
+            if (!isReportingMetricSource(anchor, 'forecast', allPages, context)) return false;
+            const required = bindingFor(context, forecastUnit!.blockId);
+            for (const role of ['scope', 'basis'] as const) {
+              const values = [
+                ...new Set(
+                  applicableDeclarations(required, role, true).map((d) => normalized(d.value))
+                ),
+              ];
+              if (
+                values.length > 1 ||
+                (values[0] ?? null) !==
+                  (f.semantics[role] === null ? null : normalized(f.semantics[role]!))
+              )
+                return false;
+            }
+            const sourcePeriod = forecastReportingTitle(
+              reportingUnitTitle(bindingFor(context, anchor), allPages)
+            )?.period;
+            const ownPeriods = [
+              ...new Set(normalized(f.quote).match(/20\d{2}年\d{1,2}月期/g) ?? []),
+            ];
+            if (ownPeriods.length && (ownPeriods.length !== 1 || ownPeriods[0] !== forecast))
+              return false;
+            return sourcePeriod === forecast && (!f.period || matchesReportingPeriod(f, forecast));
+          })()
       )
     ) {
       for (const metric of ['revenue', 'operatingProfit', 'netProfit'])
@@ -331,7 +377,7 @@ export function verifyCoverage(
               f.valueKind === target.state &&
               f.semantics.state === target.state &&
               !!f.semantics.subject &&
-              (!issuer || compact(issuer).includes(compact(f.semantics.subject)))
+              issuer === normalized(f.semantics.subject ?? '')
           )
         )
           missing.push(`COVERAGE:配当の重要事実 対象期=${target.period} 区分=${target.state}`);
@@ -358,7 +404,7 @@ export function verifyCoverage(
           /概算/.test(f.quote) &&
           f.semantics.state === 'forecast' &&
           !!f.semantics.subject &&
-          (!issuer || compact(issuer).includes(compact(f.semantics.subject))) &&
+          issuer === normalized(f.semantics.subject ?? '') &&
           applicableMeaning(f)
       )
     )
@@ -381,7 +427,7 @@ export function verifyCoverage(
           ) &&
           /特別損失/.test(f.quote) &&
           !!f.semantics.subject &&
-          (!issuer || compact(issuer).includes(compact(f.semantics.subject))) &&
+          issuer === normalized(f.semantics.subject ?? '') &&
           applicableMeaning(f)
       )
     )
@@ -390,15 +436,13 @@ export function verifyCoverage(
       );
   }
   if (type === 'earningsRevision' && /前回|修正前/.test(source) && /今回|修正後/.test(source)) {
-    const report = declaredForecastPeriod(pages);
+    const report = declaredForecastUnit(pages, context)?.period;
     if (!report) throw new Error('COVERAGE:予想修正の報告対象期を確認できません');
-    const issuer = pages
-      .find((p) => p.pageNumber === 1)
-      ?.blocks.find((b) => /会社名/.test(compact(b.text)));
+    const issuer = documentSubject(context);
     const candidates = facts.filter(
       (f) =>
         f.semantics.subject &&
-        (!issuer || compact(issuer.text).includes(compact(f.semantics.subject))) &&
+        issuer === normalized(f.semantics.subject ?? '') &&
         f.semantics.periodKind === 'fullYear' &&
         compact(f.period ?? '').match(/^(20\d{2}年\d{1,2}月期)(?:通期)?(?:予想)?$/)?.[1] === report
     );
@@ -485,7 +529,13 @@ export function verifyCoverage(
     )
       missing.push('COVERAGE:取得価額の非開示');
     if (
-      /譲渡実行日/.test(source) &&
+      pages.some((p) =>
+        p.blocks.some(
+          (b) =>
+            /譲渡実行日/.test(compact(b.text)) &&
+            datedStates(b.text).some((d) => d.state === 'planned')
+        )
+      ) &&
       !facts.some(
         (f) =>
           f.dateRoles?.some((d) => d.state === 'planned') && /譲渡実行日/.test(compact(f.quote))

@@ -92,7 +92,8 @@ export function explicitCalendarAxisMatches(axis: string, target: string): boole
   if (!source.length) return true;
   const claimed = [...compact(target).matchAll(calendar)];
   const interval = (text: string, matches: RegExpMatchArray[]) => {
-    if (matches.length !== 2 || !matches.every((m) => /日$/.test(m[0]))) return null;
+    matches = matches.filter((m) => /日$/.test(m[0]));
+    if (matches.length !== 2) return null;
     const between = compact(text).slice(matches[0].index! + matches[0][0].length, matches[1].index);
     if (!new RegExp(`^${calendarIntervalSeparator}$`).test(between)) return null;
     const keys = matches.map((m) => {

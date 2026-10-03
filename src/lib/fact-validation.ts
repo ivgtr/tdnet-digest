@@ -238,7 +238,8 @@ export function datedStates(text: string): Array<{ date: string; state: string }
             ? 'contracted'
             : prefixRole === '基準'
               ? 'reference'
-              : !cancelledPlan(source) && activePlan(match[0] + tail)
+              : !cancelledPlan(source) &&
+                  activePlan((prefixRole === '実行' ? '実行日' : '') + match[0] + tail)
                 ? 'planned'
                 : /決議|決定/.test(tail)
                   ? 'decided'
