@@ -21,10 +21,15 @@ export function reportingPeriodShape(text: string): string | null {
   if (shapes.length > 1) throw new Error('PERIOD:異なる報告期間の形が混在しています');
   return shapes[0] ?? null;
 }
-export function reportingPeriodOwner(source: string, inherited: string): string {
+export function reportingPeriodOwner(
+  source: string,
+  inherited: string,
+  tableCaption = false
+): string {
   const local = reportingPeriodText(source),
     context = reportingPeriodText(inherited);
-  if (reportingPeriodShape(local)) return local;
+  const localShape = reportingPeriodShape(local);
+  if (localShape && !tableCaption) return local;
   const fiscal = /20\d{2}年\d{1,2}月期/g;
   const ownYears = [...new Set(local.match(fiscal) ?? [])],
     contextYears = [...new Set(context.match(fiscal) ?? [])];
@@ -36,13 +41,26 @@ export function reportingPeriodOwner(source: string, inherited: string): string 
       (contextYears.length > 0 && (contextYears.length !== 1 || ownYears[0] !== contextYears[0])))
   )
     return local;
+  if (localShape) {
+    const inheritedShapes = reportingPeriodShapes(context);
+    if (
+      inheritedShapes.length > 1 ||
+      (inheritedShapes.length === 1 && inheritedShapes[0] !== localShape)
+    )
+      return local;
+    // A compatible table caption can supply the qualifier missing from its row,
+    // without lending its date, year, or another quarter.
+    const qualifiers = context.match(/累計|単独|中間期/g) ?? [];
+    return local + qualifiers.join('');
+  }
   return context;
 }
 
 export function periodKind(
   period: string | null,
   source: string,
-  inherited = ''
+  inherited = '',
+  tableCaption = false
 ): VerifiedFact['semantics']['periodKind'] {
   if (!period) return 'none';
   const text = reportingPeriodText(period),
@@ -53,7 +71,7 @@ export function periodKind(
   if (/^20\d{2}年\d{1,2}月(?:度)?$/.test(text)) return 'month';
   // The source that supplies the shape must also prove its qualifier. A claim
   // cannot add a qualifier, and an unrelated heading cannot lend one.
-  const owner = reportingPeriodOwner(context, inherited);
+  const owner = reportingPeriodOwner(context, inherited, tableCaption);
   const shape = reportingPeriodShape(text) ?? reportingPeriodShape(owner);
   if (shape === '通期') return 'fullYear';
   const q = shape?.match(/第([1-4])四半期/)?.[1];

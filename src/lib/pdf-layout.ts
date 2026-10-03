@@ -10,6 +10,12 @@ import {
   type SourceItem,
 } from './document-structure';
 import { tableContinuations, noteLinks, paragraphNoteLinks } from './document-links';
+import {
+  drawingLines,
+  drawingOperations as captureDrawingOperations,
+  type DrawingOperation,
+} from './pdf-drawing';
+import { buildTableRegions } from './table-layout';
 
 export interface PdfSpan {
   id: string;
@@ -21,10 +27,28 @@ export interface PdfSpan {
   sourceIds?: string[];
 }
 
+/** Browser Offscreen and Node evaluation use this identical extraction path. */
+export async function extractPdfPageLayout(
+  page: {
+    getTextContent(): Promise<{ items: Array<TextItem | TextMarkedContent> }>;
+    getOperatorList(): Promise<{ fnArray: number[]; argsArray: Array<unknown[] | null> }>;
+  },
+  pageNumber: number,
+  operatorRegistry: Record<string, number>
+): Promise<ExtractedPage> {
+  const [text, operators] = await Promise.all([page.getTextContent(), page.getOperatorList()]);
+  return extractPageLayout(
+    text.items,
+    pageNumber,
+    captureDrawingOperations(operators, operatorRegistry)
+  );
+}
+
 /** 座標はPDFの基線を上から下へ並べる。IDは再抽出時も同じになる。 */
 export function extractPageLayout(
   items: Array<TextItem | TextMarkedContent>,
-  pageNumber: number
+  pageNumber: number,
+  drawingOperations: DrawingOperation[] = []
 ): ExtractedPage {
   const spans: PdfSpan[] = [];
   const textItems = items.filter((item): item is TextItem => 'str' in item);
@@ -122,6 +146,9 @@ export function extractPageLayout(
   spans.forEach((span, i) => {
     span.id = `p${pageNumber}s${i + 1}`;
   });
+  const quantities = quantityCells(spans);
+  const rules = drawingLines(drawingOperations, pageNumber);
+  const tableRegions = buildTableRegions({ pageNumber, spans, quantities, drawingLines: rules });
   return {
     pageNumber,
     text: cleanPageText(groupTextItemsByY(items).join('\n'), pageNumber),
@@ -129,8 +156,11 @@ export function extractPageLayout(
     sourceItems,
     status: spans.length ? 'ok' : 'empty',
     selection: 'selected',
-    blocks: buildBlocks({ pageNumber, spans }),
-    quantities: quantityCells(spans),
+    blocks: buildBlocks({ pageNumber, spans, tableRegions }),
+    quantities,
+    drawingOperations,
+    drawingLines: rules,
+    tableRegions,
   };
 }
 

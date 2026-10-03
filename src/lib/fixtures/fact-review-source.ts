@@ -4,6 +4,24 @@ import { parseFactSummary } from '../fact-summary';
 import { parseExactQuantity, quantityNumber } from '../quantity';
 import type { TableMapping } from '../source-mappings';
 import type { VerifiedFact } from '../fact-contract';
+/** Deliberately forged persisted range for shape-vs-source rejection tests. */
+export function forgedProvenance(f: VerifiedFact, pages: ReturnType<typeof textPage>[]) {
+  if (f.evidence.kind !== 'prose') throw new Error('expected prose');
+  const ev = f.evidence,
+    block = pages.find((p) => p.pageNumber === f.page)!.blocks.find((b) => b.id === ev.blockId)!;
+  return {
+    tableId: null,
+    assertion: {
+      id: ev.assertionId,
+      blockId: ev.blockId,
+      start: 0,
+      end: block.text.normalize('NFKC').length,
+    },
+    quantityRange: { id: ev.quantityId!, start: 0, end: 1 },
+    denominator: null,
+    adjustments: [],
+  };
+}
 
 export const period = '2027年3月期';
 export function prose(body: string, value = 100) {
@@ -29,7 +47,7 @@ export function saved(
   coverage = false
 ) {
   return parseFactSummary(
-    JSON.stringify({ version: 4, documentType: type, facts, unverified: [] }),
+    JSON.stringify({ version: 5, documentType: type, facts, unverified: [] }),
     type,
     pages,
     coverage
@@ -53,6 +71,7 @@ export function event(f: VerifiedFact) {
   e.label = e.statement = e.quote;
   e.value = e.unit = e.valueKind = e.period = null;
   e.quantity = null;
+  if (e.evidence.kind === 'prose') e.evidence.quantityId = null;
   e.semantics.metricKind = 'none';
   e.semantics.periodKind = 'none';
   return e;

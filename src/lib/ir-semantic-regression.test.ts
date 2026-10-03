@@ -23,7 +23,7 @@ function parse(index: number, facts: unknown[], coverage = false) {
     ['earnings', 'shareRepurchase', 'businessUpdate', 'ma', 'earningsRevision', 'ma'] as const
   )[index];
   return parseFactSummary(
-    JSON.stringify({ version: 4, documentType, facts, unverified: [] }),
+    JSON.stringify({ version: 5, documentType, facts, unverified: [] }),
     documentType,
     sources[index],
     coverage
@@ -83,7 +83,7 @@ describe('実PDFの意味を保った利用経路', () => {
     const planPage = pages.find((page) => page.pageNumber === plan.page)!;
     planPage.selection = 'omitted';
     const raw = JSON.stringify({
-      version: 4,
+      version: 5,
       documentType: 'earnings',
       facts: expectations[0].facts.filter((f) => f.page !== plan.page),
       unverified: [],
@@ -314,7 +314,7 @@ describe('実PDFの意味を保った利用経路', () => {
     expect(parse(3, [candidate]).facts).toHaveLength(0);
   });
   it('分割した単位見出しを含む修正表の構造候補から配当の前後も照合する', () => {
-    for (const original of expectations[4].facts) {
+    for (const original of expectations[4].facts.filter((f) => f.evidence.kind === 'table')) {
       const candidate = structuredClone(original);
       if (!('valueId' in candidate.evidence)) throw new Error('table expected');
       const valueId = candidate.evidence.valueId;
@@ -417,15 +417,33 @@ describe('実PDFの意味を保った利用経路', () => {
   });
   it('修正表の上下にずれた行区分と期間キャプションを区別し、他行・未知基準を拒否する', () => {
     const summary = parse(4, expectations[4].facts, true);
-    expect(summary.facts.map((f) => f.value)).toEqual([19730, 2800, 22000, 2900, 125, 127]);
+    expect(summary.facts.filter((f) => f.kind === 'number').map((f) => f.value)).toEqual([
+      19730, 2800, 22000, 2900, 125, 127, 1870, 226.5, 1903, 230.5,
+    ]);
     expect(() => parse(4, expectations[4].facts.slice(0, 4), true)).toThrow('配当予想修正');
+    const bareProfit = fact(4, 6);
+    const p = sources[4][0];
+    const bareSource = tableReferenceHints(p).find(
+      (h) => p.quantities.find((q) => q.id === h.valueId)?.text === '1,874'
+    )!;
+    Object.assign(bareProfit.evidence, bareSource);
+    bareProfit.label = '当期利益';
+    bareProfit.value = 1874;
+    const bare = parse(4, [bareProfit]);
+    expect(bare.unverified).toEqual([]);
+    expect(() =>
+      verifyCoverage('earningsRevision', sources[4], [
+        ...summary.facts.filter((f) => f.value !== 1870),
+        ...bare.facts,
+      ])
+    ).toThrow('forecastBefore/netProfit');
     const caption = fact(4, 2);
     if (caption.evidence.kind !== 'table') throw new Error('table expected');
     caption.evidence.periodIds.push('p1s46', 'p1s47');
     caption.evidence.contextIds = ['p1s80'];
     // The fiscal caption belongs to context, not the axis for a different row.
     expect(parse(4, [caption]).facts).toHaveLength(0);
-    expect(parse(4, [fact(4,2)]).unverified).toEqual([]);
+    expect(parse(4, [fact(4, 2)]).unverified).toEqual([]);
     const wrong = fact(4);
     if (wrong.evidence.kind !== 'table') throw new Error('table expected');
     wrong.evidence.periodIds = ['p1s80'];
@@ -461,7 +479,7 @@ describe('実PDFの意味を保った利用経路', () => {
     candidate.valueKind = 'forecast';
     candidate.semantics.state = 'forecast';
     const summary = parseFactSummary(
-      JSON.stringify({ version: 4, documentType: 'other', facts: [candidate], unverified: [] }),
+      JSON.stringify({ version: 5, documentType: 'other', facts: [candidate], unverified: [] }),
       'other',
       [page]
     );
@@ -555,7 +573,7 @@ describe('実PDFの意味を保った利用経路', () => {
               : 'ma';
       const summary = parseFactSummary(
         JSON.stringify({
-          version: 4,
+          version: 5,
           documentType: type,
           facts: expectations[index].facts,
           unverified: [],

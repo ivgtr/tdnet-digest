@@ -78,6 +78,10 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
       basis: fact.semantics.basis,
       scope: fact.semantics.scope,
       factId: fact.id,
+      perShareBasis:
+        fact.semantics.metricKind === 'perShare'
+          ? fact.provenance!.adjustments.map((a) => a.basis)
+          : null,
       semantics: fact.semantics,
     },
   };
@@ -214,7 +218,7 @@ export async function extractScoreInput(
   searchStatus: string,
   facts?: FactSummary
 ): Promise<ScoreInput> {
-  if (!facts || facts.version !== 4 || !documents.length)
+  if (!facts || facts.version !== 5 || !documents.length)
     throw new Error('採点にはv4の共通確定事実が必要です');
   const registry: ScoreFacts[] = [{ document: documents[0], facts }];
   for (const document of documents.slice(1)) {

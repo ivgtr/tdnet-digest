@@ -32,6 +32,7 @@ function value(
       basis: '日本基準',
       scope: '連結',
       factId: `${metric}-${year}`,
+      perShareBasis: null,
       semantics: {
         subject: '会社',
         scope: '連結',

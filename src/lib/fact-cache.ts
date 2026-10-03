@@ -5,7 +5,9 @@ import {
   stableFactId,
   canonicalJSON,
   type FactSummary,
+  FACT_SCHEMA_VERSION,
 } from './fact-contract';
+import { checkProvenance } from './source-provenance';
 import { FACT_KEYS } from './fact-validation';
 import { quantityNumber, parseExactQuantity, parseExactRange } from './quantity';
 import { toValue } from './score-extraction';
@@ -24,7 +26,7 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
   if (
     !record(value) ||
     !exact(value, ['version', 'documentType', 'facts', 'unverified']) ||
-    value.version !== 4 ||
+    value.version !== FACT_SCHEMA_VERSION ||
     ![
       'earnings',
       'earningsRevision',
@@ -44,7 +46,7 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
     !Array.isArray(value.unverified) ||
     !value.unverified.every((x) => typeof x === 'string')
   )
-    throw new Error('保存された事実v4の形式が不正です');
+    throw new Error('保存された事実v5の形式が不正です');
   const ids = new Set<string>();
   for (const fact of value.facts) {
     if (
@@ -69,6 +71,7 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
       throw new Error('保存された事実の項目が不正です');
     ids.add(fact.id);
     checkSemantics(fact.semantics);
+    checkProvenance(fact.provenance);
     if (
       !Array.isArray(fact.dateRoles) ||
       !fact.dateRoles.every(
@@ -94,12 +97,38 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
     const ev = fact.evidence;
     if (!record(ev) || !['table', 'prose'].includes(String(ev.kind)))
       throw new Error('保存された根拠形式が不正です');
+    const provenance = fact.provenance;
+    const numeric = fact.kind === 'number' || fact.kind === 'range';
+    if (
+      (ev.kind === 'table'
+        ? typeof provenance.tableId !== 'string' ||
+          !/^(?:p\d+t\d+|row:p\d+b\d+)$/.test(provenance.tableId) ||
+          provenance.assertion !== null ||
+          provenance.quantityRange !== null
+        : provenance.tableId !== null ||
+          provenance.assertion?.blockId !== ev.blockId ||
+          provenance.assertion?.id !== ev.assertionId ||
+          provenance.assertion?.start !== 0 ||
+          provenance.assertion?.end !== fact.quote.normalize('NFKC').length ||
+          (numeric
+            ? provenance.quantityRange?.id !== ev.quantityId
+            : ev.quantityId !== null || provenance.quantityRange !== null)) ||
+      (fact.semantics.metricKind === 'perShare'
+        ? provenance.denominator === null
+        : provenance.denominator !== null || provenance.adjustments.length > 0)
+    )
+      throw new Error('保存された原文範囲・分母の対応が不正です');
     const groupKeys =
       ev.kind === 'table'
         ? ['metricIds', 'periodIds', 'unitIds', 'contextIds', 'scopeIds', 'qualifierIds']
         : ['contextIds', 'scopeIds', 'qualifierIds'];
     if (
-      !exact(ev, ['kind', ev.kind === 'table' ? 'valueId' : 'blockId', ...groupKeys]) ||
+      !exact(ev, [
+        'kind',
+        ev.kind === 'table' ? 'valueId' : 'blockId',
+        ...(ev.kind === 'prose' ? ['assertionId', 'quantityId'] : []),
+        ...groupKeys,
+      ]) ||
       typeof ev[ev.kind === 'table' ? 'valueId' : 'blockId'] !== 'string' ||
       !groupKeys.every(
         (k) =>
@@ -217,6 +246,7 @@ export function validateSavedScore(
         'scope',
         'factId',
         'semantics',
+        'perShareBasis',
       ])
     )
       throw new Error('保存された比較値の形式が不正です');
@@ -233,7 +263,13 @@ export function validateSavedScore(
       s.periodKind !== s.semantics.periodKind ||
       s.valueKind !== s.semantics.state ||
       s.scope !== s.semantics.scope ||
-      s.basis !== s.semantics.basis
+      s.basis !== s.semantics.basis ||
+      (s.semantics.metricKind === 'perShare'
+        ? !Array.isArray(s.perShareBasis) ||
+          !s.perShareBasis.every((b) =>
+            ['splitAdjusted', 'beforeSplit', 'afterSplit'].includes(String(b))
+          )
+        : s.perShareBasis !== null)
     )
       throw new Error('保存された比較値の意味属性が不正です');
     if (

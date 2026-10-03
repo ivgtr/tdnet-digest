@@ -13,7 +13,7 @@ const previous = textPage(
 );
 const facts = parseFactSummary(
   JSON.stringify({
-    version: 4,
+    version: 5,
     documentType: 'other',
     facts: [
       numberCandidate(current),

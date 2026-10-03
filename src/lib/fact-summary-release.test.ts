@@ -62,12 +62,13 @@ function table(
     },
     quantity: null,
     dateRoles: null,
+    provenance: null,
   };
 }
 const parse = (facts: VerifiedFact[], source = pages, coverage = false) =>
   parseFactSummary(
     JSON.stringify({
-      version: 4,
+      version: 5,
       documentType: 'earnings',
       facts: facts.map((f, i) => ({ ...f, id: `f${i + 1}` })),
       unverified: [],
@@ -139,9 +140,81 @@ const dividend = {
 describe('既存の実PDF形式のv4回帰', () => {
   it('EBITDAを含む実績・予想・配当を原文から照合する', () => {
     // Values are asserted independently below; these are human-reviewed reported quantities.
-    const r = parse([...financial, dividend], pages, true);
+    const eps = [
+      {
+        ...table(
+          1,
+          85,
+          '１株当たり四半期純利益',
+          13.23,
+          '2027年5月期第1四半期',
+          'actual',
+          [78, 80],
+          [84],
+          [82],
+          [28],
+          ['p1b1', 'p1b3'],
+          { periodKind: 'cumulativeQ1', metricKind: 'perShare' }
+        ),
+        unit: '円',
+      },
+      {
+        ...table(
+          2,
+          45,
+          '１株当たり当期純利益',
+          63.86,
+          '2027年5月期通期',
+          'forecast',
+          [4, 10],
+          [34],
+          [21],
+          [1],
+          ['p1b1', 'p1b3'],
+          { metricKind: 'perShare' }
+        ),
+        unit: '円',
+      },
+    ];
+    const notes = [
+      ['p1b37', 1, null, null],
+      ['p2b9', 2, '連結', '日本基準'],
+    ].map(([blockId, page, scope, basis]) => {
+      const b = pages[Number(page) - 1].blocks.find((b) => b.id === blockId)!;
+      return {
+        ...financial[0],
+        kind: 'event' as const,
+        label: b.text,
+        statement: b.text,
+        quote: b.text,
+        value: null,
+        unit: null,
+        valueKind: null,
+        period: null,
+        page: Number(page),
+        evidence: {
+          kind: 'prose' as const,
+          blockId: b.id,
+          assertionId: `${b.id}:a1`,
+          quantityId: null,
+          contextIds: page === 1 ? ['p1b36'] : ['p2b1'],
+          scopeIds: scope === null ? ['p1b3'] : ['p1b1', 'p1b3'],
+          qualifierIds: [],
+        },
+        semantics: {
+          ...financial[0].semantics,
+          scope: scope as string | null,
+          basis: basis as string | null,
+          periodKind: 'none' as const,
+          metricKind: 'none' as const,
+          state: 'unspecified' as const,
+          polarity: 'negative' as const,
+        },
+      };
+    });
+    const r = parse([...financial, dividend, ...eps, ...notes], pages, true);
     expect(r.unverified).toEqual([]);
-    expect(r.facts).toHaveLength(11);
+    expect(r.facts).toHaveLength(15);
     expect(renderFacts(r)).toContain('実績');
     expect(buildSummaryHtml(renderFacts(r), null, { companyName: 'FF', title: '決算' })).toContain(
       'AI要約'

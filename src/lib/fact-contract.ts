@@ -1,6 +1,7 @@
 import type { TableEvidence } from './numeric-evidence';
 import type { DocumentType } from './document-type';
-export const FACT_SCHEMA_VERSION = 4;
+import type { SourceProvenance } from './source-provenance';
+export const FACT_SCHEMA_VERSION = 5;
 export type FactPeriodKind =
   | 'fullYear'
   | 'cumulativeQ1'
@@ -45,6 +46,8 @@ export type FactEvidence =
   | {
       kind: 'prose';
       blockId: string;
+      assertionId: string;
+      quantityId: string | null;
       contextIds: string[];
       scopeIds: string[];
       qualifierIds: string[];
@@ -69,6 +72,7 @@ export interface VerifiedFact {
     | { raw: string; decimal: null; lower: string; upper: string; sourceIds: string[] }
     | null;
   dateRoles: Array<{ date: string; state: string; sourceId: string }> | null;
+  provenance: SourceProvenance | null;
 }
 export interface FactSummary {
   version: number;
@@ -109,6 +113,7 @@ export function stableFactId(fact: Omit<VerifiedFact, 'id'>): string {
     fact.quote,
     fact.quantity,
     fact.dateRoles,
+    fact.provenance,
   ]);
   let hash = 14695981039346656037n;
   for (const char of text)

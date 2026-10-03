@@ -103,6 +103,7 @@ export function planClauseBindings(text: string) {
   return bindings;
 }
 export function assertionPolarity(text: string): FactSemantics['polarity'] {
+  if (/修正の有無[:：]無$/.test(normalized(text))) return 'negative';
   const clauses = assertionClauses(text);
   const n = clauses.filter((c) => negative.test(c)).length;
   return n === 0 ? 'affirmative' : n === clauses.length ? 'negative' : 'mixed';
@@ -152,6 +153,7 @@ export function assertionStates(text: string): FactSemantics['state'][] {
     if (binding.planned && activePlan(positive)) states.add('planned');
     if (
       /見込まれ|見込んで|見込み|予想して|見込め|想定して/.test(positive) ||
+      /業績予想について[^。]*修正いたします$/.test(positive) ||
       new RegExp(`${outlookForecast.source}$`).test(positive)
     )
       states.add('forecast');
