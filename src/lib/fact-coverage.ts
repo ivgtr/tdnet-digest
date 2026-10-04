@@ -7,6 +7,7 @@ import {
 import { NET_PROFIT_METRIC } from './metric-semantics';
 import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
+import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
 import { tableContinuations, noteLinks, continuationSpans } from './document-links';
@@ -212,7 +213,7 @@ function unchangedDividendSources(
       page.blocks.flatMap((block) => {
         if (
           block.kind !== 'paragraph' ||
-          !/配当予想の変更はありません/.test(normalized(block.text)) ||
+          !unchangedDividend(block.text) ||
           !isIssuerSource(block.id, context)
         )
           return [];
@@ -223,7 +224,10 @@ function unchangedDividendSources(
             )
             .join('');
         if (sourceFiscalPeriod(normalized(block.text), normalized(inherited)) !== report) return [];
-        return ['中間配当金', '期末配当金', '年間配当金']
+        return [
+          ...['中間配当金', '期末配当金', '年間配当金'],
+          ...(unchangedDividendReference(block.text) ? ['配当予想'] : []),
+        ]
           .filter((label) => normalized(block.text).includes(label))
           .map((label) => ({ blockId: block.id, label }));
       })
@@ -234,16 +238,16 @@ function revisionReasonSources(pages: ExtractedPage[], context: DocumentContext)
   let inReason = false;
   for (const block of issuerBlocks(pages, context)) {
     const text = normalized(block.text);
-    if (/^(?:\d+[.、])?修正の理由$/.test(text)) {
+    if (/^(?:(?:\d+[.、])|(?:\(\d+\)))?修正の理由$/.test(text)) {
       inReason = true;
       continue;
     }
-    if (headingLevel(block) !== null) inReason = false;
+    if (headingLevel(block) !== null || /^※/.test(text)) inReason = false;
     if (
       inReason &&
       block.kind === 'paragraph' &&
       /売上高|売上収益|営業利益|当社(?:グループ)?/.test(text) &&
-      !/変更はありません/.test(text)
+      !unchangedDividend(text)
     )
       result.push(block.id);
   }
@@ -292,12 +296,27 @@ function declaredForecastUnit(
   for (const block of pages.flatMap((p) => p.blocks)) {
     const text = compact(block.text);
     const explanation = text.match(/^(.*業績予想)について説明(?:します|いたします)。?$/);
-    const title = headingLevel(block) !== null ? text : explanation?.[1];
+    const page = pages.find((p) => p.pageNumber === block.page)!;
+    const tables = page.tableRegions.filter(
+      (t) =>
+        block.spanIds.length &&
+        block.spanIds.every((id) => t.spanIds.includes(id)) &&
+        context.tableMappings.some(
+          (m) =>
+            t.valueIds.includes(m.valueId) && block.spanIds.every((id) => m.contextIds.includes(id))
+        )
+    );
+    const table = tables.length === 1 ? tables[0] : undefined;
+    const title =
+      headingLevel(block) !== null || (table && forecastReportingTitle(text))
+        ? text
+        : explanation?.[1];
     const period = title
       ? resolveForecastReportingTitle(
           { ...block, text: title },
           pages.flatMap((p) => p.blocks),
-          pages.flatMap((p) => p.spans)
+          pages.flatMap((p) => p.spans),
+          table
         )?.period
       : null;
     if (period) {
@@ -863,19 +882,19 @@ export function verifyCoverage(
             f.evidence.blockId === dividend.blockId &&
             normalized(f.label) === dividend.label &&
             f.semantics.metricKind === 'perShare' &&
-            f.semantics.state === 'planned' &&
-            f.quote.includes('変更はありません')
+            f.semantics.state === (dividend.label === '配当予想' ? 'forecast' : 'planned') &&
+            unchangedDividend(f.quote)
         )
       )
         missing.push(`COVERAGE:据置配当 ${dividend.label} 対象期=${report}`);
     const reasons = revisionReasonSources(pages, context);
-    if (
-      reasons.length &&
-      !facts.some(
-        (f) => f.kind === 'event' && isIssuerFact(f, context) && reasons.includes(factAnchor(f))
+    for (const reason of reasons)
+      if (
+        !facts.some(
+          (f) => f.kind === 'event' && isIssuerFact(f, context) && factAnchor(f) === reason
+        )
       )
-    )
-      missing.push('COVERAGE:業績予想修正の理由');
+        missing.push(`COVERAGE:業績予想修正の理由 ${reason}`);
     if (/配当予想の修正/.test(source))
       for (const kind of ['forecastBefore', 'forecastAfter'])
         if (
@@ -1194,7 +1213,8 @@ export function coverageReport(
       return unchangedForecastSources(pages, context)
         .filter((b) => requirement.endsWith(b.id))
         .map((b) => b.id);
-    if (/業績予想修正の理由/.test(requirement)) return revisionReasonSources(pages, context);
+    if (/業績予想修正の理由/.test(requirement))
+      return revisionReasonSources(pages, context).filter((id) => requirement.endsWith(id));
     if (/据置配当/.test(requirement))
       return unchangedDividendSources(
         pages,
@@ -1420,7 +1440,9 @@ export function coverageReport(
             : requirement.includes('forecastAfter')
               ? 'forecastAfter'
               : /据置配当/.test(requirement)
-                ? 'planned'
+                ? /据置配当 配当予想 /.test(requirement)
+                  ? 'forecast'
+                  : 'planned'
                 : /予想|損失予想の背景/.test(requirement)
                   ? 'forecast'
                   : /計上予定|自己株取得|譲渡の実行/.test(requirement)

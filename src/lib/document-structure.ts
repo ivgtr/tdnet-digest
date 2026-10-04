@@ -55,15 +55,76 @@ export function forecastReportingTitle(text: string): { period: string | null } 
     ? { period: null }
     : null;
 }
-/** A date-only caption borrows an explicit FY only through the identical reporting interval. */
+/** A period declaration has no financial-reporting role of its own. */
+export function forecastPeriodDeclaration(
+  text: string
+): { period: string; interval: string | null } | null {
+  const match = normalized(text)
+    .replace(/^(?:\(\d+\)|\d+[.．])/, '')
+    .match(
+      new RegExp(
+        `^(20\\d{2}年\\d{1,2}月期)(?:通期)?(?:\\((${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern})\\))?$`
+      )
+    );
+  if (!match) return null;
+  if (match[2]) {
+    const end = match[2].match(/(20\d{2})年(\d{1,2})月\d{1,2}日$/)!;
+    const [year, month] = match[1].match(/\d+/g)!.map(Number);
+    if (
+      !explicitCalendarAxisMatches(match[2], match[2]) ||
+      year !== Number(end[1]) ||
+      month !== Number(end[2])
+    )
+      return null;
+  }
+  return { period: match[1], interval: match[2] ?? null };
+}
+/** Only original declarations in this table's header may supplement its caption.
+ * Conflicting declarations remain evidence, so downstream checks cannot hide them.
+ */
+export function forecastTablePeriodSources(
+  caption: TextBlock,
+  blocks: TextBlock[],
+  spans: PdfSpan[],
+  table: TableRegion
+): TextBlock[] {
+  const firstUnit = Math.min(...spans.filter((s) => table.unitIds.includes(s.id)).map((s) => s.y));
+  return blocks.filter(
+    (b) =>
+      b.page === caption.page &&
+      b.y > caption.y &&
+      b.y < firstUnit &&
+      b.spanIds.length > 0 &&
+      b.spanIds.every((id) => table.spanIds.includes(id)) &&
+      !!forecastPeriodDeclaration(b.text) &&
+      !blocks.some(
+        (boundary) =>
+          boundary.page === caption.page &&
+          boundary.y > caption.y &&
+          boundary.y < b.y &&
+          ((/^(?:\d+[.．]|\(\d+\)|■)/.test(normalized(boundary.text)) &&
+            !forecastPeriodDeclaration(boundary.text)) ||
+            /^(?:会社名|上場会社名|名称|親会社名)/.test(normalized(boundary.text)))
+      )
+  );
+}
+/** Caption, same-table declaration, or the identical interval in issuer prose. */
 export function resolveForecastReportingTitle(
   caption: TextBlock,
   blocks: TextBlock[],
-  spans: PdfSpan[]
+  spans: PdfSpan[],
+  table?: TableRegion
 ): { period: string; sourceIds: string[] } | null {
   const title = forecastReportingTitle(caption.text);
   if (!title) return null;
-  if (title.period) return { period: title.period, sourceIds: [] };
+  const declarations = table ? forecastTablePeriodSources(caption, blocks, spans, table) : [];
+  const periods = new Set([
+    ...(title.period ? [title.period] : []),
+    ...declarations.map((b) => forecastPeriodDeclaration(b.text)!.period),
+  ]);
+  if (periods.size > 1) return null;
+  if (periods.size === 1)
+    return { period: [...periods][0], sourceIds: declarations.flatMap((b) => b.spanIds) };
   const interval = normalized(caption.text).match(
     new RegExp(`\\((${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern})\\)$`)
   )?.[1];
@@ -81,7 +142,7 @@ export function resolveForecastReportingTitle(
           boundary.page === caption.page &&
           boundary.y > block.y &&
           boundary.y < caption.y &&
-          /^(?:\d+[.．]|\(\d+\)|■)/.test(normalized(boundary.text))
+          /^(?:\d+[.．]|\(\d+\)|■|会社名|上場会社名|名称|親会社名)/.test(normalized(boundary.text))
       )
     )
       continue;
@@ -112,8 +173,8 @@ export function resolveForecastReportingTitle(
       associations.push({ period: match[1], sourceIds });
     }
   }
-  const periods = new Set(associations.map((a) => a.period));
-  return periods.size === 1
+  const associatedPeriods = new Set(associations.map((a) => a.period));
+  return associatedPeriods.size === 1
     ? {
         period: associations[0].period,
         sourceIds: [...new Set(associations.flatMap((a) => a.sourceIds))],

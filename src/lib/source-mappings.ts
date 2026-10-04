@@ -5,6 +5,7 @@ import {
   isPerformanceReportingTitle,
   forecastReportingTitle,
   resolveForecastReportingTitle,
+  forecastTablePeriodSources,
 } from './document-structure';
 import { tableContinuations, continuationSpans } from './document-links';
 import { declaredQuantityUnit, parseExactQuantity, isUncaptionedUnit } from './quantity';
@@ -113,7 +114,15 @@ export function buildTableMappings(pages: ExtractedPage[]): TableMapping[] {
       (b) =>
         forecastReportingTitle(b.text) && b.spanIds.every((id) => mapping.contextIds.includes(id))
     );
-    const resolved = caption && resolveForecastReportingTitle(caption, page.blocks, page.spans);
+    const tables = page.tableRegions.filter((t) => t.valueIds.includes(mapping.valueId));
+    const table = tables.length === 1 ? tables[0] : undefined;
+    const declarations =
+      caption && table ? forecastTablePeriodSources(caption, page.blocks, page.spans, table) : [];
+    mapping.contextIds = [
+      ...new Set([...mapping.contextIds, ...declarations.flatMap((b) => b.spanIds)]),
+    ];
+    const resolved =
+      caption && resolveForecastReportingTitle(caption, page.blocks, page.spans, table);
     if (resolved) mapping.contextIds = [...new Set([...mapping.contextIds, ...resolved.sourceIds])];
   }
   for (const link of tableContinuations(pages)) {

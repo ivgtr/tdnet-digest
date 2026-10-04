@@ -36,7 +36,13 @@ import {
 } from './numeric-evidence';
 import { classifyMetric } from './metric-semantics';
 import { validateFact, periodKind } from './fact-validation';
-import { assertionPolarity, assertionStates, verifyAssertionState } from './assertion-semantics';
+import {
+  assertionPolarity,
+  quantityAssertionPolarity,
+  assertionStates,
+  verifyAssertionState,
+  assertionKinds,
+} from './assertion-semantics';
 import { assertionId, sourceTableId } from './source-provenance';
 
 export const CANDIDATE_VERSION = 3;
@@ -348,7 +354,7 @@ function compose(
     .join('\n');
   if (numeric) {
     attempt('metric', () => {
-      if (meaning.metricKind !== classifyMetric(label, unit))
+      if (meaning.metricKind !== classifyMetric(label, unit, s.kind === 'prose' ? block.text : ''))
         throw new Error('METRIC:原文指標・単位と量の種類が不一致です');
     });
     attempt('period', () => {
@@ -401,7 +407,11 @@ function compose(
   attempt('polarity', () => {
     if (
       meaning.polarity !==
-      assertionPolarity(s.kind === 'table' ? text(s.metricIds) + text(s.periodIds) : block.text)
+      (s.kind === 'table'
+        ? assertionPolarity(text(s.metricIds) + text(s.periodIds))
+        : numeric
+          ? quantityAssertionPolarity(block.text, label)
+          : assertionPolarity(block.text))
     )
       throw new Error('POLARITY:原文の否定区分が不一致です');
   });
@@ -611,7 +621,12 @@ export function serializeCandidateSource(
           ? {
               text: b.text,
               assertions: [
-                { id: assertionId(b.id), start: 0, end: b.text.normalize('NFKC').length },
+                {
+                  id: assertionId(b.id),
+                  start: 0,
+                  end: b.text.normalize('NFKC').length,
+                  allowedKinds: assertionKinds(b.text),
+                },
               ],
               quantities: proseQuantities(b),
             }

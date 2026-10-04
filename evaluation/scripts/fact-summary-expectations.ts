@@ -13,6 +13,14 @@ export interface Case {
   documentType: DocumentType;
   url: string;
   expected: Expected[];
+  expectedRanges?: Array<
+    Omit<Expected, 'variants' | 'adjustmentBasis'> & {
+      lower: number;
+      upper: number;
+      unit: string;
+      page: number;
+    }
+  >;
   publishedDate?: string;
   code?: string;
   sourceHash?: string;
@@ -23,6 +31,7 @@ export interface Case {
     kind: string;
     semantics: Partial<VerifiedFact['semantics']>;
   }[];
+  expectedConditions?: { page: number; text: string }[];
 }
 const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
 const attributesMatch = (fact: VerifiedFact, expected: Partial<VerifiedFact['semantics']>) =>
@@ -79,6 +88,40 @@ export function expectedErrors(
     )
       errors.push(`完結した原文の重要事項が不足: p.${expected.page} ${expected.blockId}`);
   }
+  for (const expected of item.expectedRanges ?? []) {
+    if (
+      !result.facts.some(
+        (fact) =>
+          fact.kind === 'range' &&
+          expected.labels.some((label) => compact(fact.label) === compact(label)) &&
+          expected.periods.some((period) => compact(fact.period ?? '') === compact(period)) &&
+          attributesMatch(fact, expected.semantics) &&
+          fact.page === expected.page &&
+          compact(fact.unit ?? '') === compact(expected.unit) &&
+          fact.quantity &&
+          'lower' in fact.quantity &&
+          Number(fact.quantity.lower) === expected.lower &&
+          Number(fact.quantity.upper) === expected.upper
+      )
+    )
+      errors.push(
+        `意味を保った重要範囲が不足: ${expected.labels.join('/')} ${expected.lower}～${expected.upper}${expected.unit}`
+      );
+  }
+  for (const expected of item.expectedConditions ?? []) {
+    if (
+      !result.facts.some(
+        (fact) =>
+          fact.page === expected.page &&
+          (fact.semantics.conditions?.some(
+            (condition) => compact(condition) === compact(expected.text)
+          ) ||
+            ((fact.kind === 'event' || fact.kind === 'status') &&
+              compact(fact.statement ?? '').includes(compact(expected.text))))
+      )
+    )
+      errors.push(`原文の重要条件が不足: p.${expected.page} ${expected.text}`);
+  }
   for (const forbidden of item.forbidden ?? [])
     if (
       result.facts.some(
@@ -93,6 +136,21 @@ export function expectedErrors(
   if (result.unverified?.length)
     errors.push(`未確認が残っています: ${result.unverified.join(' / ')}`);
   return errors;
+}
+/** Keep the strict verdict while separating independently missing facts from
+ * residual rejection diagnostics. Candidate importance/kind never define this oracle.
+ */
+export function independentAssessment(
+  item: Case,
+  result: { facts: VerifiedFact[]; unverified?: string[] }
+) {
+  const missingFacts = expectedErrors(item, { facts: result.facts });
+  return {
+    missingFacts,
+    diagnostics: result.unverified ?? [],
+    importantFactsSatisfied: missingFacts.length === 0,
+    strictSuccess: missingFacts.length === 0 && !result.unverified?.length,
+  };
 }
 /** A fact's value, metric and meaning must appear together in one rendered list item. */
 export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): string[] {

@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { assertionPolarity, assertionStates, verifyQuantityAssertion } from './assertion-semantics';
+import {
+  assertionPolarity,
+  assertionStates,
+  assertionKinds,
+  verifyQuantityAssertion,
+} from './assertion-semantics';
 
 // 語尾の分岐はここで確認し、候補→修復→保存の各経路へ総当たりで複製しない。
 describe('述語が証明する状態・極性・確定数量', () => {
+  it.each([
+    '取得価額は非開示です。',
+    '取得時期は未定です。',
+    '該当なし',
+    '該当事項はございません。',
+  ])('明示の開示状態だけstatusを許す: %s', (text) => {
+    expect(assertionKinds(text)).toEqual(['event', 'status']);
+  });
   it.each([
     'と見込まれます。',
     'と見込まれる',

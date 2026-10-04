@@ -14,11 +14,13 @@ import {
 } from './document-context';
 import {
   assertionPolarity,
+  quantityAssertionPolarity,
   verifyAssertionState,
   isLossRecordingPlan,
   lossRecordingPeriods,
   activePlan,
   planClauseBindings,
+  assertionKinds,
 } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { drawingLines } from './pdf-drawing';
@@ -486,7 +488,7 @@ export function validateFact(
         fail('SEMANTICS:主語・否定・条件を含む完結した原文が必要です');
       if (normalized(fact.label) !== normalized(source))
         fail('SEMANTICS:出来事のlabelも完結した原文です。自由な主張文へ変更できません');
-      if (fact.kind === 'status' && !/非開示|未定|該当.*なし|該当事項.*ございません/.test(source))
+      if (!assertionKinds(source).includes(fact.kind as 'event' | 'status'))
         fail('SEMANTICS:明示状態がありません');
     }
   }
@@ -639,7 +641,10 @@ export function validateFact(
       )
     )
       fail('PERIOD:期間区分の不一致');
-    if (fact.semantics.metricKind !== metricKind(fact.label, fact.unit))
+    if (
+      fact.semantics.metricKind !==
+      metricKind(fact.label, fact.unit, ev.kind === 'prose' ? source : '')
+    )
       fail('METRIC:量の種類の不一致');
     if (
       fact.valueKind !==
@@ -732,7 +737,10 @@ export function validateFact(
       JSON.stringify(conditions.map(normalized).sort())
   )
     fail(`CONDITION:条件の欠落・不一致。原文の条件文全体=${JSON.stringify(conditions)}`);
-  const polarity = assertionPolarity(source);
+  const polarity =
+    ev.kind === 'prose' && (fact.kind === 'number' || fact.kind === 'range')
+      ? quantityAssertionPolarity(source, fact.label)
+      : assertionPolarity(source);
   if (fact.semantics.polarity !== polarity)
     fail(`POLARITY:否定の不一致。完結した原文の区分=${polarity}（混在する文はmixed）`);
   for (const k of ['subject', 'scope', 'basis'] as const) {

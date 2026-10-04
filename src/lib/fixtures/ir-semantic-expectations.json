@@ -1315,6 +1315,102 @@
         "quantity": null,
         "dateRoles": null,
         "provenance": null
+      },
+      {
+        "id": "fact-26e2008e2ff6b727",
+        "importance": "key",
+        "kind": "event",
+        "label": "これらの結果、売上収益及び営業利益以下の各段階利益が公表済みの通期連結業績予想を上回る見込みのた\nめ、上記のとおり修正いたしました。",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "これらの結果、売上収益及び営業利益以下の各段階利益が公表済みの通期連結業績予想を上回る見込みのた\nめ、上記のとおり修正いたしました。",
+        "page": 1,
+        "quote": "これらの結果、売上収益及び営業利益以下の各段階利益が公表済みの通期連結業績予想を上回る見込みのた\nめ、上記のとおり修正いたしました。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p1b28",
+          "assertionId": "p1b28:a1",
+          "quantityId": null,
+          "contextIds": ["p1b12"],
+          "scopeIds": ["p1b3", "p1b12"],
+          "qualifierIds": []
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        },
+        "quantity": null,
+        "dateRoles": [],
+        "provenance": {
+          "tableId": null,
+          "assertion": {
+            "id": "p1b28:a1",
+            "blockId": "p1b28",
+            "start": 0,
+            "end": 66
+          },
+          "quantityRange": null,
+          "denominator": null,
+          "adjustments": []
+        }
+      },
+      {
+        "id": "fact-e2997276183a08d3",
+        "importance": "key",
+        "kind": "event",
+        "label": "2026年９月期の配当予想につきまして、通期連結業績予想の修正及び当社の利益還元方針に鑑み、期末配当\n予想を１株につき127円に修正いたします。",
+        "value": null,
+        "unit": null,
+        "period": null,
+        "valueKind": null,
+        "column": null,
+        "statement": "2026年９月期の配当予想につきまして、通期連結業績予想の修正及び当社の利益還元方針に鑑み、期末配当\n予想を１株につき127円に修正いたします。",
+        "page": 2,
+        "quote": "2026年９月期の配当予想につきまして、通期連結業績予想の修正及び当社の利益還元方針に鑑み、期末配当\n予想を１株につき127円に修正いたします。",
+        "evidence": {
+          "kind": "prose",
+          "blockId": "p2b13",
+          "assertionId": "p2b13:a1",
+          "quantityId": null,
+          "contextIds": [],
+          "scopeIds": ["p1b3"],
+          "qualifierIds": ["p2b14"]
+        },
+        "semantics": {
+          "subject": "GMOフィナンシャルゲート株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "state": "unspecified",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": ["また、実際の業績等は\n様々な要因により大きく異なる可能性があります。"]
+        },
+        "quantity": null,
+        "dateRoles": [],
+        "provenance": {
+          "tableId": null,
+          "assertion": {
+            "id": "p2b13:a1",
+            "blockId": "p2b13",
+            "start": 0,
+            "end": 72
+          },
+          "quantityRange": null,
+          "denominator": null,
+          "adjustments": []
+        }
       }
     ],
     "review": " 2026-10-04: 原PDF表紙で基本EPS・親会社利益の数値と根拠範囲を追加確認。当期利益1,874/1,923は親会社利益1,870/1,903の代用にしない。"

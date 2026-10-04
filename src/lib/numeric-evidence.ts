@@ -18,6 +18,7 @@ import {
 } from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
+import { unchangedDividendReference, quantityPeriodAxis } from './dividend-semantics';
 import {
   physicalRows,
   tableUnitRuns,
@@ -593,7 +594,7 @@ export function verifyPeriodAndKind(
   nearest: string,
   tableCaption = false
 ) {
-  axis = compact(axis);
+  axis = compact(quantityPeriodAxis(axis, claim.label));
   context = compact(context);
   const target = compact(claim.period),
     local = axis + context;
@@ -601,6 +602,8 @@ export function verifyPeriodAndKind(
   if (!explicitCalendarAxisMatches(axis, target)) fail('対象年度・決算月の明示軸');
 
   const fiscal = /20\d{2}年\d{1,2}月期/;
+  if (!fiscal.test(axis) && new Set(context.match(/20\d{2}年\d{1,2}月期/g) ?? []).size > 1)
+    fail('対象年度・決算月の文脈が衝突しています');
   const date = /20\d{2}年\d{1,2}月\d{1,2}日/;
   const month = /20\d{2}年\d{1,2}月(?![\d期])/;
   const axisCalendarMonth = axis.match(/(\d{1,2})月(?!期)/);
@@ -684,6 +687,23 @@ export function verifyProseQuantity(
   quote: string,
   claim: NumericClaim
 ) {
+  const reference = unchangedDividendReference(quote);
+  if (
+    reference &&
+    claim.label === '配当予想' &&
+    claim.unit === '円' &&
+    !claim.range &&
+    Number(parseExactQuantity(reference.raw)?.decimal) === claim.value &&
+    compact(page.text).includes(compact(quote))
+  ) {
+    const quantity = proseQuantities({ id: 'prose', text: quote }).find(
+      (q) =>
+        compact(q.raw) === reference.raw &&
+        compact(quote.normalize('NFKC').slice(0, q.start)).length === reference.start
+    );
+    if (!quantity) throw new Error('QUANTITY:据置配当の原位置を確認できません');
+    return quantity;
+  }
   const escape = (text: string) => compact(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 複合助詞は語単位で認める。任意のひらがなは許さず、否定・概数の語を跨がない。
   const perShare = claim.unit === '円' && /配当金|1株当たり.*純利益/.test(compact(claim.label));

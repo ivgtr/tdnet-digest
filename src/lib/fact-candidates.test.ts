@@ -242,7 +242,7 @@ describe('生成専用候補と原文文脈の契約', () => {
       );
     }
   );
-  it.each([0, 1, 2, 3, 4, 5])('原文構造から資料%iの完全な表対応を構成し確定v4を再照合する', (i) => {
+  it.each([0, 1, 2, 3, 4, 5])('原文構造から資料%iの表対応を構成し確定v5を再照合する', (i) => {
     const source = corpus[i].pages.map((p) =>
       extractPageLayout(p.items as TextItem[], p.pageNumber)
     );

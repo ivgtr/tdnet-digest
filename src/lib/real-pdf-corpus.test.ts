@@ -112,6 +112,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
   it.each([
     ['140120260713591990', 'earnings'],
     ['140120260714593203', 'earningsRevision'],
+    ['holdout-insource-20260924', 'earningsRevision'],
   ] as const)('既知の反例 %s は代表指標だけでなく通常生成前の根拠検査も通る', (id, type) => {
     const fixture = tables.find((f) => f.id === id)!;
     const pages = fixture.pages.map((p) =>
@@ -229,6 +230,86 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
     };
     validateSavedFacts(summary);
     expect(parseFactSummary(JSON.stringify(summary), 'other', pages)).toEqual(summary);
+    if (fixture.id === 'holdout-insource-20260924') {
+      const block = pages[0].blocks.find((b) => b.id === 'p1b25')!;
+      const quantity = proseQuantities(block).find((q) => parseQuantity(q.raw)?.value === 35)!;
+      const dividend = {
+        candidateId: 'c11',
+        importance: 'key',
+        kind: 'number',
+        source: {
+          kind: 'prose',
+          blockId: block.id,
+          assertionId: assertionId(block.id),
+          quantityId: quantity.id,
+          metric: '配当予想',
+          contextBindingId: `ctx:${block.id}`,
+        },
+        meaning: {
+          subject: '株式会社インソース',
+          scope: null,
+          basis: null,
+          period: '2026年9月期',
+          periodKind: 'fullYear',
+          metricKind: 'perShare',
+          state: 'forecast',
+          polarity: 'affirmative',
+        },
+      };
+      const reasons = ['p1b23', 'p1b24'].map((id, i) =>
+        proseEvent(id, `c${12 + i}`, '株式会社インソース', '連結', null, 'forecast')
+      );
+      const full = reviewCandidates(
+        JSON.stringify({
+          candidateVersion: 3,
+          documentType: 'earningsRevision',
+          candidates: [...candidates, dividend, ...reasons],
+          unverified: [],
+        }),
+        'earningsRevision',
+        pages
+      );
+      expect(full.unverified).toEqual([]);
+      const confirmed = {
+        version: 5,
+        documentType: 'earningsRevision' as const,
+        facts: full.facts,
+        unverified: [],
+      };
+      expect(parseFactSummary(JSON.stringify(confirmed), 'earningsRevision', pages)).toEqual(
+        confirmed
+      );
+      expect(renderFacts(confirmed)).toContain('配当予想の変更なし');
+      expect(renderFacts(confirmed)).toContain('普通配当29.5円、記念配当5.5円');
+      const breakdown = proseQuantities(block).find((q) => parseQuantity(q.raw)?.value === 29.5)!;
+      const wrongDividend = {
+        ...dividend,
+        source: { ...dividend.source, quantityId: breakdown.id },
+      };
+      const wrong = reviewCandidates(
+        JSON.stringify({
+          candidateVersion: 3,
+          documentType: 'other',
+          candidates: [wrongDividend],
+          unverified: [],
+        }),
+        'other',
+        pages
+      );
+      expect(wrong.facts).toEqual([]);
+      expect(wrong.unverified.join(' ')).toContain('対応');
+      expect(
+        confirmed.facts.find((f) => f.label === '配当予想')!.provenance!.denominator!.value
+      ).toBe(1);
+      expect(() =>
+        verifyCoverage(
+          'earningsRevision',
+          pages,
+          full.facts.filter((f) => f.evidence.kind !== 'prose' || f.evidence.blockId !== 'p1b24')
+        )
+      ).toThrow('業績予想修正の理由 p1b24');
+      expect(() => verifyCoverage('earningsRevision', pages, review.facts)).toThrow('据置配当');
+    }
     if (fixture.id === '140120260930543358') {
       const events = reviewCandidates(
         JSON.stringify({

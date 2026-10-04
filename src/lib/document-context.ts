@@ -9,6 +9,8 @@ import {
   reportingScopeHeading,
   isPerformanceReportingTitle,
   forecastReportingTitle,
+  forecastPeriodDeclaration,
+  forecastTablePeriodSources,
   type TextBlock,
 } from './document-structure';
 import { buildTableMappings, type TableMapping } from './source-mappings';
@@ -69,6 +71,7 @@ export function headingLevel(block: TextBlock): number | null {
   )
     return null;
   if (/^■/.test(text)) return 1;
+  if (forecastReportingTitle(text) && /に関するお知らせ$/.test(text)) return 1;
   if (/^20\d{2}年.*(?:経営成績|予想|配当|月度|実績|取得予定)/.test(text)) return 3;
   if (/^\d+[.．]/.test(text)) return 1;
   if (/^\(\d+\)/.test(text)) return 2;
@@ -89,7 +92,10 @@ function isReportingCover(block: TextBlock): boolean {
   return /^(?:四半期|中間)?決算短信/.test(captionText(block));
 }
 /** A role field supplies its entire value; a caption needs an explicit reporting object. */
-function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value: string }[] {
+function reportingAttributes(
+  block: TextBlock,
+  tableCaption = false
+): { role: 'scope' | 'basis'; value: string }[] {
   const attributes: { role: 'scope' | 'basis'; value: string }[] = [];
   for (const part of block.text.normalize('NFKC').split(/[\n|]/)) {
     const text = part.trim().replace(/^(?:\(\d+\)|\d+[.．])/, '');
@@ -118,7 +124,7 @@ function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value
       new RegExp(`〔(${reportingBasis})〕|\\[(${reportingBasis})\\]`, 'gi')
     ))
       attributes.push({ role: 'basis', value: match[1] ?? match[2] });
-  } else if (headingLevel(block) !== null) {
+  } else if (headingLevel(block) !== null || (tableCaption && forecastReportingTitle(block.text))) {
     const scope = caption.match(
       new RegExp(
         `^\\(?${reportingScopeHeading}(?:経営成績|業績|財政状態|財務諸表|損益計算書|貸借対照表|キャッシュ.*フロー)`
@@ -130,7 +136,8 @@ function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value
 }
 function declarations(
   block: TextBlock,
-  origin: ContextDeclaration['origin']
+  origin: ContextDeclaration['origin'],
+  tableCaption = false
 ): ContextDeclaration[] {
   const text = normalized(block.text);
   const result: ContextDeclaration[] = declaredSubjectsIn(block).map((value) => ({
@@ -139,8 +146,13 @@ function declarations(
     id: block.id,
     origin,
   }));
-  for (const attribute of reportingAttributes(block))
-    result.push({ ...attribute, id: block.id, origin });
+  for (const attribute of reportingAttributes(block, tableCaption))
+    result.push({
+      ...attribute,
+      id: block.id,
+      origin,
+      ...(tableCaption || forecastReportingTitle(block.text) ? { financialOnly: true } : {}),
+    });
   const fieldStock = text.match(/株式種類([^|｜]+)/)?.[1];
   if (fieldStock) result.push({ role: 'scope', value: fieldStock, id: block.id, origin });
   const stock = block.text.split('\n').find((line) => /取得対象株式.*種類/.test(normalized(line)));
@@ -278,6 +290,16 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
           )
         );
         const hint = table ? hints.find((h) => h.valueId === anchorId) : undefined;
+        const regions = page.tableRegions.filter((r) => r.valueIds.includes(anchorId));
+        if (hint && regions.length === 1) {
+          const caption = page.blocks.find(
+            (b) =>
+              forecastReportingTitle(b.text) &&
+              b.spanIds.every((id) => hint.contextIds.includes(id)) &&
+              b.spanIds.every((id) => regions[0].spanIds.includes(id))
+          );
+          if (caption) ownDeclarations.push(...declarations(caption, 'local', true));
+        }
         const contexts =
           continued?.contextIds ??
           hint?.contextIds ??
@@ -460,6 +482,26 @@ export function reportingUnitTitle(binding: ContextBinding, pages: ExtractedPage
     .slice(-1)
     .map((id) => blocks.find((b) => b.id === id)!.text)
     .join('');
+  // A table's separate period header qualifies its own financial caption.
+  // Arbitrary child business sections still own their role and cannot borrow it.
+  const page = pages.find((p) => p.pageNumber === binding.page);
+  const tables = page?.tableRegions.filter((t) => t.valueIds.includes(binding.anchorId)) ?? [];
+  if (tables.length === 1 && (!section || forecastPeriodDeclaration(section))) {
+    const caption = page!.blocks.find(
+      (b) =>
+        forecastReportingTitle(b.text) &&
+        b.spanIds.every((id) => binding.contextIds.includes(id)) &&
+        b.spanIds.every((id) => tables[0].spanIds.includes(id))
+    );
+    if (
+      caption &&
+      (!section ||
+        forecastTablePeriodSources(caption, page!.blocks, page!.spans, tables[0]).some(
+          (b) => normalized(b.text) === normalized(section)
+        ))
+    )
+      return normalized(caption.text);
+  }
   return normalized(
     section ||
       binding.contextIds

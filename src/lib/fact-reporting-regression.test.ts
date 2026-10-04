@@ -4,14 +4,18 @@ import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { evidence, saved, report, event, cells, period } from './fixtures/fact-review-source';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from './document-context';
-import { proseQuantities, reviewCandidates } from './fact-candidates';
+import { proseQuantities, reviewCandidates, serializeCandidateSource } from './fact-candidates';
 import { generateVerifiedFactSummary, renderFacts, parseFactSummary } from './fact-summary';
 import { verifyCoverage, coverageReport } from './fact-coverage';
 import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
 import { datedStates } from './fact-validation';
 import { verifyTableEvidence } from './numeric-evidence';
-import { forecastReportingTitle, resolveForecastReportingTitle } from './document-structure';
+import {
+  forecastReportingTitle,
+  forecastPeriodDeclaration,
+  resolveForecastReportingTitle,
+} from './document-structure';
 import { generateText } from './llm-client';
 import semanticCorpus from './fixtures/ir-semantic-corpus.json';
 import semanticExpectations from './fixtures/ir-semantic-expectations.json';
@@ -731,6 +735,70 @@ describe('数量の単位証明と報告対象の必須判定', () => {
 });
 
 describe('原数量・期間・主張と保存根拠の同一性', () => {
+  it.each([
+    ['（１）2026年9月期 通期（2025年10月1日～2026年9月30日）', '2026年9月期'],
+    ['2026年9月期', '2026年9月期'],
+    ['2027年9月期 通期（2025年10月1日～2026年9月30日）', null],
+    ['2026年9月期 通期（2026年9月30日～2025年10月1日）', null],
+    ['2026年9月期の営業方針', null],
+  ])('期間宣言は財務の役割と分け、年度と区間を照合する: %s', (text, period) => {
+    expect(forecastPeriodDeclaration(text)?.period ?? null).toBe(period);
+    expect(forecastReportingTitle(text)).toBeNull();
+  });
+  it.each(['同じ表', '別表', '別ページ', '別節', '別主体', '相反FY'] as const)(
+    '別見出しのFYを同じ表へだけ渡す: %s',
+    (kind) => {
+      const captionText =
+        kind === '相反FY' ? '2027年9月期連結業績予想の修正' : '連結業績予想数値の修正';
+      const between =
+        kind === '別節' ? '1. 営業方針\n' : kind === '別主体' ? '会社名 株式会社B\n' : '';
+      const page = textPage(
+        `${captionText}\n${between}（１）2026年9月期 通期（2025年10月1日～2026年9月30日）\n百万円`
+      );
+      const caption = page.blocks[0],
+        declaration = page.blocks[page.blocks.length - 2],
+        unit = page.blocks[page.blocks.length - 1];
+      if (kind === '別ページ') declaration.page = 2;
+      const table = {
+        id: 'p1t1',
+        method: 'aligned' as const,
+        spanIds: [
+          ...caption.spanIds,
+          ...(kind === '別表' ? [] : declaration.spanIds),
+          ...unit.spanIds,
+        ],
+        valueIds: [],
+        unitIds: unit.spanIds,
+        cells: [],
+        ruleIds: [],
+        top: caption.y,
+        bottom: unit.y,
+      };
+      const resolved = resolveForecastReportingTitle(caption, page.blocks, page.spans, table);
+      if (kind === '同じ表')
+        expect(resolved).toEqual({ period: '2026年9月期', sourceIds: declaration.spanIds });
+      else if (kind === '相反FY') expect(resolved).toBeNull();
+      else expect(resolved).toBeNull();
+    }
+  );
+  it('条件段落のevent選択・status拒否を入力と保存で一致させる', () => {
+    const body = '市場動向等により一部又は全部の取得が行われない可能性もあります。';
+    const pages = [textPage(`会社名 株式会社テスト\n1. 取得条件\n${body}`)];
+    const fact = assertion(pages[0], '市場動向', 'unspecified');
+    fact.semantics.polarity = 'negative';
+    const source = JSON.parse(serializeCandidateSource(pages));
+    expect(
+      source.pages[0].blocks.find((b: { text?: string }) => b.text === body).assertions[0]
+        .allowedKinds
+    ).toEqual(['event']);
+    const good = reviewCandidates(candidateResponse([fact], pages, 'other'), 'other', pages);
+    expect(good.unverified).toEqual([]);
+    expect(saved(good.facts, pages).facts[0].statement).toBe(body);
+    const wrong = { ...fact, kind: 'status' as const };
+    const rejected = reviewCandidates(candidateResponse([wrong], pages, 'other'), 'other', pages);
+    expect(rejected.facts).toEqual([]);
+    expect(rejected.unverified.join(' ')).toContain('明示状態');
+  });
   it('年度を持たない通期表題を認識し、同じ日付区間の明示FYだけへ結ぶ', () => {
     const page = textPage(
       '会社名 株式会社テスト\n当社は2026年7月期（2025年8月1日～2026年7月31日）の業績予想を修正します。\n1. 通期業績予想の修正（2025年8月1日～2026年7月31日）'
@@ -753,7 +821,9 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     const page = textPage(
       `会社名 株式会社テスト\n${body}\n2. 通期業績予想の修正（2025年8月1日～2026年7月31日）`
     );
-    expect(resolveForecastReportingTitle(page.blocks[page.blocks.length - 1], page.blocks, page.spans)).toBeNull();
+    expect(
+      resolveForecastReportingTitle(page.blocks[page.blocks.length - 1], page.blocks, page.spans)
+    ).toBeNull();
   });
   // 見出し語彙は部品で網羅し、表・必須判定・保存の結合は単独修正/配当併記の2例。
   it.each([

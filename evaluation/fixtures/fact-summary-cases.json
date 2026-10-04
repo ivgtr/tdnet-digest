@@ -812,7 +812,17 @@
         }
       }
     ],
-    "expectedEvidence": []
+    "expectedEvidence": [],
+    "expectedConditions": [
+      {
+        "page": 1,
+        "text": "なお、市場動向等により一部又は全部の取得が行われない可能性もある。"
+      },
+      {
+        "page": 1,
+        "text": "当該買付注文は当該取引時間限りの注文とする。"
+      }
+    ]
   },
   {
     "id": "monthly-20260714",
@@ -2176,7 +2186,7 @@
         ],
         "semantics": {
           "subject": "株式会社インソース",
-          "scope": "連結",
+          "scope": null,
           "basis": null,
           "state": "forecast",
           "metricKind": "perShare",
@@ -2185,6 +2195,32 @@
         }
       }
     ],
-    "sourceHash": "152096cf4d74014350b571d3a8ccc97d19b3a93222402d46ef9b722eac88107c"
+    "sourceHash": "152096cf4d74014350b571d3a8ccc97d19b3a93222402d46ef9b722eac88107c",
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b23",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社インソース",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "metricKind": "none",
+          "periodKind": "none"
+        }
+      },
+      {
+        "page": 1,
+        "blockId": "p1b24",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社インソース",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "metricKind": "none",
+          "periodKind": "none"
+        }
+      }
+    ]
   }
 ]

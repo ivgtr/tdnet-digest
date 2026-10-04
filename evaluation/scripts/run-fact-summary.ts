@@ -10,6 +10,7 @@ import {
   FactSummaryGenerationError,
   generateVerifiedFactSummary,
   factSummaryRequestLimits,
+  factPrompt,
   renderFacts,
   parseFactSummary,
 } from '../../src/lib/fact-summary';
@@ -17,9 +18,14 @@ import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
 import { getProvider } from '../../src/lib/llm-providers';
 
-import { expectedErrors, type Case } from './fact-summary-expectations';
+import { expectedErrors, independentAssessment, type Case } from './fact-summary-expectations';
 const cases = JSON.parse(
-  await readFile('evaluation/fixtures/fact-summary-cases.json', 'utf8')
+  await readFile(
+    process.argv.includes('--holdout')
+      ? 'evaluation/fixtures/source-structure-holdout-cases.json'
+      : 'evaluation/fixtures/fact-summary-cases.json',
+    'utf8'
+  )
 ) as Case[];
 const provider = process.env.TDNET_DIGEST_PROVIDER || 'openai';
 const model = process.env.TDNET_DIGEST_MODEL || getProvider(provider)?.defaultModel;
@@ -45,6 +51,8 @@ const implementationFiles = [
   'src/lib/source-periods.ts',
   'src/lib/fact-candidates.ts',
   'src/lib/assertion-semantics.ts',
+  'src/lib/dividend-semantics.ts',
+  'src/lib/metric-semantics.ts',
   'src/lib/quantity.ts',
   'src/lib/period-semantics.ts',
   'src/lib/document-structure.ts',
@@ -134,6 +142,10 @@ for (const item of selected) {
     inputHash: createHash('sha256')
       .update(serializeCandidateSource(pages, undefined, item.documentType))
       .digest('hex'),
+    promptHash: createHash('sha256')
+      .update(JSON.stringify(factPrompt(item.documentType, sourceInput)))
+      .digest('hex'),
+    independentAssessment: result ? independentAssessment(item, result) : null,
     inputChars: serializeCandidateSource(pages, undefined, item.documentType).length,
     extractionMs,
     sourceBytes: Buffer.byteLength(JSON.stringify(pages)),

@@ -127,6 +127,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     pdfHash: string | null = null,
     failScore = false;
   const requestSettings: any[] = [];
+  const requestPromptHashes: string[] = [];
   const started = performance.now();
   const evidence: any = {
     caseId: item.id,
@@ -336,6 +337,16 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         if (request.method() === 'POST' && request.resourceType() === 'fetch') {
           apiCalls++;
           const body = request.postDataJSON();
+          requestPromptHashes.push(
+            createHash('sha256')
+              .update(
+                JSON.stringify({
+                  system: body.messages.find((m: any) => m.role === 'system')?.content,
+                  user: body.messages.find((m: any) => m.role === 'user')?.content,
+                })
+              )
+              .digest('hex')
+          );
           requestSettings.push({
             model: body.model,
             temperature: body.temperature,
@@ -672,10 +683,16 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     assert.equal(trace.error, null);
     evidence.stages.push('PDF → offscreen → API → verified facts → paired DOM meaning');
     evidence.requestSettings = requestSettings;
+    evidence.requestPromptHashes = requestPromptHashes;
     if (reference) {
       assert.equal(reference.success, true);
       assert.equal(trace.documentHash, reference.sourceHash);
       assert.equal(trace.inputHash, reference.inputHash);
+      assert.equal(
+        requestPromptHashes[0],
+        reference.promptHash,
+        '初回生成プロンプトがCLI条件と一致しません'
+      );
       assert.equal(trace.provider, reference.provider);
       assert.equal(trace.model, reference.model);
       assert.equal(trace.documentType, reference.item.documentType);

@@ -1,4 +1,5 @@
 import type { FactSemantics } from './fact-contract';
+import { unchangedDividendReference } from './dividend-semantics';
 
 const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
 // A bare profit/loss does not prove net profit. Require an owner, reporting
@@ -24,11 +25,20 @@ export function isPerShareDividend(label: string, unit: string | null): boolean 
   return normalizedUnit === '円' && /配当金/.test(text) && !/総額|合計額|支払額|総配当/.test(text);
 }
 
-export function classifyMetric(label: string, unit: string | null): FactSemantics['metricKind'] {
+export function classifyMetric(
+  label: string,
+  unit: string | null,
+  source = ''
+): FactSemantics['metricKind'] {
   const text = compact(label),
     normalizedUnit = unit === null ? '' : compact(unit);
   if (/率|比率|前年比|前年同期比/.test(text) || /[%％]/.test(normalizedUnit)) return 'rate';
-  if (perShare.test(text) || isPerShareDividend(label, unit)) return 'perShare';
+  if (
+    perShare.test(text) ||
+    isPerShareDividend(label, unit) ||
+    (text === '配当予想' && normalizedUnit === '円' && unchangedDividendReference(source))
+  )
+    return 'perShare';
   if (/円|ドル|USD|EUR/.test(normalizedUnit)) return 'amount';
   if (/^(株|人|件|店舗|社|個)$/.test(normalizedUnit)) return 'count';
   return unit ? 'other' : 'none';
