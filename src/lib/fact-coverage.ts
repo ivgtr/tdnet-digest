@@ -50,6 +50,7 @@ import {
 import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
+import { tableRowAxis } from './table-layout';
 
 /** Structural proposals use the same complete numeric proof as accepted facts. */
 function provedMappedQuantity(
@@ -134,6 +135,7 @@ function revisionMetricLabel(label: string): string | null {
  * Keep source roles even if their quantities cannot yet be verified. */
 function forecastPublicationSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);
+  const nodes = new Map(pages.flatMap((p) => [...p.spans, ...p.blocks]).map((s) => [s.id, s.text]));
   const text = (ids: string[]) =>
     normalized(ids.map((id) => spans.find((s) => s.id === id)!.text).join(''));
   const result: Array<{
@@ -202,8 +204,54 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
       });
   }
   // A lost mapping must not remove a declared header's obligation with it.
+  const declaredGroups: Array<Pick<(typeof result)[number], 'period' | 'state' | 'attributes'>> =
+    [];
+  for (const page of pages.filter((p) => p.selection === 'selected'))
+    for (const region of page.tableRegions) {
+      // Read explicit row declarations, including closed cells with no mapped values.
+      const axes = [
+        ...region.cells.map((cell) =>
+          cell.spanIds.map((id) => page.spans.find((s) => s.id === id)!)
+        ),
+        ...page.quantities
+          .filter((q) => region.valueIds.includes(q.id))
+          .map((q) => tableRowAxis(region, page.spans, q)),
+      ];
+      for (const parts of axes) {
+        if (!parts.every((s) => region.spanIds.includes(s.id))) continue;
+        const axis = normalized(parts.map((s) => s.text).join(''));
+        const period = sourceFiscalPeriod(axis, '');
+        if (!period) continue;
+        const owner = page.blocks.find((b) => parts.some((s) => b.spanIds.includes(s.id)));
+        if (
+          !owner ||
+          !isIssuerSource(owner.id, context) ||
+          !isReportingMetricSource(owner.id, 'forecast', pages, context)
+        )
+          continue;
+        const binding = bindingFor(context, owner.id);
+        const inherited = binding.contextIds
+          .map((id) => {
+            if (!nodes.has(id)) throw new Error(`REFERENCE:原文の文脈 ${id} がありません`);
+            return nodes.get(id)!;
+          })
+          .join('');
+        const state = numericValueKind(axis, inherited);
+        if (state !== 'actual' && state !== 'forecast') continue;
+        declaredGroups.push({
+          period,
+          state,
+          attributes: reportingAttributesAt(binding),
+        });
+      }
+    }
   const groups = [
-    ...new Map(result.map((s) => [JSON.stringify([s.period, s.state, s.attributes]), s])).values(),
+    ...new Map(
+      [...declaredGroups, ...result].map((s) => [
+        JSON.stringify([s.period, s.state, s.attributes]),
+        s,
+      ])
+    ).values(),
   ];
   const metricsByPeriod = new Map<string, string[]>();
   for (const s of groups) {
@@ -219,7 +267,13 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
             sameReportingAttributes(other.attributes, s.attributes)
         )
       )
-        result.push({ ...s, metric, valueId: null });
+        result.push({
+          period: s.period,
+          state: s.state,
+          attributes: s.attributes,
+          metric,
+          valueId: null,
+        });
   }
   return result;
 }

@@ -133,11 +133,7 @@ export function buildTableMappings(pages: ExtractedPage[]): TableMapping[] {
   }
   for (const link of tableContinuations(pages)) {
     const page = pages.find((p) => p.pageNumber === link.toPage)!;
-    const ids = page.quantities
-      .filter((q) =>
-        page.blocks.some((b) => link.rowIds.includes(b.id) && b.spanIds.includes(q.id))
-      )
-      .map((q) => q.id);
+    const ids = link.valueIds;
     if (!ids.length) continue;
     const projected = continuationPage(pages, page, ids[0]);
     const inheritedUnits = tableUnitRuns(
@@ -147,7 +143,7 @@ export function buildTableMappings(pages: ExtractedPage[]): TableMapping[] {
     if (inheritedUnits.length === link.periodIds.length) {
       for (const row of page.blocks.filter((b) => link.rowIds.includes(b.id))) {
         const values = page.quantities
-          .filter((q) => row.spanIds.includes(q.id))
+          .filter((q) => row.spanIds.includes(q.id) && ids.includes(q.id))
           .sort((a, b) => a.x - b.x);
         if (values.length !== link.periodIds.length) continue;
         const metricIds = page.spans

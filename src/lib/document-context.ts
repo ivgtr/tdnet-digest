@@ -1,7 +1,7 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
-import { reportingPeriodText } from './period-semantics';
+import { reportingPeriodText, reportingPeriodOwner } from './period-semantics';
 import { parseExactQuantity, proseQuantities } from './quantity';
 import {
   normalized,
@@ -11,11 +11,12 @@ import {
   forecastReportingTitle,
   forecastPeriodDeclaration,
   forecastTablePeriodSources,
+  declaredSubjectsIn,
   type TextBlock,
 } from './document-structure';
 import { buildTableMappings, type TableMapping } from './source-mappings';
-import { continuationFor, noteLinks, paragraphNoteLinks } from './document-links';
-import { splitNotes } from './source-provenance';
+import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
+import { splitNotes, splitNoteApplies } from './source-provenance';
 
 export type DeclarationRole = 'subject' | 'scope' | 'basis';
 export interface ContextDeclaration {
@@ -43,20 +44,7 @@ export interface DocumentContext {
 }
 const unique = <T>(items: T[]) => [...new Set(items)];
 const reportingBasis = '日本基準|IFRS|国際会計基準|米国基準';
-export function declaredSubjectsIn(block: TextBlock): string[] {
-  return unique(
-    block.text.split('\n').flatMap((line) => {
-      const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
-      const field = text.match(/^(?:上場会社名|会社名|名称):?([^:].*)$/)?.[1];
-      if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
-      return /^(?:株式会社|有限会社|合同会社|投資法人)[\p{L}\p{N}・&.-]+$|^[\p{L}\p{N}・&.-]+(?:株式会社|有限会社|合同会社|投資法人)$/u.test(
-        text
-      )
-        ? [text]
-        : [];
-    })
-  ).filter(Boolean);
-}
+export { declaredSubjectsIn } from './document-structure';
 /** A numbered title is a boundary, not every body mention of a scope/period. */
 export function headingLevel(block: TextBlock): number | null {
   const text = normalized(block.text);
@@ -306,24 +294,44 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
           semanticSections.slice(-1).flatMap((b) => (table ? b.spanIds : [b.id]));
         const qualifiers = unique([
           ...localNotes.filter((l) => l.blockId === block.id).map((l) => l.noteId),
-          ...(hint &&
-          /1株当たり.*純利益|配当/.test(
-            normalized(
-              hint.metricIds
-                .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
-                .join('')
-            )
-          )
-            ? splitNotes(page, anchorId)
+          ...(hint
+            ? splitNotes(continuationPage(pages, page, anchorId), anchorId)
                 .filter((note) => {
                   const metric = normalized(
                     hint.metricIds
                       .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
                       .join('')
                   );
-                  return /配当/.test(metric)
-                    ? /配当/.test(note.text)
-                    : /1株当たり.*純利益/.test(normalized(note.text));
+                  const axis = normalized(
+                    hint.periodIds
+                      .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+                      .join('')
+                  );
+                  const inherited = normalized(
+                    contexts
+                      .map(
+                        (id) =>
+                          pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!
+                            .text
+                      )
+                      .join('')
+                  );
+                  const years = [
+                    ...new Set(
+                      axis.match(/20\d{2}年\d{1,2}月期/g) ??
+                        inherited.match(/20\d{2}年\d{1,2}月期/g) ??
+                        []
+                    ),
+                  ];
+                  const shape =
+                    reportingPeriodOwner(axis, inherited, true).match(
+                      /第[1-4]四半期(?:累計|単独)?|中間期|通期/
+                    )?.[0] ?? '';
+                  return splitNoteApplies(
+                    note.text,
+                    metric,
+                    years.length === 1 ? years[0] + shape : null
+                  );
                 })
                 .map((note) => note.id)
             : []),

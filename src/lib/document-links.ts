@@ -1,6 +1,6 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { normalized } from './document-structure';
-import { parseExactNumeric } from './quantity';
+import { normalized, declaredSubjectsIn } from './document-structure';
+import { parseExactNumeric, isUncaptionedUnit } from './quantity';
 import type { PdfSpan } from './pdf-layout';
 import { tableUnitRuns } from './table-layout';
 
@@ -8,6 +8,7 @@ export interface TableContinuation {
   fromPage: number;
   toPage: number;
   rowIds: string[];
+  valueIds: string[];
   periodIds: string[];
   contextIds: string[];
   scopeIds: string[];
@@ -21,7 +22,8 @@ const quantityColumns = (page: ExtractedPage, ids: string[], allowUnitless = fal
       return (
         ids.includes(q.id) &&
         n &&
-        ((allowUnitless && n.unit === null) || /円|株|人|件|%/.test(n.unit ?? ''))
+        ((allowUnitless && n.unit === null) ||
+          (n.unit !== null && isUncaptionedUnit(n.unit) && /円|株|人|件|%/.test(n.unit)))
       );
     })
     .sort((a, b) => a.x - b.x);
@@ -51,11 +53,26 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       )
     )
       continue;
-    const periodBlock = [...previous.blocks]
+    const context = [...previous.blocks]
       .reverse()
       .find(
         (b) =>
           b.y < last.y &&
+          /経営成績|財政状態/.test(normalized(b.text)) &&
+          !/[。；]|^\(?注\)?|^※/.test(normalized(b.text))
+      );
+    if (
+      !context ||
+      (own.length === 1 && !context.spanIds.every((id) => own[0].spanIds.includes(id)))
+    )
+      continue;
+    const periodBlock = [...previous.blocks]
+      .reverse()
+      .find(
+        (b) =>
+          b.y > context.y &&
+          b.y < last.y &&
+          (own.length === 0 || b.spanIds.every((id) => own[0].spanIds.includes(id))) &&
           (normalized(b.text).match(/20\d{2}年\d{1,2}月期/g)?.length ?? 0) === before.length
       );
     if (!periodBlock) continue;
@@ -66,10 +83,19 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       own.length === 1
         ? own[0].unitIds
         : unitRuns.length === before.length &&
-            unitRuns.every((r) => Math.abs(r[0].y - unitRuns[0][0].y) <= r[0].height * 0.3)
+            unitRuns.every(
+              (r, i) =>
+                Math.abs(r[0].y - unitRuns[0][0].y) <= r[0].height * 0.3 &&
+                r[0].x <= before[i].x + before[i].width &&
+                r[r.length - 1].x + r[r.length - 1].width >= before[i].x
+            )
           ? unitRuns.flatMap((r) => r.map((s) => s.id))
           : [];
-    if (before.some((q) => !parseExactNumeric(q.text)?.unit) && !unitIds.length) continue;
+    if (
+      (!own.length && unitRuns.length && !unitIds.length) ||
+      (before.some((q) => !parseExactNumeric(q.text)?.unit) && !unitIds.length)
+    )
+      continue;
     const axes = periodBlock.spanIds
       .map((id) => previous.spans.find((s) => s.id === id)!)
       .filter((s) => /20\d{2}年\d{1,2}月期/.test(normalized(s.text)));
@@ -84,13 +110,19 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       .reverse()
       .find(
         (b) =>
-          b.y < periodBlock.y && /概要|^会社名/.test(b.text) && /株式会社|有限会社/.test(b.text)
+          b.y < context.y &&
+          (declaredSubjectsIn(b).length > 0 ||
+            (/概要/.test(b.text) && /株式会社|有限会社/.test(b.text)))
       );
-    const context = [...previous.blocks]
-      .reverse()
-      .find((b) => b.y < periodBlock.y && /経営成績|財政状態/.test(normalized(b.text)));
-    if (!scope || !context) continue;
-    const rows = [];
+    if (
+      !scope ||
+      previous.blocks.some(
+        (b) => b.y > context.y && b.y < last.y && declaredSubjectsIn(b).length > 0
+      )
+    )
+      continue;
+    const rows = [],
+      valueIds: string[] = [];
     for (const block of current.blocks) {
       if (block.kind !== 'row') break;
       const quantities = quantityColumns(current, block.spanIds, allowUnitless);
@@ -102,12 +134,14 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       )
         break;
       rows.push(block.id);
+      valueIds.push(...quantities.map((q) => q.id));
     }
     if (rows.length < 2) continue;
     links.push({
       fromPage: previous.pageNumber,
       toPage: current.pageNumber,
       rowIds: rows,
+      valueIds,
       periodIds: axes.map((s) => s.id),
       contextIds: context.spanIds,
       scopeIds: [scope.id],
@@ -184,7 +218,7 @@ export function continuationPage(
   const rowSpanIds = page.blocks
     .filter((b) => link.rowIds.includes(b.id))
     .flatMap((b) => b.spanIds);
-  const valueIds = page.quantities.filter((q) => rowSpanIds.includes(q.id)).map((q) => q.id);
+  const valueIds = link.valueIds;
   const spanIds = [
     ...new Set([...rowSpanIds, ...link.periodIds, ...link.contextIds, ...link.unitIds]),
   ];

@@ -41,6 +41,23 @@ export interface QuantityCell {
   height: number;
 }
 export const normalized = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+/** Explicit company fields and standalone legal names share one source vocabulary. */
+export function declaredSubjectsIn(block: TextBlock): string[] {
+  return [
+    ...new Set(
+      block.text.split('\n').flatMap((line) => {
+        const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
+        const field = text.match(/^(?:上場会社名|会社名|名称):?([^:].*)$/)?.[1];
+        if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
+        return /^(?:株式会社|有限会社|合同会社|投資法人)[\p{L}\p{N}・&.-]+$|^[\p{L}\p{N}・&.-]+(?:株式会社|有限会社|合同会社|投資法人)$/u.test(
+          text
+        )
+          ? [text]
+          : [];
+      })
+    ),
+  ].filter(Boolean);
+}
 export const reportingScope = '非連結|個別|単体|連結';
 export const reportingScopeHeading = `(${reportingScope})(?:累計期間)?(?:の)?`;
 /** Whole supported reporting titles, never a forecast used as a noun modifier. */

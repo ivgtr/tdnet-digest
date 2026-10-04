@@ -267,6 +267,38 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
           serializeCandidateSource(pages, lostMapping, 'earningsRevision')
         )
       ).toThrow('1株当たり利益');
+      for (const state of ['actual', 'forecast', 'all'] as const) {
+        const lostIds = fixture.expected
+          .filter((f) => state === 'all' || f.state === state)
+          .map((f) => f.valueId);
+        const lostGroup = {
+          ...context,
+          tableMappings: context.tableMappings.filter((h) => !lostIds.includes(h.valueId)),
+        };
+        const remainingFacts = review.facts.filter(
+          (f) => state !== 'all' && f.semantics.state !== state
+        );
+        const obligations = coverageReport(
+          'earningsRevision',
+          pages,
+          remainingFacts,
+          [],
+          lostGroup
+        );
+        expect(obligations).toHaveLength(10);
+        expect(obligations.filter((s) => s.status !== 'satisfied')).toHaveLength(lostIds.length);
+        expect(() => verifyCoverage('earningsRevision', pages, remainingFacts, lostGroup)).toThrow(
+          'COVERAGE'
+        );
+        expect(() =>
+          preflightCandidateSource(
+            'earningsRevision',
+            pages,
+            lostGroup,
+            serializeCandidateSource(pages, lostGroup, 'earningsRevision')
+          )
+        ).toThrow('SOURCE_PREFLIGHT');
+      }
       for (const fact of review.facts) {
         expect(
           coverageReport(

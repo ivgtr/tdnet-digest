@@ -5,6 +5,8 @@ import { proseQuantities } from './quantity';
 import { tableForValue } from './table-layout';
 import { record, exact } from './fact-contract';
 import { isPerShareProfit } from './metric-semantics';
+import { continuationPage } from './document-links';
+import { reportingPeriodText, reportingPeriodShape } from './period-semantics';
 
 export interface SourceProvenance {
   tableId: string | null;
@@ -95,6 +97,29 @@ export function splitNotes(page: ExtractedPage, valueId: string) {
       /株式分割/.test(normalized(b.text))
   );
 }
+/** A note's explicit reporting periods constrain its EPS adjustment, not its split date. */
+export function splitNoteApplies(text: string, label: string, period: string | null): boolean {
+  if (/配当/.test(normalized(label))) return /配当/.test(normalized(text));
+  if (!isPerShareProfit(label) || !isPerShareProfit(text)) return false;
+  const periods = [
+    ...reportingPeriodText(text).matchAll(
+      /20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g
+    ),
+  ].filter(
+    (m) =>
+      !/^(?:の)?(?:期首|初日|末日)/.test(reportingPeriodText(text).slice(m.index! + m[0].length))
+  );
+  if (!periods.length) return true;
+  const target = reportingPeriodText(period ?? '');
+  const fy = target.match(/20\d{2}年\d{1,2}月期/)?.[0];
+  return periods.some(
+    ([p]) =>
+      p.match(/20\d{2}年\d{1,2}月期/)?.[0] === fy &&
+      (!reportingPeriodShape(p) ||
+        reportingPeriodShape(p) === (reportingPeriodShape(target) ?? '通期')) &&
+      (!/累計|単独/.test(p) || p.match(/累計|単独/)?.[0] === target.match(/累計|単独/)?.[0])
+  );
+}
 export function applicableSplitNotes(
   page: ExtractedPage,
   valueId: string,
@@ -106,11 +131,7 @@ export function applicableSplitNotes(
     const text = normalized(note.text),
       metric = normalized(label),
       fy = normalized(period ?? '').match(/20\d{2}年\d{1,2}月期/)?.[0];
-    if (
-      !(isPerShareProfit(metric) && isPerShareProfit(text)) &&
-      !(/配当/.test(metric) && /配当/.test(text))
-    )
-      continue;
+    if (!splitNoteApplies(text, metric, period)) continue;
     let basis: SourceProvenance['adjustments'][number]['basis'] | null = null;
     if (
       isPerShareProfit(metric) &&
@@ -182,7 +203,12 @@ export function sourceProvenance(
       : null,
     adjustments:
       ev.kind === 'table' && perShare
-        ? applicableSplitNotes(page, ev.valueId, fact.label, fact.period)
+        ? applicableSplitNotes(
+            continuationPage(pages, page, ev.valueId),
+            ev.valueId,
+            fact.label,
+            fact.period
+          )
         : [],
   };
 }

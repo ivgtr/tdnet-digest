@@ -20,6 +20,7 @@ import { generateText } from './llm-client';
 import semanticCorpus from './fixtures/ir-semantic-corpus.json';
 import semanticExpectations from './fixtures/ir-semantic-expectations.json';
 import { extractPageLayout } from './pdf-layout';
+import { tableContinuations } from './document-links';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
@@ -40,7 +41,7 @@ it('継続表の単位・年度を行所属ごと投影し、入力・受理・�
   const pages = [
     cells(
       [
-        ['会社名 株式会社テスト', 0, 0, 210],
+        ['上場会社名 株式会社テスト', 0, 0, 240],
         ['1. 経営成績', 0, 30, 160],
         ['2026年3月期', 280, 60, 140],
         ['2027年3月期', 480, 60, 140],
@@ -98,6 +99,128 @@ it('継続表の単位・年度を行所属ごと投影し、入力・受理・�
   expect(buildDocumentContext(misaligned).tableMappings.some((h) => h.valueId === q.id)).toBe(
     false
   );
+});
+it('続表の年度と文脈を境界の同じ表に限定し、直前の別表から借りない', () => {
+  const current = cells(
+    [
+      ['純資産', 0, 20, 100],
+      ['10千円', 340, 20, 80],
+      ['20千円', 540, 20, 80],
+      ['総資産', 0, 50, 100],
+      ['30千円', 340, 50, 80],
+      ['40千円', 540, 50, 80],
+    ],
+    2
+  );
+  const priorRows: [string, number, number, number][] = [
+    ['会社名 株式会社テスト', 0, 0, 210],
+    ['1. 経営成績', 0, 30, 160],
+    ['2026年3月期', 280, 60, 140],
+    ['2027年3月期', 480, 60, 140],
+    ['売上高', 0, 90, 100],
+    ['100千円', 340, 90, 80],
+    ['200千円', 540, 90, 80],
+    ['2. 財政状態', 0, 120, 160],
+  ];
+  const boundary: [string, number, number, number][] = [
+    ['純資産', 0, 180, 100],
+    ['100千円', 340, 180, 80],
+    ['200千円', 540, 180, 80],
+  ];
+  expect(tableContinuations([cells([...priorRows, ...boundary], 1), current])).toEqual([]);
+  const own = cells(
+    [...priorRows, ['2025年3月期', 280, 150, 140], ['2026年3月期', 480, 150, 140], ...boundary],
+    1
+  );
+  const links = tableContinuations([own, current]);
+  expect(links).toHaveLength(1);
+  expect(links[0].periodIds.map((id) => own.spans.find((s) => s.id === id)!.text)).toEqual([
+    '2025年3月期',
+    '2026年3月期',
+  ]);
+  expect(links[0].contextIds.map((id) => own.spans.find((s) => s.id === id)!.text)).toEqual([
+    '2. 財政状態',
+  ]);
+  const changedUnitTable = cells(
+    [
+      ...priorRows.slice(0, 4),
+      ['千円', 340, 80, 80],
+      ['千円', 540, 80, 80],
+      ...priorRows.slice(4, 7),
+      ['百万円', 340, 150, 80],
+      ['百万円', 540, 150, 80],
+      ...boundary,
+    ],
+    1
+  );
+  expect(tableContinuations([changedUnitTable, current])).toEqual([]);
+});
+it('続表のIFRS EPSへ対象期の分割注記を入力・受理・保存まで接続する', () => {
+  const pages = [
+    cells(
+      [
+        ['上場会社名 株式会社テスト', 0, 0, 240],
+        ['1. 経営成績', 0, 30, 160],
+        ['2026年3月期', 280, 60, 140],
+        ['2027年3月期', 480, 60, 140],
+        ['円', 340, 90, 80],
+        ['円', 540, 90, 80],
+        ['1株当たり当期純利益', 0, 120, 230],
+        ['100', 340, 120, 80],
+        ['200', 540, 120, 80],
+      ],
+      1
+    ),
+    cells(
+      [
+        ['基本的1株当たり当期利益', 0, 20, 230],
+        ['10', 340, 20, 80],
+        ['20', 540, 20, 80],
+        ['希薄化後1株当たり当期利益', 0, 50, 230],
+        ['8', 340, 50, 80],
+        ['16', 540, 50, 80],
+        [
+          '（注）2027年3月期の基本的1株当たり当期利益は、株式分割を期首に行ったと仮定して算定しています。',
+          0,
+          90,
+          900,
+        ],
+      ],
+      2
+    ),
+  ];
+  const ctx = buildDocumentContext(pages);
+  const input = JSON.parse(serializeCandidateSource(pages, ctx));
+  const facts = [10, 20].map((value, i) => {
+    const q = pages[1].quantities.find((q) => q.text === String(value))!;
+    const hint = ctx.tableMappings.find((h) => h.valueId === q.id)!;
+    expect(hint).toBeDefined();
+    const f = numberCandidate(pages[1], '基本的1株当たり当期利益', value, `${2026 + i}年3月期`);
+    f.unit = '円';
+    f.semantics.metricKind = 'perShare';
+    f.semantics.scope = f.semantics.basis = null;
+    f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const result = reviewCandidates(candidateResponse(facts, pages), 'other', pages);
+  expect(result.unverified).toEqual([]);
+  expect(result.facts).toHaveLength(2);
+  expect(result.facts[0].provenance!.adjustments).toEqual([]);
+  expect(result.facts[1].provenance!.adjustments).toEqual([
+    expect.objectContaining({
+      basis: 'splitAdjusted',
+      noteId: pages[1].blocks[pages[1].blocks.length - 1].id,
+    }),
+  ]);
+  const noteId = pages[1].blocks[pages[1].blocks.length - 1].id;
+  const olderId = facts[0].evidence.kind === 'table' ? facts[0].evidence.valueId : '';
+  expect(bindingFor(ctx, olderId).qualifierIds).not.toContain(noteId);
+  const templateId =
+    input.unitContexts[facts[1].evidence.kind === 'table' ? facts[1].evidence.valueId : ''];
+  expect(
+    input.contextTemplates.find((t: { id: string }) => t.id === templateId).qualifierIds
+  ).toContain(pages[1].blocks[pages[1].blocks.length - 1].id);
+  expect(saved(result.facts, pages).facts).toEqual(result.facts);
 });
 function assertion(
   page: ReturnType<typeof textPage>,
