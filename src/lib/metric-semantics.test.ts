@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyMetric, perShareProfitKeys } from './metric-semantics';
+import { classifyMetric, perShareProfitKeys, isPerShareDividend } from './metric-semantics';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary } from './fact-summary';
 import { toValue, validateScoreInput } from './score-extraction';
@@ -100,3 +100,31 @@ it.each([
   expect(keys).toHaveLength(1);
   expect(keys[0] === perShareProfitKeys(right)[0]).toBe(equal);
 });
+
+it.each([
+  [
+    '配当予想',
+    '円',
+    'なお、配当予想につきましては2026年5月7日公表の1株当たり35円より変更はございません。',
+    true,
+  ],
+  ['配当予想', '円', '配当予想は35円です。', false],
+  [
+    '配当予想',
+    '百万円',
+    'なお、配当予想につきましては2026年5月7日公表の1株当たり35円より変更はございません。',
+    false,
+  ],
+  [
+    '配当金総額',
+    '円',
+    'なお、配当予想につきましては2026年5月7日公表の1株当たり35円より変更はございません。',
+    false,
+  ],
+])(
+  '据置配当の分母証明はラベル・単位・原文が揃った場合だけ使う: %s / %s / %s',
+  (label, unit, source, perShare) => {
+    expect(isPerShareDividend(label, unit, source)).toBe(perShare);
+    expect(classifyMetric(label, unit, source)).toBe(perShare ? 'perShare' : 'amount');
+  }
+);

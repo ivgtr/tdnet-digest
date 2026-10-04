@@ -244,7 +244,7 @@ export function isPerformanceReportingTitle(text: string): boolean {
     normalized(text)
   );
 }
-export const sameLine = (a: PdfSpan, b: PdfSpan) =>
+export const sameLine = (a: Pick<PdfSpan, 'y' | 'height'>, b: Pick<PdfSpan, 'y' | 'height'>) =>
   Math.abs(a.y - b.y) <= Math.min(a.height, b.height) * 0.3;
 
 /** Numeric runs retain every source span, including an incomplete decimal or separated sign. */
@@ -439,6 +439,66 @@ export function fiscalHeadingRuns(spans: PdfSpan[]): PdfSpan[][] {
   );
 }
 
+/** Column-owned header fragments, independent of quantity mappings. */
+export function tableHeaderColumns(region: TableRegion, spans: PdfSpan[]) {
+  const midpoint = (s: { x: number; width: number }) => s.x + s.width / 2;
+  const headers = tableUnitRuns(spans)
+    .filter((run) => run.every((s) => region.unitIds.includes(s.id)))
+    .map((run) => ({
+      ids: run.map((s) => s.id),
+      text: run.map((s) => s.text).join(''),
+      x: run[0].x,
+      y: run[0].y,
+      height: run[0].height,
+      width: run[run.length - 1].x + run[run.length - 1].width - run[0].x,
+    }));
+  const runs = lineRuns(spans);
+  return headers.flatMap((unit) => {
+    const peers = headers
+      .filter((h) => sameLine(h, unit))
+      .sort((a, b) => midpoint(a) - midpoint(b));
+    if (peers.length < 2) return [];
+    const i = peers.indexOf(unit);
+    const drawnBand = tableColumnBand(region, unit.ids, unit.height);
+    const left =
+      drawnBand?.[0] ??
+      (i
+        ? (midpoint(peers[i - 1]) + midpoint(unit)) / 2
+        : midpoint(unit) - (midpoint(peers[1]) - midpoint(unit)) / 2);
+    const right =
+      drawnBand?.[1] ??
+      (i + 1 < peers.length
+        ? (midpoint(unit) + midpoint(peers[i + 1])) / 2
+        : midpoint(unit) + (midpoint(unit) - midpoint(peers[i - 1])) / 2);
+    const metricRight =
+      peers[i + 1]?.text === '%' && unit.text !== '%'
+        ? i + 2 < peers.length
+          ? (midpoint(peers[i + 1]) + midpoint(peers[i + 2])) / 2
+          : right + (midpoint(peers[i + 1]) - midpoint(unit)) / 2
+        : right;
+    const top = Math.max(region.top, unit.y - unit.height * 10);
+    const metricIds = runs
+      .filter((run) => {
+        const text = normalized(run.map((s) => s.text).join(''));
+        const center = midpoint({
+          x: run[0].x,
+          width: run[run.length - 1].x + run[run.length - 1].width - run[0].x,
+        });
+        return (
+          run[0].y > top &&
+          run[0].y < unit.y &&
+          !isPerformanceReportingTitle(text) &&
+          !/20\d{2}年|業績予想|配当の状況|決算短信|表示は|未満(?:切捨て|四捨五入)|単位[:：]|^(?:\(?連結\)?|\(?個別\)?)$/.test(
+            text
+          ) &&
+          (text === '年間配当金' || (center > left && center < metricRight))
+        );
+      })
+      .flatMap((run) => run.map((s) => s.id));
+    return [{ unitIds: unit.ids, metricIds }];
+  });
+}
+
 /** Structural hints only: no values, periods, or semantics are confirmed here. */
 export function tableReferenceHints(
   page: Pick<ExtractedPage, 'spans' | 'quantities' | 'tableRegions'>
@@ -467,6 +527,7 @@ function rawTableReferenceHints(
     unitIds: string[];
     contextIds: string[];
   }> = [];
+  const columnHeaders = tableHeaderColumns(region, spans);
   const unitRows = tableUnitRuns(spans);
   const headers = unitRows.map((run) => ({
     id: run[0].id,
@@ -507,23 +568,6 @@ function rawTableReferenceHints(
     if (slots.length !== 1) continue;
     const i = slots[0],
       unit = peers[i];
-    const drawnBand = tableColumnBand(region, unit.ids, value.height);
-    const left =
-      drawnBand?.[0] ??
-      (i
-        ? (midpoint(peers[i - 1]) + midpoint(unit)) / 2
-        : midpoint(unit) - (midpoint(peers[1]) - midpoint(unit)) / 2);
-    const right =
-      drawnBand?.[1] ??
-      (i + 1 < peers.length
-        ? (midpoint(unit) + midpoint(peers[i + 1])) / 2
-        : midpoint(unit) + (midpoint(unit) - midpoint(peers[i - 1])) / 2);
-    const metricRight =
-      peers[i + 1]?.text === '%' && unit.text !== '%'
-        ? i + 2 < peers.length
-          ? (midpoint(peers[i + 1]) + midpoint(peers[i + 2])) / 2
-          : right + (midpoint(peers[i + 1]) - midpoint(unit)) / 2
-        : right;
     const priorRows = cells.filter(
       (q) =>
         q.y < unit.y &&
@@ -533,30 +577,14 @@ function rawTableReferenceHints(
           .length >= 2
     );
     const top = Math.max(unit.y - value.height * 10, ...priorRows.map((q) => q.y));
-    const metricRuns = runs
-      .filter(
-        (run) =>
-          run[0].y > top && run[0].y < unit.y && run.every((s) => value.y - s.y < value.height * 18)
-      )
-      .filter((run) => {
-        const text = normalized(run.map((s) => s.text).join(''));
-        return (
-          !isPerformanceReportingTitle(text) &&
-          !/20\d{2}年|業績予想|配当の状況|決算短信|表示は|未満(?:切捨て|四捨五入)|単位[:：]|^(?:\(?連結\)?|\(?個別\)?)$/.test(
-            text
-          ) &&
-          (text === '年間配当金' ||
-            (midpoint({
-              x: run[0].x,
-              width: run[run.length - 1].x + run[run.length - 1].width - run[0].x,
-            }) > left &&
-              midpoint({
-                x: run[0].x,
-                width: run[run.length - 1].x + run[run.length - 1].width - run[0].x,
-              }) < metricRight))
-        );
-      });
-    const metrics = metricRuns.flat();
+    const metrics = (
+      columnHeaders.find(
+        (column) =>
+          column.unitIds.length === unit.ids.length &&
+          column.unitIds.every((id) => unit.ids.includes(id))
+      )?.metricIds ?? []
+    ).map((id) => spans.find((s) => s.id === id)!);
+    if (metrics.some((s) => s.y <= top || value.y - s.y >= value.height * 18)) continue;
     if (!metrics.length) continue;
     const rowCells = cells.filter((q) => sameLine(q, value) && !periodRunIds.has(q.id));
     const minX = Math.min(...rowCells.map((q) => q.x));

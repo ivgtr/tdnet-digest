@@ -110,7 +110,9 @@ function splitReportingPeriods(clause: string) {
     // A split's execution date and a calculation's assumed date do not scope EPS.
     return (
       !/^(?:の)?(?:期首|初日|末日)/.test(following) &&
-      !/^に(?:おいて)?(?:当社は)?株式分割を(?:実施|行|予定|決議)/.test(following)
+      !/^に(?:おいて)?[、,]?(?:当社(?:は|の)?)?(?:普通株式)?(?:\d+(?:\.\d+)?株(?:につき|に対して?|を)\d+(?:\.\d+)?株(?:の割合(?:で|をもって)|に|とする))?株式分割を(?:実施|行|予定|決議)/.test(
+        following
+      )
     );
   });
 }

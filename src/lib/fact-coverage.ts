@@ -4,7 +4,11 @@ import {
   periodKind,
   reportingPeriodShape,
 } from './period-semantics';
-import { NET_PROFIT_METRIC, BASIC_PER_SHARE_PROFIT_METRIC } from './metric-semantics';
+import {
+  NET_PROFIT_METRIC,
+  BASIC_PER_SHARE_PROFIT_METRIC,
+  perShareProfitKeys,
+} from './metric-semantics';
 import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
@@ -47,7 +51,7 @@ import {
   forecastReportingTitle,
   resolveForecastReportingTitle,
 } from './document-structure';
-import { normalized } from './document-structure';
+import { normalized, tableHeaderColumns } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
 import { tableRowAxis, tableRowDeclarations } from './table-layout';
@@ -188,7 +192,8 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
     const own = normalized(block.text);
     const label = own.match(
       new RegExp(
-        `(${BASIC_PER_SHARE_PROFIT_METRIC}|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC})(?:は|が|について)`
+        `(${BASIC_PER_SHARE_PROFIT_METRIC}|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
+        'i'
       )
     )?.[1];
     const metric = label && revisionMetricLabel(label),
@@ -313,7 +318,18 @@ function declaredReportingMetrics(
         continue;
       if (/経常(?:利益|損失)/.test(text)) declared.add('ordinaryProfit');
       if (/親会社|当期(?:純)?利益|当期純損失/.test(text)) declared.add('netProfit');
-      if (/1株(?:当たり|あたり)|EPS/i.test(text) && /利益|損失/.test(text))
+      if (
+        tableHeaderColumns(
+          region,
+          page.spans.filter((s) => region.spanIds.includes(s.id))
+        ).some((column) =>
+          perShareProfitKeys(
+            normalized(
+              column.metricIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
+            )
+          ).some((key) => key.startsWith('basic:'))
+        )
+      )
         declared.add('1株当たり利益');
     }
   for (const block of issuerBlocks(
@@ -336,7 +352,7 @@ function declaredReportingMetrics(
     );
     if (sourceFiscalPeriod(text, inherited) !== report || /^\(?注\)?|^※/.test(text)) continue;
     if (/(?:^|の)経常(?:利益|損失)(?:は|が|について)/.test(text)) declared.add('ordinaryProfit');
-    if (/(?:^|の)(?:基本的)?1株当たり.*(?:利益|損失)(?:は|が|について)/.test(text))
+    if (new RegExp(`(?:^|の)${BASIC_PER_SHARE_PROFIT_METRIC}(?:は|が|について)`, 'i').test(text))
       declared.add('1株当たり利益');
   }
   return [...declared];
@@ -1298,7 +1314,8 @@ export function coverageReport(
     for (const block of page.blocks.filter((b) => b.kind === 'paragraph')) {
       const label = normalized(block.text).match(
         new RegExp(
-          `(${BASIC_PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`
+          `(${BASIC_PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
+          'i'
         )
       )?.[1];
       if (!label || !proseQuantities(block).length) continue;

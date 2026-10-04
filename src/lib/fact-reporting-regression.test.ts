@@ -3057,3 +3057,92 @@ it.each(['scope', 'basis'] as const)(
     );
   }
 );
+
+it.each([
+  ['table', 'EPS', true],
+  ['prose', 'eps', true],
+  ['table', '希薄化後1株当たり当期利益', false],
+  ['table', '1株当たり配当金', false],
+] as const)(
+  'EPS別名の実績・予想を原文宣言から必須とし、対応欠落でも義務を保持する: %s / %s',
+  (format, label, required) => {
+    const { pages, amounts } = report();
+    const target = '2028年3月期';
+    for (const [index, fiscal, title] of [
+      [2, period, '連結経営成績'],
+      [3, target, '連結業績予想'],
+    ] as const)
+      pages.push(
+        format === 'prose'
+          ? textPage(`1. ${fiscal} ${title}\n${fiscal}の${label}は42円です。`, index)
+          : cells(
+              [
+                [`1. ${fiscal} ${title}`, 0, 20, 320],
+                ['売上高', 230, 50, 80],
+                [label, 430, 50, 220],
+                ['百万円', 230, 80, 80],
+                ['円', 430, 80, 80],
+                [fiscal, 0, 110, 180],
+                ['100', 230, 110, 80],
+                ['42', 430, 110, 80],
+              ],
+              index
+            )
+      );
+    pages.push(
+      textPage(
+        `1. ${target} 連結業績予想\n${['売上高', '営業利益', '当期純利益'].map((m) => `${target}の${m}は100百万円です。`).join('\n')}`,
+        4
+      )
+    );
+    const forecasts = ['売上高', '営業利益', '当期純利益'].map((label) => {
+      const f = numberCandidate(pages[3], label, 100, target);
+      f.valueKind = f.semantics.state = 'forecast';
+      return f;
+    });
+    const base = reviewCandidates(
+      candidateResponse([...amounts, ...forecasts], pages, 'earnings'),
+      'earnings',
+      pages
+    );
+    expect(base.unverified).toEqual([]);
+    const slots = coverageReport('earnings', pages, base.facts);
+    const epsSlots = slots.filter((s) => s.requirement.includes('1株当たり利益'));
+    expect(epsSlots).toHaveLength(required ? 2 : 0);
+    if (!required) {
+      expect(() => verifyCoverage('earnings', pages, base.facts)).not.toThrow();
+      return;
+    }
+    expect(epsSlots.every((s) => s.status === 'absent')).toBe(true);
+    expect(() => verifyCoverage('earnings', pages, base.facts)).toThrow('1株当たり利益');
+    const ctx = buildDocumentContext(pages);
+    const eps = pages.slice(1, 3).map((page, i) => {
+      const f = numberCandidate(page, label, 42, i ? target : period);
+      f.unit = '円';
+      f.semantics.metricKind = 'perShare';
+      f.valueKind = f.semantics.state = i ? 'forecast' : 'actual';
+      if (format === 'table') {
+        const q = page.quantities.find((q) => q.text === '42')!;
+        const hint = ctx.tableMappings.find((h) => h.valueId === q.id)!;
+        f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+      }
+      return f;
+    });
+    const good = reviewCandidates(
+      candidateResponse([...amounts, ...forecasts, ...eps], pages, 'earnings'),
+      'earnings',
+      pages
+    );
+    expect(good.unverified).toEqual([]);
+    expect(() => verifyCoverage('earnings', pages, good.facts)).not.toThrow();
+    expect(saved(good.facts, pages, 'earnings', true).facts).toEqual(good.facts);
+    if (format !== 'table') return;
+    const epsIds = new Set(eps.map((f) => (f.evidence.kind === 'table' ? f.evidence.valueId : '')));
+    ctx.tableMappings = ctx.tableMappings.filter((h) => !epsIds.has(h.valueId));
+    expect(
+      coverageReport('earnings', pages, base.facts, [], ctx).filter((s) =>
+        s.requirement.includes('1株当たり利益')
+      )
+    ).toHaveLength(2);
+  }
+);

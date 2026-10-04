@@ -13,6 +13,7 @@ import { parseQuantity } from './quantity';
 import { proseQuantities } from './quantity';
 import { assertionId } from './source-provenance';
 import { parseFactSummary, renderFacts } from './fact-summary';
+import { toValue } from './score-extraction';
 import { validateSavedFacts } from './fact-cache';
 import { verifyCoverage, coverageReport } from './fact-coverage';
 import { preflightCandidateSource } from './source-preflight';
@@ -477,6 +478,20 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       );
       expect(renderFacts(confirmed)).toContain('配当予想の変更なし');
       expect(renderFacts(confirmed)).toContain('普通配当29.5円、記念配当5.5円');
+      const dividendValue = toValue(confirmed.facts.find((f) => f.label === '配当予想')!, {
+        url: 'https://issuer.example/insource.pdf',
+        documentHash: fixture.sha256,
+        pages,
+        text: pages.map((p) => p.text).join('\n'),
+        issuer: '株式会社インソース',
+        code: '6200',
+        publishedDate: '2026-09-24',
+      });
+      expect(dividendValue.value).toBe(35);
+      expect(dividendValue.source.scope).toBeNull();
+      expect(dividendValue.source.quote).toBe(block.text);
+      expect(dividendValue.source.semantics.metricKind).toBe('perShare');
+
       const breakdown = proseQuantities(block).find((q) => parseQuantity(q.raw)?.value === 29.5)!;
       const wrongDividend = {
         ...dividend,

@@ -34,14 +34,20 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
     !fact.unit ||
     !fact.period ||
     !fact.quantity ||
-    !hasComparableScope(fact.semantics.scope, fact.label, fact.semantics.metricKind, fact.unit) ||
+    !hasComparableScope(
+      fact.semantics.scope,
+      fact.label,
+      fact.semantics.metricKind,
+      fact.unit,
+      fact.quote
+    ) ||
     !fact.semantics.subject ||
     fact.semantics.polarity !== 'affirmative' ||
     fact.semantics.state === 'unspecified' ||
     ['interval', 'relativeYear', 'none'].includes(fact.semantics.periodKind)
   )
     throw new Error('比較可能な数値・期間・主体・範囲がありません');
-  if (fact.semantics.metricKind !== classifyMetric(fact.label, fact.unit))
+  if (fact.semantics.metricKind !== classifyMetric(fact.label, fact.unit, fact.quote))
     throw new Error('採点の指標区分と原文指標・単位が一致しません');
   const fiscalYear = Number(fact.period.normalize('NFKC').match(/(20\d{2})年/)?.[1]);
   if (!Number.isInteger(fiscalYear)) throw new Error('対象年がありません');

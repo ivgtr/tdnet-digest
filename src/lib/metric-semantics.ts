@@ -31,7 +31,7 @@ export function isPerShareProfit(label: string): boolean {
 }
 
 /** 単位と分母の明記を優先し、配当総額を1株配当へ読み替えない。 */
-export function isPerShareDividend(label: string, unit: string | null): boolean {
+export function isPerShareDividend(label: string, unit: string | null, source = ''): boolean {
   const text = compact(label),
     normalizedUnit = unit === null ? '' : compact(unit);
   if (
@@ -41,6 +41,8 @@ export function isPerShareDividend(label: string, unit: string | null): boolean 
   )
     return false;
   if (perShare.test(text)) return true;
+  if (text === '配当予想' && normalizedUnit === '円' && unchangedDividendReference(source))
+    return true;
   return normalizedUnit === '円' && /配当金/.test(text) && !/総額|合計額|支払額|総配当/.test(text);
 }
 
@@ -52,12 +54,7 @@ export function classifyMetric(
   const text = compact(label),
     normalizedUnit = unit === null ? '' : compact(unit);
   if (/率|比率|前年比|前年同期比/.test(text) || /[%％]/.test(normalizedUnit)) return 'rate';
-  if (
-    perShare.test(text) ||
-    isPerShareDividend(label, unit) ||
-    (text === '配当予想' && normalizedUnit === '円' && unchangedDividendReference(source))
-  )
-    return 'perShare';
+  if (perShare.test(text) || isPerShareDividend(label, unit, source)) return 'perShare';
   if (/円|ドル|USD|EUR/.test(normalizedUnit)) return 'amount';
   if (/^(株|人|件|店舗|社|個)$/.test(normalizedUnit)) return 'count';
   return unit ? 'other' : 'none';

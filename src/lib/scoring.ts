@@ -113,19 +113,20 @@ export function hasComparableScope(
   scope: unknown,
   metric: string,
   metricKind: FactSemantics['metricKind'],
-  unit: string
+  unit: string,
+  quote = ''
 ): boolean {
   return (
     (typeof scope === 'string' && !!scope.trim()) ||
-    (scope === null && metricKind === 'perShare' && isPerShareDividend(metric, unit))
+    (scope === null && metricKind === 'perShare' && isPerShareDividend(metric, unit, quote))
   );
 }
 export function compatible(a: ScoreValue, b: ScoreValue, forecast = false): boolean {
   const x = a.source,
     y = b.source;
   return (
-    hasComparableScope(x.scope, x.metric, x.semantics.metricKind, a.unit) &&
-    hasComparableScope(y.scope, y.metric, y.semantics.metricKind, b.unit) &&
+    hasComparableScope(x.scope, x.metric, x.semantics.metricKind, a.unit, x.quote) &&
+    hasComparableScope(y.scope, y.metric, y.semantics.metricKind, b.unit, y.quote) &&
     a.unit === b.unit &&
     // A generic adjustment category does not prove the same share denominator.
     // Cross-document split events remain incomparable without an event proof.
@@ -228,8 +229,20 @@ function ownershipRatio(claim: ScoreClaim): number | null {
     a.source.fiscalYear !== b.source.fiscalYear ||
     a.source.period !== b.source.period ||
     a.source.periodKind !== b.source.periodKind ||
-    !hasComparableScope(a.source.scope, a.source.metric, a.source.semantics.metricKind, a.unit) ||
-    !hasComparableScope(b.source.scope, b.source.metric, b.source.semantics.metricKind, b.unit) ||
+    !hasComparableScope(
+      a.source.scope,
+      a.source.metric,
+      a.source.semantics.metricKind,
+      a.unit,
+      a.source.quote
+    ) ||
+    !hasComparableScope(
+      b.source.scope,
+      b.source.metric,
+      b.source.semantics.metricKind,
+      b.unit,
+      b.source.quote
+    ) ||
     a.source.scope !== b.source.scope
   )
     return null;

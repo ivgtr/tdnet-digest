@@ -7,7 +7,10 @@ import {
   toValue,
   type ScoreFacts,
 } from './score-extraction';
-import { compatible } from './scoring';
+import { compatible, assessClaim } from './scoring';
+import { proseQuantities } from './quantity';
+import { assertionId } from './source-provenance';
+import { validateSavedScore } from './fact-cache';
 import { generateText } from './llm-client';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const current = textPage(
@@ -146,4 +149,80 @@ describe('共通確定事実からの採点入力', () => {
       '数値・期間・範囲・限定・状態を書き直しません'
     );
   });
+});
+
+it('据置配当の原文証明を採点入力・保存照合へ渡し、証明なしの配当予想を拒否する', () => {
+  const source =
+    'なお、配当予想につきましては2026年5月7日公表の1株当たり35円より変更はございません。';
+  const pages = [
+    textPage('会社名 株式会社テスト\n2026年3月期 修正後配当予想\n年間配当金は40円です。'),
+    textPage('会社名 株式会社テスト\n2026年3月期 修正前配当予想\n年間配当金は35円です。', 2),
+    textPage(`会社名 株式会社テスト\n2026年3月期 配当予想\n${source}`, 3),
+  ];
+  const candidates = pages.map((p, i) => {
+    const f = numberCandidate(p, i === 2 ? '配当予想' : '年間配当金', i === 0 ? 40 : 35);
+    if (i === 2 && f.evidence.kind === 'prose') {
+      const block = p.blocks.find((b) => b.text === source)!;
+      f.quote = block.text;
+      f.evidence.blockId = block.id;
+      f.evidence.assertionId = assertionId(block.id);
+      f.evidence.quantityId = proseQuantities(block).find((q) => q.raw === '35円')!.id;
+    }
+    f.id = `f${i + 1}`;
+    f.unit = '円';
+    f.semantics.scope = f.semantics.basis = null;
+    f.semantics.metricKind = 'perShare';
+    f.valueKind = f.semantics.state =
+      i === 0 ? 'forecastAfter' : i === 1 ? 'forecastBefore' : 'forecast';
+    return f;
+  });
+  const facts = parseFactSummary(
+    JSON.stringify({ version: 5, documentType: 'other', facts: candidates, unverified: [] }),
+    'other',
+    pages
+  );
+  expect(facts.unverified).toEqual([]);
+  expect(facts.facts).toHaveLength(3);
+  const document = { ...registry[0].document, pages, text: pages.map((p) => p.text).join('\n') };
+  const dividend = facts.facts[2];
+  expect(dividend.semantics.scope).toBeNull();
+  const v = toValue(dividend, document);
+  expect(v.source.quote).toBe(source);
+  expect(v.source.semantics.metricKind).toBe('perShare');
+  // An ordinary forecast does not become a revision pair merely because its scope is proved.
+  expect(compatible(v, v, true)).toBe(false);
+  const selected = validateScoreInput(
+    raw({
+      ...claim,
+      category: 'shareholderReturn',
+      label: '配当',
+      current: facts.facts[0].id,
+      previous: facts.facts[1].id,
+      relatedValue: dividend.id,
+    }),
+    [{ document, facts }],
+    '元PDF内'
+  );
+  expect(selected.unverified).toEqual([]);
+  expect(selected.claims).toHaveLength(1);
+  const comparison = assessClaim(selected.claims[0]);
+  expect(comparison).not.toBeNull();
+  const score = {
+    value: 70,
+    verdict: '好材料',
+    positives: ['配当'],
+    negatives: [],
+    unverified: [],
+    searchStatus: '固定',
+    breakdown: [{ ...selected.claims[0], impact: 'positive', strength: 'small', comparison }],
+  };
+  expect(() => validateSavedScore(score, facts, document.url, document.documentHash)).not.toThrow();
+  const unproved = structuredClone(dividend);
+  unproved.quote = '配当予想は35円です。';
+  expect(() => toValue(unproved, document)).toThrow('範囲');
+  const altered = structuredClone(score);
+  altered.breakdown[0].relatedValue!.source.quote = unproved.quote;
+  expect(() => validateSavedScore(altered, facts, document.url, document.documentHash)).toThrow(
+    '意味属性'
+  );
 });

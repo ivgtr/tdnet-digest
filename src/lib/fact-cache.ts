@@ -259,8 +259,14 @@ export function validateSavedScore(
       !['url', 'quote', 'period', 'metric', 'factId'].every((k) => typeof s[k] === 'string') ||
       typeof s.documentHash !== 'string' ||
       !/^[a-f0-9]{64}$/.test(s.documentHash) ||
-      !hasComparableScope(s.scope, String(s.metric), s.semantics.metricKind, v.unit) ||
-      s.semantics.metricKind !== classifyMetric(String(s.metric), v.unit) ||
+      !hasComparableScope(
+        s.scope,
+        String(s.metric),
+        s.semantics.metricKind,
+        v.unit,
+        String(s.quote)
+      ) ||
+      s.semantics.metricKind !== classifyMetric(String(s.metric), v.unit, String(s.quote)) ||
       !/^fact-[a-f0-9]{16}$/.test(String(s.factId)) ||
       !Number.isInteger(s.page) ||
       Number(s.page) < 1 ||
