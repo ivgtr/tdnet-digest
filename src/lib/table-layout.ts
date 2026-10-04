@@ -258,8 +258,10 @@ export function buildTableRegions(page: {
         .map((run) => run[0].y)
     );
     const priorTable = Math.max(-Infinity, ...result.map((t) => t.bottom));
+    const valueSpanIds = new Set(values.flatMap((q) => q.spanIds));
     const top = Math.max(unitY - height * 10, title[0].y, lastNote, priorTable),
-      bottom = Math.max(...values.map((q) => q.y)) + height * 0.5;
+      bottom =
+        Math.max(...spans.filter((s) => valueSpanIds.has(s.id)).map((s) => s.y)) + height * 0.5;
     const members = spans.filter(
       (s) =>
         s.y > top &&

@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { parseQuantity, proseQuantities, parseExactNumeric } from './quantity';
 import { quantityCells } from './document-structure';
 import type { PdfSpan } from './pdf-layout';
-import type { TableCell } from './table-layout';
+import { buildTableCells, buildTableRegions, type TableCell } from './table-layout';
 
 it.each([
   ['120店舗', 120, '店舗'],
@@ -117,4 +117,51 @@ it('範囲記号のない複数行・介在文字・別セル・未証明セル�
   const spans = wrappedSpans(['670', '～800']);
   for (const cells of [[], spans.map((s, i) => physicalCell([s], `cell${i}`))])
     expect(quantityCells(spans, cells).map((q) => q.text)).toEqual(['670']);
+});
+
+it('表の最終行が複数行数量でも全断片を表の所属へ渡す', () => {
+  const labels: [string, number, number][] = [
+    ['2027年3月期業績予想', 0, 10],
+    ['売上高', 110, 30],
+    ['営業利益', 210, 30],
+    ['百万円', 110, 45],
+    ['百万円', 210, 45],
+    ['通期', 0, 70],
+    ['100～', 110, 70],
+    ['200～', 210, 70],
+    ['150', 110, 82],
+    ['250', 210, 82],
+  ];
+  const spans = labels.map(([text, x, y], i) => ({
+    id: `s${i}`,
+    text,
+    x,
+    y,
+    width: text.length * 5,
+    height: 10,
+  }));
+  const drawingLines = [
+    [90, 55, 180, 90],
+    [190, 55, 280, 90],
+  ].flatMap(([l, t, r, b], i) =>
+    [
+      [l, t, r, t],
+      [r, t, r, b],
+      [r, b, l, b],
+      [l, b, l, t],
+    ].map(([x1, y1, x2, y2], j) => ({
+      id: `rule${i}-${j}`,
+      x1: Math.min(x1, x2),
+      y1: Math.min(y1, y2),
+      x2: Math.max(x1, x2),
+      y2: Math.max(y1, y2),
+      operatorIndices: [i * 4 + j],
+    }))
+  );
+  const quantities = quantityCells(spans, buildTableCells(drawingLines, spans, 1));
+  const table = buildTableRegions({ pageNumber: 1, spans, quantities, drawingLines })[0];
+  const ranges = quantities.filter((q) => parseExactNumeric(q.text)?.kind === 'range');
+  expect(ranges).toHaveLength(2);
+  expect(table.valueIds).toEqual(ranges.map((q) => q.id));
+  expect(ranges.flatMap((q) => q.spanIds).every((id) => table.spanIds.includes(id))).toBe(true);
 });
