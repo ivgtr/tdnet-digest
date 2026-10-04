@@ -24,6 +24,7 @@ import { uniqueTableMapping } from './source-mappings';
 import {
   parseExactQuantity,
   parseExactRange,
+  parseExactNumeric,
   quantityNumber,
   declaredQuantityUnit,
   proseQuantities,
@@ -661,7 +662,7 @@ export function serializeCandidateSource(
             const unit = parsed?.unit ?? range?.unit ?? declaredQuantityUnit(text(h.unitIds));
             try {
               if (!unit || (!parsed && !range))
-                throw new Error('QUANTITY:確定数量の単位を確認できません');
+                throw new Error('QUANTITY:原文数量の単位を確認できません');
               verifyTableEvidence(
                 { ...p, spans },
                 h,
@@ -682,6 +683,7 @@ export function serializeCandidateSource(
           return {
             id: q.id,
             text: q.text,
+            kind: parseExactNumeric(q.text)!.kind,
             spanIds: q.spanIds,
             tableId: sourceTableId(p, q.id),
             eligibility: reason === null ? { status: 'selectable' } : { status: 'blocked', reason },

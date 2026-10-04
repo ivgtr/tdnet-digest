@@ -20,6 +20,7 @@ import {
 } from './numeric-evidence';
 import {
   parseExactQuantity,
+  parseExactNumeric,
   proseQuantities,
   quantityNumber,
   declaredQuantityUnit,
@@ -51,20 +52,23 @@ import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
 
 /** Structural proposals use the same complete numeric proof as accepted facts. */
-function provedMappedNumber(
+function provedMappedQuantity(
   pages: ExtractedPage[],
   hint: TableMapping,
   claim: { label: string; unit: string; period: string; valueKind: string }
 ): boolean {
   const page = pages.find((p) => p.quantities.some((q) => q.id === hint.valueId));
   if (!page || page.selection !== 'selected') return false;
-  const quantity = parseExactQuantity(page.quantities.find((q) => q.id === hint.valueId)!.text);
-  const value = quantity && quantityNumber(quantity.decimal)?.value;
-  if (value === undefined || value === null) return false;
+  const quantity = parseExactNumeric(page.quantities.find((q) => q.id === hint.valueId)!.text);
+  const value =
+    quantity?.kind === 'range' ? null : quantity && quantityNumber(quantity.decimal)?.value;
+  if (!quantity || value === undefined || (quantity.kind === 'number' && value === null))
+    return false;
   try {
     verifyTableEvidence({ ...page, spans: continuationSpans(pages, page, hint.valueId) }, hint, {
       ...claim,
       value,
+      range: quantity.kind === 'range',
     });
     return true;
   } catch {
@@ -94,7 +98,7 @@ function reportedDividends(
         const state = numericValueKind(axis, text(hint.contextIds));
         if (state !== 'actual' && state !== 'forecast') return [];
         return period &&
-          provedMappedNumber(pages, hint, {
+          provedMappedQuantity(pages, hint, {
             label: text(hint.metricIds),
             unit,
             period,
@@ -557,7 +561,7 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
     )
       return false;
     if (
-      !provedMappedNumber(pages, h, {
+      !provedMappedQuantity(pages, h, {
         label: '売上高営業利益率',
         unit: '%',
         period,
@@ -617,7 +621,7 @@ function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
       const unitText = compact(text(hint.unitIds));
       const unit = parseExactQuantity(unitText)?.unit ?? unitText;
       if (
-        !provedMappedNumber(pages, hint, {
+        !provedMappedQuantity(pages, hint, {
           label: text(hint.metricIds),
           unit,
           period: latest,
@@ -697,7 +701,7 @@ export function verifyCoverage(
     const has = (metric: string, kind: 'actual' | 'forecast', target: string) =>
       facts.some(
         (f) =>
-          f.kind === 'number' &&
+          (f.kind === 'number' || f.kind === 'range') &&
           revisionMetricLabel(f.label) === metric &&
           (metric !== 'netProfit' || ownsRequiredNetProfit(f.label, pages, context, kind)) &&
           matchesReport(f, kind, target)
@@ -747,7 +751,7 @@ export function verifyCoverage(
         reportedTableMargins(allPages, context, marginPeriod).length > 0) &&
       !facts.some(
         (f) =>
-          f.kind === 'number' &&
+          (f.kind === 'number' || f.kind === 'range') &&
           /営業利益率/.test(f.label) &&
           f.semantics.metricKind === 'rate' &&
           matchesReport(f, 'actual', period)
@@ -766,7 +770,7 @@ export function verifyCoverage(
         if (
           !facts.some(
             (f) =>
-              f.kind === 'number' &&
+              (f.kind === 'number' || f.kind === 'range') &&
               isPerShareDividend(f.label, f.unit) &&
               f.semantics.metricKind === 'perShare' &&
               f.semantics.periodKind === 'fullYear' &&
@@ -854,7 +858,7 @@ export function verifyCoverage(
         if (
           !candidates.some(
             (f) =>
-              f.kind === 'number' &&
+              (f.kind === 'number' || f.kind === 'range') &&
               revisionMetricLabel(f.label) === metric &&
               (metric !== 'netProfit' ||
                 ownsRequiredNetProfit(f.label, pages, context, 'forecast')) &&
@@ -877,7 +881,7 @@ export function verifyCoverage(
       if (
         !candidates.some(
           (f) =>
-            f.kind === 'number' &&
+            (f.kind === 'number' || f.kind === 'range') &&
             f.evidence.kind === 'prose' &&
             f.evidence.blockId === dividend.blockId &&
             normalized(f.label) === dividend.label &&
@@ -900,7 +904,7 @@ export function verifyCoverage(
         if (
           !candidates.some(
             (f) =>
-              f.kind === 'number' &&
+              (f.kind === 'number' || f.kind === 'range') &&
               isPerShareDividend(f.label, f.unit) &&
               f.semantics.metricKind === 'perShare' &&
               f.valueKind === kind
@@ -916,7 +920,7 @@ export function verifyCoverage(
         if (
           !facts.some(
             (f) =>
-              f.kind === 'number' &&
+              (f.kind === 'number' || f.kind === 'range') &&
               f.semantics.metricKind === metric &&
               f.semantics.qualifiers.includes('上限') &&
               f.semantics.state === 'planned' &&
@@ -941,7 +945,7 @@ export function verifyCoverage(
       month &&
       !facts.some(
         (f) =>
-          f.kind === 'number' &&
+          (f.kind === 'number' || f.kind === 'range') &&
           normalized(f.semantics.subject ?? '') === documentSubject(context) &&
           isIssuerSource(
             f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId,
@@ -958,7 +962,7 @@ export function verifyCoverage(
         isIssuerSource(link.headingId, context) &&
         !facts.some(
           (f) =>
-            f.kind === 'number' &&
+            (f.kind === 'number' || f.kind === 'range') &&
             compact(f.label) === link.metric &&
             f.semantics.metricKind !== 'rate' &&
             compact(f.period ?? '') === month &&
@@ -1194,11 +1198,11 @@ export function coverageReport(
             const q = pages.flatMap((p) => p.quantities).find((q) => q.id === h.valueId);
             const unit =
               q && h.unitIds.includes(h.valueId)
-                ? parseExactQuantity(q.text)?.unit
+                ? parseExactNumeric(q.text)?.unit
                 : declaredQuantityUnit(text(h.unitIds));
             return (
               !!unit &&
-              provedMappedNumber(pages, h, {
+              provedMappedQuantity(pages, h, {
                 label: text(h.metricIds),
                 unit,
                 period: month,
@@ -1506,7 +1510,7 @@ export function coverageReport(
         : /非開示/.test(requirement)
           ? 'status'
           : amount || /配当|1株当たり|利益率|自己株取得|対象月|KPI/.test(requirement)
-            ? 'number'
+            ? sourceQuantityKind(resolvedIds, pages)
             : null,
       state,
       metricKind: assertion
@@ -1549,4 +1553,23 @@ export function coverageReport(
       ) as CoverageSlot['expected'],
     };
   });
+}
+
+/** Repair constraints follow literal source syntax, without changing forecast state. */
+function sourceQuantityKind(ids: string[], pages: ExtractedPage[]): 'number' | 'range' | null {
+  const kinds = new Set(
+    [
+      ...pages
+        .flatMap((p) => p.quantities)
+        .filter((q) => ids.includes(q.id))
+        .map((q) => q.text),
+      ...pages
+        .flatMap((p) => p.blocks)
+        .filter((b) => ids.includes(b.id))
+        .flatMap((b) => proseQuantities(b).map((q) => q.raw)),
+    ]
+      .map((raw) => parseExactNumeric(raw)?.kind)
+      .filter((kind) => kind !== undefined)
+  );
+  return kinds.size === 1 ? [...kinds][0]! : null;
 }

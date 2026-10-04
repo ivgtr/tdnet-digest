@@ -8,7 +8,7 @@ import {
   isPerformanceReportingTitle,
   forecastReportingTitle,
 } from './document-structure';
-import { declaredQuantityUnit, isUncaptionedUnit, parseExactQuantity } from './quantity';
+import { declaredQuantityUnit, isUncaptionedUnit, parseExactNumeric } from './quantity';
 
 export interface TableCell {
   id: string;
@@ -91,7 +91,11 @@ export function tableUnitRuns(spans: PdfSpan[]): PdfSpan[][] {
   }
   return result;
 }
-function gridCells(lines: DrawingLine[], spans: PdfSpan[], pageNumber: number): TableCell[] {
+export function buildTableCells(
+  lines: DrawingLine[],
+  spans: PdfSpan[],
+  pageNumber: number
+): TableCell[] {
   if (lines.length > 2000) throw new Error('SOURCE_DRAWING:表の罫線解析の処理上限');
   const snap = (values: number[]) => {
     const groups: number[][] = [];
@@ -176,7 +180,7 @@ export function buildTableRegions(page: {
   const spans = page.spans,
     runs = lineRuns(spans),
     physical = physicalRows(spans),
-    grids = gridCells(page.drawingLines, spans, page.pageNumber);
+    grids = buildTableCells(page.drawingLines, spans, page.pageNumber);
   const units = tableUnitRuns(spans).map((run) => ({
     ids: run.map((s) => s.id),
     x: run[0].x,
@@ -212,7 +216,7 @@ export function buildTableRegions(page: {
         q.y > unitY &&
         q.y < end &&
         q.y - unitY < height * 24 &&
-        parseExactQuantity(q.text)?.unit === null &&
+        parseExactNumeric(q.text)?.unit === null &&
         numericRuns.some((run) => run.some((s) => s.id === q.id)) &&
         cx(q) > cx(unitRow[0]) - height * 3 &&
         cx(q) < cx(unitRow[unitRow.length - 1]) + height * 6 &&

@@ -3,7 +3,7 @@ import type { DocumentType } from './document-type';
 import type { DocumentContext } from './document-context';
 import { coverageReport } from './fact-coverage';
 import {
-  parseExactQuantity,
+  parseExactNumeric,
   quantityNumber,
   declaredQuantityUnit,
   proseQuantities,
@@ -42,7 +42,11 @@ export function preflightCandidateSource(
           .find((p: { page: number }) => p.page === page.pageNumber)
           ?.blocks.find((b: { id: string }) => b.id === id);
         if (!serialized?.assertions?.length) return `${id}:入力に主張範囲がありません`;
-        if (slot.expected.kind !== 'number') return null;
+        const numeric =
+          slot.expected.kind === 'number' ||
+          slot.expected.kind === 'range' ||
+          ['amount', 'rate', 'perShare', 'count'].includes(slot.expected.metricKind ?? '');
+        if (!numeric) return null;
         const label =
           slot.expected.label ??
           normalized(block.text).match(
@@ -52,11 +56,12 @@ export function preflightCandidateSource(
           )?.[1];
         if (!label) return `${id}:必要な本文指標を確認できません`;
         for (const quantity of proseQuantities(block)) {
-          const parsed = parseExactQuantity(quantity.raw),
-            value = parsed && quantityNumber(parsed.decimal)?.value;
+          const parsed = parseExactNumeric(quantity.raw),
+            value =
+              parsed?.kind === 'range' ? null : parsed && quantityNumber(parsed.decimal)?.value;
           if (
             !parsed?.unit ||
-            value === null ||
+            (parsed.kind === 'number' && value === null) ||
             value === undefined ||
             !serialized.quantities.some((q: { id: string }) => q.id === quantity.id)
           )
@@ -65,6 +70,7 @@ export function preflightCandidateSource(
             const claim = {
               label,
               value,
+              range: parsed.kind === 'range',
               unit: parsed.unit,
               period: slot.expected.period ?? '',
               valueKind: slot.expected.state ?? 'actual',
@@ -99,9 +105,10 @@ export function preflightCandidateSource(
         spans = continuationSpans(pages, page, id);
       const text = (ids: string[]) =>
         ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
-      const parsed = parseExactQuantity(q.text),
-        value = parsed && quantityNumber(parsed.decimal)?.value;
-      if (value === null || value === undefined) return `${id}:確定数量を表現できません`;
+      const parsed = parseExactNumeric(q.text),
+        value = parsed?.kind === 'range' ? null : parsed && quantityNumber(parsed.decimal)?.value;
+      if (!parsed || value === undefined || (parsed.kind === 'number' && value === null))
+        return `${id}:原文の数量を表現できません`;
       const unit =
         hint.unitIds.includes(id) && parsed?.unit
           ? parsed.unit
@@ -114,6 +121,7 @@ export function preflightCandidateSource(
           {
             label: text(hint.metricIds),
             value,
+            range: parsed.kind === 'range',
             unit,
             period: slot.expected.period ?? '',
             valueKind: slot.expected.state ?? 'actual',

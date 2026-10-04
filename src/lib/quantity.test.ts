@@ -1,5 +1,8 @@
 import { expect, it } from 'vitest';
-import { parseQuantity, proseQuantities } from './quantity';
+import { parseQuantity, proseQuantities, parseExactNumeric } from './quantity';
+import { quantityCells } from './document-structure';
+import type { PdfSpan } from './pdf-layout';
+import type { TableCell } from './table-layout';
 
 it.each([
   ['120店舗', 120, '店舗'],
@@ -70,4 +73,48 @@ it.each(['10円50銭', '１０円５０銭', '-0円05銭'])('円銭の本文原�
   expect(proseQuantities({ id: 'b', text: `配当金は${raw}です。` })).toEqual([
     { id: 'b:q1', raw: raw.normalize('NFKC'), start: 4 },
   ]);
+});
+
+function wrappedSpans(lines: string[]): PdfSpan[] {
+  return lines.map((text, i) => ({
+    id: `s${i}`,
+    text,
+    x: 10,
+    y: 10 + i * 12,
+    width: 30,
+    height: 10,
+  }));
+}
+function physicalCell(spans: PdfSpan[], id = 'cell'): TableCell {
+  return { id, left: 0, top: 0, right: 50, bottom: 100, spanIds: spans.map((s) => s.id) };
+}
+it.each([
+  ['670', '～800'],
+  ['670～', '800'],
+  ['670', '～', '800'],
+  ['△4～', '△2'],
+])('同じ閉じたセルの範囲構文は改行と全原文IDを保つ: %j', (...lines) => {
+  const spans = wrappedSpans(lines),
+    original = structuredClone(spans);
+  const quantities = quantityCells(spans, [physicalCell(spans)]);
+  expect(quantities).toHaveLength(1);
+  expect(quantities[0].spanIds).toEqual(spans.map((s) => s.id));
+  expect(quantities[0].text).toBe(lines.join('\n'));
+  expect(parseExactNumeric(quantities[0].text)?.kind).toBe('range');
+  expect(spans).toEqual(original);
+});
+it('範囲記号のない複数行・介在文字・別セル・未証明セルを近さで結合しない', () => {
+  for (const lines of [
+    ['100', '200'],
+    ['100百万円', '10%'],
+    ['670', '内訳', '～800'],
+  ]) {
+    const spans = wrappedSpans(lines);
+    expect(quantityCells(spans, [physicalCell(spans)]).every((q) => q.spanIds.length === 1)).toBe(
+      true
+    );
+  }
+  const spans = wrappedSpans(['670', '～800']);
+  for (const cells of [[], spans.map((s, i) => physicalCell([s], `cell${i}`))])
+    expect(quantityCells(spans, cells).map((q) => q.text)).toEqual(['670']);
 });

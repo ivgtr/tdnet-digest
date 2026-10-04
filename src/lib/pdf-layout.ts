@@ -15,7 +15,7 @@ import {
   drawingOperations as captureDrawingOperations,
   type DrawingOperation,
 } from './pdf-drawing';
-import { buildTableRegions } from './table-layout';
+import { buildTableRegions, buildTableCells } from './table-layout';
 
 export interface PdfSpan {
   id: string;
@@ -146,8 +146,8 @@ export function extractPageLayout(
   spans.forEach((span, i) => {
     span.id = `p${pageNumber}s${i + 1}`;
   });
-  const quantities = quantityCells(spans);
   const rules = drawingLines(drawingOperations, pageNumber);
+  const quantities = quantityCells(spans, buildTableCells(rules, spans, pageNumber));
   const tableRegions = buildTableRegions({ pageNumber, spans, quantities, drawingLines: rules });
   return {
     pageNumber,

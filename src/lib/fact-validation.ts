@@ -24,7 +24,7 @@ import {
 } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { drawingLines } from './pdf-drawing';
-import { buildTableRegions } from './table-layout';
+import { buildTableRegions, buildTableCells } from './table-layout';
 import { sourceProvenance } from './source-provenance';
 import { parseExactQuantity, parseExactRange, quantityNumber, proseQuantities } from './quantity';
 import {
@@ -177,7 +177,9 @@ export function validatePages(pages: ExtractedPage[]): void {
       canonicalJSON(drawingLines(p.drawingOperations, p.pageNumber)) !==
         canonicalJSON(p.drawingLines) ||
       canonicalJSON(buildTableRegions(p)) !== canonicalJSON(p.tableRegions) ||
-      canonicalJSON(quantityCells(p.spans)) !== canonicalJSON(p.quantities) ||
+      canonicalJSON(
+        quantityCells(p.spans, buildTableCells(p.drawingLines, p.spans, p.pageNumber))
+      ) !== canonicalJSON(p.quantities) ||
       canonicalJSON(buildBlocks(p)) !== canonicalJSON(p.blocks)
     )
       fail('SOURCE:派生構造の不一致');

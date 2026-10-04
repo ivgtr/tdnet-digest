@@ -15,6 +15,15 @@ export interface ExactRange {
   upper: string;
   unit: string | null;
 }
+/** Literal syntax only: the source's range is never reduced to one endpoint. */
+export function parseExactNumeric(
+  raw: string
+): ({ kind: 'number' } & ExactQuantity) | ({ kind: 'range' } & ExactRange) | null {
+  const range = parseExactRange(raw);
+  if (range) return { kind: 'range', ...range };
+  const quantity = parseExactQuantity(raw);
+  return quantity ? { kind: 'number', ...quantity } : null;
+}
 export function parseExactRange(raw: string): ExactRange | null {
   const text = raw.normalize('NFKC').replace(/\s/g, ''),
     m = text.match(

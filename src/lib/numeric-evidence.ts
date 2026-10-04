@@ -15,6 +15,7 @@ import {
   isUnitToken,
   proseQuantities,
   parseExactQuantity,
+  isQuantityPrefix,
 } from './quantity';
 import { quantityCells, lineRuns } from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
@@ -103,8 +104,10 @@ export function verifyTableEvidence(
     fail('参照の項目');
   if (!Array.isArray(page.spans) || !page.spans.length) fail('PDFの位置情報がありません');
   const value =
-    quantityCells(page.spans).find((s) => s.id === object.valueId) ??
-    fail('値の参照先・値・符号・数量の一部参照');
+    quantityCells(
+      page.spans,
+      page.tableRegions?.flatMap((t) => t.cells)
+    ).find((s) => s.id === object.valueId) ?? fail('値の参照先・値・符号・数量の一部参照');
   const ownRow = physicalRows(page.spans).find((row) => row.some((s) => s.id === value.id));
   if (ownRow && /^(?:\(?注\)?|※)/.test(compact(ownRow.map((s) => s.text).join(''))))
     fail('注記の数量を表本体の列へ対応できません');
@@ -114,6 +117,24 @@ export function verifyTableEvidence(
   // Every local row/column/header search uses the same proved table membership.
   // Explicit context references remain in the document and cannot become table headers.
   const tableSpans = table ? page.spans.filter((s) => table.spanIds.includes(s.id)) : page.spans;
+  const tableQuantities = quantityCells(tableSpans, table?.cells);
+  const owningCells = (table?.cells ?? [])
+    .filter((c) => value.spanIds.every((id) => c.spanIds.includes(id)))
+    .sort(
+      (a, b) => (a.right - a.left) * (a.bottom - a.top) - (b.right - b.left) * (b.bottom - b.top)
+    );
+  // A separator or incomplete endpoint in the same physical cell cannot be
+  // silently omitted. Complete, separate quantities still retain their own IDs.
+  if (
+    tableSpans.some(
+      (s) =>
+        (owningCells[0]?.spanIds.includes(s.id) || table?.method === 'aligned') &&
+        /[～〜~]/.test(s.text) &&
+        isQuantityPrefix(s.text) &&
+        !tableQuantities.some((q) => q.spanIds.includes(s.id))
+    )
+  )
+    fail('数量の範囲記号・端点の断片が未解決です');
   const announcementIds = new Set(
     lineRuns(tableSpans)
       .filter((run) =>
@@ -201,7 +222,10 @@ export function verifyTableEvidence(
 
   if (!isUncaptionedUnit(unitText!)) fail('数量の単位を確認できません');
 
-  const rowNumbers = tableSpans.filter(
+  const rowNumbers = [
+    ...tableQuantities,
+    ...tableSpans.filter((s) => /^[－―—–-]$/.test(compact(s.text))),
+  ].filter(
     (s) =>
       sameRow(s, value) &&
       !announcementIds.has(s.id) &&
@@ -218,7 +242,7 @@ export function verifyTableEvidence(
   if (metricOnRow) {
     const left = Math.min(...metrics.map((s) => s.x)),
       right = Math.max(...metrics.map((s) => s.x + s.width));
-    const quantities = quantityCells(tableSpans);
+    const quantities = tableQuantities;
     const precedingRow = Math.max(
       -Infinity,
       ...quantities
@@ -402,7 +426,7 @@ export function verifyTableEvidence(
   }
   // A vertically centred row label may sit between the units and its values.
   // Bind it to one nearest numeric data row; an equal-distance tie is ambiguous.
-  const dataCells = quantityCells(tableSpans).filter((q) => q.y > unitY);
+  const dataCells = tableQuantities.filter((q) => q.y > unitY);
   const dataRows = [
     ...new Set(
       dataCells

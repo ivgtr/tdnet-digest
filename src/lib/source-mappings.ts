@@ -8,7 +8,12 @@ import {
   forecastTablePeriodSources,
 } from './document-structure';
 import { tableContinuations, continuationSpans } from './document-links';
-import { declaredQuantityUnit, parseExactQuantity, isUncaptionedUnit } from './quantity';
+import {
+  declaredQuantityUnit,
+  parseExactQuantity,
+  parseExactNumeric,
+  isUncaptionedUnit,
+} from './quantity';
 export type TableMapping = ReturnType<typeof tableReferenceHints>[number];
 function inlineMappings(page: ExtractedPage): TableMapping[] {
   const result: TableMapping[] = [];
@@ -16,7 +21,7 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
     const cells = page.quantities.filter((q) => row.spanIds.includes(q.id));
     const units = cells
       .flatMap((q) => {
-        const inline = parseExactQuantity(q.text)?.unit;
+        const inline = parseExactNumeric(q.text)?.unit;
         if (inline && isUncaptionedUnit(inline)) return [{ q, unit: inline, unitIds: [q.id] }];
         const suffix = page.spans.filter(
           (s) =>

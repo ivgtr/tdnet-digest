@@ -11,6 +11,7 @@ import {
   tableColumnBand,
   tableUnitRuns,
   physicalRows,
+  type TableCell,
   type TableRegion,
 } from './table-layout';
 
@@ -190,7 +191,7 @@ export const sameLine = (a: PdfSpan, b: PdfSpan) =>
   Math.abs(a.y - b.y) <= Math.min(a.height, b.height) * 0.3;
 
 /** Numeric runs retain every source span, including an incomplete decimal or separated sign. */
-export function quantityCells(spans: PdfSpan[]): QuantityCell[] {
+export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): QuantityCell[] {
   const cells: QuantityCell[] = [];
   const ordered = [...spans].sort((a, b) => a.y - b.y || a.x - b.x);
   for (let i = 0; i < ordered.length; i++) {
@@ -233,7 +234,63 @@ export function quantityCells(spans: PdfSpan[]): QuantityCell[] {
       i = end;
     }
   }
-  return cells;
+  // A range may wrap inside a closed physical cell. Require the explicit
+  // separator and uninterrupted numeric runs; proximity alone never joins rows.
+  const area = (c: TableCell) => (c.right - c.left) * (c.bottom - c.top);
+  const owners = new Map<string, TableCell[]>();
+  for (const cell of sourceCells)
+    for (const id of cell.spanIds) owners.set(id, [...(owners.get(id) ?? []), cell]);
+  const members = new Map<string, PdfSpan[]>();
+  for (const span of spans) {
+    const candidates = (owners.get(span.id) ?? []).sort((a, b) => area(a) - area(b));
+    if (!candidates.length || (candidates[1] && area(candidates[0]) === area(candidates[1])))
+      continue;
+    const id = candidates[0].id;
+    members.set(id, [...(members.get(id) ?? []), span]);
+  }
+  for (const cell of sourceCells) {
+    const rows = physicalRows(members.get(cell.id) ?? []);
+    for (let i = 0; i < rows.length - 1; i++) {
+      const first = rows[i];
+      if (lineRuns(first, 0.6).length !== 1) continue;
+      let parts = [...first],
+        raw = parts.map((s) => s.text).join('');
+      if (!isQuantityPrefix(raw) || parseExactRange(raw)) continue;
+      for (let j = i + 1; j < rows.length; j++) {
+        const next = rows[j];
+        if (lineRuns(next, 0.6).length !== 1) break;
+        const continued = raw + '\n' + next.map((s) => s.text).join('');
+        if (!/[～〜~]/.test(continued) || !isQuantityPrefix(continued)) break;
+        raw = continued;
+        parts = [...parts, ...next];
+        if (!parseExactRange(raw)) continue;
+        const ids = parts.map((s) => s.id);
+        // An existing run must be wholly represented by this range.
+        if (
+          cells.some(
+            (q) =>
+              q.spanIds.some((id) => ids.includes(id)) && q.spanIds.some((id) => !ids.includes(id))
+          )
+        )
+          break;
+        for (let k = cells.length - 1; k >= 0; k--)
+          if (cells[k].spanIds.some((id) => ids.includes(id))) cells.splice(k, 1);
+        const x = Math.min(...parts.map((s) => s.x));
+        cells.push({
+          id: parts[0].id,
+          spanIds: ids,
+          text: raw,
+          x,
+          y: parts[0].y,
+          width: Math.max(...parts.map((s) => s.x + s.width)) - x,
+          height: parts[0].height,
+        });
+        i = j;
+        break;
+      }
+    }
+  }
+  return cells.sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
 /** Horizontal text runs are a structural unit; a band intersecting a run does not own it. */

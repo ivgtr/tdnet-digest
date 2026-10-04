@@ -17,6 +17,7 @@ import { validateSavedFacts } from './fact-cache';
 import { verifyCoverage, coverageReport } from './fact-coverage';
 import { preflightCandidateSource } from './source-preflight';
 import { buildDocumentContext } from './document-context';
+import { stableFactId } from './fact-contract';
 function proseEvent(
   blockId: string,
   candidateId: string,
@@ -178,7 +179,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
     const candidates = fixture.expected.map((expected, i) => ({
       candidateId: `c${i + 1}`,
       importance: 'key',
-      kind: 'number',
+      kind: expected.value === null ? 'range' : 'number',
       source: {
         kind: 'table',
         valueId: expected.valueId,
@@ -218,9 +219,19 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
         normalized(f.label),
         f.semantics.state,
         f.semantics.periodKind,
+        ...(f.kind === 'range' && f.quantity && 'lower' in f.quantity
+          ? [f.quantity.lower, f.quantity.upper]
+          : []),
       ])
     ).toEqual(
-      fixture.expected.map((f) => [f.value, f.unit, normalized(f.label), f.state, f.periodKind])
+      fixture.expected.map((f) => [
+        f.value,
+        f.unit,
+        normalized(f.label),
+        f.state,
+        f.periodKind,
+        ...('lower' in f ? [f.lower, f.upper] : []),
+      ])
     );
     const summary = {
       version: 5,
@@ -230,6 +241,92 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
     };
     validateSavedFacts(summary);
     expect(parseFactSummary(JSON.stringify(summary), 'other', pages)).toEqual(summary);
+    if (fixture.id === 'holdout-makuake-20260901') {
+      const ranges = review.facts.filter((f) => f.kind === 'range');
+      expect(ranges).toHaveLength(4);
+      for (const f of ranges) {
+        expect(f.semantics.state).toBe('forecastBefore');
+        expect(f.valueKind).toBe('forecastBefore');
+        expect(f.quantity!.raw).toContain('\n');
+        expect(f.quantity!.sourceIds.length).toBeGreaterThan(1);
+        expect(renderFacts(summary)).toContain(
+          f.quantity && 'lower' in f.quantity
+            ? `${f.quantity.lower}～${f.quantity.upper}${f.unit}`
+            : 'missing range'
+        );
+        const source = candidates.find(
+          (c) => c.source.valueId === (f.evidence.kind === 'table' ? f.evidence.valueId : null)
+        )!;
+        const wrong = reviewCandidates(
+          JSON.stringify({
+            candidateVersion: 3,
+            documentType: 'other',
+            candidates: [{ ...source, kind: 'number' }],
+            unverified: [],
+          }),
+          'other',
+          pages
+        );
+        expect(wrong.facts).toEqual([]);
+        expect(wrong.unverified.join(' ')).toContain('QUANTITY');
+      }
+      const original = ranges.find((f) => normalized(f.label) === '営業利益')!;
+      const invalidItems = structuredClone(fixture.pages[0].items) as TextItem[];
+      invalidItems.find((item) => item.str === '670')!.str = '900';
+      const invalidPages = [
+        extractPageLayout(
+          invalidItems,
+          1,
+          fixture.pages[0].drawingOperations as DrawingOperation[]
+        ),
+        ...pages.slice(1),
+      ];
+      const invalidContext = buildDocumentContext(invalidPages);
+      const invalidInput = serializeCandidateSource(
+        invalidPages,
+        invalidContext,
+        'earningsRevision'
+      );
+      expect(
+        JSON.parse(invalidInput).pages[0].quantities.find((q: { id: string }) => q.id === 'p1s67')
+          .eligibility.status
+      ).toBe('blocked');
+      expect(() =>
+        preflightCandidateSource('earningsRevision', invalidPages, invalidContext, invalidInput)
+      ).toThrow('断片が未解決');
+      // Removing the physical boundaries does not license reading one endpoint
+      // as the whole quantity. Keep the text and report unresolved structure.
+      const unruled = [
+        extractPageLayout(fixture.pages[0].items as TextItem[], 1),
+        ...pages.slice(1),
+      ];
+      const unruledContext = buildDocumentContext(unruled);
+      const unruledInput = serializeCandidateSource(unruled, unruledContext, 'earningsRevision');
+      expect(() =>
+        preflightCandidateSource('earningsRevision', unruled, unruledContext, unruledInput)
+      ).toThrow('断片が未解決');
+      for (const value of [670, 800, 735]) {
+        const forged = structuredClone(original);
+        forged.kind = 'number';
+        forged.value = value;
+        forged.quantity = {
+          raw: String(value),
+          decimal: String(value),
+          sourceIds: original.quantity!.sourceIds,
+        };
+        forged.id = stableFactId(forged);
+        expect(() =>
+          parseFactSummary(JSON.stringify({ ...summary, facts: [forged] }), 'other', pages)
+        ).toThrow('値・符号');
+      }
+      const slots = coverageReport('earningsRevision', pages, [], [], buildDocumentContext(pages));
+      expect(slots.filter((s) => s.expected.kind === 'range')).toHaveLength(4);
+      expect(
+        coverageReport('earningsRevision', pages, review.facts)
+          .filter((s) => /予想修正の前後/.test(s.requirement))
+          .every((s) => s.status === 'satisfied')
+      ).toBe(true);
+    }
     if (fixture.id === 'holdout-insource-20260924') {
       const block = pages[0].blocks.find((b) => b.id === 'p1b25')!;
       const quantity = proseQuantities(block).find((q) => parseQuantity(q.raw)?.value === 35)!;

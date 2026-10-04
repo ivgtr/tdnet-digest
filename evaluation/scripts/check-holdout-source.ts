@@ -7,8 +7,14 @@ import { parseExactQuantity, parseExactRange } from '../../src/lib/quantity.ts';
 import { parseFactSummary } from '../../src/lib/fact-summary.ts';
 import { expectedErrors, type Case } from './fact-summary-expectations';
 import cases from '../fixtures/source-structure-holdout-cases.json';
+import knownCases from '../fixtures/fact-summary-cases.json';
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== '--case'))
+  throw new Error('Usage: npm run test:fact-source -- [--case frozen-case-id]');
+const selected = args.length ? [...cases, ...knownCases].filter((c) => c.id === args[1]) : cases;
+if (args.length && selected.length !== 1) throw new Error(`Unknown/ambiguous case: ${args[1]}`);
 const output = [];
-for (const item of cases as Case[]) {
+for (const item of selected as Case[]) {
   const raw = await readFile(`evaluation/fixtures/real-pdfs/${item.id}.pdf`);
   const pdfHash = createHash('sha256').update(raw).digest('hex');
   if (!item.sourceHash || item.sourceHash !== pdfHash)
