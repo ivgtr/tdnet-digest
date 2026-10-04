@@ -11,19 +11,15 @@ export const NET_PROFIT_METRIC = `(?:${netProfitOwner}${netProfitPeriod}?純?|${
 const perShare = /1株|一株|株当たり|EPS/i;
 const currency = /^(?:千|百万|億)?円$|^(?:ドル|USD|EUR)$/;
 
-/** Supported EPS labels, including IFRS profit/loss forms. */
-export const BASIC_PER_SHARE_PROFIT_METRIC =
-  '(?:(?:基本的)?1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|EPS)';
-/** EPS denotes basic annual profit per share; diluted and interim names remain distinct. */
+/** Full EPS names preserve the basic/diluted qualifier during prose searches. */
+const perShareProfitName = '1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|\\bEPS\\b';
+export const PER_SHARE_PROFIT_METRIC = `(?:(?:基本的|希薄化後|潜在株式調整後)?(?:${perShareProfitName}))`;
+export const BASIC_PER_SHARE_PROFIT_METRIC = `(?:(?:基本的)?(?:${perShareProfitName}))`;
+/** Bare EPS denotes basic annual profit; explicit qualifiers remain distinct. */
 export function perShareProfitKeys(text: string): string[] {
-  return [
-    ...compact(text).matchAll(
-      /(基本的|希薄化後|潜在株式調整後)?1株(?:当たり|あたり)(当期|四半期|中間)?純?(利益|損失)|\bEPS\b/gi
-    ),
-  ].map((m) =>
-    m[0].toUpperCase() === 'EPS'
-      ? 'basic:当期:利益'
-      : `${/希薄化後|潜在株式調整後/.test(m[1] ?? '') ? 'diluted' : 'basic'}:${m[2] ?? '当期'}:${m[3]}`
+  return [...compact(text).matchAll(new RegExp(PER_SHARE_PROFIT_METRIC, 'gi'))].map(
+    (m) =>
+      `${/^(?:希薄化後|潜在株式調整後)/.test(m[0]) ? 'diluted' : 'basic'}:${m[0].match(/当期|四半期|中間/)?.[0] ?? '当期'}:${m[0].match(/利益|損失/)?.[0] ?? '利益'}`
   );
 }
 export function isPerShareProfit(label: string): boolean {

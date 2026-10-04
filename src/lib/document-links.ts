@@ -4,6 +4,8 @@ import {
   declaredSubjectsIn,
   headingLevel,
   fiscalHeadingRuns,
+  isPerformanceReportingTitle,
+  forecastReportingTitle,
 } from './document-structure';
 import { parseExactNumeric, isUncaptionedUnit } from './quantity';
 import type { PdfSpan } from './pdf-layout';
@@ -64,7 +66,9 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       .find(
         (b) =>
           b.y < last.y &&
-          /経営成績|財政状態/.test(normalized(b.text)) &&
+          (isPerformanceReportingTitle(b.text) ||
+            /財政状態/.test(normalized(b.text)) ||
+            !!forecastReportingTitle(b.text)) &&
           !/[。；]|^\(?注\)?|^※/.test(normalized(b.text))
       );
     if (

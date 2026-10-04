@@ -11,6 +11,8 @@ const operatorNames = [
   'setLineWidth',
   'setStrokeTransparent',
   'setFillTransparent',
+  'setStrokeRGBColor',
+  'setFillRGBColor',
 ] as const;
 const OPS = Object.fromEntries(
   [
@@ -57,6 +59,8 @@ const retained = new Set<string>([
   OPS.setLineWidth,
   OPS.setStrokeTransparent,
   OPS.setFillTransparent,
+  OPS.setStrokeRGBColor,
+  OPS.setFillRGBColor,
 ]);
 const plain = (value: unknown): unknown =>
   ArrayBuffer.isView(value)
@@ -167,6 +171,8 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
     unresolvedClip: boolean;
     stroke: boolean;
     fill: boolean;
+    strokeAlpha: number;
+    fillAlpha: number;
   };
   let state: State = {
     transform: [1, 0, 0, 1, 0, 0],
@@ -174,6 +180,8 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
     unresolvedClip: false,
     stroke: true,
     fill: true,
+    strokeAlpha: 1,
+    fillAlpha: 1,
   };
   const stack: State[] = [];
   const lines: Omit<DrawingLine, 'id'>[] = [];
@@ -216,6 +224,11 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
       (args.length !== 1 || typeof args[0] !== 'number' || !Number.isFinite(args[0]) || args[0] < 0)
     )
       throw new Error('SOURCE_DRAWING:線幅の形式が不正です');
+    if (
+      [OPS.setStrokeRGBColor, OPS.setFillRGBColor].includes(operation.fn) &&
+      (args.length !== 1 || typeof args[0] !== 'string' || !/^#[0-9a-f]{6}$/i.test(args[0]))
+    )
+      throw new Error('SOURCE_DRAWING:色の形式が不正です');
     if (operation.fn === OPS.save) save();
     else if (operation.fn === OPS.restore) restore();
     else if (operation.fn === OPS.transform)
@@ -235,6 +248,8 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
     else if (operation.fn === OPS.clip || operation.fn === OPS.eoClip) clipPending = true;
     else if (operation.fn === OPS.setStrokeTransparent) state.stroke = false;
     else if (operation.fn === OPS.setFillTransparent) state.fill = false;
+    else if (operation.fn === OPS.setStrokeRGBColor) state.stroke = true;
+    else if (operation.fn === OPS.setFillRGBColor) state.fill = true;
     else if (operation.fn === OPS.setGState) {
       if (
         args.length !== 1 ||
@@ -245,8 +260,17 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
       )
         throw new Error('SOURCE_DRAWING:描画状態の形式が不正です');
       for (const entry of args[0] as Array<[string, unknown]>) {
-        if (entry[0] === 'CA') state.stroke = typeof entry[1] === 'number' && entry[1] > 0;
-        if (entry[0] === 'ca') state.fill = typeof entry[1] === 'number' && entry[1] > 0;
+        if (entry[0] === 'CA' || entry[0] === 'ca') {
+          if (
+            typeof entry[1] !== 'number' ||
+            !Number.isFinite(entry[1]) ||
+            entry[1] < 0 ||
+            entry[1] > 1
+          )
+            throw new Error('SOURCE_DRAWING:透明度の形式が不正です');
+          if (entry[0] === 'CA') state.strokeAlpha = entry[1];
+          else state.fillAlpha = entry[1];
+        }
       }
     } else if (operation.fn === OPS.constructPath) {
       if (
@@ -268,6 +292,7 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
         op = args[0];
       const stroke =
         state.stroke &&
+        state.strokeAlpha > 0 &&
         [
           OPS.stroke,
           OPS.closeStroke,
@@ -278,6 +303,7 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
         ].includes(op as string);
       const fill =
         state.fill &&
+        state.fillAlpha > 0 &&
         [
           OPS.fill,
           OPS.eoFill,

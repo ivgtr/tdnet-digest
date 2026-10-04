@@ -7,6 +7,7 @@ import {
 import {
   NET_PROFIT_METRIC,
   BASIC_PER_SHARE_PROFIT_METRIC,
+  PER_SHARE_PROFIT_METRIC,
   perShareProfitKeys,
 } from './metric-semantics';
 import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
@@ -192,7 +193,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
     const own = normalized(block.text);
     const label = own.match(
       new RegExp(
-        `(${BASIC_PER_SHARE_PROFIT_METRIC}|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
+        `(${PER_SHARE_PROFIT_METRIC}|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
         'i'
       )
     )?.[1];
@@ -352,8 +353,10 @@ function declaredReportingMetrics(
     );
     if (sourceFiscalPeriod(text, inherited) !== report || /^\(?注\)?|^※/.test(text)) continue;
     if (/(?:^|の)経常(?:利益|損失)(?:は|が|について)/.test(text)) declared.add('ordinaryProfit');
-    if (new RegExp(`(?:^|の)${BASIC_PER_SHARE_PROFIT_METRIC}(?:は|が|について)`, 'i').test(text))
-      declared.add('1株当たり利益');
+    const eps = text.match(
+      new RegExp(`(?:^|の)(${PER_SHARE_PROFIT_METRIC})(?:は|が|について)`, 'i')
+    )?.[1];
+    if (eps && revisionMetricLabel(eps) === '1株当たり利益') declared.add('1株当たり利益');
   }
   return [...declared];
 }
@@ -1314,7 +1317,7 @@ export function coverageReport(
     for (const block of page.blocks.filter((b) => b.kind === 'paragraph')) {
       const label = normalized(block.text).match(
         new RegExp(
-          `(${BASIC_PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
+          `(${PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
           'i'
         )
       )?.[1];

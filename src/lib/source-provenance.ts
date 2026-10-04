@@ -4,7 +4,7 @@ import { normalized, headingLevel, declaredSubjectsIn } from './document-structu
 import { proseQuantities } from './quantity';
 import { tableForValue } from './table-layout';
 import { record, exact } from './fact-contract';
-import { isPerShareProfit, perShareProfitKeys } from './metric-semantics';
+import { isPerShareProfit, perShareProfitKeys, PER_SHARE_PROFIT_METRIC } from './metric-semantics';
 import { continuationPage } from './document-links';
 import { reportingPeriodText, reportingPeriodShape } from './period-semantics';
 
@@ -135,7 +135,10 @@ function matchingEpsClauses(text: string, label: string, period: string | null):
   // A comma starts another clause only when it explicitly restates a fiscal
   // period and EPS subject. A period list sharing one predicate stays intact.
   const clauses = reportingPeriodText(text).split(
-    /[。；;]|、(?=20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?の?(?:(?:基本的|希薄化後|潜在株式調整後)?1株|EPS))/i
+    new RegExp(
+      `[。；;]|、(?=20\\d{2}年\\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?の?${PER_SHARE_PROFIT_METRIC})`,
+      'i'
+    )
   );
   return clauses.filter((clause) => {
     if (!perShareProfitKeys(clause).includes(names[0])) return false;
@@ -157,9 +160,73 @@ function matchingEpsClauses(text: string, label: string, period: string | null):
     return splitPeriodMatches(clause, period);
   });
 }
+/** A fiscal declaration may cover the whole year's dividends or a named component. */
+function matchingDividendClauses(text: string, label: string, period: string | null): string[] {
+  if (!/配当/.test(text)) return [];
+  const target = reportingPeriodText(period ?? '').match(/20\d{2}年\d{1,2}月期/)?.[0];
+  const component = label.match(/第[1-4]四半期末|中間期末|中間|期末|合計|年間$/)?.[0];
+  const clauses = reportingPeriodText(text).split(
+    /[。；;]|、(?=20\d{2}年\d{1,2}月期(?:の)?(?:第[1-4]四半期末|中間期末|中間|期末|年間|配当))/
+  );
+  return clauses.filter((clause) => {
+    // This conditional amount is a separate quantity, not the printed table's basis.
+    if (
+      /^(?:なお、?)?株式分割を考慮しない場合の/.test(clause) &&
+      /配当金は\d+(?:\.\d+)?円/.test(clause)
+    )
+      return false;
+    if (
+      !/配当/.test(clause) &&
+      (!/(?:株式)?分割前|(?:株式)?分割後|仮定/.test(clause) || isPerShareProfit(clause))
+    )
+      return false;
+    const periods = splitReportingPeriods(clause);
+    if (isPerShareProfit(clause) && new Set(periods.map(([p]) => p)).size > 1)
+      throw new Error('STRUCTURE:複数指標の株式分割注記の期間対応を確定できません');
+    if (!periods.length) {
+      if (!/配当/.test(clause)) return false;
+      if (
+        clauses.some(
+          (other) =>
+            !/配当/.test(other) && !isPerShareProfit(other) && splitReportingPeriods(other).length
+        )
+      )
+        throw new Error('STRUCTURE:株式分割注記の共通期間と配当の期間対応を確定できません');
+      return true;
+    }
+    return periods.some((match) => {
+      const fiscal = match[0].match(/20\d{2}年\d{1,2}月期/)![0];
+      const following = clause.slice(match.index! + fiscal.length);
+      const stated = following.match(
+        /^(?:の)?(第[1-4]四半期末|中間期末|中間|期末|年間(?:配当金)?(?:合計)?)/
+      )?.[1];
+      return (
+        fiscal === target &&
+        (!stated ||
+          (stated.startsWith('年間') ? /合計|年間$/.test(component ?? '') : stated === component))
+      );
+    });
+  });
+}
+function splitBasis(
+  clauses: string[],
+  noteId: string
+): SourceProvenance['adjustments'][number]['basis'] {
+  const bases = clauses.map((clause) => {
+    const declared: SourceProvenance['adjustments'][number]['basis'][] = [];
+    if (/仮定|株式分割の影響を考慮/.test(clause)) declared.push('splitAdjusted');
+    if (/(?:株式)?分割前/.test(clause)) declared.push('beforeSplit');
+    if (/(?:株式)?分割後/.test(clause)) declared.push('afterSplit');
+    return declared;
+  });
+  if (bases.some((b) => b.length !== 1) || new Set(bases.flat()).size !== 1)
+    throw new Error(`STRUCTURE:株式分割注記の適用基準を確定できません: ${noteId}`);
+  return bases[0][0];
+}
 /** The same matched clauses own the input qualifier and persisted basis. */
 export function splitNoteApplies(text: string, label: string, period: string | null): boolean {
-  if (/配当/.test(normalized(label))) return /配当/.test(normalized(text));
+  if (/配当/.test(normalized(label)))
+    return matchingDividendClauses(normalized(text), normalized(label), period).length > 0;
   return matchingEpsClauses(text, label, period).length > 0;
 }
 export function applicableSplitNotes(
@@ -171,34 +238,17 @@ export function applicableSplitNotes(
   const result: SourceProvenance['adjustments'] = [];
   for (const note of splitNotes(page, valueId)) {
     const text = normalized(note.text),
-      metric = normalized(label),
-      fy = normalized(period ?? '').match(/20\d{2}年\d{1,2}月期/)?.[0];
+      metric = normalized(label);
     if (!splitNoteApplies(text, metric, period)) continue;
-    let basis: SourceProvenance['adjustments'][number]['basis'] | null = null;
-    if (isPerShareProfit(metric)) {
-      const bases = matchingEpsClauses(text, metric, period).map((clause) => {
-        const declared: SourceProvenance['adjustments'][number]['basis'][] = [];
-        if (/仮定|株式分割の影響を考慮/.test(clause)) declared.push('splitAdjusted');
-        if (/(?:株式)?分割前/.test(clause)) declared.push('beforeSplit');
-        if (/(?:株式)?分割後/.test(clause)) declared.push('afterSplit');
-        return declared;
-      });
-      if (bases.some((b) => b.length !== 1) || new Set(bases.flat()).size !== 1)
-        throw new Error(`STRUCTURE:株式分割注記の適用基準を確定できません: ${note.id}`);
-      basis = bases[0][0];
-    }
-    if (/配当/.test(metric) && fy) {
-      const before = text.match(
-        /(20\d{2}年\d{1,2}月期)及び(20\d{2}年\d{1,2}月期)第2四半期末については.*?株式分割前/
-      );
-      if (before && (fy === before[1] || (fy === before[2] && /第2四半期末/.test(metric))))
-        basis = 'beforeSplit';
-      const after = text.match(/(20\d{2}年\d{1,2}月期)期末については.*?株式分割後/);
-      if (after && fy === after[1] && /期末/.test(metric)) basis = 'afterSplit';
-    }
-    if (basis) result.push({ kind: 'stockSplit', noteId: note.id, text: note.text, basis });
-    else if (isPerShareProfit(metric) || /配当/.test(metric))
-      throw new Error(`STRUCTURE:株式分割注記の適用基準を確定できません: ${note.id}`);
+    const clauses = /配当/.test(metric)
+      ? matchingDividendClauses(text, metric, period)
+      : matchingEpsClauses(text, metric, period);
+    result.push({
+      kind: 'stockSplit',
+      noteId: note.id,
+      text: note.text,
+      basis: splitBasis(clauses, note.id),
+    });
   }
   return result;
 }

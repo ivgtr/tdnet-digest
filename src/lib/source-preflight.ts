@@ -10,7 +10,7 @@ import {
 } from './quantity';
 import { verifyTableEvidence, verifyProseQuantity, verifyProsePeriod } from './numeric-evidence';
 import { normalized } from './document-structure';
-import { NET_PROFIT_METRIC, BASIC_PER_SHARE_PROFIT_METRIC } from './metric-semantics';
+import { NET_PROFIT_METRIC, PER_SHARE_PROFIT_METRIC } from './metric-semantics';
 import { continuationSpans, continuationPage } from './document-links';
 /** Required source choices must survive serialization before spending a generation attempt. */
 export function preflightCandidateSource(
@@ -51,7 +51,8 @@ export function preflightCandidateSource(
           slot.expected.label ??
           normalized(block.text).match(
             new RegExp(
-              `((?:売上高)?営業利益率|株式の取得価額の総額|取得価額の総額|取得する株式の総数|${BASIC_PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|MRR|ARR|${NET_PROFIT_METRIC})(?:は|が|について|[:：]|(?=[0-9]))`
+              `((?:売上高)?営業利益率|株式の取得価額の総額|取得価額の総額|取得する株式の総数|${PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|MRR|ARR|${NET_PROFIT_METRIC})(?:は|が|について|[:：]|(?=[0-9]))`,
+              'i'
             )
           )?.[1];
         if (!label) return `${id}:必要な本文指標を確認できません`;

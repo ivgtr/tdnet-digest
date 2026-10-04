@@ -21,6 +21,7 @@ import semanticCorpus from './fixtures/ir-semantic-corpus.json';
 import semanticExpectations from './fixtures/ir-semantic-expectations.json';
 import { extractPageLayout } from './pdf-layout';
 import { tableContinuations } from './document-links';
+import { preflightCandidateSource } from './source-preflight';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
@@ -144,14 +145,23 @@ it('業績予想の報告根拠を作れないとき、空の必須検査でAPI�
   ).rejects.toThrow('SOURCE_PREFLIGHT');
   expect(generateText).not.toHaveBeenCalled();
 });
-it.each(['単一span', '分割span'])(
+it.each(['単一span', '分割span', '業績予想', '予想修正'])(
   '継続表の単位・年度を行所属ごと投影し、入力・受理・保存まで保持する: %s',
   (layout) => {
     const pages = [
       cells(
         [
           ['上場会社名 株式会社テスト', 0, 0, 240],
-          ['1. 経営成績', 0, 30, 160],
+          [
+            layout === '業績予想'
+              ? '1. 連結業績予想'
+              : layout === '予想修正'
+                ? '1. 連結業績予想数値の修正'
+                : '1. 経営成績',
+            0,
+            30,
+            280,
+          ],
           ...(layout === '分割span'
             ? ([
                 ['2026年', 280, 60, 80],
@@ -197,6 +207,8 @@ it.each(['単一span', '分割span'])(
     ).toBe('selectable');
     const f = numberCandidate(pages[1], '営業利益', 20, '2027年3月期');
     f.unit = '千円';
+    if (layout === '業績予想' || layout === '予想修正')
+      f.valueKind = f.semantics.state = 'forecast';
     f.semantics.scope = f.semantics.basis = null;
     f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
     const result = reviewCandidates(candidateResponse([f], pages), 'other', pages);
@@ -3062,6 +3074,7 @@ it.each([
   ['table', 'EPS', true],
   ['prose', 'eps', true],
   ['table', '希薄化後1株当たり当期利益', false],
+  ['prose', '希薄化後EPS', false],
   ['table', '1株当たり配当金', false],
 ] as const)(
   'EPS別名の実績・予想を原文宣言から必須とし、対応欠落でも義務を保持する: %s / %s',
@@ -3074,7 +3087,10 @@ it.each([
     ] as const)
       pages.push(
         format === 'prose'
-          ? textPage(`1. ${fiscal} ${title}\n${fiscal}の${label}は42円です。`, index)
+          ? textPage(
+              `1. ${fiscal} ${title}\n${fiscal}の${label.endsWith('当たり') ? label + '42円' : label + 'は42円'}です。`,
+              index
+            )
           : cells(
               [
                 [`1. ${fiscal} ${title}`, 0, 20, 320],
@@ -3116,6 +3132,14 @@ it.each([
     expect(epsSlots.every((s) => s.status === 'absent')).toBe(true);
     expect(() => verifyCoverage('earnings', pages, base.facts)).toThrow('1株当たり利益');
     const ctx = buildDocumentContext(pages);
+    expect(() =>
+      preflightCandidateSource(
+        'earnings',
+        pages,
+        ctx,
+        serializeCandidateSource(pages, ctx, 'earnings')
+      )
+    ).not.toThrow();
     const eps = pages.slice(1, 3).map((page, i) => {
       const f = numberCandidate(page, label, 42, i ? target : period);
       f.unit = '円';
@@ -3146,3 +3170,88 @@ it.each([
     ).toHaveLength(2);
   }
 );
+
+it.each([
+  'EPS',
+  'eps',
+  '基本的EPS',
+  '希薄化後EPS',
+  '潜在株式調整後eps',
+  '希薄化後1株当たり当期利益',
+  'epsは1株当たり',
+])('初回予想の本文EPSは完全な指標名の基本区分だけを必須にする: %s', (label) => {
+  const pages = [
+    textPage(
+      `会社名 株式会社テスト\n2027年3月期 連結業績予想\n売上高は100百万円です。\n営業利益は10百万円です。\n当期純利益は8百万円です。\n${label.endsWith('当たり') ? label + '42円' : label + 'は42円'}です。`
+    ),
+  ];
+  const ctx = buildDocumentContext(pages);
+  const slots = coverageReport('earningsRevision', pages, [], [], ctx);
+  expect(slots.some((s) => s.requirement.includes('1株当たり利益'))).toBe(
+    !/希薄化後|潜在株式調整後/.test(label)
+  );
+  expect(() =>
+    preflightCandidateSource(
+      'earningsRevision',
+      pages,
+      ctx,
+      serializeCandidateSource(pages, ctx, 'earningsRevision')
+    )
+  ).not.toThrow();
+});
+
+it('配当注記の適用範囲を生成入力・候補受理・保存で共有する', () => {
+  const pages = [
+    cells(
+      [
+        ['会社名 株式会社テスト', 0, 0, 240],
+        ['2. 配当の状況', 0, 30, 250],
+        ['年間配当金期末', 230, 60, 150],
+        ['年間配当金第2四半期末', 430, 60, 210],
+        ['円', 230, 85, 80],
+        ['円', 430, 85, 80],
+        ['2026年3月期', 0, 110, 180],
+        ['10', 230, 110, 80],
+        ['5', 430, 110, 80],
+        ['2027年3月期', 0, 140, 180],
+        ['20', 230, 140, 80],
+        ['7', 430, 140, 80],
+        ['2027年3月期期末については、株式分割後の配当金の金額を記載しています。', 0, 180, 1200],
+      ],
+      1
+    ),
+  ];
+  const ctx = buildDocumentContext(pages),
+    input = JSON.parse(serializeCandidateSource(pages, ctx));
+  const noteId = pages[0].blocks[pages[0].blocks.length - 1].id;
+  const facts = [10, 5, 20, 7].map((value, index) => {
+    const q = pages[0].quantities.find((q) => q.text === String(value))!;
+    const hint = ctx.tableMappings.find((h) => h.valueId === q.id)!;
+    expect(hint).toBeDefined();
+    const f = numberCandidate(
+      pages[0],
+      index % 2 ? '年間配当金第2四半期末' : '年間配当金期末',
+      value,
+      `${index < 2 ? 2026 : 2027}年3月期`
+    );
+    f.unit = '円';
+    f.semantics.metricKind = 'perShare';
+    f.semantics.scope = f.semantics.basis = null;
+    f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+    const binding = input.contextTemplates.find(
+      (c: { id: string }) => c.id === input.unitContexts[q.id]
+    );
+    expect(binding.qualifierIds.includes(noteId)).toBe(index === 2);
+    return f;
+  });
+  const result = reviewCandidates(candidateResponse(facts, pages), 'other', pages);
+  expect(result.unverified).toEqual([]);
+  expect(result.facts).toHaveLength(4);
+  expect(result.facts.map((f) => f.provenance!.adjustments.map((a) => a.basis))).toEqual([
+    [],
+    [],
+    ['afterSplit'],
+    [],
+  ]);
+  expect(saved(result.facts, pages).facts).toEqual(result.facts);
+});

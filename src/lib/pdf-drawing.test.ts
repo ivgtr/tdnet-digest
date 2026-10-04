@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { drawingLines, type DrawingOperation } from './pdf-drawing';
+import { drawingLines, drawingOperations, type DrawingOperation } from './pdf-drawing';
 const op = (index: number, fn: string, args: unknown[] = []): DrawingOperation => ({
   index,
   fn,
@@ -69,7 +69,71 @@ describe('PDFの描かれた罫線の証明', () => {
     [path(0, 'unknown', [0, 0, 0, 1, 10, 0])],
     [op(0, 'transform', [1, 0, 0, 1, 0, NaN])],
     [op(0, 'setGState', [['bad']])],
+    [op(0, 'setStrokeRGBColor', ['transparent'])],
+    [op(0, 'setFillRGBColor', [0, 0, 0])],
+    [op(0, 'setGState', [[['CA', NaN]]])],
   ])('不正な描画契約は黙って文字だけに置き換えない: %j', (...operations) => {
     expect(() => drawingLines(operations, 1)).toThrow('SOURCE_DRAWING:');
   });
+});
+
+it.each(['Stroke', 'Fill'] as const)('PDF.jsの%s色復帰と独立したalphaを保持する', (kind) => {
+  const registry = {
+    [`set${kind}Transparent`]: 1,
+    [`set${kind}RGBColor`]: 2,
+    constructPath: 3,
+    stroke: 4,
+    fill: 5,
+  };
+  const commands =
+    kind === 'Stroke' ? [0, 0, 0, 1, 30, 0] : [0, 0, 0, 1, 30, 0, 1, 30, 1, 1, 0, 1, 4];
+  const paint = kind === 'Stroke' ? 'stroke' : 'fill';
+  const operations = drawingOperations(
+    {
+      fnArray: [1, 3, 2, 3],
+      argsArray: [
+        [],
+        [registry[paint], [commands], null],
+        ['#000000'],
+        [registry[paint], [commands], null],
+      ],
+    },
+    registry
+  );
+  expect(operations.map((o) => o.index)).toEqual([0, 1, 2, 3]);
+  expect(
+    drawingLines(
+      [
+        op(0, `set${kind}Transparent`),
+        op(1, 'save'),
+        op(2, `set${kind}RGBColor`, ['#000000']),
+        path(3, paint, commands),
+        op(4, 'restore'),
+        path(5, paint, commands),
+      ],
+      1
+    ).map((l) => l.operatorIndices)
+  ).toEqual([[3]]);
+  expect(drawingLines(operations, 1).map((l) => l.operatorIndices)).toEqual([[3]]);
+  const alpha = kind === 'Stroke' ? 'CA' : 'ca';
+  expect(
+    drawingLines(
+      [
+        op(0, 'setGState', [[[alpha, 0]]]),
+        op(1, `set${kind}RGBColor`, ['#000000']),
+        path(2, paint, commands),
+      ],
+      1
+    )
+  ).toEqual([]);
+  expect(
+    drawingLines(
+      [
+        op(0, `set${kind}Transparent`),
+        op(1, 'setGState', [[[alpha, 1]]]),
+        path(2, paint, commands),
+      ],
+      1
+    )
+  ).toEqual([]);
 });

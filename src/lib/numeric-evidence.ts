@@ -1,3 +1,4 @@
+import { isPerShareProfit } from './metric-semantics';
 import {
   explicitCalendarAxisMatches,
   periodKind,
@@ -745,7 +746,8 @@ export function verifyProseQuantity(
   }
   const escape = (text: string) => compact(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // 複合助詞は語単位で認める。任意のひらがなは許さず、否定・概数の語を跨がない。
-  const perShare = claim.unit === '円' && /配当金|1株当たり.*純利益/.test(compact(claim.label));
+  const perShare =
+    claim.unit === '円' && (/配当金/.test(compact(claim.label)) || isPerShareProfit(claim.label));
   const sharedDividend =
     perShare &&
     ['中間配当金', '期末配当金'].includes(compact(claim.label)) &&

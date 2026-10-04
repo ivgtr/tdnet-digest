@@ -2,10 +2,11 @@ import { it, expect } from 'vitest';
 import { cells } from './fixtures/fact-review-source';
 import { applicableSplitNotes, splitNoteApplies } from './source-provenance';
 
-it.each(['。', '、', 'EPS別名'])(
+it.each(['。', '、', 'EPS別名', '希薄化後EPS別名'])(
   '別の対象期の計算基準を混ぜず、矛盾する基準は拒否する: %s',
   (separator) => {
-    const label = '基本的1株当たり当期利益';
+    const label =
+      separator === '希薄化後EPS別名' ? '希薄化後1株当たり当期利益' : '基本的1株当たり当期利益';
     const make = (note: string) =>
       cells(
         [
@@ -23,8 +24,10 @@ it.each(['。', '、', 'EPS別名'])(
       );
     const before = `2026年3月期の${label}は株式分割前の金額です`;
     const adjusted = `2027年3月期の${label}は株式分割を期首に行ったと仮定して算定しています`;
-    const restated = separator === 'EPS別名' ? adjusted.replace(label, 'EPS') : adjusted;
-    const punctuation = separator === 'EPS別名' ? '、' : separator;
+    const restated = separator.endsWith('EPS別名')
+      ? adjusted.replace(label, separator === '希薄化後EPS別名' ? '希薄化後eps' : 'EPS')
+      : adjusted;
+    const punctuation = separator.endsWith('EPS別名') ? '、' : separator;
     const p = make(before + punctuation + restated + '。');
     const id = p.quantities.find((q) => q.text === '10')!.id;
     expect(applicableSplitNotes(p, id, label, '2026年3月期')[0].basis).toBe('beforeSplit');
@@ -198,3 +201,91 @@ it.each([
     )
   ).toThrow('適用基準');
 });
+
+it('配当の分割注記を対象年度・配当区分へ限定し、矛盾や未解決を拒否する', () => {
+  const make = (note: string) =>
+    cells(
+      [
+        ['2027年3月期 配当の状況', 0, 0, 250],
+        ['売上高', 200, 30, 70],
+        ['年間配当金期末', 350, 30, 170],
+        ['百万円', 200, 55, 70],
+        ['円', 420, 55, 20],
+        ['2026年3月期', 0, 80, 130],
+        ['100', 200, 80, 70],
+        ['10', 420, 80, 20],
+        ['2027年3月期', 0, 105, 130],
+        ['200', 200, 105, 70],
+        ['20', 420, 105, 20],
+        [note, 0, 140, 1200],
+      ],
+      1
+    );
+  const text = '2027年3月期期末については、株式分割後の配当金の金額を記載しています。';
+  const p = make(
+      text +
+        'なお、株式分割を考慮しない場合の2027年3月期(予想)の1株当たり期末配当金は20円となります。'
+    ),
+    id = p.quantities.find((q) => q.text === '10')!.id;
+  expect(applicableSplitNotes(p, id, '年間配当金期末', '2026年3月期')).toEqual([]);
+  expect(applicableSplitNotes(p, id, '年間配当金第2四半期末', '2027年3月期')).toEqual([]);
+  expect(applicableSplitNotes(p, id, '年間配当金合計', '2027年3月期')).toEqual([]);
+  expect(applicableSplitNotes(p, id, '年間配当金期末', '2027年3月期')).toEqual([
+    expect.objectContaining({ basis: 'afterSplit' }),
+  ]);
+  const mixed = make(
+    '2026年3月期及び2027年3月期第2四半期末については株式分割前の配当金です。' + text
+  );
+  expect(applicableSplitNotes(mixed, id, '年間配当金期末', '2026年3月期')[0].basis).toBe(
+    'beforeSplit'
+  );
+  expect(applicableSplitNotes(mixed, id, '年間配当金第2四半期末', '2027年3月期')[0].basis).toBe(
+    'beforeSplit'
+  );
+  const contradictory = make(text + text.replace('分割後', '分割前'));
+  expect(() => applicableSplitNotes(contradictory, id, '年間配当金期末', '2027年3月期')).toThrow(
+    '適用基準'
+  );
+  const unresolved = make('株式分割と配当金については別途記載しています。');
+  expect(() => applicableSplitNotes(unresolved, id, '年間配当金期末', '2027年3月期')).toThrow(
+    '適用基準'
+  );
+});
+
+it.each(['。', '、'])(
+  '配当注記の年度ごとの述語を混ぜず、年度だけの全配当宣言を認識する: %s',
+  (separator) => {
+    const note =
+      '2026年3月期については株式分割前の配当金です' +
+      separator +
+      '2027年3月期期末については株式分割後の金額です。';
+    const p = cells(
+        [
+          ['配当の状況', 0, 0, 200],
+          ['売上高', 150, 30, 70],
+          ['年間配当金期末', 300, 30, 140],
+          ['百万円', 150, 55, 70],
+          ['円', 350, 55, 30],
+          ['2026年3月期', 0, 80, 130],
+          ['100', 150, 80, 70],
+          ['10', 350, 80, 30],
+          [note, 0, 115, 1200],
+        ],
+        1
+      ),
+      id = p.quantities.find((q) => q.text === '10')!.id;
+    expect(applicableSplitNotes(p, id, '年間配当金期末', '2026年3月期')[0].basis).toBe(
+      'beforeSplit'
+    );
+    expect(applicableSplitNotes(p, id, '年間配当金期末', '2027年3月期')[0].basis).toBe(
+      'afterSplit'
+    );
+    expect(() =>
+      splitNoteApplies(
+        '2026年3月期のEPSと2027年3月期の配当金は株式分割後の金額です。',
+        '年間配当金期末',
+        '2026年3月期'
+      )
+    ).toThrow('期間対応');
+  }
+);
