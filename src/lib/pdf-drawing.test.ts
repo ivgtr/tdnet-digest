@@ -72,6 +72,8 @@ describe('PDFの描かれた罫線の証明', () => {
     [op(0, 'setStrokeRGBColor', ['transparent'])],
     [op(0, 'setFillRGBColor', [0, 0, 0])],
     [op(0, 'setGState', [[['CA', NaN]]])],
+    [op(0, 'paintFormXObjectBegin', [null, [0, 0, NaN, 10]])],
+    [op(0, 'paintFormXObjectBegin', [null, [0, 0, 10]])],
   ])('不正な描画契約は黙って文字だけに置き換えない: %j', (...operations) => {
     expect(() => drawingLines(operations, 1)).toThrow('SOURCE_DRAWING:');
   });
@@ -137,3 +139,36 @@ it.each(['Stroke', 'Fill'] as const)('PDF.jsの%s色復帰と独立したalpha�
     )
   ).toEqual([]);
 });
+
+it.each([
+  {
+    name: '回転',
+    transform: [1, 1, -1, 1, 0, 0],
+    commands: [0, -5, 15, 1, 15, -5],
+    expected: [-10, -10, 10, -10],
+  },
+  {
+    name: 'せん断',
+    transform: [1, 0, -1, 1, 0, 0],
+    commands: [0, -5, 5, 1, 15, 5],
+    expected: [-5, -5, 5, -5],
+  },
+])(
+  'Form BBoxの全頂点と変換後の形で可視部分だけを残す: $name',
+  ({ transform, commands, expected }) => {
+    const lines = drawingLines(
+      [
+        op(0, 'paintFormXObjectBegin', [transform, [0, 0, 10, 10]]),
+        path(1, 'stroke', commands),
+        path(2, 'stroke', [0, -20, 25, 1, -10, 15]),
+        op(3, 'paintFormXObjectEnd'),
+        path(4, 'stroke', [0, 30, 0, 1, 50, 0]),
+      ],
+      1
+    );
+    expect(lines.map((l) => [l.x1, l.y1, l.x2, l.y2, l.operatorIndices])).toEqual([
+      [...expected, [1]],
+      [30, -0, 50, -0, [4]],
+    ]);
+  }
+);

@@ -15,6 +15,19 @@ const currency = /^(?:千|百万|億)?円$|^(?:ドル|USD|EUR)$/;
 const perShareProfitName = '1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|\\bEPS\\b';
 export const PER_SHARE_PROFIT_METRIC = `(?:(?:基本的|希薄化後|潜在株式調整後)?(?:${perShareProfitName}))`;
 export const BASIC_PER_SHARE_PROFIT_METRIC = `(?:(?:基本的)?(?:${perShareProfitName}))`;
+/** Direct metric occurrences are shared by declaration, allocation and quantity boundaries. */
+export const PROSE_REPORTING_METRIC_PATTERN = `(?:${PER_SHARE_PROFIT_METRIC}|(?:売上高)?営業利益率|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC}|MRR|ARR)`;
+export function proseReportingMetrics(
+  text: string,
+  extraPattern = ''
+): Array<{ label: string; start: number; end: number }> {
+  const pattern = `(${PROSE_REPORTING_METRIC_PATTERN}${extraPattern ? '|' + extraPattern : ''})(?:について(?:は|が)?|は|が|[:：]|(?=[0-9]))`;
+  return [...compact(text).matchAll(new RegExp(pattern, 'gi'))].map((m) => ({
+    label: m[1],
+    start: m.index!,
+    end: m.index! + m[0].length,
+  }));
+}
 /** Bare EPS denotes basic annual profit; explicit qualifiers remain distinct. */
 export function perShareProfitKeys(text: string): string[] {
   return [...compact(text).matchAll(new RegExp(PER_SHARE_PROFIT_METRIC, 'gi'))].map(

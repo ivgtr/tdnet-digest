@@ -3216,7 +3216,12 @@ it('配当注記の適用範囲を生成入力・候補受理・保存で共有�
         ['2027年3月期', 0, 140, 180],
         ['20', 230, 140, 80],
         ['7', 430, 140, 80],
-        ['2027年3月期期末については、株式分割後の配当金の金額を記載しています。', 0, 180, 1200],
+        [
+          '2027年3月期(予想)の期末配当金については、株式分割後の金額を記載しています。',
+          0,
+          180,
+          1200,
+        ],
       ],
       1
     ),
@@ -3254,4 +3259,100 @@ it('配当注記の適用範囲を生成入力・候補受理・保存で共有�
     [],
   ]);
   expect(saved(result.facts, pages).facts).toEqual(result.facts);
+});
+
+it.each(['人', '株', '百万円', '円'])(
+  '続表の先頭・後続行で明示単位が一致するときだけ元表を継承する: %s',
+  (unit) => {
+    const prior = cells(
+      [
+        ['会社名 株式会社テスト', 0, 0, 240],
+        ['1. 経営成績', 0, 30, 200],
+        ['2026年3月期', 280, 60, 140],
+        ['2027年3月期', 480, 60, 140],
+        ['売上高', 0, 100, 100],
+        ['100円', 340, 100, 80],
+        ['200円', 540, 100, 80],
+      ],
+      1
+    );
+    const next = (firstUnit: string, secondUnit: string) =>
+      cells(
+        [
+          ['営業利益', 0, 20, 100],
+          [`10${firstUnit}`, 340, 20, 80],
+          [`20${firstUnit}`, 540, 20, 80],
+          ['当期純利益', 0, 50, 100],
+          [`8${secondUnit}`, 340, 50, 80],
+          [`16${secondUnit}`, 540, 50, 80],
+        ],
+        2
+      );
+    for (const first of [true, false]) {
+      const pages = [prior, next(first ? unit : '円', unit)];
+      const links = tableContinuations(pages);
+      expect(links).toHaveLength(unit === '円' || !first ? 1 : 0);
+      if (unit !== '円')
+        expect(links.flatMap((l) => l.valueIds)).not.toContain(
+          pages[1].quantities.find((q) => q.text === `16${unit}`)!.id
+        );
+      expect(
+        buildDocumentContext(pages).tableMappings.some((h) => h.valueId.startsWith('p2'))
+      ).toBe(unit === '円' || !first);
+    }
+  }
+);
+it('初回予想の同じ本文段落から全指標を選択し、他の数量で義務を代替しない', () => {
+  const pages = [
+    textPage(
+      '会社名 株式会社テスト\n2027年3月期 連結業績予想\n売上高は100百万円、営業利益は10百万円、当期純利益は8百万円です。'
+    ),
+  ];
+  const ctx = buildDocumentContext(pages),
+    raw = serializeCandidateSource(pages, ctx, 'earningsRevision');
+  const slots = coverageReport('earningsRevision', pages, [], [], ctx);
+  expect(slots).toHaveLength(3);
+  expect(slots.every((s) => s.sourceIds.length === 1)).toBe(true);
+  expect(new Set(slots.flatMap((s) => s.sourceIds)).size).toBe(1);
+  expect(() => preflightCandidateSource('earningsRevision', pages, ctx, raw)).not.toThrow();
+  const facts = ['売上高', '営業利益', '当期純利益'].map((label, i) => {
+    const f = numberCandidate(pages[0], label, [100, 10, 8][i], '2027年3月期');
+    f.valueKind = f.semantics.state = 'forecast';
+    f.semantics.basis = null;
+    return f;
+  });
+  const result = reviewCandidates(
+    candidateResponse(facts, pages, 'earningsRevision'),
+    'earningsRevision',
+    pages
+  );
+  expect(result.unverified).toEqual([]);
+  expect(result.facts).toHaveLength(3);
+  expect(() => verifyCoverage('earningsRevision', pages, result.facts)).not.toThrow();
+  expect(
+    parseFactSummary(
+      JSON.stringify({
+        version: 5,
+        documentType: 'earningsRevision',
+        facts: result.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      pages,
+      true
+    ).facts
+  ).toEqual(result.facts);
+  expect(() =>
+    verifyCoverage(
+      'earningsRevision',
+      pages,
+      result.facts.filter((f) => f.label !== '営業利益')
+    )
+  ).toThrow('operatingProfit');
+  const input = JSON.parse(raw),
+    block = input.pages[0].blocks.find((b: { id: string }) => b.id === slots[0].sourceIds[0]);
+  block.quantities = block.quantities.filter((q: { raw: string }) => q.raw !== '10百万円');
+  expect(() =>
+    preflightCandidateSource('earningsRevision', pages, ctx, JSON.stringify(input))
+  ).toThrow('operatingProfit');
 });

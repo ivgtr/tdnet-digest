@@ -6,7 +6,12 @@ import { tableForValue } from './table-layout';
 import { record, exact } from './fact-contract';
 import { isPerShareProfit, perShareProfitKeys, PER_SHARE_PROFIT_METRIC } from './metric-semantics';
 import { continuationPage } from './document-links';
-import { reportingPeriodText, reportingPeriodShape } from './period-semantics';
+import {
+  reportingPeriodText,
+  reportingPeriodShape,
+  REPORTING_FISCAL_PERIOD_PATTERN,
+  REPORTING_STATE_QUALIFIER_PATTERN,
+} from './period-semantics';
 
 export interface SourceProvenance {
   tableId: string | null;
@@ -103,10 +108,12 @@ export function splitNotes(page: ExtractedPage, valueId: string) {
   );
 }
 function splitReportingPeriods(clause: string) {
-  return [
-    ...clause.matchAll(/20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g),
-  ].filter((m) => {
+  return [...clause.matchAll(new RegExp(REPORTING_FISCAL_PERIOD_PATTERN, 'g'))].filter((m) => {
     const following = clause.slice(m.index! + m[0].length);
+    if (/^(?:の)?(?:\(|第\d+四半期|中間期|通期|累計|単独)/.test(following))
+      throw new Error('STRUCTURE:株式分割注記の期間限定を確定できません');
+    if (new Set(m[0].match(/予想|実績/g) ?? []).size > 1)
+      throw new Error('STRUCTURE:株式分割注記の期間限定が矛盾しています');
     // A split's execution date and a calculation's assumed date do not scope EPS.
     return (
       !/^(?:の)?(?:期首|初日|末日)/.test(following) &&
@@ -126,7 +133,9 @@ function splitPeriodMatches(clause: string, period: string | null): boolean {
       p.match(/20\d{2}年\d{1,2}月期/)?.[0] === fy &&
       (!reportingPeriodShape(p) ||
         reportingPeriodShape(p) === (reportingPeriodShape(target) ?? '通期')) &&
-      (!/累計|単独/.test(p) || p.match(/累計|単独/)?.[0] === target.match(/累計|単独/)?.[0])
+      (!/累計|単独|中間期/.test(p) ||
+        (/単独/.test(p) ? '単独' : '累計') ===
+          (/単独/.test(target) ? '単独' : /累計|中間期/.test(target) ? '累計' : null))
   );
 }
 function matchingEpsClauses(text: string, label: string, period: string | null): string[] {
@@ -135,10 +144,7 @@ function matchingEpsClauses(text: string, label: string, period: string | null):
   // A comma starts another clause only when it explicitly restates a fiscal
   // period and EPS subject. A period list sharing one predicate stays intact.
   const clauses = reportingPeriodText(text).split(
-    new RegExp(
-      `[。；;]|、(?=20\\d{2}年\\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?の?${PER_SHARE_PROFIT_METRIC})`,
-      'i'
-    )
+    new RegExp(`[。；;]|、(?=${REPORTING_FISCAL_PERIOD_PATTERN}の?${PER_SHARE_PROFIT_METRIC})`, 'i')
   );
   return clauses.filter((clause) => {
     if (!perShareProfitKeys(clause).includes(names[0])) return false;
@@ -166,7 +172,9 @@ function matchingDividendClauses(text: string, label: string, period: string | n
   const target = reportingPeriodText(period ?? '').match(/20\d{2}年\d{1,2}月期/)?.[0];
   const component = label.match(/第[1-4]四半期末|中間期末|中間|期末|合計|年間$/)?.[0];
   const clauses = reportingPeriodText(text).split(
-    /[。；;]|、(?=20\d{2}年\d{1,2}月期(?:の)?(?:第[1-4]四半期末|中間期末|中間|期末|年間|配当))/
+    new RegExp(
+      `[。；;]|、(?=20\\d{2}年\\d{1,2}月期(?:${REPORTING_STATE_QUALIFIER_PATTERN})?の?(?:第[1-4]四半期末|中間期末|中間|期末|年間|配当))`
+    )
   );
   return clauses.filter((clause) => {
     // This conditional amount is a separate quantity, not the printed table's basis.
@@ -196,7 +204,9 @@ function matchingDividendClauses(text: string, label: string, period: string | n
     }
     return periods.some((match) => {
       const fiscal = match[0].match(/20\d{2}年\d{1,2}月期/)![0];
-      const following = clause.slice(match.index! + fiscal.length);
+      const following = clause
+        .slice(match.index! + fiscal.length)
+        .replace(new RegExp(`^${REPORTING_STATE_QUALIFIER_PATTERN}`), '');
       const stated = following.match(
         /^(?:の)?(第[1-4]四半期末|中間期末|中間|期末|年間(?:配当金)?(?:合計)?)/
       )?.[1];

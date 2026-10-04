@@ -7,7 +7,7 @@ import {
   isPerformanceReportingTitle,
   forecastReportingTitle,
 } from './document-structure';
-import { parseExactNumeric, isUncaptionedUnit } from './quantity';
+import { parseExactNumeric, isUncaptionedUnit, declaredQuantityUnit } from './quantity';
 import type { PdfSpan } from './pdf-layout';
 import { tableUnitRuns } from './table-layout';
 
@@ -35,6 +35,22 @@ const quantityColumns = (page: ExtractedPage, ids: string[], allowUnitless = fal
       );
     })
     .sort((a, b) => a.x - b.x);
+/** A destination inline unit must agree with the proved source column, including scale. */
+function continuationColumnUnits(
+  page: ExtractedPage,
+  values: Array<Pick<PdfSpan, 'x' | 'width' | 'text'>>,
+  unitIds: string[]
+): Array<string | null> {
+  const declared = tableUnitRuns(page.spans.filter((s) => unitIds.includes(s.id)));
+  return values.map((q) => {
+    const inline = parseExactNumeric(q.text)?.unit;
+    if (inline) return inline;
+    const owners = declared.filter(
+      (run) => run[0].x <= q.x + q.width && run[run.length - 1].x + run[run.length - 1].width >= q.x
+    );
+    return owners.length === 1 ? declaredQuantityUnit(owners[0].map((s) => s.text).join('')) : null;
+  });
+}
 /** Continue only a boundary table with the same complete, aligned columns and fiscal headings. */
 export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] {
   const links: TableContinuation[] = [];
@@ -110,6 +126,13 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       (before.some((q) => !parseExactNumeric(q.text)?.unit) && !unitIds.length)
     )
       continue;
+    const columnUnits = continuationColumnUnits(previous, before, unitIds);
+    if (columnUnits.some((unit) => unit === null)) continue;
+    const sameUnit = (q: Pick<PdfSpan, 'text'>, i: number) => {
+      const unit = parseExactNumeric(q.text)?.unit;
+      return unit === null ? allowUnitless : unit === columnUnits[i];
+    };
+    if (after.some((q, i) => !sameUnit(q, i))) continue;
     const axes = fiscalHeadingRuns(
       periodBlock.spanIds.map((id) => previous.spans.find((s) => s.id === id)!)
     );
@@ -145,14 +168,16 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       if (
         quantities.length !== before.length ||
         quantities.some(
-          (q, i) => Math.abs(q.x + q.width - before[i].x - before[i].width) > q.height * 0.5
+          (q, i) =>
+            !sameUnit(q, i) ||
+            Math.abs(q.x + q.width - before[i].x - before[i].width) > q.height * 0.5
         )
       )
         break;
       rows.push(block.id);
       valueIds.push(...quantities.map((q) => q.id));
     }
-    if (rows.length < 2) continue;
+    if (!rows.length) continue;
     links.push({
       fromPage: previous.pageNumber,
       toPage: current.pageNumber,

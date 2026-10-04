@@ -1,4 +1,4 @@
-import { isPerShareProfit } from './metric-semantics';
+import { isPerShareProfit, proseReportingMetrics } from './metric-semantics';
 import {
   explicitCalendarAxisMatches,
   periodKind,
@@ -16,6 +16,7 @@ import {
   isUnitToken,
   proseQuantities,
   parseExactQuantity,
+  parseExactNumeric,
   isQuantityPrefix,
 } from './quantity';
 import { quantityCells, lineRuns, fiscalHeadingRuns } from './document-structure';
@@ -721,6 +722,33 @@ export function verifyProsePeriod(claim: NumericClaim, source: string, context: 
     throw new Error('PERIOD:本文の明示期間と数量の期間が不一致です');
 }
 
+/** Enumerated direct financial quantities share only their final predicate.
+ * A modifier, repeated metric or retraction never becomes a list boundary.
+ */
+function verifyReportingListSuffix(suffix: string, currentLabel: string): void {
+  if (proseReportingMetrics(currentLabel + 'は')[0]?.label !== compact(currentLabel)) {
+    verifyQuantityAssertion(suffix);
+    return;
+  }
+  let rest = suffix;
+  const names = new Set([compact(currentLabel)]);
+  while (rest) {
+    const metric = proseReportingMetrics(rest)[0];
+    if (!metric || names.has(compact(metric.label))) break;
+    const boundary = rest.slice(0, metric.start);
+    if (!/[、。;；]$/.test(boundary)) break;
+    verifyQuantityAssertion(boundary.slice(0, -1));
+    const perShare = isPerShareProfit(metric.label) || /配当金/.test(metric.label);
+    const bridge =
+      perShare && rest.slice(metric.end).startsWith('1株当たり') ? '1株当たり'.length : 0;
+    const start = metric.end + bridge;
+    const quantity = proseQuantities({ id: 'list', text: rest }).find((q) => q.start === start);
+    if (!quantity || !parseExactNumeric(quantity.raw)?.unit) break;
+    names.add(compact(metric.label));
+    rest = rest.slice(quantity.start + quantity.raw.length);
+  }
+  verifyQuantityAssertion(rest);
+}
 /** 表と本文は別の根拠形式。本文でも指標・数値・単位の直接対応だけを採用する。 */
 export function verifyProseQuantity(
   page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
@@ -803,7 +831,7 @@ export function verifyProseQuantity(
       /^、年間配当金は1株当たり-?\d+(?:\.\d+)?円を予定しております。?$/.test(suffix)
     )
       verifyQuantityAssertion('を予定しております。');
-    else verifyQuantityAssertion(suffix);
+    else verifyReportingListSuffix(suffix, claim.label);
   }
   if (!compact(page.text).includes(compact(quote)) || !match)
     throw new Error('引用で数値・単位・指標・期間の対応を確認できません');

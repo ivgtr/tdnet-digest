@@ -3,6 +3,13 @@ const compact = (text: string) => text.normalize('NFKC').replace(/[\s,，]/g, ''
 export const calendarIntervalSeparator = '(?:[～〜~-]|から)';
 export const calendarDatePattern = '20\\d{2}年\\d{1,2}月\\d{1,2}日';
 
+/** Explicit fiscal axes in source notes retain balanced shape/state qualifiers. */
+export const REPORTING_STATE_QUALIFIER_PATTERN = '\\((?:予想|実績)\\)';
+const noteShape = '(?:第[1-4]四半期|中間期|通期)';
+const noteQualifier = '(?:累計|単独)(?:期間)?';
+const noteShapeQualified = `(?:${noteShape}(?:${noteQualifier}|\\(${noteQualifier}\\))?|\\(${noteShape}(?:${noteQualifier})?\\)(?:${noteQualifier}|\\(${noteQualifier}\\))?)`;
+export const REPORTING_FISCAL_PERIOD_PATTERN = `20\\d{2}年\\d{1,2}月期(?:${REPORTING_STATE_QUALIFIER_PATTERN})?(?:の?${noteShapeQualified})?(?:${REPORTING_STATE_QUALIFIER_PATTERN})?`;
+
 /** Supported source aliases share one meaning; generated fact periods remain canonical. */
 export function reportingPeriodText(text: string): string {
   return compact(text).replace(/([1-4])Q/gi, '第$1四半期');

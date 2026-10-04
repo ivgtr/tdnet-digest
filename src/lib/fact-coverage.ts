@@ -7,7 +7,7 @@ import {
 import {
   NET_PROFIT_METRIC,
   BASIC_PER_SHARE_PROFIT_METRIC,
-  PER_SHARE_PROFIT_METRIC,
+  proseReportingMetrics,
   perShareProfitKeys,
 } from './metric-semantics';
 import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
@@ -128,7 +128,7 @@ function standardMetricLabel(source: string): string | null {
   if (new RegExp(`^${NET_PROFIT_METRIC}(?:又は.*)?(?:\\(△\\))?$`).test(label)) return 'netProfit';
   return null;
 }
-function revisionMetricLabel(label: string): string | null {
+export function revisionMetricLabel(label: string): string | null {
   const metric = standardMetricLabel(label);
   if (metric) return metric;
   const text = normalized(label);
@@ -191,23 +191,20 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
         .join('')
     );
     const own = normalized(block.text);
-    const label = own.match(
-      new RegExp(
-        `(${PER_SHARE_PROFIT_METRIC}|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
-        'i'
-      )
-    )?.[1];
-    const metric = label && revisionMetricLabel(label),
-      period = sourceFiscalPeriod(own, inherited),
+    const period = sourceFiscalPeriod(own, inherited),
       state = numericValueKind(own, inherited);
-    if (metric && period && (state === 'actual' || state === 'forecast'))
-      result.push({
-        valueId: block.id,
-        metric,
-        period,
-        state,
-        attributes: reportingAttributesAt(binding),
-      });
+    if (!period || (state !== 'actual' && state !== 'forecast')) continue;
+    for (const { label } of proseReportingMetrics(own)) {
+      const metric = revisionMetricLabel(label);
+      if (metric)
+        result.push({
+          valueId: block.id,
+          metric,
+          period,
+          state,
+          attributes: reportingAttributesAt(binding),
+        });
+    }
   }
   // A lost mapping must not remove a declared header's obligation with it.
   const declaredGroups: Array<Pick<(typeof result)[number], 'period' | 'state' | 'attributes'>> =
@@ -352,11 +349,10 @@ function declaredReportingMetrics(
         .join('')
     );
     if (sourceFiscalPeriod(text, inherited) !== report || /^\(?注\)?|^※/.test(text)) continue;
-    if (/(?:^|の)経常(?:利益|損失)(?:は|が|について)/.test(text)) declared.add('ordinaryProfit');
-    const eps = text.match(
-      new RegExp(`(?:^|の)(${PER_SHARE_PROFIT_METRIC})(?:は|が|について)`, 'i')
-    )?.[1];
-    if (eps && revisionMetricLabel(eps) === '1株当たり利益') declared.add('1株当たり利益');
+    for (const { label } of proseReportingMetrics(text)) {
+      const metric = revisionMetricLabel(label);
+      if (metric === 'ordinaryProfit' || metric === '1株当たり利益') declared.add(metric);
+    }
   }
   return [...declared];
 }
@@ -1315,13 +1311,8 @@ export function coverageReport(
   }));
   for (const page of pages)
     for (const block of page.blocks.filter((b) => b.kind === 'paragraph')) {
-      const label = normalized(block.text).match(
-        new RegExp(
-          `(${PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`,
-          'i'
-        )
-      )?.[1];
-      if (!label || !proseQuantities(block).length) continue;
+      const labels = proseReportingMetrics(block.text);
+      if (!labels.length || !proseQuantities(block).length) continue;
       const binding = bindingFor(context, block.id);
       if (
         !isReportingMetricSource(
@@ -1340,18 +1331,20 @@ export function coverageReport(
         )
       )
         continue;
-      units.push({
-        anchor: block.id,
-        label,
-        axis: normalized(block.text),
-        context: normalized(
-          binding.contextIds
-            .map(
-              (id) => pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-            )
-            .join('')
-        ),
-      });
+      for (const { label } of labels)
+        units.push({
+          anchor: block.id,
+          label,
+          axis: normalized(block.text),
+          context: normalized(
+            binding.contextIds
+              .map(
+                (id) =>
+                  pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
+              )
+              .join('')
+          ),
+        });
     }
   let publicationSources: ReturnType<typeof forecastPublicationSources> | undefined;
   const sourceIds = (requirement: string): string[] => {

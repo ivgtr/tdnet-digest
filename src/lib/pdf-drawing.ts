@@ -161,6 +161,32 @@ const intersection = (a: Box, b: Box): Box => [
   Math.min(a[3], b[3]),
 ];
 
+/** Convex Form bounds clip the actual transformed rectangle, not only its envelope. */
+function clipToForm(a: Point, b: Point, polygon: Point[]): [Point, Point] | null {
+  const cross = (u: Point, v: Point) => u[0] * v[1] - u[1] * v[0];
+  const area = polygon.reduce((sum, p, i) => sum + cross(p, polygon[(i + 1) % polygon.length]), 0);
+  if (Math.abs(area) < 1e-9) return null;
+  const sign = Math.sign(area),
+    direction: Point = [b[0] - a[0], b[1] - a[1]];
+  let from = 0,
+    to = 1;
+  for (const [i, p] of polygon.entries()) {
+    const next = polygon[(i + 1) % polygon.length],
+      edge: Point = [next[0] - p[0], next[1] - p[1]];
+    const start = cross(edge, [a[0] - p[0], a[1] - p[1]]) * sign,
+      delta = cross(edge, direction) * sign;
+    if (Math.abs(delta) < 1e-9) {
+      if (start < -1e-9) return null;
+    } else if (delta > 0) from = Math.max(from, -start / delta);
+    else to = Math.min(to, -start / delta);
+    if (from > to) return null;
+  }
+  return [
+    [a[0] + from * direction[0], a[1] + from * direction[1]],
+    [a[0] + to * direction[0], a[1] + to * direction[1]],
+  ];
+}
+
 /** Painted axis-aligned rules only: clipping paths, cell backgrounds and glyph outlines do not become grids. */
 export function drawingLines(operations: DrawingOperation[], pageNumber: number): DrawingLine[] {
   if (!Array.isArray(operations) || operations.length > 100000)
@@ -168,6 +194,7 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
   type State = {
     transform: Matrix;
     clip: Box | null;
+    formClips: Point[][];
     unresolvedClip: boolean;
     stroke: boolean;
     fill: boolean;
@@ -177,6 +204,7 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
   let state: State = {
     transform: [1, 0, 0, 1, 0, 0],
     clip: null,
+    formClips: [],
     unresolvedClip: false,
     stroke: true,
     fill: true,
@@ -234,15 +262,27 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
     else if (operation.fn === OPS.transform)
       state.transform = multiply(state.transform, matrix(args));
     else if (operation.fn === OPS.paintFormXObjectBegin) {
+      if (
+        args.length !== 2 ||
+        !(
+          args[1] === null ||
+          (Array.isArray(args[1]) && args[1].length === 4 && args[1].every(Number.isFinite))
+        )
+      )
+        throw new Error('SOURCE_DRAWING:Form境界の形式が不正です');
       save();
       if (args[0] !== null) state.transform = multiply(state.transform, matrix(args[0]));
-      if (Array.isArray(args[1]) && args[1].length === 4) {
+      if (Array.isArray(args[1])) {
         const b = args[1] as number[];
-        const box = bounds([
+        const polygon = [
           point(state.transform, b[0], b[1]),
+          point(state.transform, b[2], b[1]),
           point(state.transform, b[2], b[3]),
-        ]);
+          point(state.transform, b[0], b[3]),
+        ];
+        const box = bounds(polygon);
         state.clip = state.clip ? intersection(state.clip, box) : box;
+        state.formClips = [...state.formClips, polygon];
       }
     } else if (operation.fn === OPS.paintFormXObjectEnd) restore();
     else if (operation.fn === OPS.clip || operation.fn === OPS.eoClip) clipPending = true;
@@ -353,6 +393,13 @@ export function drawingLines(operations: DrawingOperation[], pageNumber: number)
                 b = [b[0], Math.min(c[3], bottom)];
               }
             }
+            let clipped: [Point, Point] | null = [a, b];
+            for (const polygon of state.formClips) {
+              clipped = clipToForm(clipped[0], clipped[1], polygon);
+              if (!clipped) break;
+            }
+            if (!clipped) continue;
+            [a, b] = clipped;
             if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) < 6) continue;
             if (a[0] > b[0] || a[1] > b[1]) [a, b] = [b, a];
             lines.push({

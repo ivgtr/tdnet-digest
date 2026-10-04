@@ -289,3 +289,53 @@ it.each(['。', '、'])(
     ).toThrow('期間対応');
   }
 );
+
+it.each(['(予想)', '(実績)', '(予想)の', '(実績)の'])(
+  '配当区分を状態の括弧で失わず期末以外へ渡さない: %s',
+  (qualifier) => {
+    const note = `2027年3月期${qualifier}期末配当金については株式分割後の金額です。`;
+    expect(splitNoteApplies(note, '年間配当金期末', '2027年3月期')).toBe(true);
+    expect(splitNoteApplies(note, '年間配当金第2四半期末', '2027年3月期')).toBe(false);
+    expect(splitNoteApplies(note, '年間配当金合計', '2027年3月期')).toBe(false);
+  }
+);
+it.each([
+  '(第2四半期累計)',
+  '第2四半期(累計)',
+  '(第2四半期)(累計)',
+  '(中間期)',
+  '(2Q単独)',
+  'の(第2四半期累計)',
+])('EPS注記の括弧内の形・累計単独を対象期間に保持する: %s', (shape) => {
+  const note = `2027年3月期${shape}の1株当たり四半期利益は株式分割の影響を考慮しています。`;
+  const target = shape.includes('単独') ? '2027年3月期第2四半期単独' : '2027年3月期第2四半期累計';
+  expect(splitNoteApplies(note, '1株当たり四半期利益', target)).toBe(true);
+  expect(
+    splitNoteApplies(
+      note,
+      '1株当たり四半期利益',
+      target.replace(
+        shape.includes('単独') ? '単独' : '累計',
+        shape.includes('単独') ? '累計' : '単独'
+      )
+    )
+  ).toBe(false);
+  expect(splitNoteApplies(note, '1株当たり四半期利益', '2027年3月期第3四半期累計')).toBe(false);
+  const restated =
+    note.replace('。', '、') +
+    `2027年3月期(第3四半期累計)の1株当たり四半期利益は株式分割前の金額です。`;
+  expect(splitNoteApplies(restated, '1株当たり四半期利益', target)).toBe(true);
+});
+
+it.each(['(第5四半期累計)', '(第2四半期累計単独)', '(予想)(実績)', '(未定)'])(
+  '未証明・矛盾した括弧の限定を年次の注記として扱わない: %s',
+  (qualifier) => {
+    expect(() =>
+      splitNoteApplies(
+        `2027年3月期${qualifier}のEPSは株式分割の影響を考慮しています。`,
+        'EPS',
+        '2027年3月期'
+      )
+    ).toThrow('期間限定');
+  }
+);
