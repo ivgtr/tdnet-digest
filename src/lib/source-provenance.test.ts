@@ -34,6 +34,14 @@ it('基本・希薄化後と当期・四半期の指標を注記の明記に対�
   expect(splitNoteApplies(note, '希薄化後1株当たり当期利益', '2027年3月期')).toBe(false);
   expect(splitNoteApplies(note, '1株当たり四半期利益', '2027年3月期')).toBe(false);
   expect(splitNoteApplies(note, '基本的1株当たり当期利益', '2027年3月期')).toBe(true);
+  // Splitting a note must not silently erase an unassigned common period declaration.
+  expect(() =>
+    splitNoteApplies(
+      '2027年3月期について。基本的1株当たり当期利益は株式分割の影響を考慮しています。',
+      '基本的1株当たり当期利益',
+      '2026年3月期'
+    )
+  ).toThrow('期間対応');
 });
 
 it.each([

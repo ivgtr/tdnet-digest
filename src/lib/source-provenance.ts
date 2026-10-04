@@ -114,10 +114,13 @@ function epsNames(text: string): string[] {
       : `${/希薄化後|潜在株式調整後/.test(m[1] ?? '') ? 'diluted' : 'basic'}:${m[2] ?? ''}:${m[3]}`
   );
 }
-function splitPeriodMatches(clause: string, period: string | null): boolean {
-  const periods = [
+function splitReportingPeriods(clause: string) {
+  return [
     ...clause.matchAll(/20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g),
   ].filter((m) => !/^(?:の)?(?:期首|初日|末日)/.test(clause.slice(m.index! + m[0].length)));
+}
+function splitPeriodMatches(clause: string, period: string | null): boolean {
+  const periods = splitReportingPeriods(clause);
   if (!periods.length) return true;
   const target = reportingPeriodText(period ?? '');
   const fy = target.match(/20\d{2}年\d{1,2}月期/)?.[0];
@@ -139,6 +142,14 @@ function matchingEpsClauses(text: string, label: string, period: string | null):
   );
   return clauses.filter((clause) => {
     if (!epsNames(clause).includes(names[0])) return false;
+    if (
+      !splitReportingPeriods(clause).length &&
+      clauses.some(
+        (other) =>
+          !epsNames(other).length && !/配当/.test(other) && splitReportingPeriods(other).length > 0
+      )
+    )
+      throw new Error('STRUCTURE:株式分割注記の共通期間と指標の期間対応を確定できません');
     if (
       (/配当/.test(clause) || epsNames(clause).length > 1) &&
       new Set(clause.match(/20\d{2}年\d{1,2}月期/g)).size > 1
