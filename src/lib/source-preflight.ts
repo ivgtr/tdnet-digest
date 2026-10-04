@@ -92,7 +92,7 @@ export function preflightCandidateSource(
                 )
                 .join('');
               if (slot.expected.period) verifyProsePeriod(claim, block.text, inherited);
-              const proof = verifyProseQuantity(page, block.text, claim);
+              const proof = verifyProseQuantity(page, block.text, claim, quantity);
               if (proof.start === quantity.start && proof.raw === quantity.raw) return null;
             } catch {
               /* Other quantities in this assertion may belong to another metric. */

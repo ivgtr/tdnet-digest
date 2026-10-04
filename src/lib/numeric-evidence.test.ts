@@ -3,9 +3,11 @@ import {
   verifyTableEvidence,
   verifyPeriodAndKind,
   verifyProseEvidence,
+  verifyProseQuantity,
   type NumericClaim,
   type TableEvidence,
 } from './numeric-evidence';
+import { proseQuantities } from './quantity';
 import { extractPageLayout } from './pdf-layout';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { PdfSpan } from './pdf-layout';
@@ -737,3 +739,56 @@ it.each([
     else expect(verify).toThrow();
   }
 });
+
+it.each([
+  ['売上高については、売上高は100百万円を見込んでおります。', true],
+  ['売上高については、売上収益は100百万円を見込んでおります。', true],
+  ['売上高は100百万円、売上高については、売上高は120百万円を見込んでおります。', false],
+  ['売上高は100百万円、売上収益は100百万円です。', false],
+])('指標の話題への言及と、複数の数量による再指定を区別する: %s', (quote, valid) => {
+  const label = quote.includes('売上収益は') ? '売上収益' : '売上高';
+  const verify = () =>
+    verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, {
+      ...claim,
+      label,
+      value: 100,
+      unit: '百万円',
+    });
+  if (valid) expect(verify()).toBe(0);
+  else expect(verify).toThrow();
+});
+it('物理的な番号付き項目の数量だけを検証し、別項目の同指標を再指定としない', () => {
+  const quote = '(1)EPSは42円です。\n(2)基本的1株当たり当期利益は43円です。';
+  for (const [label, value] of [
+    ['EPS', 42],
+    ['基本的1株当たり当期利益', 43],
+  ] as const)
+    expect(
+      verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, {
+        ...claim,
+        label,
+        value,
+        unit: '円',
+      })
+    ).toBe(0);
+});
+
+it.each(['42円', '42～43円'])(
+  '番号付き項目の同じ値も選択済みの原数量で所属を確定する: %s',
+  (amount) => {
+    const quote = `(1)EPSは${amount}です。\n(2)基本的1株当たり当期利益は${amount}です。`;
+    const quantities = proseQuantities({ id: 'source', text: quote }).filter(
+      (q) => q.raw === amount.normalize('NFKC')
+    );
+    expect(quantities).toHaveLength(2);
+    const range = amount.includes('～');
+    for (const [i, label] of ['EPS', '基本的1株当たり当期利益'].entries()) {
+      const current = { ...claim, label, unit: '円', value: range ? null : 42, range };
+      const page = { pageNumber: 1, text: quote, spans: [] };
+      expect(verifyProseQuantity(page, quote, current, quantities[i]).start).toBe(
+        quantities[i].start
+      );
+      expect(() => verifyProseQuantity(page, quote, current, quantities[1 - i])).toThrow();
+    }
+  }
+);

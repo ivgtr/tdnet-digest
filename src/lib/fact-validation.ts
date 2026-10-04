@@ -448,8 +448,10 @@ export function validateFact(
         subject: fact.semantics.subject,
         scope: fact.semantics.scope,
       };
-      const proved = verifyProseQuantity(page, source, proseClaim);
-      const selected = proseQuantities(block).find((q) => q.id === ev.quantityId);
+      const selected =
+        proseQuantities(block).find((q) => q.id === ev.quantityId) ??
+        fail('QUANTITY:選択した本文数量がありません');
+      const proved = verifyProseQuantity(page, source, proseClaim, selected);
       if (!selected || selected.start !== proved.start || selected.raw !== proved.raw)
         fail('QUANTITY:選択した数量の範囲が指標の根拠と不一致です');
       verifyProsePeriod(proseClaim, source, context);

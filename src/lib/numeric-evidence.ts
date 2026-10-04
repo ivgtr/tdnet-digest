@@ -4,6 +4,7 @@ import {
   reportingMetricKey,
   proseMetricPrefixMatches,
   proseFieldText,
+  PROSE_METRIC_BRIDGE_PATTERN,
 } from './metric-semantics';
 import {
   explicitCalendarAxisMatches,
@@ -759,7 +760,8 @@ function verifyReportingListSuffix(suffix: string, currentLabel: string): void {
 export function verifyProseQuantity(
   page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'>,
   quote: string,
-  claim: NumericClaim
+  claim: NumericClaim,
+  selection?: { start: number; raw: string }
 ) {
   const reference = unchangedDividendReference(quote);
   if (
@@ -787,7 +789,7 @@ export function verifyProseQuantity(
     ['中間配当金', '期末配当金'].includes(compact(claim.label)) &&
     /中間配当金及び期末配当金は、?それぞれ1株当たり/.test(compact(quote));
   const labelPattern = sharedDividend ? '中間配当金及び期末配当金' : escape(claim.label);
-  const bridge = `((?:について|に関して|に対して|において|として|[はがをにでと、:()]){0,6}${sharedDividend ? 'それぞれ' : ''}${perShare ? '(?:1株当たり)?' : ''})`;
+  const bridge = `(${PROSE_METRIC_BRIDGE_PATTERN}{0,6}${sharedDividend ? 'それぞれ' : ''}${perShare ? '(?:1株当たり)?' : ''})`;
   const scalar = '-?\\d+(?:\\.\\d+)?';
   const amount = claim.range
     ? `${scalar}[～〜~]${scalar}${escape(claim.unit)}`
@@ -808,23 +810,61 @@ export function verifyProseQuantity(
   const directMetrics = proseReportingMetrics(normalized, '', owners);
   const ownsFullMetric = (index: number) =>
     !directMetrics.some((m) => m.start < index && m.end > index);
-  if (
-    metricKey &&
-    directMetrics.filter((m) => reportingMetricKey(m.label) === metricKey).length > 1
-  )
-    throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
-  const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
-  const heads = [
-    ...normalized.matchAll(new RegExp(`${labelPattern}${bridge}(${token})`, 'gu')),
-  ].filter((m) => ownsFullMetric(m.index!));
-  if (heads.length > 1)
-    throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
-  const match = [...normalized.matchAll(new RegExp(binding, 'gu'))].find(
+  const sourceStart =
+    selection && assertionText(quote.normalize('NFKC').slice(0, selection.start)).length;
+  const matches = [...normalized.matchAll(new RegExp(binding, 'gu'))].filter(
     (m) =>
       ownsFullMetric(m.index!) &&
       m[1].replace(perShare ? /1株当たり|それぞれ/g : /$^/g, '').length <= 6 &&
-      corresponds(m[2])
+      corresponds(m[2]) &&
+      (!selection ||
+        (m.index! + m[0].length - m[2].length === sourceStart &&
+          compact(selection.raw).replace(/[△▲−](?=\d)/g, '-') === m[2]))
   );
+  if (matches.length > 1) throw new Error('STRUCTURE:本文の数量を一意に選択できません');
+  const match = matches[0];
+  // A physical numbered field owns its own quantities, even when PDF layout
+  // combines fields into one paragraph. Keep the full source and quantity IDs.
+  const fieldStarts = [
+    0,
+    ...[...normalized.matchAll(/[;；](?=\(\d+\))/g)].map((m) => m.index! + 1),
+  ];
+  const fieldStart = match ? Math.max(...fieldStarts.filter((start) => start <= match.index!)) : 0;
+  const fieldEnd = match
+    ? (fieldStarts.find((start) => start > match.index!) ?? normalized.length + 1) - 1
+    : normalized.length;
+  const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
+  const heads = [
+    ...normalized.matchAll(new RegExp(`${labelPattern}${bridge}(${token})`, 'gu')),
+  ].filter((m) => ownsFullMetric(m.index!) && m.index! >= fieldStart && m.index! < fieldEnd);
+  if (heads.length > 1)
+    throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
+  const boundStarts = new Set<number>();
+  if (metricKey) {
+    const quantities = proseQuantities({ id: 'proof', text: normalized });
+    for (const metric of directMetrics.filter(
+      (m) =>
+        m.start >= fieldStart && m.start < fieldEnd && reportingMetricKey(m.label) === metricKey
+    )) {
+      const labelEnd = metric.start + compact(metric.label).length;
+      const denominator =
+        isPerShareProfit(metric.label) || /配当金/.test(metric.label) ? '(?:1株当たり)?' : '';
+      const quantityBridge = new RegExp(`^${PROSE_METRIC_BRIDGE_PATTERN}{0,6}${denominator}$`);
+      for (const quantity of quantities.filter((q) => q.start >= labelEnd && q.start < fieldEnd))
+        if (
+          !(
+            denominator &&
+            quantity.raw === '1株' &&
+            normalized.slice(quantity.start + quantity.raw.length).startsWith('当たり')
+          ) &&
+          parseExactNumeric(quantity.raw)?.unit &&
+          quantityBridge.test(normalized.slice(labelEnd, quantity.start))
+        )
+          boundStarts.add(quantity.start);
+    }
+  }
+  if (boundStarts.size > 1)
+    throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
   if (match) {
     // Only explicit periods, resolved subject/scope and grammatical separators
     // may precede a metric. A suffix of an unproven parent metric is not proof.
@@ -835,7 +875,7 @@ export function verifyProseQuantity(
         .slice(-1)[0] ?? '';
     if (!proseMetricPrefixMatches(prefix, owners))
       throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
-    const suffix = normalized.slice(match.index! + match[0].length);
+    const suffix = normalized.slice(match.index! + match[0].length, fieldEnd);
     if (
       sharedDividend &&
       /^、年間配当金は1株当たり-?\d+(?:\.\d+)?円を予定しております。?$/.test(suffix)

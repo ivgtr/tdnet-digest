@@ -211,16 +211,21 @@ function compose(
     const parsed =
       candidate.kind === 'range' ? parseExactRange(quantity.raw) : parseExactQuantity(quantity.raw);
     if (!parsed || !parsed.unit) throw new Error('QUANTITY:本文数量の単位を確認できません');
-    const proved = verifyProseQuantity(page, block.text, {
-      label: s.metric ?? '',
-      value: 'decimal' in parsed ? quantityNumber(parsed.decimal)!.value : null,
-      unit: parsed.unit,
-      period: candidate.meaning.period ?? '',
-      valueKind: candidate.meaning.state,
-      range: candidate.kind === 'range',
-      subject: candidate.meaning.subject,
-      scope: candidate.meaning.scope,
-    });
+    const proved = verifyProseQuantity(
+      page,
+      block.text,
+      {
+        label: s.metric ?? '',
+        value: 'decimal' in parsed ? quantityNumber(parsed.decimal)!.value : null,
+        unit: parsed.unit,
+        period: candidate.meaning.period ?? '',
+        valueKind: candidate.meaning.state,
+        range: candidate.kind === 'range',
+        subject: candidate.meaning.subject,
+        scope: candidate.meaning.scope,
+      },
+      quantity
+    );
     if (proved.start !== quantity.start || proved.raw !== quantity.raw)
       throw new Error('QUANTITY:選択した数量は指標に直接対応しません');
   }

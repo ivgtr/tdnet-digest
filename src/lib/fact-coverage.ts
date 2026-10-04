@@ -121,11 +121,8 @@ export function standardMetric(fact: VerifiedFact): string | null {
   return standardMetricLabel(fact.label);
 }
 function standardMetricLabel(source: string): string | null {
-  const label = compact(source);
-  if (/調整|コア|EBITDA/i.test(label)) return null;
-  if (/^(売上高|売上収益|営業収益)$/.test(label)) return 'revenue';
-  if (/^営業(?:利益|損失)(?:\(△\))?$/.test(label)) return 'operatingProfit';
-  if (new RegExp(`^${NET_PROFIT_METRIC}(?:又は.*)?(?:\\(△\\))?$`).test(label)) return 'netProfit';
+  const key = reportingMetricKey(source);
+  if (key === 'revenue' || key === 'operatingProfit' || key === 'netProfit') return key;
   return null;
 }
 export function revisionMetricLabel(label: string): string | null {
@@ -1511,7 +1508,15 @@ export function coverageReport(
       return units
         .filter(
           (u) =>
-            marker.test(u.label) &&
+            ([
+              'revenue',
+              'operatingProfit',
+              'ordinaryProfit',
+              'netProfit',
+              '1株当たり利益',
+            ].includes(metric ?? '')
+              ? revisionMetricLabel(u.label) === metric
+              : marker.test(u.label)) &&
             (metric !== 'netProfit' ||
               !reporting ||
               ownsRequiredNetProfit(
@@ -1615,7 +1620,7 @@ export function coverageReport(
       : [];
   };
   return [...new Set([...obligations, ...fullObligations])].map((requirement) => {
-    const ids = sourceIds(requirement);
+    const ids = [...new Set(sourceIds(requirement))];
     const selectedIds = ids.filter((id) =>
       selected.some(
         (p) => p.blocks.some((b) => b.id === id) || p.quantities.some((q) => q.id === id)

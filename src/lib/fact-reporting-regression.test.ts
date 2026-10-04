@@ -3308,7 +3308,7 @@ it.each(['人', '株', '百万円', '円'])(
 it('初回予想の同じ本文段落から全指標を選択し、他の数量で義務を代替しない', () => {
   const pages = [
     textPage(
-      '会社名 株式会社テスト\n2027年3月期 連結業績予想\n売上高は100百万円、営業利益は10百万円、当期純利益は8百万円です。\n調整後経常利益は9百万円です。'
+      '会社名 株式会社テスト\n2027年3月期 連結業績予想\n当社グループの売上高については、売上高は100百万円、営業利益は10百万円、当期純利益は8百万円です。\n調整後経常利益は9百万円です。'
     ),
   ];
   const ctx = buildDocumentContext(pages),
@@ -3360,7 +3360,11 @@ it('初回予想の同じ本文段落から全指標を選択し、他の数量�
   ).toThrow('operatingProfit');
 });
 
-it('表の修飾付き経常利益も標準指標の義務へ縮めない', () => {
+it.each([
+  ['調整後経常利益', false],
+  ['経常利益(△)', true],
+  ['経常利益又は経常損失(△)', true],
+] as const)('標準の損失表記を義務として保持し修飾付き指標へ縮めない: %s', (label, required) => {
   const pages = [
     cells(
       [
@@ -3369,7 +3373,7 @@ it('表の修飾付き経常利益も標準指標の義務へ縮めない', () =
         ['売上高', 200, 60, 80],
         ['営業利益', 340, 60, 80],
         ['当期純利益', 480, 60, 100],
-        ['調整後経常利益', 650, 60, 140],
+        [label, 650, 60, 250],
         ['百万円', 200, 85, 80],
         ['百万円', 340, 85, 80],
         ['百万円', 480, 85, 80],
@@ -3385,8 +3389,8 @@ it('表の修飾付き経常利益も標準指標の義務へ縮めない', () =
   ];
   const ctx = buildDocumentContext(pages);
   const slots = coverageReport('earningsRevision', pages, [], [], ctx);
-  expect(slots).toHaveLength(3);
-  expect(slots.some((s) => s.requirement.includes('ordinaryProfit'))).toBe(false);
+  expect(slots).toHaveLength(required ? 4 : 3);
+  expect(slots.some((s) => s.requirement.includes('ordinaryProfit'))).toBe(required);
   expect(() =>
     preflightCandidateSource(
       'earningsRevision',
@@ -3395,4 +3399,42 @@ it('表の修飾付き経常利益も標準指標の義務へ縮めない', () =
       serializeCandidateSource(pages, ctx, 'earningsRevision')
     )
   ).not.toThrow();
+  const facts = ctx.tableMappings.map((hint) => {
+    const text = (ids: string[]) =>
+      ids.map((id) => pages[0].spans.find((s) => s.id === id)!.text).join('');
+    const f = numberCandidate(
+      pages[0],
+      text(hint.metricIds),
+      Number(pages[0].quantities.find((q) => q.id === hint.valueId)!.text),
+      '2027年3月期'
+    );
+    f.valueKind = f.semantics.state = 'forecast';
+    f.semantics.basis = null;
+    f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const result = reviewCandidates(
+    candidateResponse(facts, pages, 'earningsRevision'),
+    'earningsRevision',
+    pages
+  );
+  expect(result.unverified).toEqual([]);
+  expect(() => verifyCoverage('earningsRevision', pages, result.facts)).not.toThrow();
+  const without = result.facts.filter((f) => f.label !== label);
+  if (required)
+    expect(() => verifyCoverage('earningsRevision', pages, without)).toThrow('ordinaryProfit');
+  else expect(() => verifyCoverage('earningsRevision', pages, without)).not.toThrow();
+  expect(
+    parseFactSummary(
+      JSON.stringify({
+        version: 5,
+        documentType: 'earningsRevision',
+        facts: result.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      pages,
+      true
+    ).facts
+  ).toEqual(result.facts);
 });

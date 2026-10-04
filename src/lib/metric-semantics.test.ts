@@ -4,6 +4,7 @@ import {
   perShareProfitKeys,
   isPerShareDividend,
   proseReportingMetrics,
+  reportingMetricKey,
 } from './metric-semantics';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary } from './fact-summary';
@@ -164,4 +165,27 @@ it('指標の前置きは明示された主体だけを使い、未知の修飾�
   expect(
     proseReportingMetrics('株式会社テストの調整後経常利益は9百万円', '', ['株式会社テスト'])
   ).toEqual([]);
+});
+
+it.each(['当社グループ', '当グループ', '当社', '株式会社テストグループ'])(
+  '主体名を短い接頭辞で切らず最長の宣言で照合する: %s',
+  (owner) => {
+    const owners = owner.startsWith('株式会社') ? ['株式会社テスト', owner] : [];
+    expect(
+      proseReportingMetrics(`${owner}の売上高は100百万円`, '', owners).map((m) => m.label)
+    ).toEqual(['売上高']);
+    expect(proseReportingMetrics(`${owner}の調整後営業利益は10百万円`, '', owners)).toEqual([]);
+  }
+);
+it.each([
+  ['経常利益(△)', 'ordinaryProfit'],
+  ['経常利益又は経常損失(△)', 'ordinaryProfit'],
+  ['営業利益又は営業損失(△)', 'operatingProfit'],
+  ['当期純利益又は当期純損失(△)', 'netProfit'],
+  ['親会社株主に帰属する当期純利益又は損失(△)', 'netProfit'],
+  ['営業損失(△)', 'operatingProfit'],
+  ['調整後経常利益(△)', null],
+  ['経常利益又は調整後経常損失(△)', null],
+])('利益/損失の標準表記全体を指標に対応させる: %s', (label, key) => {
+  expect(reportingMetricKey(label)).toBe(key);
 });

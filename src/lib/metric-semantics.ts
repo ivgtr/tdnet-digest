@@ -24,7 +24,9 @@ export function proseMetricPrefixMatches(prefix: string, owners: string[] = []):
   let rest = reportingPeriodText(prefix)
     .replace(/^\(\d+\)/, '')
     .replace(/^\(+/, '');
-  const declared = [...owners, '当社', '当グループ'];
+  const declared = [
+    ...new Set([...owners, '当社グループ', '当社', '当グループ'].map(compact)),
+  ].sort((a, b) => b.length - a.length);
   const removeOwners = () => {
     for (const owner of declared) {
       const escaped = compact(owner).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -41,14 +43,23 @@ export function proseMetricPrefixMatches(prefix: string, owners: string[] = []):
   removeOwners();
   return rest === '';
 }
+/** Standard profit/loss alternatives and loss markers remain part of the full label. */
+const profitLabel = (name: string) => `(?:${name})(?:又は(?:${name}|利益|損失))?(?:\\(△\\))?`;
+const amountProfitMetrics = [
+  ['operatingProfit', profitLabel('営業(?:利益|損失)')],
+  ['ordinaryProfit', profitLabel('経常(?:利益|損失)')],
+  ['netProfit', profitLabel(NET_PROFIT_METRIC)],
+] as const;
+export const PROSE_METRIC_BRIDGE_PATTERN =
+  '(?:について|に関して|に対して|において|として|[はがをにでと、:()])';
 /** Direct metric occurrences are shared by declaration, allocation and quantity boundaries. */
-export const PROSE_REPORTING_METRIC_PATTERN = `(?:${PER_SHARE_PROFIT_METRIC}|(?:売上高)?営業利益率|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC}|MRR|ARR)`;
+export const PROSE_REPORTING_METRIC_PATTERN = `(?:${PER_SHARE_PROFIT_METRIC}|(?:売上高)?営業利益率|年間配当金|売上高|売上収益|営業収益|${amountProfitMetrics.map(([, pattern]) => pattern).join('|')}|MRR|ARR)`;
 export function proseReportingMetrics(
   text: string,
   extraPattern = '',
   owners: string[] = []
 ): Array<{ label: string; start: number; end: number }> {
-  const pattern = `(${PROSE_REPORTING_METRIC_PATTERN}${extraPattern ? '|' + extraPattern : ''})(?:について(?:は|が)?|は|が|[:：]|(?=[0-9]))`;
+  const pattern = `(${PROSE_REPORTING_METRIC_PATTERN}${extraPattern ? '|' + extraPattern : ''})(?:${PROSE_METRIC_BRIDGE_PATTERN}{1,6}|(?=[0-9]))`;
   const source = compact(proseFieldText(text));
   return [...source.matchAll(new RegExp(pattern, 'gi'))]
     .filter((m) => {
@@ -71,9 +82,8 @@ export function reportingMetricKey(label: string): string | null {
   if (new RegExp(`^${PER_SHARE_PROFIT_METRIC}$`, 'i').test(text))
     return `eps:${perShareProfitKeys(text)[0]}`;
   if (/^(売上高|売上収益|営業収益)$/.test(text)) return 'revenue';
-  if (/^営業(?:利益|損失)$/.test(text)) return 'operatingProfit';
-  if (/^経常(?:利益|損失)$/.test(text)) return 'ordinaryProfit';
-  if (new RegExp(`^${NET_PROFIT_METRIC}$`).test(text)) return 'netProfit';
+  const amount = amountProfitMetrics.find(([, pattern]) => new RegExp(`^${pattern}$`).test(text));
+  if (amount) return amount[0];
   if (/^(?:売上高)?営業利益率$/.test(text)) return 'operatingMargin';
   if (text === '年間配当金') return 'annualDividend';
   if (/^(MRR|ARR)$/i.test(text)) return text.toUpperCase();
