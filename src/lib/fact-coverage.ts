@@ -40,7 +40,11 @@ import {
   type DocumentContext,
   type ContextBinding,
 } from './document-context';
-import { isPerformanceReportingTitle, forecastReportingTitle } from './document-structure';
+import {
+  isPerformanceReportingTitle,
+  forecastReportingTitle,
+  resolveForecastReportingTitle,
+} from './document-structure';
 import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
@@ -138,9 +142,11 @@ function declaredReportingMetrics(
       const text = normalized(
         region.spanIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
       );
-      const titlePeriod = forecastReportingTitle(
-        reportingUnitTitle(bindingFor(context, anchor), pages)
-      )?.period;
+      const binding = bindingFor(context, anchor);
+      const inherited = binding.contextIds
+        .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+        .join('');
+      const titlePeriod = sourceFiscalPeriod('', normalized(inherited));
       if (
         (state === 'forecast' && !text.includes(report) && titlePeriod !== report) ||
         (revision && (!/前回|修正前/.test(text) || !/今回|修正後/.test(text)))
@@ -287,7 +293,13 @@ function declaredForecastUnit(
     const text = compact(block.text);
     const explanation = text.match(/^(.*業績予想)について説明(?:します|いたします)。?$/);
     const title = headingLevel(block) !== null ? text : explanation?.[1];
-    const period = title ? forecastReportingTitle(title)?.period : null;
+    const period = title
+      ? resolveForecastReportingTitle(
+          { ...block, text: title },
+          pages.flatMap((p) => p.blocks),
+          pages.flatMap((p) => p.spans)
+        )?.period
+      : null;
     if (period) {
       const owners = [
         ...new Set(

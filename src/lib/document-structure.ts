@@ -1,7 +1,11 @@
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { isQuantityPrefix, parseExactQuantity, parseExactRange } from './quantity';
-import { calendarDatePattern, calendarIntervalSeparator } from './period-semantics';
+import {
+  calendarDatePattern,
+  calendarIntervalSeparator,
+  explicitCalendarAxisMatches,
+} from './period-semantics';
 import {
   tableRowAxis,
   tableColumnBand,
@@ -43,12 +47,77 @@ export function forecastReportingTitle(text: string): { period: string | null } 
   const title = normalized(text).replace(/^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/, '');
   const match = title.match(
     new RegExp(
-      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の)?(?:通期)?)?(?:${reportingScopeHeading})?業績予想(?:数値)?(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
+      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の)?)?(?:通期)?(?:${reportingScopeHeading})?業績予想(?:数値)?(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
     )
   );
   if (match) return { period: match[1] ?? null };
   return /^(?:20\d{2}年\d{1,2}月期(?:の)?)?今後の見通し(?:について)?$/.test(title)
     ? { period: null }
+    : null;
+}
+/** A date-only caption borrows an explicit FY only through the identical reporting interval. */
+export function resolveForecastReportingTitle(
+  caption: TextBlock,
+  blocks: TextBlock[],
+  spans: PdfSpan[]
+): { period: string; sourceIds: string[] } | null {
+  const title = forecastReportingTitle(caption.text);
+  if (!title) return null;
+  if (title.period) return { period: title.period, sourceIds: [] };
+  const interval = normalized(caption.text).match(
+    new RegExp(`\\((${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern})\\)$`)
+  )?.[1];
+  if (!interval || !explicitCalendarAxisMatches(interval, interval)) return null;
+  const associations: Array<{ period: string; sourceIds: string[] }> = [];
+  for (const block of blocks) {
+    if (
+      block.page !== caption.page ||
+      block.y >= caption.y ||
+      block.kind !== 'paragraph' ||
+      !/^(?:当社|当グループ)/.test(normalized(block.text)) ||
+      !/業績予想/.test(normalized(block.text)) ||
+      blocks.some(
+        (boundary) =>
+          boundary.page === caption.page &&
+          boundary.y > block.y &&
+          boundary.y < caption.y &&
+          /^(?:\d+[.．]|\(\d+\)|■)/.test(normalized(boundary.text))
+      )
+    )
+      continue;
+    for (const match of normalized(block.text).matchAll(
+      new RegExp(
+        `(20\\d{2}年\\d{1,2}月期)\\((${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern})\\)`,
+        'g'
+      )
+    )) {
+      if (!explicitCalendarAxisMatches(match[2], interval)) continue;
+      const [year, month] = match[1].match(/\d+/g)!.map(Number);
+      const end = match[2].match(/(20\d{2})年(\d{1,2})月\d{1,2}日$/)!;
+      if (year !== Number(end[1]) || month !== Number(end[2])) continue;
+      const parts = block.spanIds.map((id) => spans.find((s) => s.id === id)!);
+      if (
+        parts.some((s) => !s) ||
+        normalized(parts.map((s) => s.text).join('')) !== normalized(block.text)
+      )
+        continue;
+      let offset = 0;
+      const sourceIds = parts
+        .filter((s) => {
+          const start = offset;
+          offset += normalized(s.text).length;
+          return start < match.index! + match[1].length && offset > match.index!;
+        })
+        .map((s) => s.id);
+      associations.push({ period: match[1], sourceIds });
+    }
+  }
+  const periods = new Set(associations.map((a) => a.period));
+  return periods.size === 1
+    ? {
+        period: associations[0].period,
+        sourceIds: [...new Set(associations.flatMap((a) => a.sourceIds))],
+      }
     : null;
 }
 export function isPerformanceReportingTitle(text: string): boolean {

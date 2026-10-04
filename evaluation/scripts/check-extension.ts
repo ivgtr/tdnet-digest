@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile, mkdir, cp } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -155,39 +155,28 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         )
       : null;
     const extensionDirectory = oldProfile?.extensionDirectory ?? path.resolve('dist');
-    if (oldProfile) {
-      // Update files at the registered unpacked path, preserving profile and ID.
-      await rm(extensionDirectory, { recursive: true });
-      await cp(path.resolve('dist'), extensionDirectory, { recursive: true });
-      // Chrome detects installed-version updates. Simulate that lifecycle in
-      // the disposable copy while all product scripts and the fixed key stay exact.
-      const manifestPath = path.join(extensionDirectory, 'manifest.json');
-      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-      assert.equal(manifest.version, '0.7.3');
-      manifest.version = '0.7.3.1';
-      await writeFile(manifestPath, JSON.stringify(manifest));
-      evidence.upgradeManifestVersion = manifest.version;
-    }
-    context = await chromium.launchPersistentContext(profile, {
-      executablePath: arg('--browser-executable'),
-      headless: true,
-      ignoreDefaultArgs: ['--disable-extensions'],
-      env: {
-        XDG_CONFIG_HOME: profile,
-        XDG_CACHE_HOME: profile,
-        TMPDIR: profile,
-        PATH: '/usr/local/bin:/usr/bin:/bin',
-      },
-      args: [
-        `--disable-extensions-except=${extensionDirectory}`,
-        `--load-extension=${extensionDirectory}`,
-        '--no-sandbox',
-      ],
-      viewport: { width: 1200, height: 900 },
-    });
+    context =
+      oldProfile?.context ??
+      (await chromium.launchPersistentContext(profile, {
+        executablePath: arg('--browser-executable'),
+        headless: true,
+        ignoreDefaultArgs: ['--disable-extensions'],
+        env: {
+          XDG_CONFIG_HOME: profile,
+          XDG_CACHE_HOME: profile,
+          TMPDIR: profile,
+          PATH: '/usr/local/bin:/usr/bin:/bin',
+        },
+        args: [
+          `--disable-extensions-except=${extensionDirectory}`,
+          `--load-extension=${extensionDirectory}`,
+          '--no-sandbox',
+        ],
+        viewport: { width: 1200, height: 900 },
+      }));
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     if (oldProfile)
-      assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), '0.7.3.1');
+      assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), '0.7.3');
     evidence.loadedOffscreenHtml = await worker.evaluate(async () =>
       (await fetch(chrome.runtime.getURL('offscreen.html'))).text()
     );

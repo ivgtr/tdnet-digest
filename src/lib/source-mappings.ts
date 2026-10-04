@@ -4,6 +4,7 @@ import {
   tableReferenceHints,
   isPerformanceReportingTitle,
   forecastReportingTitle,
+  resolveForecastReportingTitle,
 } from './document-structure';
 import { tableContinuations, continuationSpans } from './document-links';
 import { declaredQuantityUnit, parseExactQuantity, isUncaptionedUnit } from './quantity';
@@ -106,6 +107,15 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
 /** Structural proposals; complete geometry and semantic ownership are still verified on use. */
 export function buildTableMappings(pages: ExtractedPage[]): TableMapping[] {
   const mappings = pages.flatMap((p) => [...tableReferenceHints(p), ...inlineMappings(p)]);
+  for (const mapping of mappings) {
+    const page = pages.find((p) => p.quantities.some((q) => q.id === mapping.valueId))!;
+    const caption = page.blocks.find(
+      (b) =>
+        forecastReportingTitle(b.text) && b.spanIds.every((id) => mapping.contextIds.includes(id))
+    );
+    const resolved = caption && resolveForecastReportingTitle(caption, page.blocks, page.spans);
+    if (resolved) mapping.contextIds = [...new Set([...mapping.contextIds, ...resolved.sourceIds])];
+  }
   for (const link of tableContinuations(pages)) {
     const page = pages.find((p) => p.pageNumber === link.toPage)!;
     const ids = page.quantities

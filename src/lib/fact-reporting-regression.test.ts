@@ -11,7 +11,7 @@ import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
 import { datedStates } from './fact-validation';
 import { verifyTableEvidence } from './numeric-evidence';
-import { forecastReportingTitle } from './document-structure';
+import { forecastReportingTitle, resolveForecastReportingTitle } from './document-structure';
 import { generateText } from './llm-client';
 import semanticCorpus from './fixtures/ir-semantic-corpus.json';
 import semanticExpectations from './fixtures/ir-semantic-expectations.json';
@@ -731,6 +731,30 @@ describe('数量の単位証明と報告対象の必須判定', () => {
 });
 
 describe('原数量・期間・主張と保存根拠の同一性', () => {
+  it('年度を持たない通期表題を認識し、同じ日付区間の明示FYだけへ結ぶ', () => {
+    const page = textPage(
+      '会社名 株式会社テスト\n当社は2026年7月期（2025年8月1日～2026年7月31日）の業績予想を修正します。\n1. 通期業績予想の修正（2025年8月1日～2026年7月31日）'
+    );
+    const caption = page.blocks[2];
+    expect(forecastReportingTitle(caption.text)).toEqual({ period: null });
+    const resolved = resolveForecastReportingTitle(caption, page.blocks, page.spans)!;
+    expect(resolved.period).toBe('2026年7月期');
+    expect(
+      resolved.sourceIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
+    ).toContain('2026年7月期');
+  });
+  it.each([
+    '当社は2027年7月期（2026年8月1日～2027年7月31日）の業績予想を修正します。',
+    '当社は2027年7月期（2025年8月1日～2026年7月31日）の業績予想を修正します。',
+    '株式会社Bは2026年7月期（2025年8月1日～2026年7月31日）の業績予想を修正します。',
+    '当社は2026年7月期の業績予想を修正します。',
+    '当社は2026年7月期（2025年8月1日～2026年7月31日）の業績予想を修正します。\n1. 別の事業',
+  ])('異なる区間・FY・主体・節から年度を補わない: %s', (body) => {
+    const page = textPage(
+      `会社名 株式会社テスト\n${body}\n2. 通期業績予想の修正（2025年8月1日～2026年7月31日）`
+    );
+    expect(resolveForecastReportingTitle(page.blocks[page.blocks.length - 1], page.blocks, page.spans)).toBeNull();
+  });
   // 見出し語彙は部品で網羅し、表・必須判定・保存の結合は単独修正/配当併記の2例。
   it.each([
     'の修正について',

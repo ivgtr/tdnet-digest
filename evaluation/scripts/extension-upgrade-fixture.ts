@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, cp } from 'node:fs/promises';
+import { readFile, cp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -105,6 +105,7 @@ export async function seedOldExtensionProfile(
     ],
   });
   let requests = 0;
+  let retained = false;
   try {
     // A cache display must never contact any API or download its PDF.
     await old.route('https://api.openai.com/**', async (route: any) => {
@@ -141,8 +142,31 @@ export async function seedOldExtensionProfile(
     await frame.getByRole('heading', { name: '確認できた事実', exact: true }).waitFor();
     assert.equal(await frame.locator('.tdnet-digest-summary-row li').count(), 11);
     assert.equal(requests, 0);
-    return { settings, key, value, extensionDirectory };
+    // Reload the installed unpacked extension through Chrome while retaining
+    // the same running profile. Replacing files between browser launches can
+    // leave the registered service worker's old script cache in use.
+    await page.close();
+    await rm(extensionDirectory, { recursive: true });
+    await cp(path.resolve('dist'), extensionDirectory, { recursive: true });
+    const manager = await old.newPage();
+    await manager.goto('chrome://extensions/');
+    await manager.evaluate(async (id: string) => {
+      const api = (chrome as any).developerPrivate;
+      await new Promise<void>((resolve, reject) =>
+        api.updateProfileConfiguration({ inDeveloperMode: true }, () =>
+          chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()
+        )
+      );
+      await new Promise<void>((resolve, reject) =>
+        api.reload(id, { failQuietly: false }, () =>
+          chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()
+        )
+      );
+    }, new URL(worker.url()).host);
+    await manager.close();
+    retained = true;
+    return { settings, key, value, extensionDirectory, context: old };
   } finally {
-    await old.close();
+    if (!retained) await old.close();
   }
 }

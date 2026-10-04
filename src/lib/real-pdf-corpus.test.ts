@@ -109,8 +109,11 @@ describe('TDnet実PDFコーパスのタイトル分類', () => {
 });
 
 describe('原PDFから独立に固定した表紙の正常受理', () => {
-  it('未使用QPS表紙は主要3指標の受理だけでなく通常生成前の根拠検査も通る', () => {
-    const fixture = tables.find((f) => f.id === '140120260713591990')!;
+  it.each([
+    ['140120260713591990', 'earnings'],
+    ['140120260714593203', 'earningsRevision'],
+  ] as const)('既知の反例 %s は代表指標だけでなく通常生成前の根拠検査も通る', (id, type) => {
+    const fixture = tables.find((f) => f.id === id)!;
     const pages = fixture.pages.map((p) =>
       extractPageLayout(
         p.items as TextItem[],
@@ -119,8 +122,8 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       )
     );
     const context = buildDocumentContext(pages);
-    const source = serializeCandidateSource(pages, context, 'earnings');
-    expect(() => preflightCandidateSource('earnings', pages, context, source)).not.toThrow();
+    const source = serializeCandidateSource(pages, context, type);
+    expect(() => preflightCandidateSource(type, pages, context, source)).not.toThrow();
   });
   it.each(tables.filter((f) => 'forbiddenAnchors' in f))(
     '$id の包括利益注記を表本体へ貸さない',

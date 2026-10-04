@@ -110,8 +110,11 @@ export function verifyTableEvidence(
   const table = page.tableRegions
     ? tableForValue({ tableRegions: page.tableRegions }, value.id)
     : null;
+  // Every local row/column/header search uses the same proved table membership.
+  // Explicit context references remain in the document and cannot become table headers.
+  const tableSpans = table ? page.spans.filter((s) => table.spanIds.includes(s.id)) : page.spans;
   const announcementIds = new Set(
-    lineRuns(page.spans)
+    lineRuns(tableSpans)
       .filter((run) =>
         /20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(
           compact(
@@ -170,7 +173,7 @@ export function verifyTableEvidence(
         sameRow(s, value) &&
         gap >= -0.5 &&
         gap <= Math.min(s.height, previous.height) * 0.6 &&
-        !page.spans.some(
+        !tableSpans.some(
           (other) =>
             other.id !== s.id &&
             other.id !== previous.id &&
@@ -182,7 +185,7 @@ export function verifyTableEvidence(
     });
   if (inlineUnit || adjacentUnit) {
     const last = orderedUnits[orderedUnits.length - 1] ?? value;
-    const omittedSuffix = page.spans.some((s) => {
+    const omittedSuffix = tableSpans.some((s) => {
       const gap = s.x - last.x - last.width;
       return (
         !units.some((ref) => ref.id === s.id) &&
@@ -197,7 +200,7 @@ export function verifyTableEvidence(
 
   if (!isUncaptionedUnit(unitText!)) fail('数量の単位を確認できません');
 
-  const rowNumbers = page.spans.filter(
+  const rowNumbers = tableSpans.filter(
     (s) =>
       sameRow(s, value) &&
       !announcementIds.has(s.id) &&
@@ -214,14 +217,14 @@ export function verifyTableEvidence(
   if (metricOnRow) {
     const left = Math.min(...metrics.map((s) => s.x)),
       right = Math.max(...metrics.map((s) => s.x + s.width));
-    const quantities = quantityCells(page.spans);
+    const quantities = quantityCells(tableSpans);
     const precedingRow = Math.max(
       -Infinity,
       ...quantities
         .filter((q) => q.y < value.y && quantities.filter((other) => sameRow(q, other)).length >= 2)
         .map((q) => q.y)
     );
-    const incomplete = page.spans.some(
+    const incomplete = tableSpans.some(
       (s) =>
         s.y > precedingRow &&
         s.y <= value.y &&
@@ -235,7 +238,7 @@ export function verifyTableEvidence(
     if (incomplete) fail('行指標見出しの一部が未参照');
   }
   const singleValueRow = metricOnRow && rowNumbers.length === 1;
-  const unitRuns = tableUnitRuns(page.spans);
+  const unitRuns = tableUnitRuns(tableSpans);
   const allUnits = unitRuns
     .map((run) => ({
       ...run[0],
@@ -332,7 +335,7 @@ export function verifyTableEvidence(
   if (
     !metricOnRow &&
     !metrics.every((s) => {
-      const run = lineRuns(page.spans).find((run) => run.some((part) => part.id === s.id))!;
+      const run = lineRuns(tableSpans).find((run) => run.some((part) => part.id === s.id))!;
       const left = Math.min(...run.map((part) => part.x)),
         right = Math.max(...run.map((part) => part.x + part.width));
       return (
@@ -344,14 +347,14 @@ export function verifyTableEvidence(
   )
     fail('指標の列');
   if (!metricOnRow) {
-    const numericRowsAbove = page.spans.filter(
+    const numericRowsAbove = tableSpans.filter(
       (s) =>
         s.y < unitY &&
         parseQuantity(s.text)?.unit === null &&
-        page.spans.filter((other) => sameRow(s, other) && parseQuantity(other.text)?.unit === null)
+        tableSpans.filter((other) => sameRow(s, other) && parseQuantity(other.text)?.unit === null)
           .length >= 2
     );
-    const sectionHeadings = page.spans.filter(
+    const sectionHeadings = tableSpans.filter(
       (s) =>
         s.y < unitY && /経営成績|業績|配当の状況|決算短信|財政状態|損益計算書/.test(compact(s.text))
     );
@@ -361,7 +364,7 @@ export function verifyTableEvidence(
       ...sectionHeadings.map((s) => s.y)
     );
     // 同じ列の見出しの一部だけを選び、潜在株式調整後等の限定を落とせない。
-    const omitted = page.spans.filter(
+    const omitted = tableSpans.filter(
       (s) =>
         s.y < unitY &&
         s.y > top &&
@@ -374,7 +377,7 @@ export function verifyTableEvidence(
     );
     // Inspect complete horizontal runs, so the leading digit of a neighbouring heading
     // cannot become a missing fragment of this metric. Do not discard numeric headings.
-    const owned = lineRuns(page.spans.filter((s) => s.y < unitY && s.y > top))
+    const owned = lineRuns(tableSpans.filter((s) => s.y < unitY && s.y > top))
       .filter((run) => {
         // A complete calendar heading is a period axis, including when it wraps
         // into a financial column. Its digits are never a metric qualifier.
@@ -398,7 +401,7 @@ export function verifyTableEvidence(
   }
   // A vertically centred row label may sit between the units and its values.
   // Bind it to one nearest numeric data row; an equal-distance tie is ambiguous.
-  const dataCells = quantityCells(page.spans).filter((q) => q.y > unitY);
+  const dataCells = quantityCells(tableSpans).filter((q) => q.y > unitY);
   const dataRows = [
     ...new Set(
       dataCells
@@ -407,7 +410,7 @@ export function verifyTableEvidence(
     ),
   ];
   const onDataRow = (s: PdfSpan) => {
-    if (table && tableRowAxis(table, page.spans, value).some((axis) => axis.id === s.id))
+    if (table && tableRowAxis(table, tableSpans, value).some((axis) => axis.id === s.id))
       return true;
     if (sameRow(s, value)) return true;
     if (Math.abs(s.y - value.y) > Math.min(s.height, value.height) * 1.2) return false;
@@ -419,11 +422,11 @@ export function verifyTableEvidence(
     );
   };
   if (!metricOnRow) {
-    const axisFragments = page.spans.filter(
+    const axisFragments = tableSpans.filter(
       (s) =>
         onDataRow(s) &&
         s.x + s.width < Math.min(...rowNumbers.map((n) => n.x)) &&
-        !physicalRows(page.spans.filter((p) => p.x + p.width < value.x)).some(
+        !physicalRows(tableSpans.filter((p) => p.x + p.width < value.x)).some(
           (run) =>
             run.some((p) => p.id === s.id) && /20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(joined(run))
         ) &&
@@ -437,7 +440,7 @@ export function verifyTableEvidence(
   const rowPeriods = periods.filter(
     (s) => onDataRow(s) && s.x + s.width < Math.min(...rowNumbers.map((n) => n.x))
   );
-  const fiscalPeers = page.spans.filter(
+  const fiscalPeers = tableSpans.filter(
     (s) => s.y < value.y && /20\d{2}年\d{1,2}月期/.test(compact(s.text))
   );
   const ownedFiscal = (s: PdfSpan) => {
@@ -448,7 +451,7 @@ export function verifyTableEvidence(
     (s) => !sameRow(s, value) && above(s) && (inBand(s) || ownedFiscal(s))
   );
   const commonPeriodIds = new Set(
-    lineRuns(page.spans)
+    lineRuns(tableSpans)
       .filter((run) => {
         const text = joined(run);
         return (
@@ -513,7 +516,7 @@ export function verifyTableEvidence(
         (unit) =>
           unit.y > context.y &&
           unit.y < firstHeaderY &&
-          page.spans.some(
+          tableSpans.some(
             (cell) =>
               cell.y > unit.y &&
               cell.y < firstHeaderY &&
