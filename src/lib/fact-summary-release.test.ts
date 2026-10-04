@@ -197,7 +197,7 @@ describe('既存の実PDF形式のv4回帰', () => {
           blockId: b.id,
           assertionId: `${b.id}:a1`,
           quantityId: null,
-          contextIds: page === 1 ? ['p1b36'] : ['p2b1'],
+          contextIds: page === 1 ? ['p1b30'] : ['p2b1'],
           scopeIds: scope === null ? ['p1b3'] : ['p1b1', 'p1b3'],
           qualifierIds: [],
         },

@@ -1365,7 +1365,7 @@
         }
       },
       {
-        "id": "fact-e2997276183a08d3",
+        "id": "fact-edaf6b9aacada101",
         "importance": "key",
         "kind": "event",
         "label": "2026年９月期の配当予想につきまして、通期連結業績予想の修正及び当社の利益還元方針に鑑み、期末配当\n予想を１株につき127円に修正いたします。",
@@ -1382,7 +1382,7 @@
           "blockId": "p2b13",
           "assertionId": "p2b13:a1",
           "quantityId": null,
-          "contextIds": [],
+          "contextIds": ["p2b2"],
           "scopeIds": ["p1b3"],
           "qualifierIds": ["p2b14"]
         },

@@ -1,5 +1,5 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { normalized, declaredSubjectsIn } from './document-structure';
+import { normalized, declaredSubjectsIn, headingLevel } from './document-structure';
 import { parseExactNumeric, isUncaptionedUnit } from './quantity';
 import type { PdfSpan } from './pdf-layout';
 import { tableUnitRuns } from './table-layout';
@@ -76,6 +76,19 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
           (normalized(b.text).match(/20\d{2}年\d{1,2}月期/g)?.length ?? 0) === before.length
       );
     if (!periodBlock) continue;
+    // Every explicit section boundary ends the old header's ownership,
+    // including nonfinancial sections whose columns happen to align.
+    if (
+      previous.blocks.some(
+        (b) =>
+          b.y > context.y &&
+          b.y < last.y &&
+          b.kind !== 'row' &&
+          b.id !== periodBlock.id &&
+          headingLevel(b) !== null
+      )
+    )
+      continue;
     const unitRuns = tableUnitRuns(
       previous.spans.filter((s) => s.y > periodBlock.y && s.y < last.y)
     );

@@ -7,6 +7,7 @@ import {
   sameLine,
   isPerformanceReportingTitle,
   forecastReportingTitle,
+  headingLevel,
 } from './document-structure';
 import { declaredQuantityUnit, isUncaptionedUnit, parseExactNumeric } from './quantity';
 
@@ -205,7 +206,9 @@ export function buildTableRegions(page: {
       .filter(
         (run) =>
           run[0].y > unitY &&
-          (note(run.map((s) => s.text).join('')) ||
+          ((!run.some((s) => page.quantities.some((q) => q.spanIds.includes(s.id))) &&
+            headingLevel({ id: '', text: run.map((s) => s.text).join('') }) !== null) ||
+            note(run.map((s) => s.text).join('')) ||
             isPerformanceReportingTitle(run.map((s) => s.text).join('')) ||
             forecastReportingTitle(run.map((s) => s.text).join('')))
       )
@@ -319,7 +322,80 @@ export function tableColumnBand(
   // A whole-table cell does not prove an individual column.
   return cell && cell.right - cell.left < height * 14 ? [cell.left, cell.right] : null;
 }
-/** A complete left cell supplies the row axis; dates in that cell retain their own role. */
+/** Closed neighboring cells form one row declaration before interpretation. */
+function closedAxisParts(
+  region: Pick<TableRegion, 'cells' | 'valueIds'>,
+  spans: PdfSpan[],
+  band: Pick<TableCell, 'top' | 'bottom'>,
+  right: number
+): PdfSpan[] {
+  const dataLeft = Math.min(
+    right,
+    ...region.cells
+      .filter(
+        (cell) =>
+          cell.top <= band.top + 0.8 &&
+          cell.bottom >= band.bottom - 0.8 &&
+          cell.spanIds.some(
+            (id) =>
+              region.valueIds.includes(id) &&
+              parseExactNumeric(spans.find((s) => s.id === id)!.text)?.unit === null
+          )
+      )
+      .map((cell) => cell.left)
+  );
+  const cells = region.cells
+    .filter(
+      (c) =>
+        c.right <= dataLeft + 0.8 &&
+        c.top <= band.top + 0.8 &&
+        c.bottom >= band.bottom - 0.8 &&
+        !c.spanIds.some((id) => region.valueIds.includes(id))
+    )
+    .sort((a, b) => a.left - b.left);
+  return cells.flatMap((cell) => {
+    const ids = new Set(cell.spanIds);
+    const members = spans.filter((s) => ids.has(s.id));
+    const runs = lineRuns(members);
+    // A closed merged cell declaring only one period owns all contained rows.
+    // Mixed periods/states still need their own physical row correspondence.
+    const sharedPeriod =
+      runs.length === 1 &&
+      /^20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?$/.test(
+        normalized(runs[0].map((s) => s.text).join(''))
+      );
+    const parts = members.filter((s) => sharedPeriod || (cy(s) > band.top && cy(s) < band.bottom));
+    return lineRuns(parts)
+      .filter((run) => {
+        const text = normalized(run.map((s) => s.text).join(''));
+        return !/20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(text) && !tableUnit(text);
+      })
+      .flat();
+  });
+}
+export function tableRowDeclarations(
+  region: Pick<TableRegion, 'cells' | 'valueIds'>,
+  spans: PdfSpan[]
+): PdfSpan[][] {
+  const declarations = region.cells.filter((cell) =>
+    /20\d{2}年\d{1,2}月期|予想|実績/.test(
+      normalized(cell.spanIds.map((id) => spans.find((s) => s.id === id)!.text).join(''))
+    )
+  );
+  // Use narrower state rows instead of interpreting a merged cell on its own.
+  const bands = declarations.filter(
+    (cell) =>
+      !declarations.some(
+        (other) =>
+          other.top >= cell.top &&
+          other.bottom <= cell.bottom &&
+          (other.top > cell.top + 0.8 || other.bottom < cell.bottom - 0.8)
+      )
+  );
+  return [...new Map(bands.map((cell) => [`${cell.top}:${cell.bottom}`, cell])).values()].map(
+    (cell) => closedAxisParts(region, spans, cell, Infinity)
+  );
+}
 export function tableRowAxis(
   region: Pick<TableRegion, 'cells' | 'valueIds'>,
   spans: PdfSpan[],
@@ -331,30 +407,13 @@ export function tableRowAxis(
       (a, b) => (a.right - a.left) * (a.bottom - a.top) - (b.right - b.left) * (b.bottom - b.top)
     )[0];
   if (!own) return [];
-  const left = region.cells
-    .filter((c) => c.right <= own.left + 0.8 && c.top <= cy(value) && c.bottom >= cy(value))
-    .sort((a, b) => a.left - b.left)[0];
-  if (!left) return [];
-  const ids = new Set(left.spanIds);
-  const axes = lineRuns(spans.filter((s) => ids.has(s.id))).filter((run) => {
-    const text = normalized(run.map((s) => s.text).join(''));
-    return !/20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(text) && !tableUnit(text);
-  });
-  const reporting = axes.filter((run) =>
-    /20\d{2}年\d{1,2}月期|予想|実績|通期/.test(normalized(run.map((s) => s.text).join('')))
-  );
+  const parts = closedAxisParts(region, spans, own, own.left);
   const numericRows = physicalRows(
     spans.filter(
       (s) =>
-        region.valueIds.includes(s.id) &&
-        s.x >= left.right &&
-        cy(s) >= left.top &&
-        cy(s) <= left.bottom
+        region.valueIds.includes(s.id) && s.x >= own.left && cy(s) > own.top && cy(s) < own.bottom
     )
   );
-  // One physical row cell may contain a state and a fiscal axis on separate lines.
-  // A cell spanning multiple data rows does not license borrowing those axes.
-  if (reporting.length > 1 && numericRows.length !== 1)
-    return reporting.filter((run) => sameLine(run[0], value)).flat();
-  return axes.flat();
+  // A cell spanning multiple data rows does not license another row's axis.
+  return numericRows.length > 1 ? parts.filter((s) => sameLine(s, value)) : parts;
 }

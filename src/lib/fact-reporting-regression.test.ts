@@ -24,6 +24,100 @@ import { tableContinuations } from './document-links';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+it.each(['別セル', '年度結合セル'])(
+  '罫線表の隣接した年度・状態セルを同じ行宣言として入力・義務・保存へ渡す: %s',
+  (layout) => {
+    const rows: [string, number, number, number][] = [
+      ['会社名 株式会社テスト', 0, 0, 240],
+      ['2027年3月期 連結業績予想', 0, 30, 300],
+      ['売上高', 230, 60, 60],
+      ['営業利益', 330, 60, 60],
+      ['当期純利益', 430, 60, 60],
+      ['百万円', 230, 85, 60],
+      ['百万円', 330, 85, 60],
+      ['百万円', 430, 85, 60],
+      [layout === '年度結合セル' ? '2027年3月期' : '2026年3月期', 0, 110, 140],
+      ['実績', 155, 110, 40],
+      ['100', 230, 110, 60],
+      ['10', 330, 110, 60],
+      ['8', 430, 110, 60],
+      ...(layout === '年度結合セル'
+        ? []
+        : [['2027年3月期', 0, 150, 140] as [string, number, number, number]]),
+      ['予想', 155, 150, 40],
+      ['200', 230, 150, 60],
+      ['20', 330, 150, 60],
+      ['16', 430, 150, 60],
+    ];
+    const xs = [-5, 145, 205, 305, 405, 505],
+      ys = [95, 130, 170];
+    const lines = [
+      ...xs.map((x) => [0, x, -ys[0], 1, x, -ys[2]]),
+      ...ys.map((y) => [
+        0,
+        layout === '年度結合セル' && y === 130 ? xs[1] : xs[0],
+        -y,
+        1,
+        xs[5],
+        -y,
+      ]),
+    ];
+    const page = extractPageLayout(
+      rows.map(([str, x, y, width]) => ({
+        str,
+        dir: 'ltr',
+        transform: [10, 0, 0, 10, x, -y],
+        width,
+        height: 10,
+        hasEOL: false,
+        fontName: 'test',
+      })) as TextItem[],
+      1,
+      lines.map((commands, index) => ({
+        index,
+        fn: 'constructPath',
+        args: ['stroke', [commands], null],
+      }))
+    );
+    const pages = [page],
+      context = buildDocumentContext(pages);
+    expect(page.tableRegions[0].method).toBe('ruled');
+    const facts = [100, 10, 8, 200, 20, 16].map((value, i) => {
+      const q = page.quantities.find((q) => q.text === String(value))!;
+      const hint = context.tableMappings.find((h) => h.valueId === q.id)!;
+      const f = numberCandidate(
+        page,
+        ['売上高', '営業利益', '当期純利益'][i % 3],
+        value,
+        `${layout === '年度結合セル' || i >= 3 ? 2027 : 2026}年3月期`
+      );
+      f.semantics.basis = null;
+      f.valueKind = f.semantics.state = i < 3 ? 'actual' : 'forecast';
+      f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+      return f;
+    });
+    const reviewed = reviewCandidates(
+      candidateResponse(facts, pages, 'earningsRevision'),
+      'earningsRevision',
+      pages
+    );
+    expect(reviewed.unverified).toEqual([]);
+    expect(reviewed.facts).toHaveLength(6);
+    const slots = coverageReport('earningsRevision', pages, reviewed.facts);
+    expect(slots).toHaveLength(6);
+    expect(slots.every((s) => s.status === 'satisfied')).toBe(true);
+    expect(
+      coverageReport('earningsRevision', pages, [], [], { ...context, tableMappings: [] })
+    ).toHaveLength(6);
+    const raw = JSON.stringify({
+      version: 5,
+      documentType: 'earningsRevision',
+      facts: reviewed.facts,
+      unverified: [],
+    });
+    expect(parseFactSummary(raw, 'earningsRevision', pages).facts).toEqual(reviewed.facts);
+  }
+);
 it('業績予想の報告根拠を作れないとき、空の必須検査でAPIへ進まない', async () => {
   const pages = [
     textPage('会社名 株式会社テスト\n2027年3月期 業績予想\n当社は新施策を実施する予定です。'),
@@ -154,6 +248,34 @@ it('続表の年度と文脈を境界の同じ表に限定し、直前の別表�
     1
   );
   expect(tableContinuations([changedUnitTable, current])).toEqual([]);
+  const employeePage = cells(
+    [
+      ...priorRows.slice(0, 7),
+      ['2. 従業員の状況', 0, 120, 180],
+      ['従業員数', 0, 180, 100],
+      ['10人', 340, 180, 80],
+      ['20人', 540, 180, 80],
+    ],
+    1
+  );
+  const employeeContinuation = cells(
+    [
+      ['正社員', 0, 20, 100],
+      ['10人', 340, 20, 80],
+      ['20人', 540, 20, 80],
+      ['臨時社員', 0, 50, 100],
+      ['30人', 340, 50, 80],
+      ['40人', 540, 50, 80],
+    ],
+    2
+  );
+  expect(tableContinuations([employeePage, employeeContinuation])).toEqual([]);
+  const context = buildDocumentContext([employeePage, employeeContinuation]);
+  expect(
+    context.tableMappings.some((h) =>
+      employeePage.quantities.filter((q) => /人$/.test(q.text)).some((q) => q.id === h.valueId)
+    )
+  ).toBe(false);
 });
 it('続表のIFRS EPSへ対象期の分割注記を入力・受理・保存まで接続する', () => {
   const pages = [
@@ -191,11 +313,16 @@ it('続表のIFRS EPSへ対象期の分割注記を入力・受理・保存ま�
   ];
   const ctx = buildDocumentContext(pages);
   const input = JSON.parse(serializeCandidateSource(pages, ctx));
-  const facts = [10, 20].map((value, i) => {
+  const facts = [10, 20, 8, 16].map((value, i) => {
     const q = pages[1].quantities.find((q) => q.text === String(value))!;
     const hint = ctx.tableMappings.find((h) => h.valueId === q.id)!;
     expect(hint).toBeDefined();
-    const f = numberCandidate(pages[1], '基本的1株当たり当期利益', value, `${2026 + i}年3月期`);
+    const f = numberCandidate(
+      pages[1],
+      i < 2 ? '基本的1株当たり当期利益' : '希薄化後1株当たり当期利益',
+      value,
+      `${2026 + (i % 2)}年3月期`
+    );
     f.unit = '円';
     f.semantics.metricKind = 'perShare';
     f.semantics.scope = f.semantics.basis = null;
@@ -204,7 +331,7 @@ it('続表のIFRS EPSへ対象期の分割注記を入力・受理・保存ま�
   });
   const result = reviewCandidates(candidateResponse(facts, pages), 'other', pages);
   expect(result.unverified).toEqual([]);
-  expect(result.facts).toHaveLength(2);
+  expect(result.facts).toHaveLength(4);
   expect(result.facts[0].provenance!.adjustments).toEqual([]);
   expect(result.facts[1].provenance!.adjustments).toEqual([
     expect.objectContaining({
@@ -212,6 +339,12 @@ it('続表のIFRS EPSへ対象期の分割注記を入力・受理・保存ま�
       noteId: pages[1].blocks[pages[1].blocks.length - 1].id,
     }),
   ]);
+  for (const fact of result.facts.slice(2)) {
+    expect(fact.provenance!.adjustments).toEqual([]);
+    expect(
+      bindingFor(ctx, fact.evidence.kind === 'table' ? fact.evidence.valueId : '').qualifierIds
+    ).not.toContain(pages[1].blocks[pages[1].blocks.length - 1].id);
+  }
   const noteId = pages[1].blocks[pages[1].blocks.length - 1].id;
   const olderId = facts[0].evidence.kind === 'table' ? facts[0].evidence.valueId : '';
   expect(bindingFor(ctx, olderId).qualifierIds).not.toContain(noteId);

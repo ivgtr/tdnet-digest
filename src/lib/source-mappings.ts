@@ -1,6 +1,7 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import {
   normalized,
+  headingLevel,
   tableReferenceHints,
   isPerformanceReportingTitle,
   forecastReportingTitle,
@@ -69,7 +70,18 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
       const caption = page.blocks
         .filter((b) => b.y < top && /20\d{2}年\d{1,2}月(?!期)/.test(normalized(b.text)))
         .sort((a, b) => b.y - a.y)[0];
-      if (!caption) continue;
+      if (
+        !caption ||
+        page.blocks.some(
+          (b) =>
+            b.y > caption.y &&
+            b.y < row.y &&
+            b.kind !== 'row' &&
+            !b.spanIds.every((id) => axes.some((s) => s.id === id)) &&
+            headingLevel(b) !== null
+        )
+      )
+        continue;
       for (const [i, c] of amounts.entries())
         result.push({
           valueId: c.q.id,
@@ -99,6 +111,18 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
           )
           .map((s) => s.id);
       if (!context.length) continue;
+      const contextY = Math.max(...context.map((id) => page.spans.find((s) => s.id === id)!.y));
+      if (
+        page.blocks.some(
+          (b) =>
+            b.y > contextY &&
+            b.y < row.y &&
+            b.kind !== 'row' &&
+            !b.spanIds.every((id) => axes.some((s) => s.id === id)) &&
+            headingLevel(b) !== null
+        )
+      )
+        continue;
       for (const [i, c] of units.entries())
         result.push({
           valueId: c.q.id,

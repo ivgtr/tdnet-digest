@@ -50,7 +50,7 @@ import {
 import { normalized } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
-import { tableRowAxis } from './table-layout';
+import { tableRowAxis, tableRowDeclarations } from './table-layout';
 
 /** Structural proposals use the same complete numeric proof as accepted facts. */
 function provedMappedQuantity(
@@ -209,13 +209,12 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
   for (const page of pages.filter((p) => p.selection === 'selected'))
     for (const region of page.tableRegions) {
       // Read explicit row declarations, including closed cells with no mapped values.
+      const rowAxes = page.quantities
+        .filter((q) => region.valueIds.includes(q.id))
+        .map((q) => ({ valueId: q.id, parts: tableRowAxis(region, page.spans, q) }));
       const axes = [
-        ...region.cells.map((cell) =>
-          cell.spanIds.map((id) => page.spans.find((s) => s.id === id)!)
-        ),
-        ...page.quantities
-          .filter((q) => region.valueIds.includes(q.id))
-          .map((q) => tableRowAxis(region, page.spans, q)),
+        ...tableRowDeclarations(region, page.spans),
+        ...rowAxes.map((row) => row.parts),
       ];
       for (const parts of axes) {
         if (!parts.every((s) => region.spanIds.includes(s.id))) continue;
@@ -223,13 +222,19 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
         const period = sourceFiscalPeriod(axis, '');
         if (!period) continue;
         const owner = page.blocks.find((b) => parts.some((s) => b.spanIds.includes(s.id)));
+        // Use an original row value's binding when the caption belongs to a
+        // table rather than a numbered section. This does not consult mappings.
+        const quantity = rowAxes.find((row) =>
+          parts.every((part) => row.parts.some((s) => s.id === part.id))
+        );
+        const anchor = quantity?.valueId ?? owner?.id;
         if (
-          !owner ||
-          !isIssuerSource(owner.id, context) ||
-          !isReportingMetricSource(owner.id, 'forecast', pages, context)
+          !anchor ||
+          !isIssuerSource(anchor, context) ||
+          !isReportingMetricSource(anchor, 'forecast', pages, context)
         )
           continue;
-        const binding = bindingFor(context, owner.id);
+        const binding = bindingFor(context, anchor);
         const inherited = binding.contextIds
           .map((id) => {
             if (!nodes.has(id)) throw new Error(`REFERENCE:原文の文脈 ${id} がありません`);

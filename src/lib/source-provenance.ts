@@ -1,6 +1,6 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { VerifiedFact } from './fact-contract';
-import { normalized } from './document-structure';
+import { normalized, headingLevel, declaredSubjectsIn } from './document-structure';
 import { proseQuantities } from './quantity';
 import { tableForValue } from './table-layout';
 import { record, exact } from './fact-contract';
@@ -87,7 +87,12 @@ export function splitNotes(page: ExtractedPage, valueId: string) {
   if (!own) return [];
   const next = Math.min(
     Infinity,
-    ...page.tableRegions.filter((t) => t.top > own.bottom).map((t) => t.top)
+    ...page.tableRegions.filter((t) => t.top > own.bottom).map((t) => t.top),
+    ...page.blocks
+      .filter(
+        (b) => b.y > own.bottom && (headingLevel(b) !== null || declaredSubjectsIn(b).length > 0)
+      )
+      .map((b) => b.y)
   );
   return page.blocks.filter(
     (b) =>
@@ -97,24 +102,22 @@ export function splitNotes(page: ExtractedPage, valueId: string) {
       /株式分割/.test(normalized(b.text))
   );
 }
-/** A note's explicit reporting periods constrain its EPS adjustment, not its split date. */
-export function splitNoteApplies(text: string, label: string, period: string | null): boolean {
-  if (/配当/.test(normalized(label))) return /配当/.test(normalized(text));
-  if (!isPerShareProfit(label) || !isPerShareProfit(text)) return false;
-  const scope = reportingPeriodText(text)
-    .split(/[。；;]/)
-    .filter((sentence) => !/配当/.test(sentence) || isPerShareProfit(sentence))
-    .join('。');
-  for (const sentence of scope.split('。'))
-    if (
-      /配当/.test(sentence) &&
-      isPerShareProfit(sentence) &&
-      new Set(sentence.match(/20\d{2}年\d{1,2}月期/g)).size > 1
-    )
-      throw new Error('STRUCTURE:複数指標の株式分割注記の期間対応を確定できません');
+/** Resolve the EPS name and its reporting-period clause together. */
+function epsNames(text: string): string[] {
+  return [
+    ...normalized(text).matchAll(
+      /(基本的|希薄化後|潜在株式調整後)?1株(?:当たり|あたり)(当期|四半期|中間)?純?(利益|損失)|\bEPS\b/gi
+    ),
+  ].map((m) =>
+    m[0].toUpperCase() === 'EPS'
+      ? 'EPS'
+      : `${/希薄化後|潜在株式調整後/.test(m[1] ?? '') ? 'diluted' : 'basic'}:${m[2] ?? ''}:${m[3]}`
+  );
+}
+function splitPeriodMatches(clause: string, period: string | null): boolean {
   const periods = [
-    ...scope.matchAll(/20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g),
-  ].filter((m) => !/^(?:の)?(?:期首|初日|末日)/.test(scope.slice(m.index! + m[0].length)));
+    ...clause.matchAll(/20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g),
+  ].filter((m) => !/^(?:の)?(?:期首|初日|末日)/.test(clause.slice(m.index! + m[0].length)));
   if (!periods.length) return true;
   const target = reportingPeriodText(period ?? '');
   const fy = target.match(/20\d{2}年\d{1,2}月期/)?.[0];
@@ -125,6 +128,29 @@ export function splitNoteApplies(text: string, label: string, period: string | n
         reportingPeriodShape(p) === (reportingPeriodShape(target) ?? '通期')) &&
       (!/累計|単独/.test(p) || p.match(/累計|単独/)?.[0] === target.match(/累計|単独/)?.[0])
   );
+}
+function matchingEpsClauses(text: string, label: string, period: string | null): string[] {
+  const names = epsNames(label);
+  if (names.length !== 1) return [];
+  // A comma starts another clause only when it explicitly restates a fiscal
+  // period and EPS subject. A period list sharing one predicate stays intact.
+  const clauses = reportingPeriodText(text).split(
+    /[。；;]|、(?=20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?の?(?:基本的|希薄化後|潜在株式調整後)?1株)/
+  );
+  return clauses.filter((clause) => {
+    if (!epsNames(clause).includes(names[0])) return false;
+    if (
+      (/配当/.test(clause) || epsNames(clause).length > 1) &&
+      new Set(clause.match(/20\d{2}年\d{1,2}月期/g)).size > 1
+    )
+      throw new Error('STRUCTURE:複数指標の株式分割注記の期間対応を確定できません');
+    return splitPeriodMatches(clause, period);
+  });
+}
+/** The same matched clauses own the input qualifier and persisted basis. */
+export function splitNoteApplies(text: string, label: string, period: string | null): boolean {
+  if (/配当/.test(normalized(label))) return /配当/.test(normalized(text));
+  return matchingEpsClauses(text, label, period).length > 0;
 }
 export function applicableSplitNotes(
   page: ExtractedPage,
@@ -139,12 +165,18 @@ export function applicableSplitNotes(
       fy = normalized(period ?? '').match(/20\d{2}年\d{1,2}月期/)?.[0];
     if (!splitNoteApplies(text, metric, period)) continue;
     let basis: SourceProvenance['adjustments'][number]['basis'] | null = null;
-    if (
-      isPerShareProfit(metric) &&
-      isPerShareProfit(text) &&
-      /仮定|株式分割の影響を考慮/.test(text)
-    )
-      basis = 'splitAdjusted';
+    if (isPerShareProfit(metric)) {
+      const bases = matchingEpsClauses(text, metric, period).map((clause) => {
+        const declared: SourceProvenance['adjustments'][number]['basis'][] = [];
+        if (/仮定|株式分割の影響を考慮/.test(clause)) declared.push('splitAdjusted');
+        if (/(?:株式)?分割前/.test(clause)) declared.push('beforeSplit');
+        if (/(?:株式)?分割後/.test(clause)) declared.push('afterSplit');
+        return declared;
+      });
+      if (bases.some((b) => b.length !== 1) || new Set(bases.flat()).size !== 1)
+        throw new Error(`STRUCTURE:株式分割注記の適用基準を確定できません: ${note.id}`);
+      basis = bases[0][0];
+    }
     if (/配当/.test(metric) && fy) {
       const before = text.match(
         /(20\d{2}年\d{1,2}月期)及び(20\d{2}年\d{1,2}月期)第2四半期末については.*?株式分割前/
