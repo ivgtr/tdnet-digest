@@ -1,7 +1,8 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { normalized } from './document-structure';
-import { parseExactQuantity } from './quantity';
+import { parseExactNumeric } from './quantity';
 import type { PdfSpan } from './pdf-layout';
+import { tableUnitRuns } from './table-layout';
 
 export interface TableContinuation {
   fromPage: number;
@@ -11,12 +12,18 @@ export interface TableContinuation {
   contextIds: string[];
   scopeIds: string[];
   columnEdges: number[];
+  unitIds: string[];
 }
-const quantityColumns = (page: ExtractedPage, ids: string[]) =>
+const quantityColumns = (page: ExtractedPage, ids: string[], allowUnitless = false) =>
   page.quantities
-    .filter(
-      (q) => ids.includes(q.id) && /円|株|人|件|%/.test(parseExactQuantity(q.text)?.unit ?? '')
-    )
+    .filter((q) => {
+      const n = parseExactNumeric(q.text);
+      return (
+        ids.includes(q.id) &&
+        n &&
+        ((allowUnitless && n.unit === null) || /円|株|人|件|%/.test(n.unit ?? ''))
+      );
+    })
     .sort((a, b) => a.x - b.x);
 /** Continue only a boundary table with the same complete, aligned columns and fiscal headings. */
 export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] {
@@ -27,8 +34,13 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
     const last = previous.blocks[previous.blocks.length - 1];
     const first = current.blocks[0];
     if (last?.kind !== 'row' || first?.kind !== 'row') continue;
-    const before = quantityColumns(previous, last.spanIds),
-      after = quantityColumns(current, first.spanIds);
+    const inlineBefore = quantityColumns(previous, last.spanIds);
+    const before =
+      inlineBefore.length >= 2 ? inlineBefore : quantityColumns(previous, last.spanIds, true);
+    const allowUnitless = before.some((q) => parseExactNumeric(q.text)?.unit === null);
+    const after = quantityColumns(current, first.spanIds, allowUnitless);
+    const own = previous.tableRegions.filter((t) => before.every((q) => t.valueIds.includes(q.id)));
+    if (own.length > 1) continue;
     if (
       before.length < 2 ||
       before.length !== after.length ||
@@ -47,6 +59,17 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
           (normalized(b.text).match(/20\d{2}年\d{1,2}月期/g)?.length ?? 0) === before.length
       );
     if (!periodBlock) continue;
+    const unitRuns = tableUnitRuns(
+      previous.spans.filter((s) => s.y > periodBlock.y && s.y < last.y)
+    );
+    const unitIds =
+      own.length === 1
+        ? own[0].unitIds
+        : unitRuns.length === before.length &&
+            unitRuns.every((r) => Math.abs(r[0].y - unitRuns[0][0].y) <= r[0].height * 0.3)
+          ? unitRuns.flatMap((r) => r.map((s) => s.id))
+          : [];
+    if (before.some((q) => !parseExactNumeric(q.text)?.unit) && !unitIds.length) continue;
     const axes = periodBlock.spanIds
       .map((id) => previous.spans.find((s) => s.id === id)!)
       .filter((s) => /20\d{2}年\d{1,2}月期/.test(normalized(s.text)));
@@ -59,7 +82,10 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       continue;
     const scope = [...previous.blocks]
       .reverse()
-      .find((b) => b.y < periodBlock.y && /概要/.test(b.text) && /株式会社|有限会社/.test(b.text));
+      .find(
+        (b) =>
+          b.y < periodBlock.y && /概要|^会社名/.test(b.text) && /株式会社|有限会社/.test(b.text)
+      );
     const context = [...previous.blocks]
       .reverse()
       .find((b) => b.y < periodBlock.y && /経営成績|財政状態/.test(normalized(b.text)));
@@ -67,7 +93,7 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
     const rows = [];
     for (const block of current.blocks) {
       if (block.kind !== 'row') break;
-      const quantities = quantityColumns(current, block.spanIds);
+      const quantities = quantityColumns(current, block.spanIds, allowUnitless);
       if (
         quantities.length !== before.length ||
         quantities.some(
@@ -86,6 +112,7 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       contextIds: context.spanIds,
       scopeIds: [scope.id],
       columnEdges: before.map((q) => q.x + q.width),
+      unitIds,
     });
   }
   return links;
@@ -135,7 +162,7 @@ export function continuationSpans(
   const link = continuationFor(pages, page, valueId);
   if (!link) return page.spans;
   const owner = pages.find((p) => p.pageNumber === link.fromPage)!;
-  const inherited = [...link.periodIds, ...link.contextIds].map(
+  const inherited = [...link.periodIds, ...link.contextIds, ...link.unitIds].map(
     (id) => owner.spans.find((s) => s.id === id)!
   );
   const top = Math.min(...page.spans.map((s) => s.y));
@@ -143,6 +170,43 @@ export function continuationSpans(
   const offset = top - bottom - Math.max(...inherited.map((s) => s.height)) * 2;
   // Explicit coordinate projection for a confirmed continuation. Original coordinates remain untouched.
   return [...inherited.map((s) => ({ ...s, y: s.y + offset })), ...page.spans];
+}
+/** Project only proved continuation headers into their destination rows.
+ * The persisted page and unrelated regions retain their original membership. */
+export function continuationPage(
+  pages: ExtractedPage[],
+  page: ExtractedPage,
+  valueId: string
+): ExtractedPage {
+  const link = continuationFor(pages, page, valueId);
+  if (!link) return page;
+  const spans = continuationSpans(pages, page, valueId);
+  const rowSpanIds = page.blocks
+    .filter((b) => link.rowIds.includes(b.id))
+    .flatMap((b) => b.spanIds);
+  const valueIds = page.quantities.filter((q) => rowSpanIds.includes(q.id)).map((q) => q.id);
+  const spanIds = [
+    ...new Set([...rowSpanIds, ...link.periodIds, ...link.contextIds, ...link.unitIds]),
+  ];
+  const members = spans.filter((s) => spanIds.includes(s.id));
+  return {
+    ...page,
+    spans,
+    tableRegions: [
+      ...page.tableRegions.filter((t) => !t.valueIds.some((id) => valueIds.includes(id))),
+      {
+        id: `continued:${link.fromPage}:${link.toPage}`,
+        method: 'aligned',
+        spanIds,
+        valueIds,
+        unitIds: link.unitIds,
+        cells: [],
+        ruleIds: [],
+        top: Math.min(...members.map((s) => s.y)) - 1,
+        bottom: Math.max(...members.map((s) => s.y)) + 1,
+      },
+    ],
+  };
 }
 /** Numbered sections delimit local notes; a note never crosses the next peer heading. */
 export function paragraphNoteLinks(

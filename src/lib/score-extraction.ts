@@ -16,6 +16,7 @@ import {
 } from './scoring';
 export interface ScoreDocument {
   url: string;
+  documentHash: string;
   text: string;
   pages: ExtractedPage[];
   publishedDate: string | null;
@@ -58,6 +59,7 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
     unit: fact.unit,
     source: {
       url: document.url,
+      documentHash: document.documentHash,
       page: fact.page,
       quote: fact.quote,
       evidence:
@@ -80,7 +82,7 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
       factId: fact.id,
       perShareBasis:
         fact.semantics.metricKind === 'perShare'
-          ? fact.provenance!.adjustments.map((a) => a.basis)
+          ? fact.provenance!.adjustments.map((a) => ({ ...a }))
           : null,
       semantics: fact.semantics,
     },

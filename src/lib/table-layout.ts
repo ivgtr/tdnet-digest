@@ -234,7 +234,7 @@ export function buildTableRegions(page: {
         ) ||
           /予想|実績|通期|20\d{2}年/.test(
             normalized(
-              tableRowAxis({ cells: grids } as TableRegion, spans, q)
+              tableRowAxis({ cells: grids, valueIds: page.quantities.map((q) => q.id) }, spans, q)
                 .map((s) => s.text)
                 .join('')
             )
@@ -321,7 +321,7 @@ export function tableColumnBand(
 }
 /** A complete left cell supplies the row axis; dates in that cell retain their own role. */
 export function tableRowAxis(
-  region: TableRegion,
+  region: Pick<TableRegion, 'cells' | 'valueIds'>,
   spans: PdfSpan[],
   value: QuantityCell
 ): PdfSpan[] {
@@ -343,6 +343,18 @@ export function tableRowAxis(
   const reporting = axes.filter((run) =>
     /20\d{2}年\d{1,2}月期|予想|実績|通期/.test(normalized(run.map((s) => s.text).join('')))
   );
-  if (reporting.length > 1) return reporting.filter((run) => sameLine(run[0], value)).flat();
+  const numericRows = physicalRows(
+    spans.filter(
+      (s) =>
+        region.valueIds.includes(s.id) &&
+        s.x >= left.right &&
+        cy(s) >= left.top &&
+        cy(s) <= left.bottom
+    )
+  );
+  // One physical row cell may contain a state and a fiscal axis on separate lines.
+  // A cell spanning multiple data rows does not license borrowing those axes.
+  if (reporting.length > 1 && numericRows.length !== 1)
+    return reporting.filter((run) => sameLine(run[0], value)).flat();
   return axes.flat();
 }

@@ -135,6 +135,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url: corpus[1].url,
       pages: sources[1],
       text: sources[1].map((p) => p.text).join('\n'),
+      documentHash: 'a'.repeat(64),
       publishedDate: '2026-07-14',
       issuer: '株式会社丸八倉庫',
       code: '9313',
@@ -192,6 +193,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url: corpus[4].url,
       pages: sources[4],
       text: sources[4].map((p) => p.text).join('\n'),
+      documentHash: 'a'.repeat(64),
       publishedDate: '2026-09-10',
       issuer: current.semantics.subject!,
       code: '4051',
@@ -253,11 +255,18 @@ describe('実PDFの意味を保った利用経路', () => {
       expect(buildScoreHtml(score)).toContain('範囲の指定なし');
       expect(buildScoreHtml(score)).toContain('125→127円');
       expect(buildScoreHtml(score)).not.toContain('連結');
-      validateSavedScore(JSON.parse(JSON.stringify(score)), facts, document.url);
+      validateSavedScore(
+        JSON.parse(JSON.stringify(score)),
+        facts,
+        document.url,
+        document.documentHash
+      );
       const altered = structuredClone(score);
       altered.breakdown[0].current.source.scope = '連結';
       altered.breakdown[0].current.source.semantics.scope = '連結';
-      expect(() => validateSavedScore(altered, facts, document.url)).toThrow('不一致');
+      expect(() => validateSavedScore(altered, facts, document.url, document.documentHash)).toThrow(
+        '不一致'
+      );
       const mismatched = structuredClone(score);
       mismatched.breakdown[0].previous!.source.scope = '普通株式';
       mismatched.breakdown[0].previous!.source.semantics.scope = '普通株式';
@@ -272,6 +281,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url: corpus[0].url,
       pages: sources[0],
       text: '',
+      documentHash: 'a'.repeat(64),
       publishedDate: null,
       issuer: '株式会社BlueMeme',
       code: '4069',
@@ -390,6 +400,7 @@ describe('実PDFの意味を保った利用経路', () => {
         url: corpus[0].url,
         pages: sources[0],
         text: sources[0].map((p) => p.text).join('\n'),
+        documentHash: 'a'.repeat(64),
         publishedDate: '2026-09-30',
         issuer: '株式会社BlueMeme',
         code: '4069',
@@ -600,6 +611,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url,
       text: '',
       pages: [],
+      documentHash: 'a'.repeat(64),
       publishedDate: null,
       issuer: '',
       code: '',
@@ -629,10 +641,17 @@ describe('実PDFの意味を保った利用経路', () => {
         { ...claim, impact: 'positive', strength: 'small', comparison: assessClaim(claim) },
       ],
     };
-    validateSavedScore(score, facts, url);
+    validateSavedScore(score, facts, url, current.source.documentHash);
     const changed = structuredClone(score);
     changed.breakdown[0].current.value = 1;
-    expect(() => validateSavedScore(changed, facts, url)).toThrow('不一致');
+    expect(() => validateSavedScore(changed, facts, url, current.source.documentHash)).toThrow(
+      '不一致'
+    );
+    const changedHash = structuredClone(score);
+    changedHash.breakdown[0].current.source.documentHash = 'b'.repeat(64);
+    expect(() => validateSavedScore(changedHash, facts, url, current.source.documentHash)).toThrow(
+      '不一致'
+    );
     const reordered = JSON.parse(
       JSON.stringify(score, (_key, value) =>
         value && typeof value === 'object' && !Array.isArray(value)
@@ -644,6 +663,6 @@ describe('実PDFの意味を保った利用経路', () => {
           : value
       )
     );
-    validateSavedScore(reordered, facts, url);
+    validateSavedScore(reordered, facts, url, current.source.documentHash);
   });
 });

@@ -37,12 +37,7 @@ import {
 import { normalized, quantityCells, buildBlocks } from './document-structure';
 import { classifyMetric as metricKind } from './metric-semantics';
 export { classifyMetric as metricKind } from './metric-semantics';
-import {
-  continuationFor,
-  continuationSpans,
-  noteLinks,
-  paragraphNoteLinks,
-} from './document-links';
+import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
 import {
   checkSemantics,
   exact,
@@ -389,7 +384,7 @@ export function validateFact(
       valueKind: fact.valueKind ?? 'actual',
     };
     const checked = verifyTableEvidence(
-      { ...page, spans: continuationSpans(pages, page, ev.valueId) },
+      continuationPage(pages, page, ev.valueId),
       {
         valueId: ev.valueId,
         metricIds: ev.metricIds,

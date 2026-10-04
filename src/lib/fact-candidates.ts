@@ -18,7 +18,7 @@ import {
   type DocumentContext,
 } from './document-context';
 import { coverageReport } from './fact-coverage';
-import { continuationSpans } from './document-links';
+import { continuationSpans, continuationPage } from './document-links';
 import { sourceDateOptions } from './source-periods';
 import { uniqueTableMapping } from './source-mappings';
 import {
@@ -294,7 +294,7 @@ function compose(
     throw new Error('STRUCTURE:表を本文候補で代用できません');
   if (s.kind === 'table')
     verifyTableEvidence(
-      { ...page, spans: continuationSpans(pages, page, s.valueId) },
+      continuationPage(pages, page, s.valueId),
       {
         valueId: s.valueId,
         metricIds: s.metricIds,
@@ -664,7 +664,7 @@ export function serializeCandidateSource(
               if (!unit || (!parsed && !range))
                 throw new Error('QUANTITY:原文数量の単位を確認できません');
               verifyTableEvidence(
-                { ...p, spans },
+                continuationPage(pages, p, q.id),
                 h,
                 {
                   label: text(h.metricIds),

@@ -39,6 +39,7 @@ export interface ScoreSource {
   factId: string;
   semantics: FactSemantics;
   url: string;
+  documentHash: string;
   page: number;
   quote: string;
   evidence: TableEvidence | null;
@@ -49,7 +50,12 @@ export interface ScoreSource {
   metric: string;
   basis: string | null;
   scope: string | null;
-  perShareBasis: Array<'splitAdjusted' | 'beforeSplit' | 'afterSplit'> | null;
+  perShareBasis: Array<{
+    kind: 'stockSplit';
+    noteId: string;
+    text: string;
+    basis: 'splitAdjusted' | 'beforeSplit' | 'afterSplit';
+  }> | null;
 }
 export interface ScoreValue {
   value: number;
@@ -121,6 +127,10 @@ export function compatible(a: ScoreValue, b: ScoreValue, forecast = false): bool
     hasComparableScope(x.scope, x.metric, x.semantics.metricKind, a.unit) &&
     hasComparableScope(y.scope, y.metric, y.semantics.metricKind, b.unit) &&
     a.unit === b.unit &&
+    // A generic adjustment category does not prove the same share denominator.
+    // Cross-document split events remain incomparable without an event proof.
+    ((!x.perShareBasis?.length && !y.perShareBasis?.length) ||
+      (/^[a-f0-9]{64}$/.test(x.documentHash) && x.documentHash === y.documentHash)) &&
     JSON.stringify(x.perShareBasis) === JSON.stringify(y.perShareBasis) &&
     x.semantics.polarity === y.semantics.polarity &&
     JSON.stringify(x.semantics.qualifiers) === JSON.stringify(y.semantics.qualifiers) &&

@@ -455,7 +455,9 @@ export function verifyTableEvidence(
           (run) =>
             run.some((p) => p.id === s.id) && /20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(joined(run))
         ) &&
-        /予想|見込|見通し|前回|従来|修正|今回|通期|四半期|中間期|20\d{2}年/.test(compact(s.text))
+        /予想|実績|見込|見通し|前回|従来|修正|今回|通期|四半期|中間期|20\d{2}年/.test(
+          compact(s.text)
+        )
     );
     if (axisFragments.some((s) => !periods.some((ref) => ref.id === s.id)))
       fail(

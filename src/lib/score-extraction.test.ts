@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary } from './fact-summary';
-import { validateScoreInput, extractScoreInput, type ScoreFacts } from './score-extraction';
+import {
+  validateScoreInput,
+  extractScoreInput,
+  toValue,
+  type ScoreFacts,
+} from './score-extraction';
+import { compatible } from './scoring';
 import { generateText } from './llm-client';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const current = textPage(
@@ -30,6 +36,7 @@ const registry: ScoreFacts[] = [
       url: 'https://issuer.example/report.pdf',
       issuer: '株式会社テスト',
       code: '1234',
+      documentHash: 'a'.repeat(64),
       publishedDate: '2026-09-30',
       pages: [current, previous],
       text: current.text + '\n' + previous.text,
@@ -49,6 +56,46 @@ const claim = {
 const raw = (candidate: unknown) =>
   JSON.stringify({ version: 4, claims: [candidate], unverified: [] });
 describe('共通確定事実からの採点入力', () => {
+  it('分割の原文注記と資料を比較まで保持し、未証明の別分割を比較しない', () => {
+    const current = structuredClone(facts.facts[0]),
+      previous = structuredClone(facts.facts[1]);
+    for (const f of [current, previous]) {
+      f.label = '1株当たり当期純利益';
+      f.unit = '円';
+      f.semantics.metricKind = 'perShare';
+      f.provenance!.adjustments = [
+        {
+          kind: 'stockSplit',
+          noteId: 'p1b9',
+          text: '2026年4月1日に1株を3株に株式分割',
+          basis: 'splitAdjusted',
+        },
+      ];
+    }
+    const a = toValue(current, registry[0].document),
+      b = toValue(previous, registry[0].document);
+    expect(a.source.perShareBasis).toEqual(current.provenance!.adjustments);
+    expect(compatible(a, b)).toBe(true);
+    expect(
+      compatible(
+        a,
+        toValue(previous, { ...registry[0].document, url: 'https://issuer.example/alias.pdf' })
+      )
+    ).toBe(true);
+    const foreign = toValue(previous, {
+      ...registry[0].document,
+      url: 'https://issuer.example/other.pdf',
+      documentHash: 'b'.repeat(64),
+    });
+    expect(compatible(a, foreign)).toBe(false);
+    expect(
+      compatible(a, toValue(previous, { ...registry[0].document, documentHash: 'b'.repeat(64) }))
+    ).toBe(false);
+    for (const text of ['2026年4月1日に1株を2株に株式分割', '2025年4月1日に1株を3株に株式分割']) {
+      previous.provenance!.adjustments[0].text = text;
+      expect(compatible(a, toValue(previous, registry[0].document))).toBe(false);
+    }
+  });
   it('値・期間・範囲をモデルに書き直させず確定事実IDで比較する', () => {
     const result = validateScoreInput(raw(claim), registry, '元PDF内');
     expect(result.unverified).toEqual([]);
@@ -77,6 +124,7 @@ describe('共通確定事実からの採点入力', () => {
         document: {
           ...registry[0].document,
           url: 'https://issuer.example/later.pdf',
+          documentHash: 'a'.repeat(64),
           publishedDate: '2026-10-01',
         },
         facts: { ...facts, facts: [{ ...facts.facts[1], id: 'later' }] },

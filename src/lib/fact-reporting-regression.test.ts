@@ -23,6 +23,82 @@ import { extractPageLayout } from './pdf-layout';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+it('業績予想の報告根拠を作れないとき、空の必須検査でAPIへ進まない', async () => {
+  const pages = [
+    textPage('会社名 株式会社テスト\n2027年3月期 業績予想\n当社は新施策を実施する予定です。'),
+  ];
+  expect(coverageReport('earningsRevision', pages, [])).toContainEqual(
+    expect.objectContaining({ status: 'unknown' })
+  );
+  vi.mocked(generateText).mockReset();
+  await expect(
+    generateVerifiedFactSummary(config, 'earningsRevision', 'source', pages)
+  ).rejects.toThrow('SOURCE_PREFLIGHT');
+  expect(generateText).not.toHaveBeenCalled();
+});
+it('継続表の単位・年度を行所属ごと投影し、入力・受理・保存まで保持する', () => {
+  const pages = [
+    cells(
+      [
+        ['会社名 株式会社テスト', 0, 0, 210],
+        ['1. 経営成績', 0, 30, 160],
+        ['2026年3月期', 280, 60, 140],
+        ['2027年3月期', 480, 60, 140],
+        ['千円', 340, 90, 80],
+        ['千円', 540, 90, 80],
+        ['売上高', 0, 120, 100],
+        ['100', 340, 120, 80],
+        ['200', 540, 120, 80],
+      ],
+      1
+    ),
+    cells(
+      [
+        ['営業利益', 0, 20, 100],
+        ['10', 340, 20, 80],
+        ['20', 540, 20, 80],
+        ['当期純利益', 0, 50, 100],
+        ['8', 340, 50, 80],
+        ['16', 540, 50, 80],
+      ],
+      2
+    ),
+  ];
+  const ctx = buildDocumentContext(pages),
+    input = JSON.parse(serializeCandidateSource(pages, ctx));
+  const q = pages[1].quantities.find((q) => q.text === '20')!;
+  const hint = ctx.tableMappings.find((h) => h.valueId === q.id)!;
+  expect(hint).toBeDefined();
+  expect(hint.unitIds.every((id) => pages[0].spans.some((s) => s.id === id))).toBe(true);
+  expect(
+    input.pages[1].quantities.find(
+      (q: { id: string; eligibility: { status: string } }) => q.id === hint.valueId
+    ).eligibility.status
+  ).toBe('selectable');
+  const f = numberCandidate(pages[1], '営業利益', 20, '2027年3月期');
+  f.unit = '千円';
+  f.semantics.scope = f.semantics.basis = null;
+  f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+  const result = reviewCandidates(candidateResponse([f], pages), 'other', pages);
+  expect(result.unverified).toEqual([]);
+  expect(result.facts).toHaveLength(1);
+  expect(saved(result.facts, pages).facts).toEqual(result.facts);
+  const misaligned = structuredClone(pages);
+  misaligned[1] = cells(
+    [
+      ['営業利益', 0, 20, 100],
+      ['10', 370, 20, 80],
+      ['20', 570, 20, 80],
+      ['当期純利益', 0, 50, 100],
+      ['8', 370, 50, 80],
+      ['16', 570, 50, 80],
+    ],
+    2
+  );
+  expect(buildDocumentContext(misaligned).tableMappings.some((h) => h.valueId === q.id)).toBe(
+    false
+  );
+});
 function assertion(
   page: ReturnType<typeof textPage>,
   label: string,
@@ -1244,6 +1320,8 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     expect(generateText).toHaveBeenCalledTimes(2);
     expect(result.facts.facts).toHaveLength(3);
     expect(renderFacts(result.facts).match(/売上高:/g)).toHaveLength(1);
+    expect(renderFacts(result.facts)).toContain(period + '中間期');
+    expect(renderFacts(result.facts)).not.toContain('中間期累計');
   });
   it.each([
     ['当社は本施策を実施しない。', 'negative', 'unspecified'],

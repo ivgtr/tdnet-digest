@@ -364,6 +364,7 @@ describe('要約モード別の表示とキャッシュ', () => {
       );
       const document = {
         url: storedUrl,
+        documentHash: 'c'.repeat(64),
         pages: [current, previous],
         text: current.text + '\n' + previous.text,
         issuer: '株式会社テスト',

@@ -11,6 +11,13 @@ export const NET_PROFIT_METRIC = `(?:${netProfitOwner}${netProfitPeriod}?純?|${
 const perShare = /1株|一株|株当たり|EPS/i;
 const currency = /^(?:千|百万|億)?円$|^(?:ドル|USD|EUR)$/;
 
+/** Supported EPS labels, including IFRS profit/loss forms. */
+export const BASIC_PER_SHARE_PROFIT_METRIC =
+  '(?:(?:基本的)?1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|EPS)';
+export function isPerShareProfit(label: string): boolean {
+  return /1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|\bEPS\b/i.test(compact(label));
+}
+
 /** 単位と分母の明記を優先し、配当総額を1株配当へ読み替えない。 */
 export function isPerShareDividend(label: string, unit: string | null): boolean {
   const text = compact(label),

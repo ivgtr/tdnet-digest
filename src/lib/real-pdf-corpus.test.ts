@@ -241,6 +241,73 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
     };
     validateSavedFacts(summary);
     expect(parseFactSummary(JSON.stringify(summary), 'other', pages)).toEqual(summary);
+    if (fixture.id === 'holdout-remix-20260611') {
+      const context = buildDocumentContext(pages);
+      expect(() =>
+        preflightCandidateSource(
+          'earningsRevision',
+          pages,
+          context,
+          serializeCandidateSource(pages, context, 'earningsRevision')
+        )
+      ).not.toThrow();
+      const slots = coverageReport('earningsRevision', pages, review.facts, [], context);
+      expect(slots).toHaveLength(10);
+      expect(slots.every((s) => s.status === 'satisfied')).toBe(true);
+      const lostMapping = {
+        ...context,
+        tableMappings: context.tableMappings.filter((h) => h.valueId !== 'p1s61'),
+      };
+      expect(coverageReport('earningsRevision', pages, [], [], lostMapping)).toHaveLength(10);
+      expect(() =>
+        preflightCandidateSource(
+          'earningsRevision',
+          pages,
+          lostMapping,
+          serializeCandidateSource(pages, lostMapping, 'earningsRevision')
+        )
+      ).toThrow('1株当たり利益');
+      for (const fact of review.facts) {
+        expect(
+          coverageReport(
+            'earningsRevision',
+            pages,
+            review.facts.filter((f) => f.id !== fact.id),
+            [],
+            context
+          ).filter((s) => s.status !== 'satisfied')
+        ).toHaveLength(1);
+      }
+      const wrong = structuredClone(
+        candidates.filter((c) => c.source.valueId === 'p1s57' || c.source.valueId === 'p1s63')
+      );
+      wrong[0].meaning.state = 'forecast';
+      wrong[1].meaning.state = 'forecastAfter';
+      expect(
+        reviewCandidates(
+          JSON.stringify({
+            candidateVersion: 3,
+            documentType: 'earningsRevision',
+            candidates: wrong,
+            unverified: [],
+          }),
+          'earningsRevision',
+          pages
+        ).facts
+      ).toEqual([]);
+      for (const fact of review.facts.filter(
+        (f) => f.evidence.kind === 'table' && ['p1s57', 'p1s63'].includes(f.evidence.valueId)
+      )) {
+        const forged = structuredClone(fact);
+        forged.semantics.state = forged.valueKind =
+          fact.semantics.state === 'actual' ? 'forecast' : 'forecastAfter';
+        forged.id = stableFactId(forged);
+        expect(
+          parseFactSummary(JSON.stringify({ ...summary, facts: [forged] }), 'other', pages, false)
+            .facts
+        ).toEqual([]);
+      }
+    }
     if (fixture.id === 'holdout-makuake-20260901') {
       const ranges = review.facts.filter((f) => f.kind === 'range');
       expect(ranges).toHaveLength(4);

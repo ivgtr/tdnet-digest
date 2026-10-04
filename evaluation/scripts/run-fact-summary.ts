@@ -19,20 +19,28 @@ import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
 import { getProvider } from '../../src/lib/llm-providers';
 
 import { expectedErrors, independentAssessment, type Case } from './fact-summary-expectations';
+import { parseFactSummaryArgs } from './fact-summary-args';
+const cli = parseFactSummaryArgs(process.argv.slice(2));
 const cases = JSON.parse(
   await readFile(
-    process.argv.includes('--holdout')
+    cli.holdout
       ? 'evaluation/fixtures/source-structure-holdout-cases.json'
       : 'evaluation/fixtures/fact-summary-cases.json',
     'utf8'
   )
 ) as Case[];
+const selected = cli.caseId ? cases.filter((item) => item.id === cli.caseId) : cases;
+if (!selected.length) throw new Error('評価ケースがありません');
+if (cli.listCases) {
+  console.log(
+    JSON.stringify({ suite: cli.holdout ? 'holdout' : 'known', caseIds: selected.map((c) => c.id) })
+  );
+  process.exit(0);
+}
 const provider = process.env.TDNET_DIGEST_PROVIDER || 'openai';
 const model = process.env.TDNET_DIGEST_MODEL || getProvider(provider)?.defaultModel;
 const apiKey = process.env.TDNET_DIGEST_API_KEY || process.env[`${provider.toUpperCase()}_API_KEY`];
 if (!model || !apiKey) throw new Error('モデルまたはAPIキーを設定してください');
-const selected = process.argv[2] ? cases.filter((item) => item.id === process.argv[2]) : cases;
-if (!selected.length) throw new Error('評価ケースがありません');
 if (process.argv.includes('--browser')) {
   const { checkExtension } = await import('./check-extension');
   for (const item of selected)

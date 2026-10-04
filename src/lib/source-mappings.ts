@@ -7,7 +7,8 @@ import {
   resolveForecastReportingTitle,
   forecastTablePeriodSources,
 } from './document-structure';
-import { tableContinuations, continuationSpans } from './document-links';
+import { tableContinuations, continuationPage } from './document-links';
+import { tableUnitRuns } from './table-layout';
 import {
   declaredQuantityUnit,
   parseExactQuantity,
@@ -138,10 +139,36 @@ export function buildTableMappings(pages: ExtractedPage[]): TableMapping[] {
       )
       .map((q) => q.id);
     if (!ids.length) continue;
-    const projected = { ...page, spans: continuationSpans(pages, page, ids[0]) };
-    for (const mapping of [...tableReferenceHints(projected), ...inlineMappings(projected)].filter(
-      (h) => ids.includes(h.valueId)
-    ))
+    const projected = continuationPage(pages, page, ids[0]);
+    const inheritedUnits = tableUnitRuns(
+      projected.spans.filter((s) => link.unitIds.includes(s.id))
+    );
+    const continuedRows: TableMapping[] = [];
+    if (inheritedUnits.length === link.periodIds.length) {
+      for (const row of page.blocks.filter((b) => link.rowIds.includes(b.id))) {
+        const values = page.quantities
+          .filter((q) => row.spanIds.includes(q.id))
+          .sort((a, b) => a.x - b.x);
+        if (values.length !== link.periodIds.length) continue;
+        const metricIds = page.spans
+          .filter((s) => row.spanIds.includes(s.id) && s.x + s.width < values[0].x)
+          .map((s) => s.id);
+        if (!metricIds.length) continue;
+        for (const [i, q] of values.entries())
+          continuedRows.push({
+            valueId: q.id,
+            metricIds,
+            periodIds: [link.periodIds[i]],
+            unitIds: inheritedUnits[i].map((s) => s.id),
+            contextIds: link.contextIds,
+          });
+      }
+    }
+    for (const mapping of [
+      ...tableReferenceHints(projected),
+      ...inlineMappings(projected),
+      ...continuedRows,
+    ].filter((h) => ids.includes(h.valueId)))
       if (!mappings.some((h) => JSON.stringify(h) === JSON.stringify(mapping)))
         mappings.push({ ...mapping, contextIds: link.contextIds });
   }

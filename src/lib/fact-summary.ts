@@ -388,7 +388,9 @@ export function renderFacts(summary: FactSummary): string {
     .sort((a, b) => (a.importance === b.importance ? 0 : a.importance === 'key' ? -1 : 1))
     .map((f) => {
       const period =
-        f.period && f.semantics.periodKind.startsWith('cumulativeQ') && !/累計/.test(f.period)
+        f.period &&
+        f.semantics.periodKind.startsWith('cumulativeQ') &&
+        !/累計|中間期/.test(f.period)
           ? `${f.period}累計`
           : f.period && f.semantics.periodKind.startsWith('standaloneQ') && !/単独/.test(f.period)
             ? `${f.period}単独`
@@ -402,7 +404,7 @@ export function renderFacts(summary: FactSummary): string {
           ? stateLabels[f.semantics.state] + (f.semantics.polarity === 'negative' ? '（否定）' : '')
           : null,
         ...f.semantics.qualifiers,
-        ...(f.provenance?.denominator?.value === 1 && !/1株当たり|１株当たり/.test(f.label)
+        ...(f.provenance?.denominator?.value === 1 && !/[1１]株(?:当たり|あたり)/.test(f.label)
           ? ['1株当たり']
           : []),
         ...(f.semantics.metricKind === 'perShare' && unchangedDividend(f.quote)

@@ -25,7 +25,7 @@ describe('数量の指標区分と配当の分母', () => {
   ])(
     '%s / %s の総額を確定できても範囲・基準なしでは採点せず、perShareへの誤分類を拒否する',
     (label, unit) => {
-      const pages = ['前回予想', '今回予想'].map((state, index) =>
+      const pages = ['修正前予想', '修正後予想'].map((state, index) =>
         textPage(
           `会社名 株式会社テスト\n2026年3月期 ${state}\n${label}は${100 + index * 10}${unit}です。`,
           index + 1
@@ -50,6 +50,7 @@ describe('数量の指標区分と配当の分母', () => {
         pages,
         issuer: '株式会社テスト',
         code: '1234',
+        documentHash: 'a'.repeat(64),
         publishedDate: null,
       };
       expect(() => toValue(facts.facts[1], document)).toThrow('範囲');

@@ -4,13 +4,13 @@ import {
   periodKind,
   reportingPeriodShape,
 } from './period-semantics';
-import { NET_PROFIT_METRIC } from './metric-semantics';
+import { NET_PROFIT_METRIC, BASIC_PER_SHARE_PROFIT_METRIC } from './metric-semantics';
 import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
-import { tableContinuations, noteLinks, continuationSpans } from './document-links';
+import { tableContinuations, noteLinks, continuationPage } from './document-links';
 import {
   compact,
   verifyTableEvidence,
@@ -65,7 +65,7 @@ function provedMappedQuantity(
   if (!quantity || value === undefined || (quantity.kind === 'number' && value === null))
     return false;
   try {
-    verifyTableEvidence({ ...page, spans: continuationSpans(pages, page, hint.valueId) }, hint, {
+    verifyTableEvidence(continuationPage(pages, page, hint.valueId), hint, {
       ...claim,
       value,
       range: quantity.kind === 'range',
@@ -127,9 +127,104 @@ function revisionMetricLabel(label: string): string | null {
   if (metric) return metric;
   const text = normalized(label);
   if (/^経常(?:利益|損失)$/.test(text)) return 'ordinaryProfit';
-  if (/^(?:基本的)?1株当たり.*(?:利益|損失)$/.test(text)) return '1株当たり利益';
+  if (new RegExp(`^${BASIC_PER_SHARE_PROFIT_METRIC}$`, 'i').test(text)) return '1株当たり利益';
   return null;
 }
+/** A publication table declares its comparative actuals and ordinary forecasts.
+ * Keep source roles even if their quantities cannot yet be verified. */
+function forecastPublicationSources(pages: ExtractedPage[], context: DocumentContext) {
+  const spans = pages.flatMap((p) => p.spans);
+  const text = (ids: string[]) =>
+    normalized(ids.map((id) => spans.find((s) => s.id === id)!.text).join(''));
+  const result: Array<{
+    valueId: string | null;
+    metric: string;
+    period: string;
+    state: 'actual' | 'forecast';
+    attributes: ReportingAttributes | null;
+  }> = context.tableMappings.flatMap((h) => {
+    if (
+      !pages.some(
+        (p) => p.selection === 'selected' && p.quantities.some((q) => q.id === h.valueId)
+      ) ||
+      !isIssuerSource(h.valueId, context) ||
+      !isReportingMetricSource(h.valueId, 'forecast', pages, context)
+    )
+      return [];
+    const axis = text(h.periodIds),
+      inherited = text(h.contextIds);
+    const metric = revisionMetricLabel(text(h.metricIds)),
+      period = sourceFiscalPeriod(axis, inherited);
+    const state = numericValueKind(axis, inherited);
+    if (!metric || !period || (state !== 'actual' && state !== 'forecast')) return [];
+    return [
+      {
+        valueId: h.valueId,
+        metric,
+        period,
+        state: state as 'actual' | 'forecast',
+        attributes: reportingAttributesAt(bindingFor(context, h.valueId)),
+      },
+    ];
+  });
+  for (const block of issuerBlocks(
+    pages.filter((p) => p.selection === 'selected'),
+    context
+  )) {
+    if (
+      block.kind !== 'paragraph' ||
+      !proseQuantities(block).length ||
+      !isReportingMetricSource(block.id, 'forecast', pages, context)
+    )
+      continue;
+    const binding = bindingFor(context, block.id);
+    const inherited = normalized(
+      binding.contextIds
+        .map((id) => pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!.text)
+        .join('')
+    );
+    const own = normalized(block.text);
+    const label = own.match(
+      new RegExp(
+        `(${BASIC_PER_SHARE_PROFIT_METRIC}|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC})(?:は|が|について)`
+      )
+    )?.[1];
+    const metric = label && revisionMetricLabel(label),
+      period = sourceFiscalPeriod(own, inherited),
+      state = numericValueKind(own, inherited);
+    if (metric && period && (state === 'actual' || state === 'forecast'))
+      result.push({
+        valueId: block.id,
+        metric,
+        period,
+        state,
+        attributes: reportingAttributesAt(binding),
+      });
+  }
+  // A lost mapping must not remove a declared header's obligation with it.
+  const groups = [
+    ...new Map(result.map((s) => [JSON.stringify([s.period, s.state, s.attributes]), s])).values(),
+  ];
+  const metricsByPeriod = new Map<string, string[]>();
+  for (const s of groups) {
+    if (!metricsByPeriod.has(s.period))
+      metricsByPeriod.set(s.period, declaredReportingMetrics(pages, context, s.period, 'forecast'));
+    for (const metric of metricsByPeriod.get(s.period)!)
+      if (
+        !result.some(
+          (other) =>
+            other.metric === metric &&
+            other.period === s.period &&
+            other.state === s.state &&
+            sameReportingAttributes(other.attributes, s.attributes)
+        )
+      )
+        result.push({ ...s, metric, valueId: null });
+  }
+  return result;
+}
+const publicationRequirement = (s: ReturnType<typeof forecastPublicationSources>[number]) =>
+  `COVERAGE:業績予想公表の重要指標 ${s.metric} 対象期=${s.period} 区分=${s.state}`;
 function declaredReportingMetrics(
   pages: ExtractedPage[],
   context: DocumentContext,
@@ -159,7 +254,8 @@ function declaredReportingMetrics(
         continue;
       if (/経常(?:利益|損失)/.test(text)) declared.add('ordinaryProfit');
       if (/親会社|当期(?:純)?利益|当期純損失/.test(text)) declared.add('netProfit');
-      if (/1株当たり/.test(text) && /利益|損失/.test(text)) declared.add('1株当たり利益');
+      if (/1株(?:当たり|あたり)|EPS/i.test(text) && /利益|損失/.test(text))
+        declared.add('1株当たり利益');
     }
   for (const block of issuerBlocks(
     pages.filter((p) => p.selection === 'selected'),
@@ -644,6 +740,7 @@ export function verifyCoverage(
   const missing: string[] = [];
   const ownedBlocks = issuerBlocks(pages, context);
   const source = compact(ownedBlocks.map((b) => b.text).join('\n'));
+  const revision = /前回|修正前/.test(source) && /今回|修正後/.test(source);
   if (type === 'earnings') {
     const report = earningsReportingPeriod(pages);
     if (!report) throw new Error('COVERAGE:報告対象の決算期を確認できません');
@@ -841,7 +938,31 @@ export function verifyCoverage(
       )
         missing.push(`COVERAGE:予想修正なしの明示 ${block.id}`);
   }
-  if (type === 'earningsRevision' && /前回|修正前/.test(source) && /今回|修正後/.test(source)) {
+  if (type === 'earningsRevision' && !revision) {
+    const sources = forecastPublicationSources(pages, context);
+    if (!sources.length) missing.push('COVERAGE:業績予想公表の報告対象・重要指標を確認できません');
+    for (const s of sources) {
+      if (
+        !facts.some(
+          (f) =>
+            (f.kind === 'number' || f.kind === 'range') &&
+            revisionMetricLabel(f.label) === s.metric &&
+            f.semantics.state === s.state &&
+            matchesReportingPeriod(f, s.period) &&
+            sameReportingAttributes(f.semantics, s.attributes) &&
+            sources.some(
+              (other) =>
+                other.metric === s.metric &&
+                other.period === s.period &&
+                other.state === s.state &&
+                factAnchor(f) === other.valueId
+            )
+        )
+      )
+        missing.push(publicationRequirement(s));
+    }
+  }
+  if (type === 'earningsRevision' && revision) {
     const target = earningsTargets(pages, context).forecast;
     const report = target?.period;
     if (!report) throw new Error('COVERAGE:予想修正の報告対象期を確認できません');
@@ -1118,7 +1239,7 @@ export function coverageReport(
     for (const block of page.blocks.filter((b) => b.kind === 'paragraph')) {
       const label = normalized(block.text).match(
         new RegExp(
-          `(1株当たり(?:当期|四半期|中間)?純利益|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`
+          `(${BASIC_PER_SHARE_PROFIT_METRIC}|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|${NET_PROFIT_METRIC})(?:は|が|について)`
         )
       )?.[1];
       if (!label || !proseQuantities(block).length) continue;
@@ -1153,7 +1274,15 @@ export function coverageReport(
         ),
       });
     }
+  let publicationSources: ReturnType<typeof forecastPublicationSources> | undefined;
   const sourceIds = (requirement: string): string[] => {
+    if (/業績予想公表の重要指標/.test(requirement))
+      return (publicationSources ??= forecastPublicationSources(
+        pages.map((p) => ({ ...p, selection: 'selected' as const })),
+        context
+      ))
+        .filter((s) => publicationRequirement(s) === requirement)
+        .flatMap((s) => (s.valueId === null ? [] : [s.valueId]));
     if (type === 'businessUpdate' && requirement === 'COVERAGE:報告対象月') {
       const month = normalized(
         issuerBlocks(pages, context)
@@ -1256,7 +1385,7 @@ export function coverageReport(
       operatingProfit: /^営業(?:利益|損失)/,
       ordinaryProfit: /^経常(?:利益|損失)$/,
       netProfit: new RegExp(`^${NET_PROFIT_METRIC}$`),
-      '1株当たり利益': /^(?:基本的)?1株当たり.*(?:利益|損失)$/,
+      '1株当たり利益': new RegExp(`^${BASIC_PER_SHARE_PROFIT_METRIC}$`, 'i'),
       営業利益率: /営業利益率/,
       配当: /配当/,
       KPI: /MRR|ARR|KPI/,

@@ -4,6 +4,7 @@ import { normalized } from './document-structure';
 import { proseQuantities } from './quantity';
 import { tableForValue } from './table-layout';
 import { record, exact } from './fact-contract';
+import { isPerShareProfit } from './metric-semantics';
 
 export interface SourceProvenance {
   tableId: string | null;
@@ -23,6 +24,20 @@ export interface SourceProvenance {
   }>;
 }
 export const assertionId = (blockId: string) => `${blockId}:a1`;
+export function isAdjustments(value: unknown): value is SourceProvenance['adjustments'] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (a) =>
+        record(a) &&
+        exact(a, ['kind', 'noteId', 'text', 'basis']) &&
+        a.kind === 'stockSplit' &&
+        typeof a.noteId === 'string' &&
+        typeof a.text === 'string' &&
+        ['splitAdjusted', 'beforeSplit', 'afterSplit'].includes(String(a.basis))
+    )
+  );
+}
 export function checkProvenance(value: unknown): asserts value is SourceProvenance {
   const range = (v: unknown, keys: string[]) =>
     record(v) &&
@@ -53,16 +68,7 @@ export function checkProvenance(value: unknown): asserts value is SourceProvenan
         value.denominator.sourceIds.length > 0 &&
         value.denominator.sourceIds.every((id) => typeof id === 'string'))
     ) ||
-    !Array.isArray(value.adjustments) ||
-    !value.adjustments.every(
-      (a) =>
-        record(a) &&
-        exact(a, ['kind', 'noteId', 'text', 'basis']) &&
-        a.kind === 'stockSplit' &&
-        typeof a.noteId === 'string' &&
-        typeof a.text === 'string' &&
-        ['splitAdjusted', 'beforeSplit', 'afterSplit'].includes(String(a.basis))
-    )
+    !isAdjustments(value.adjustments)
   )
     throw new Error('SCHEMA:原文範囲・分母・調整基準が不正です');
 }
@@ -101,14 +107,14 @@ export function applicableSplitNotes(
       metric = normalized(label),
       fy = normalized(period ?? '').match(/20\d{2}年\d{1,2}月期/)?.[0];
     if (
-      !(/1株当たり.*純利益/.test(metric) && /1株当たり.*純利益/.test(text)) &&
+      !(isPerShareProfit(metric) && isPerShareProfit(text)) &&
       !(/配当/.test(metric) && /配当/.test(text))
     )
       continue;
     let basis: SourceProvenance['adjustments'][number]['basis'] | null = null;
     if (
-      /純利益/.test(metric) &&
-      /1株当たり.*純利益/.test(text) &&
+      isPerShareProfit(metric) &&
+      isPerShareProfit(text) &&
       /仮定|株式分割の影響を考慮/.test(text)
     )
       basis = 'splitAdjusted';
@@ -122,7 +128,7 @@ export function applicableSplitNotes(
       if (after && fy === after[1] && /期末/.test(metric)) basis = 'afterSplit';
     }
     if (basis) result.push({ kind: 'stockSplit', noteId: note.id, text: note.text, basis });
-    else if (/純利益|配当/.test(metric))
+    else if (isPerShareProfit(metric) || /配当/.test(metric))
       throw new Error(`STRUCTURE:株式分割注記の適用基準を確定できません: ${note.id}`);
   }
   return result;
@@ -152,7 +158,7 @@ export function sourceProvenance(
   const perShare = fact.semantics.metricKind === 'perShare';
   const explicit =
     perShare &&
-    /1株当たり/.test(normalized(ev.kind === 'table' ? fact.label : (block?.text ?? '')));
+    /1株(?:当たり|あたり)/.test(normalized(ev.kind === 'table' ? fact.label : (block?.text ?? '')));
   return {
     tableId: ev.kind === 'table' ? sourceTableId(page, ev.valueId) : null,
     assertion: block

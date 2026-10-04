@@ -98,11 +98,14 @@ export function numericValueKind(axis: string, context: string, nearest = '') {
   context = compact(context);
   const local = axis + context;
   if (/予定|取得する株式|買付けの委託を行う/.test(local)) return null;
+  // Explicit actual rows keep their state even inside a forecast table.
+  if (/実績/.test(axis)) return /予想|見込|見通し|修正前|修正後/.test(axis) ? null : 'actual';
   const kindAxis = /前回|従来|修正前|直近の配当予想|今回|修正後|決定額/.test(axis) ? axis : context;
   if (/前回|従来|修正前/.test(kindAxis) && /今回|修正後/.test(kindAxis)) return null;
   return /前回|従来|修正前|直近の配当予想/.test(kindAxis)
     ? 'forecastBefore'
-    : /今回|修正後|決定額/.test(kindAxis)
+    : /修正後|決定額/.test(kindAxis) ||
+        (/今回/.test(kindAxis) && /修正|変更|決定/.test(context + compact(nearest)))
       ? 'forecastAfter'
       : /予想|見込|見通し/.test(local) || /業績予想/.test(compact(nearest))
         ? 'forecast'

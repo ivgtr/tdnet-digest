@@ -41,17 +41,29 @@ vi.mock('@/lib/disclosure-search', () => ({
 }));
 
 const nativePage = textPage(
-  '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 今回予想\n営業利益は1150百万円です。'
+  '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 業績予想\n営業利益は1150百万円です。\n売上高は10000百万円です。\n当期純利益は800百万円です。'
 );
 const page = nativePage.text;
 const candidate = numberCandidate(nativePage, '営業利益', 1150);
-candidate.valueKind = 'forecastAfter';
-candidate.semantics.state = 'forecastAfter';
+candidate.valueKind = 'forecast';
+candidate.semantics.state = 'forecast';
+const forecastFacts = [
+  candidate,
+  ...[
+    ['売上高', 10000],
+    ['当期純利益', 800],
+  ].map(([label, value], i) => {
+    const f = numberCandidate(nativePage, String(label), Number(value));
+    f.id = `f${i + 2}`;
+    f.valueKind = f.semantics.state = 'forecast';
+    return f;
+  }),
+];
 const facts: FactSummary = parseFactSummary(
   JSON.stringify({
     version: 5,
     documentType: 'earningsRevision',
-    facts: [candidate],
+    facts: forecastFacts,
     unverified: [],
   }),
   'earningsRevision',

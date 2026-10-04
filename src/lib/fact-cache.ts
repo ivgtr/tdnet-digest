@@ -7,7 +7,7 @@ import {
   type FactSummary,
   FACT_SCHEMA_VERSION,
 } from './fact-contract';
-import { checkProvenance } from './source-provenance';
+import { checkProvenance, isAdjustments } from './source-provenance';
 import { FACT_KEYS } from './fact-validation';
 import { quantityNumber, parseExactQuantity, parseExactRange } from './quantity';
 import { toValue } from './score-extraction';
@@ -197,9 +197,11 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
 export function validateSavedScore(
   value: unknown,
   facts: FactSummary,
-  pdfUrl: string
+  pdfUrl: string,
+  documentHash: string
 ): asserts value is ExperimentalScore {
   if (
+    !/^[a-f0-9]{64}$/.test(documentHash) ||
     !record(value) ||
     !exact(value, [
       'value',
@@ -234,6 +236,7 @@ export function validateSavedScore(
       !record(v.source) ||
       !exact(v.source, [
         'url',
+        'documentHash',
         'page',
         'quote',
         'evidence',
@@ -254,6 +257,8 @@ export function validateSavedScore(
     checkSemantics(s.semantics);
     if (
       !['url', 'quote', 'period', 'metric', 'factId'].every((k) => typeof s[k] === 'string') ||
+      typeof s.documentHash !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(s.documentHash) ||
       !hasComparableScope(s.scope, String(s.metric), s.semantics.metricKind, v.unit) ||
       s.semantics.metricKind !== classifyMetric(String(s.metric), v.unit) ||
       !/^fact-[a-f0-9]{16}$/.test(String(s.factId)) ||
@@ -265,10 +270,7 @@ export function validateSavedScore(
       s.scope !== s.semantics.scope ||
       s.basis !== s.semantics.basis ||
       (s.semantics.metricKind === 'perShare'
-        ? !Array.isArray(s.perShareBasis) ||
-          !s.perShareBasis.every((b) =>
-            ['splitAdjusted', 'beforeSplit', 'afterSplit'].includes(String(b))
-          )
+        ? !isAdjustments(s.perShareBasis)
         : s.perShareBasis !== null)
     )
       throw new Error('保存された比較値の意味属性が不正です');
@@ -317,6 +319,7 @@ export function validateSavedScore(
       throw new Error('保存された採点の元事実がありません');
     const expected = toValue(fact, {
       url: pdfUrl,
+      documentHash,
       pages: [],
       text: '',
       publishedDate: null,
