@@ -1,5 +1,10 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { normalized, declaredSubjectsIn, headingLevel } from './document-structure';
+import {
+  normalized,
+  declaredSubjectsIn,
+  headingLevel,
+  fiscalHeadingRuns,
+} from './document-structure';
 import { parseExactNumeric, isUncaptionedUnit } from './quantity';
 import type { PdfSpan } from './pdf-layout';
 import { tableUnitRuns } from './table-layout';
@@ -10,6 +15,7 @@ export interface TableContinuation {
   rowIds: string[];
   valueIds: string[];
   periodIds: string[];
+  periodColumns: string[][];
   contextIds: string[];
   scopeIds: string[];
   columnEdges: number[];
@@ -35,7 +41,7 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
     if (!previous) continue;
     const last = previous.blocks[previous.blocks.length - 1];
     const first = current.blocks[0];
-    if (last?.kind !== 'row' || first?.kind !== 'row') continue;
+    if (last?.kind !== 'row' || first?.kind !== 'row' || headingLevel(first) !== null) continue;
     const inlineBefore = quantityColumns(previous, last.spanIds);
     const before =
       inlineBefore.length >= 2 ? inlineBefore : quantityColumns(previous, last.spanIds, true);
@@ -78,16 +84,7 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
     if (!periodBlock) continue;
     // Every explicit section boundary ends the old header's ownership,
     // including nonfinancial sections whose columns happen to align.
-    if (
-      previous.blocks.some(
-        (b) =>
-          b.y > context.y &&
-          b.y < last.y &&
-          b.kind !== 'row' &&
-          b.id !== periodBlock.id &&
-          headingLevel(b) !== null
-      )
-    )
+    if (previous.blocks.some((b) => b.y > context.y && b.y <= last.y && headingLevel(b) !== null))
       continue;
     const unitRuns = tableUnitRuns(
       previous.spans.filter((s) => s.y > periodBlock.y && s.y < last.y)
@@ -109,13 +106,15 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       (before.some((q) => !parseExactNumeric(q.text)?.unit) && !unitIds.length)
     )
       continue;
-    const axes = periodBlock.spanIds
-      .map((id) => previous.spans.find((s) => s.id === id)!)
-      .filter((s) => /20\d{2}年\d{1,2}月期/.test(normalized(s.text)));
+    const axes = fiscalHeadingRuns(
+      periodBlock.spanIds.map((id) => previous.spans.find((s) => s.id === id)!)
+    );
     if (
       axes.length !== before.length ||
       axes.some(
-        (axis, i) => axis.x > before[i].x + before[i].width || axis.x + axis.width < before[i].x
+        (axis, i) =>
+          axis[0].x > before[i].x + before[i].width ||
+          axis[axis.length - 1].x + axis[axis.length - 1].width < before[i].x
       )
     )
       continue;
@@ -137,7 +136,7 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
     const rows = [],
       valueIds: string[] = [];
     for (const block of current.blocks) {
-      if (block.kind !== 'row') break;
+      if (block.kind !== 'row' || headingLevel(block) !== null) break;
       const quantities = quantityColumns(current, block.spanIds, allowUnitless);
       if (
         quantities.length !== before.length ||
@@ -155,7 +154,8 @@ export function tableContinuations(pages: ExtractedPage[]): TableContinuation[] 
       toPage: current.pageNumber,
       rowIds: rows,
       valueIds,
-      periodIds: axes.map((s) => s.id),
+      periodIds: axes.flatMap((run) => run.map((s) => s.id)),
+      periodColumns: axes.map((run) => run.map((s) => s.id)),
       contextIds: context.spanIds,
       scopeIds: [scope.id],
       columnEdges: before.map((q) => q.x + q.width),

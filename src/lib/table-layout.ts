@@ -7,6 +7,7 @@ import {
   sameLine,
   isPerformanceReportingTitle,
   forecastReportingTitle,
+  forecastPeriodDeclaration,
   headingLevel,
 } from './document-structure';
 import { declaredQuantityUnit, isUncaptionedUnit, parseExactNumeric } from './quantity';
@@ -196,6 +197,16 @@ export function buildTableRegions(page: {
       row.push(unit);
     else rows.push([unit]);
   }
+  const rowHeading = (run: PdfSpan[]) =>
+    headingLevel({
+      id: '',
+      text: run.map((s) => s.text).join(''),
+      kind:
+        page.quantities.filter((q) => q.spanIds.some((id) => run.some((s) => s.id === id)))
+          .length >= 2
+          ? 'row'
+          : 'paragraph',
+    });
   const numericRuns = runs.filter((run) => !note(run.map((s) => s.text).join('')));
   const result: TableRegion[] = [];
   for (const unitRow of rows.filter((r) => r.length >= 2)) {
@@ -206,8 +217,7 @@ export function buildTableRegions(page: {
       .filter(
         (run) =>
           run[0].y > unitY &&
-          ((!run.some((s) => page.quantities.some((q) => q.spanIds.includes(s.id))) &&
-            headingLevel({ id: '', text: run.map((s) => s.text).join('') }) !== null) ||
+          (rowHeading(run) !== null ||
             note(run.map((s) => s.text).join('')) ||
             isPerformanceReportingTitle(run.map((s) => s.text).join('')) ||
             forecastReportingTitle(run.map((s) => s.text).join('')))
@@ -237,7 +247,15 @@ export function buildTableRegions(page: {
         ) ||
           /予想|実績|通期|20\d{2}年/.test(
             normalized(
-              tableRowAxis({ cells: grids, valueIds: page.quantities.map((q) => q.id) }, spans, q)
+              tableRowAxis(
+                {
+                  cells: grids,
+                  valueIds: page.quantities.map((q) => q.id),
+                  unitIds: unitRow.flatMap((u) => u.ids),
+                },
+                spans,
+                q
+              )
                 .map((s) => s.text)
                 .join('')
             )
@@ -253,7 +271,20 @@ export function buildTableRegions(page: {
             /配当(?:の状況|予想)/.test(normalized(run.map((s) => s.text).join(''))))
       )
       .sort((a, b) => b[0].y - a[0].y)[0];
-    if (!title) continue;
+    if (
+      !title ||
+      physical.some(
+        (run) =>
+          run[0].y > title[0].y &&
+          run[0].y < unitY &&
+          rowHeading(run) !== null &&
+          !(
+            forecastReportingTitle(title.map((s) => s.text).join('')) &&
+            forecastPeriodDeclaration(run.map((s) => s.text).join(''))
+          )
+      )
+    )
+      continue;
     const lastNote = Math.max(
       -Infinity,
       ...physical
@@ -324,7 +355,7 @@ export function tableColumnBand(
 }
 /** Closed neighboring cells form one row declaration before interpretation. */
 function closedAxisParts(
-  region: Pick<TableRegion, 'cells' | 'valueIds'>,
+  region: Pick<TableRegion, 'cells' | 'valueIds' | 'unitIds'>,
   spans: PdfSpan[],
   band: Pick<TableCell, 'top' | 'bottom'>,
   right: number
@@ -336,11 +367,15 @@ function closedAxisParts(
         (cell) =>
           cell.top <= band.top + 0.8 &&
           cell.bottom >= band.bottom - 0.8 &&
-          cell.spanIds.some(
-            (id) =>
-              region.valueIds.includes(id) &&
-              parseExactNumeric(spans.find((s) => s.id === id)!.text)?.unit === null
-          )
+          (region.unitIds.some((id) => {
+            const unit = spans.find((s) => s.id === id)!;
+            return cx(unit) > cell.left && cx(unit) < cell.right;
+          }) ||
+            cell.spanIds.some(
+              (id) =>
+                region.valueIds.includes(id) &&
+                parseExactNumeric(spans.find((s) => s.id === id)!.text)?.unit === null
+            ))
       )
       .map((cell) => cell.left)
   );
@@ -374,7 +409,7 @@ function closedAxisParts(
   });
 }
 export function tableRowDeclarations(
-  region: Pick<TableRegion, 'cells' | 'valueIds'>,
+  region: Pick<TableRegion, 'cells' | 'valueIds' | 'unitIds'>,
   spans: PdfSpan[]
 ): PdfSpan[][] {
   const declarations = region.cells.filter((cell) =>
@@ -397,7 +432,7 @@ export function tableRowDeclarations(
   );
 }
 export function tableRowAxis(
-  region: Pick<TableRegion, 'cells' | 'valueIds'>,
+  region: Pick<TableRegion, 'cells' | 'valueIds' | 'unitIds'>,
   spans: PdfSpan[],
   value: QuantityCell
 ): PdfSpan[] {

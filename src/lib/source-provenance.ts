@@ -4,7 +4,7 @@ import { normalized, headingLevel, declaredSubjectsIn } from './document-structu
 import { proseQuantities } from './quantity';
 import { tableForValue } from './table-layout';
 import { record, exact } from './fact-contract';
-import { isPerShareProfit } from './metric-semantics';
+import { isPerShareProfit, perShareProfitKeys } from './metric-semantics';
 import { continuationPage } from './document-links';
 import { reportingPeriodText, reportingPeriodShape } from './period-semantics';
 
@@ -102,22 +102,17 @@ export function splitNotes(page: ExtractedPage, valueId: string) {
       /株式分割/.test(normalized(b.text))
   );
 }
-/** Resolve the EPS name and its reporting-period clause together. */
-function epsNames(text: string): string[] {
-  return [
-    ...normalized(text).matchAll(
-      /(基本的|希薄化後|潜在株式調整後)?1株(?:当たり|あたり)(当期|四半期|中間)?純?(利益|損失)|\bEPS\b/gi
-    ),
-  ].map((m) =>
-    m[0].toUpperCase() === 'EPS'
-      ? 'EPS'
-      : `${/希薄化後|潜在株式調整後/.test(m[1] ?? '') ? 'diluted' : 'basic'}:${m[2] ?? ''}:${m[3]}`
-  );
-}
 function splitReportingPeriods(clause: string) {
   return [
     ...clause.matchAll(/20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g),
-  ].filter((m) => !/^(?:の)?(?:期首|初日|末日)/.test(clause.slice(m.index! + m[0].length)));
+  ].filter((m) => {
+    const following = clause.slice(m.index! + m[0].length);
+    // A split's execution date and a calculation's assumed date do not scope EPS.
+    return (
+      !/^(?:の)?(?:期首|初日|末日)/.test(following) &&
+      !/^に(?:おいて)?(?:当社は)?株式分割を(?:実施|行|予定|決議)/.test(following)
+    );
+  });
 }
 function splitPeriodMatches(clause: string, period: string | null): boolean {
   const periods = splitReportingPeriods(clause);
@@ -133,26 +128,28 @@ function splitPeriodMatches(clause: string, period: string | null): boolean {
   );
 }
 function matchingEpsClauses(text: string, label: string, period: string | null): string[] {
-  const names = epsNames(label);
+  const names = perShareProfitKeys(label);
   if (names.length !== 1) return [];
   // A comma starts another clause only when it explicitly restates a fiscal
   // period and EPS subject. A period list sharing one predicate stays intact.
   const clauses = reportingPeriodText(text).split(
-    /[。；;]|、(?=20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?の?(?:基本的|希薄化後|潜在株式調整後)?1株)/
+    /[。；;]|、(?=20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?の?(?:(?:基本的|希薄化後|潜在株式調整後)?1株|EPS))/i
   );
   return clauses.filter((clause) => {
-    if (!epsNames(clause).includes(names[0])) return false;
+    if (!perShareProfitKeys(clause).includes(names[0])) return false;
     if (
       !splitReportingPeriods(clause).length &&
       clauses.some(
         (other) =>
-          !epsNames(other).length && !/配当/.test(other) && splitReportingPeriods(other).length > 0
+          !perShareProfitKeys(other).length &&
+          !/配当/.test(other) &&
+          splitReportingPeriods(other).length > 0
       )
     )
       throw new Error('STRUCTURE:株式分割注記の共通期間と指標の期間対応を確定できません');
     if (
-      (/配当/.test(clause) || epsNames(clause).length > 1) &&
-      new Set(clause.match(/20\d{2}年\d{1,2}月期/g)).size > 1
+      (/配当/.test(clause) || perShareProfitKeys(clause).length > 1) &&
+      new Set(splitReportingPeriods(clause).map(([p]) => p)).size > 1
     )
       throw new Error('STRUCTURE:複数指標の株式分割注記の期間対応を確定できません');
     return splitPeriodMatches(clause, period);

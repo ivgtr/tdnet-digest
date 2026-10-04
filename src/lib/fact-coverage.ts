@@ -744,7 +744,7 @@ function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);
   const text = (ids: string[]) => ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
   return tableContinuations(pages).flatMap((link) => {
-    const periods = link.periodIds.map((id) => normalized(text([id])));
+    const periods = link.periodColumns.map((ids) => normalized(text(ids)));
     const dated = periods.map((period) => {
       // A chronological key is not a constraint on the complete source axis.
       // Ordinary numeric proof below still decides its qualified period meaning.

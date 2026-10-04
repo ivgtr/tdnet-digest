@@ -62,8 +62,18 @@ export function declaredSubjectsIn(block: TextBlock): string[] {
 export function headingLevel(
   block: Pick<TextBlock, 'id' | 'text'> & Partial<Pick<TextBlock, 'kind'>>
 ): number | null {
-  if (block.kind === 'row') return null;
   const text = normalized(block.text);
+  const raw = block.text.normalize('NFKC').trim();
+  const numbered = /^■/.test(text)
+    ? 1
+    : /^\d+\.(?:\s|[^\d]|20\d{2}年)/.test(raw)
+      ? 1
+      : /^\(\d+\)/.test(text)
+        ? 2
+        : /^\(?[①-⑳]\)?/.test(text)
+          ? 3
+          : null;
+  if (block.kind === 'row') return !/[。；]/.test(text) ? numbered : null;
   const quantities = proseQuantities({ id: block.id, text });
   if (
     text.length > 180 ||
@@ -76,10 +86,12 @@ export function headingLevel(
     return null;
   if (/^■/.test(text)) return 1;
   if (forecastReportingTitle(text) && /に関するお知らせ$/.test(text)) return 1;
-  if (/^20\d{2}年.*(?:経営成績|予想|配当|月度|実績|取得予定)/.test(text)) return 3;
-  if (/^\d+[.．]/.test(text)) return 1;
-  if (/^\(\d+\)/.test(text)) return 2;
-  if (/^\(?[①-⑳]\)?/.test(text)) return 3;
+  if (
+    /^20\d{2}年.*(?:経営成績|予想|配当|月度|実績|取得予定)/.test(text) &&
+    (text.match(/20\d{2}年\d{1,2}月期/g)?.length ?? 0) <= 1
+  )
+    return 3;
+  if (numbered !== null) return numbered;
   if (
     /^\((?:連結|個別)?(?:損益計算書|貸借対照表|キャッシュ.*|重要な.*|追加情報|.*関係)\)$/.test(text)
   )
@@ -416,6 +428,15 @@ export function buildBlocks(
       });
   }
   return blocks;
+}
+
+/** A fiscal column is a complete horizontal run, retaining every source span. */
+export function fiscalHeadingRuns(spans: PdfSpan[]): PdfSpan[][] {
+  return lineRuns(spans).filter(
+    (run) =>
+      (normalized(run.map((s) => s.text).join('')).match(/20\d{2}年\d{1,2}月期/g)?.length ?? 0) ===
+      1
+  );
 }
 
 /** Structural hints only: no values, periods, or semantics are confirmed here. */

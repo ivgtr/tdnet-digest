@@ -17,7 +17,7 @@ import {
   parseExactQuantity,
   isQuantityPrefix,
 } from './quantity';
-import { quantityCells, lineRuns } from './document-structure';
+import { quantityCells, lineRuns, fiscalHeadingRuns } from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
 import { unchangedDividendReference, quantityPeriodAxis } from './dividend-semantics';
 import {
@@ -434,9 +434,9 @@ export function verifyTableEvidence(
         .map((q) => q.y)
     ),
   ];
+  const closedAxis = table?.method === 'ruled' ? tableRowAxis(table, tableSpans, value) : null;
   const onDataRow = (s: PdfSpan) => {
-    if (table && tableRowAxis(table, tableSpans, value).some((axis) => axis.id === s.id))
-      return true;
+    if (closedAxis) return closedAxis.some((axis) => axis.id === s.id);
     if (sameRow(s, value)) return true;
     if (Math.abs(s.y - value.y) > Math.min(s.height, value.height) * 1.2) return false;
     const distances = dataRows.map((y) => Math.abs(y - s.y));
@@ -467,13 +467,26 @@ export function verifyTableEvidence(
   const rowPeriods = periods.filter(
     (s) => onDataRow(s) && s.x + s.width < Math.min(...rowNumbers.map((n) => n.x))
   );
-  const fiscalPeers = tableSpans.filter(
-    (s) => s.y < value.y && /20\d{2}年\d{1,2}月期/.test(compact(s.text))
-  );
+  const fiscalRuns = fiscalHeadingRuns(tableSpans.filter((s) => s.y < value.y));
+  const fiscalPeers = (run: PdfSpan[]) => fiscalRuns.filter((other) => sameRow(run[0], other[0]));
   const ownedFiscal = (s: PdfSpan) => {
-    const peers = fiscalPeers.filter((other) => sameRow(s, other));
-    return peers.length >= 2 && peers[bandFor(value, peers).index].id === s.id;
+    const run = fiscalRuns.find((r) => r.some((part) => part.id === s.id));
+    if (!run) return false;
+    const peers = fiscalPeers(run);
+    const bands = peers.map((r) => ({
+      ...r[0],
+      width: r[r.length - 1].x + r[r.length - 1].width - r[0].x,
+    }));
+    return peers.length >= 2 && peers[bandFor(value, bands).index] === run;
   };
+  for (const run of fiscalRuns) {
+    if (
+      fiscalPeers(run).length >= 2 &&
+      run.some((s) => periods.some((p) => p.id === s.id)) &&
+      run.some((s) => !periods.some((p) => p.id === s.id))
+    )
+      fail('期間見出しの一部が未参照');
+  }
   const columnPeriods = periods.filter(
     (s) => !sameRow(s, value) && above(s) && (inBand(s) || ownedFiscal(s))
   );

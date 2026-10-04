@@ -14,8 +14,20 @@ const currency = /^(?:千|百万|億)?円$|^(?:ドル|USD|EUR)$/;
 /** Supported EPS labels, including IFRS profit/loss forms. */
 export const BASIC_PER_SHARE_PROFIT_METRIC =
   '(?:(?:基本的)?1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|EPS)';
+/** EPS denotes basic annual profit per share; diluted and interim names remain distinct. */
+export function perShareProfitKeys(text: string): string[] {
+  return [
+    ...compact(text).matchAll(
+      /(基本的|希薄化後|潜在株式調整後)?1株(?:当たり|あたり)(当期|四半期|中間)?純?(利益|損失)|\bEPS\b/gi
+    ),
+  ].map((m) =>
+    m[0].toUpperCase() === 'EPS'
+      ? 'basic:当期:利益'
+      : `${/希薄化後|潜在株式調整後/.test(m[1] ?? '') ? 'diluted' : 'basic'}:${m[2] ?? '当期'}:${m[3]}`
+  );
+}
 export function isPerShareProfit(label: string): boolean {
-  return /1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|\bEPS\b/i.test(compact(label));
+  return perShareProfitKeys(label).length > 0;
 }
 
 /** 単位と分母の明記を優先し、配当総額を1株配当へ読み替えない。 */

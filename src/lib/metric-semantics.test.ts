@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyMetric } from './metric-semantics';
+import { classifyMetric, perShareProfitKeys } from './metric-semantics';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary } from './fact-summary';
 import { toValue, validateScoreInput } from './score-extraction';
@@ -85,4 +85,18 @@ describe('数量の指標区分と配当の分母', () => {
       expect(() => toValue(forged, document)).toThrow('範囲');
     }
   );
+});
+
+it.each([
+  ['EPS', '基本的1株当たり当期利益', true],
+  ['基本的1株当たり当期利益', 'eps', true],
+  ['EPS', '1株当たり純利益', true],
+  ['EPS', '希薄化後1株当たり当期利益', false],
+  ['EPS', '潜在株式調整後1株当たり当期利益', false],
+  ['EPS', '1株当たり四半期利益', false],
+  ['EPS', '1株当たり中間損失', false],
+])('EPSの別名を共通の指標キーで照合する: %s / %s', (left, right, equal) => {
+  const keys = perShareProfitKeys(left);
+  expect(keys).toHaveLength(1);
+  expect(keys[0] === perShareProfitKeys(right)[0]).toBe(equal);
 });
