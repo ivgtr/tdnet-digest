@@ -8,8 +8,13 @@
     "code": "37230",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 2203,
@@ -28,8 +33,13 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 1258,
@@ -48,8 +58,13 @@
         }
       },
       {
-        "labels": ["経常利益"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 1281,
@@ -68,8 +83,13 @@
         }
       },
       {
-        "labels": ["四半期純利益"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "四半期純利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 889,
@@ -88,8 +108,13 @@
         }
       },
       {
-        "labels": ["1株当たり四半期純利益"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "1株当たり四半期純利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 88.83,
@@ -108,8 +133,14 @@
         }
       },
       {
-        "labels": ["売上高"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 3600,
@@ -128,8 +159,14 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 2200,
@@ -148,8 +185,14 @@
         }
       },
       {
-        "labels": ["経常利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 2200,
@@ -168,8 +211,14 @@
         }
       },
       {
-        "labels": ["当期純利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 1500,
@@ -188,8 +237,14 @@
         }
       },
       {
-        "labels": ["1株当たり当期純利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 145.91,
@@ -208,8 +263,14 @@
         }
       },
       {
-        "labels": ["年間配当金"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "年間配当金"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 10,
@@ -228,8 +289,14 @@
         }
       },
       {
-        "labels": ["期末配当金"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "期末配当金"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 10,
@@ -248,8 +315,15 @@
         }
       },
       {
-        "labels": ["第2四半期末配当金", "年間配当金第2四半期末"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "第2四半期末配当金",
+          "年間配当金第2四半期末"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 0,
@@ -271,26 +345,33 @@
     "sourceHash": "9598bfdfdd6c38c964b51e9f3e9f6d305ffbcf2087e1b8078392510d46f9c863"
   },
   {
-    "id": "holdout-insource-20260924",
-    "title": "2026年９月期 通期連結業績予想の修正に関するお知らせ",
+    "id": "holdout-makuake-20260901",
+    "title": "通期業績予想の修正に関するお知らせ",
     "documentType": "earningsRevision",
-    "url": "https://www.insource.co.jp/resource/pdf/ir/26092401.pdf",
-    "publishedDate": "2026-09-24",
-    "code": "62000",
+    "url": "https://ssl4.eir-parts.net/doc/4479/tdnet/2880180/00.pdf",
+    "publishedDate": "2026-09-01",
+    "code": "44790",
+    "sourceHash": "326cb1f5963513a4672e48d57cc610646a79e687baeb4efbad58020957531bb9",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
-            "value": 16000,
+            "value": 5400,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
+          "subject": "株式会社マクアケ",
+          "scope": null,
           "basis": null,
           "state": "forecastBefore",
           "metricKind": "amount",
@@ -299,206 +380,229 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
-            "value": 6380,
+            "value": 5850,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
+          "subject": "株式会社マクアケ",
+          "scope": null,
           "basis": null,
-          "state": "forecastBefore",
+          "state": "forecastAfter",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
         }
       },
       {
-        "labels": ["経常利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
-            "value": 6430,
+            "value": 860,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
+          "subject": "株式会社マクアケ",
+          "scope": null,
           "basis": null,
-          "state": "forecastBefore",
+          "state": "forecastAfter",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
-            "value": 4400,
+            "value": 860,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
+          "subject": "株式会社マクアケ",
+          "scope": null,
           "basis": null,
-          "state": "forecastBefore",
+          "state": "forecastAfter",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
         }
       },
       {
-        "labels": ["1株当たり当期純利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
-            "value": 52.39,
+            "value": 740,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 58.03,
             "unit": "円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
-          "basis": null,
-          "state": "forecastBefore",
-          "metricKind": "perShare",
-          "periodKind": "fullYear",
-          "polarity": "affirmative"
-        }
-      },
-      {
-        "labels": ["売上高"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
-        "variants": [
-          {
-            "value": 15600,
-            "unit": "百万円",
-            "page": 1
-          }
-        ],
-        "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
+          "subject": "株式会社マクアケ",
+          "scope": null,
           "basis": null,
           "state": "forecastAfter",
-          "metricKind": "amount",
-          "periodKind": "fullYear",
-          "polarity": "affirmative"
-        }
-      },
-      {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
-        "variants": [
-          {
-            "value": 6150,
-            "unit": "百万円",
-            "page": 1
-          }
-        ],
-        "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
-          "basis": null,
-          "state": "forecastAfter",
-          "metricKind": "amount",
-          "periodKind": "fullYear",
-          "polarity": "affirmative"
-        }
-      },
-      {
-        "labels": ["経常利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
-        "variants": [
-          {
-            "value": 6200,
-            "unit": "百万円",
-            "page": 1
-          }
-        ],
-        "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
-          "basis": null,
-          "state": "forecastAfter",
-          "metricKind": "amount",
-          "periodKind": "fullYear",
-          "polarity": "affirmative"
-        }
-      },
-      {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
-        "variants": [
-          {
-            "value": 4250,
-            "unit": "百万円",
-            "page": 1
-          }
-        ],
-        "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
-          "basis": null,
-          "state": "forecastAfter",
-          "metricKind": "amount",
-          "periodKind": "fullYear",
-          "polarity": "affirmative"
-        }
-      },
-      {
-        "labels": ["1株当たり当期純利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
-        "variants": [
-          {
-            "value": 50.86,
-            "unit": "円",
-            "page": 1
-          }
-        ],
-        "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
-          "basis": null,
-          "state": "forecastAfter",
-          "metricKind": "perShare",
-          "periodKind": "fullYear",
-          "polarity": "affirmative"
-        }
-      },
-      {
-        "labels": ["配当予想"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
-        "variants": [
-          {
-            "value": 35,
-            "unit": "円",
-            "page": 1
-          }
-        ],
-        "semantics": {
-          "subject": "株式会社インソース",
-          "scope": "連結",
-          "basis": null,
-          "state": "forecast",
           "metricKind": "perShare",
           "periodKind": "fullYear",
           "polarity": "affirmative"
         }
       }
     ],
-    "sourceHash": "152096cf4d74014350b571d3a8ccc97d19b3a93222402d46ef9b722eac88107c"
+    "expectedRanges": [
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 670,
+        "upper": 800,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 670,
+        "upper": 800,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 590,
+        "upper": 700,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 46.28,
+        "upper": 54.91,
+        "unit": "円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ]
   }
 ]

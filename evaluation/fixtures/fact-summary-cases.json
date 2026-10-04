@@ -6,8 +6,13 @@
     "url": "https://finance-frontend-pc-dist.west.edge.storage-yahoo.jp/disclosure/20260813/20260812518359.pdf",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 3393,
@@ -38,8 +43,13 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 634,
@@ -70,8 +80,13 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する四半期純利益"],
-        "periods": ["2026年9月期第3四半期", "2026年9月期第3四半期累計"],
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
         "variants": [
           {
             "value": 418,
@@ -102,8 +117,14 @@
         }
       },
       {
-        "labels": ["売上高"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 4500,
@@ -124,8 +145,16 @@
         }
       },
       {
-        "labels": ["年間配当金", "年間配当金合計", "期末配当金"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "年間配当金",
+          "年間配当金合計",
+          "期末配当金"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 11,
@@ -146,8 +175,14 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 539,
@@ -168,8 +203,13 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期", "2026年9月期通期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期"
+        ],
         "variants": [
           {
             "value": 800,
@@ -198,8 +238,14 @@
     "url": "https://finance-frontend-pc-dist.west.edge.storage-yahoo.jp/disclosure/20260910/20260909533864.pdf",
     "expected": [
       {
-        "labels": ["売上収益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 19730,
@@ -220,8 +266,14 @@
         }
       },
       {
-        "labels": ["売上収益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 22000,
@@ -242,8 +294,14 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 2800,
@@ -264,8 +322,14 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 2900,
@@ -286,8 +350,17 @@
         }
       },
       {
-        "labels": ["年間配当金", "年間配当金合計", "期末配当金", "年間配当金期末"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "年間配当金",
+          "年間配当金合計",
+          "期末配当金",
+          "年間配当金期末"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 125,
@@ -308,8 +381,17 @@
         }
       },
       {
-        "labels": ["年間配当金", "年間配当金合計", "期末配当金", "年間配当金期末"],
-        "periods": ["2026年9月期", "2026年9月期通期", "2026年9月期(予想)"],
+        "labels": [
+          "年間配当金",
+          "年間配当金合計",
+          "期末配当金",
+          "年間配当金期末"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
         "variants": [
           {
             "value": 127,
@@ -384,8 +466,12 @@
     "url": "https://www.release.tdnet.info/inbs/140120260930543649.pdf",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2026年3月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年3月期"
+        ],
         "variants": [
           {
             "value": 3298,
@@ -406,8 +492,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年3月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年3月期"
+        ],
         "variants": [
           {
             "value": 47,
@@ -428,8 +518,12 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2026年3月期"],
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年3月期"
+        ],
         "variants": [
           {
             "value": 24,
@@ -450,8 +544,13 @@
         }
       },
       {
-        "labels": ["売上高"],
-        "periods": ["2027年3月期通期", "2027年3月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年3月期通期",
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 2600,
@@ -472,8 +571,13 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2027年3月期通期", "2027年3月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年3月期通期",
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 30,
@@ -494,8 +598,13 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2027年3月期通期", "2027年3月期"],
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年3月期通期",
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": -400,
@@ -516,8 +625,12 @@
         }
       },
       {
-        "labels": ["売上高営業利益率"],
-        "periods": ["2026年3月期"],
+        "labels": [
+          "売上高営業利益率"
+        ],
+        "periods": [
+          "2026年3月期"
+        ],
         "variants": [
           {
             "value": 1.4,
@@ -538,8 +651,13 @@
         }
       },
       {
-        "labels": ["１株当たり当期純利益"],
-        "periods": ["2027年3月期通期", "2027年3月期"],
+        "labels": [
+          "１株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年3月期通期",
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": -119.53,
@@ -560,8 +678,14 @@
         }
       },
       {
-        "labels": ["年間配当金", "年間配当金合計"],
-        "periods": ["2027年3月期", "2027年3月期(予想)"],
+        "labels": [
+          "年間配当金",
+          "年間配当金合計"
+        ],
+        "periods": [
+          "2027年3月期",
+          "2027年3月期(予想)"
+        ],
         "variants": [
           {
             "value": 0,
@@ -593,7 +717,9 @@
           "basis": "日本基準",
           "periodKind": "none",
           "metricKind": "none",
-          "qualifiers": ["概算額"],
+          "qualifiers": [
+            "概算額"
+          ],
           "state": "forecast",
           "polarity": "affirmative",
           "conditions": []
@@ -624,8 +750,12 @@
     "url": "https://www2.jpx.co.jp/disc/93130/140120260709590524.pdf",
     "expected": [
       {
-        "labels": ["取得する株式の総数"],
-        "periods": ["2026年7月15日"],
+        "labels": [
+          "取得する株式の総数"
+        ],
+        "periods": [
+          "2026年7月15日"
+        ],
         "variants": [
           {
             "value": 200000,
@@ -639,7 +769,9 @@
           "basis": null,
           "periodKind": "eventDate",
           "metricKind": "count",
-          "qualifiers": ["上限"],
+          "qualifiers": [
+            "上限"
+          ],
           "state": "planned",
           "polarity": "affirmative",
           "conditions": [
@@ -649,8 +781,12 @@
         }
       },
       {
-        "labels": ["株式の取得価額の総額"],
-        "periods": ["2026年7月15日"],
+        "labels": [
+          "株式の取得価額の総額"
+        ],
+        "periods": [
+          "2026年7月15日"
+        ],
         "variants": [
           {
             "value": 206200000,
@@ -664,7 +800,9 @@
           "basis": null,
           "periodKind": "eventDate",
           "metricKind": "amount",
-          "qualifiers": ["上限"],
+          "qualifiers": [
+            "上限"
+          ],
           "state": "planned",
           "polarity": "affirmative",
           "conditions": [
@@ -683,8 +821,12 @@
     "url": "https://www2.jpx.co.jp/disc/39790/140120260714592844.pdf",
     "expected": [
       {
-        "labels": ["MRR"],
-        "periods": ["2026年6月"],
+        "labels": [
+          "MRR"
+        ],
+        "periods": [
+          "2026年6月"
+        ],
         "variants": [
           {
             "value": 338214,
@@ -698,10 +840,15 @@
           "basis": null,
           "periodKind": "month",
           "metricKind": "amount",
-          "qualifiers": ["速報値", "修正する可能性"],
+          "qualifiers": [
+            "速報値",
+            "修正する可能性"
+          ],
           "state": "actual",
           "polarity": "affirmative",
-          "conditions": ["※本数値は速報値であり、今後修正する可能性があります。"]
+          "conditions": [
+            "※本数値は速報値であり、今後修正する可能性があります。"
+          ]
         }
       }
     ],
@@ -714,8 +861,12 @@
     "url": "https://www2.jpx.co.jp/disc/551A0/140120260709590424.pdf",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2025年7月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2025年7月期"
+        ],
         "variants": [
           {
             "value": 592019,
@@ -736,8 +887,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2025年7月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2025年7月期"
+        ],
         "variants": [
           {
             "value": 64168,
@@ -758,8 +913,12 @@
         }
       },
       {
-        "labels": ["当期純利益"],
-        "periods": ["2025年7月期"],
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2025年7月期"
+        ],
         "variants": [
           {
             "value": 44195,
@@ -839,8 +998,12 @@
     "code": "6652",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 75500,
@@ -859,8 +1022,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 7200,
@@ -879,8 +1046,12 @@
         }
       },
       {
-        "labels": ["経常利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 6750,
@@ -899,8 +1070,12 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 6000,
@@ -919,8 +1094,12 @@
         }
       },
       {
-        "labels": ["１株当たり当期純利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "１株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 203.25,
@@ -939,8 +1118,12 @@
         }
       },
       {
-        "labels": ["売上高"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 85000,
@@ -959,8 +1142,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 9400,
@@ -979,8 +1166,12 @@
         }
       },
       {
-        "labels": ["経常利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 8950,
@@ -999,8 +1190,12 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 8600,
@@ -1019,8 +1214,12 @@
         }
       },
       {
-        "labels": ["１株当たり当期純利益"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "１株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 290.46,
@@ -1039,8 +1238,12 @@
         }
       },
       {
-        "labels": ["中間配当金"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "中間配当金"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 65,
@@ -1059,8 +1262,12 @@
         }
       },
       {
-        "labels": ["期末配当金"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "期末配当金"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 65,
@@ -1079,8 +1286,12 @@
         }
       },
       {
-        "labels": ["年間配当金"],
-        "periods": ["2027年3月期"],
+        "labels": [
+          "年間配当金"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
         "variants": [
           {
             "value": 130,
@@ -1120,8 +1331,13 @@
     "code": "4394",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2026年11月期第3四半期累計", "2026年11月期第3四半期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
         "variants": [
           {
             "value": 1062,
@@ -1140,8 +1356,13 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年11月期第3四半期累計", "2026年11月期第3四半期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
         "variants": [
           {
             "value": 155,
@@ -1160,8 +1381,13 @@
         }
       },
       {
-        "labels": ["経常利益"],
-        "periods": ["2026年11月期第3四半期累計", "2026年11月期第3四半期"],
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
         "variants": [
           {
             "value": 160,
@@ -1180,8 +1406,13 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する四半期純利益"],
-        "periods": ["2026年11月期第3四半期累計", "2026年11月期第3四半期"],
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
         "variants": [
           {
             "value": 103,
@@ -1200,8 +1431,13 @@
         }
       },
       {
-        "labels": ["１株当たり四半期純利益"],
-        "periods": ["2026年11月期第3四半期累計", "2026年11月期第3四半期"],
+        "labels": [
+          "１株当たり四半期純利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
         "variants": [
           {
             "value": 17.05,
@@ -1221,8 +1457,12 @@
         "adjustmentBasis": "splitAdjusted"
       },
       {
-        "labels": ["売上高"],
-        "periods": ["2026年11月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
         "variants": [
           {
             "value": 1451,
@@ -1241,8 +1481,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年11月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
         "variants": [
           {
             "value": 204,
@@ -1261,8 +1505,12 @@
         }
       },
       {
-        "labels": ["経常利益"],
-        "periods": ["2026年11月期"],
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
         "variants": [
           {
             "value": 206,
@@ -1281,8 +1529,12 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2026年11月期"],
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
         "variants": [
           {
             "value": 133,
@@ -1301,8 +1553,12 @@
         }
       },
       {
-        "labels": ["１株当たり当期純利益"],
-        "periods": ["2026年11月期"],
+        "labels": [
+          "１株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
         "variants": [
           {
             "value": 22.01,
@@ -1322,8 +1578,12 @@
         "adjustmentBasis": "splitAdjusted"
       },
       {
-        "labels": ["年間配当金期末"],
-        "periods": ["2026年11月期"],
+        "labels": [
+          "年間配当金期末"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
         "variants": [
           {
             "value": 10,
@@ -1402,8 +1662,12 @@
     "sourceHash": "343aa9d1ff34e539a2ccce148653a7345122b83596fb51af19a1ddba91c5a932",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2026年5月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年5月期"
+        ],
         "variants": [
           {
             "value": 3803,
@@ -1422,8 +1686,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年5月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年5月期"
+        ],
         "variants": [
           {
             "value": -833,
@@ -1442,8 +1710,12 @@
         }
       },
       {
-        "labels": ["親会社株主に帰属する当期純利益"],
-        "periods": ["2026年5月期"],
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年5月期"
+        ],
         "variants": [
           {
             "value": 1152,
@@ -1473,8 +1745,12 @@
     "sourceHash": "c7463314f1490c420632bdd8c24cd3403e96579d7b35b37412b50a09bfebe3e7",
     "expected": [
       {
-        "labels": ["売上高"],
-        "periods": ["2026年7月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
         "variants": [
           {
             "value": 2800,
@@ -1493,8 +1769,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年7月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
         "variants": [
           {
             "value": 401,
@@ -1513,8 +1793,12 @@
         }
       },
       {
-        "labels": ["当期純利益"],
-        "periods": ["2026年7月期"],
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
         "variants": [
           {
             "value": 288,
@@ -1533,8 +1817,12 @@
         }
       },
       {
-        "labels": ["売上高"],
-        "periods": ["2026年7月期"],
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
         "variants": [
           {
             "value": 2650,
@@ -1553,8 +1841,12 @@
         }
       },
       {
-        "labels": ["営業利益"],
-        "periods": ["2026年7月期"],
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
         "variants": [
           {
             "value": 488,
@@ -1573,8 +1865,12 @@
         }
       },
       {
-        "labels": ["当期純利益"],
-        "periods": ["2026年7月期"],
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
         "variants": [
           {
             "value": 331,
@@ -1593,5 +1889,302 @@
         }
       }
     ]
+  },
+  {
+    "id": "holdout-insource-20260924",
+    "title": "2026年９月期 通期連結業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://www.insource.co.jp/resource/pdf/ir/26092401.pdf",
+    "publishedDate": "2026-09-24",
+    "code": "62000",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 16000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6380,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6430,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 4400,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 52.39,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 15600,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6150,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 4250,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 50.86,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "配当予想"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 35,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ],
+    "sourceHash": "152096cf4d74014350b571d3a8ccc97d19b3a93222402d46ef9b722eac88107c"
   }
 ]
