@@ -101,14 +101,20 @@ export function splitNotes(page: ExtractedPage, valueId: string) {
 export function splitNoteApplies(text: string, label: string, period: string | null): boolean {
   if (/配当/.test(normalized(label))) return /配当/.test(normalized(text));
   if (!isPerShareProfit(label) || !isPerShareProfit(text)) return false;
+  const scope = reportingPeriodText(text)
+    .split(/[。；;]/)
+    .filter((sentence) => !/配当/.test(sentence) || isPerShareProfit(sentence))
+    .join('。');
+  for (const sentence of scope.split('。'))
+    if (
+      /配当/.test(sentence) &&
+      isPerShareProfit(sentence) &&
+      new Set(sentence.match(/20\d{2}年\d{1,2}月期/g)).size > 1
+    )
+      throw new Error('STRUCTURE:複数指標の株式分割注記の期間対応を確定できません');
   const periods = [
-    ...reportingPeriodText(text).matchAll(
-      /20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g
-    ),
-  ].filter(
-    (m) =>
-      !/^(?:の)?(?:期首|初日|末日)/.test(reportingPeriodText(text).slice(m.index! + m[0].length))
-  );
+    ...scope.matchAll(/20\d{2}年\d{1,2}月期(?:第[1-4]四半期(?:累計|単独)?|中間期|通期)?/g),
+  ].filter((m) => !/^(?:の)?(?:期首|初日|末日)/.test(scope.slice(m.index! + m[0].length)));
   if (!periods.length) return true;
   const target = reportingPeriodText(period ?? '');
   const fy = target.match(/20\d{2}年\d{1,2}月期/)?.[0];

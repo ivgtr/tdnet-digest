@@ -58,6 +58,16 @@ it('EPSの分割調整は注記が明示した対象期だけに適用する', (
   expect(applicableSplitNotes(p, valueId, label, '2026年3月期')).toEqual([]);
 });
 
+it('同じ注記内の配当の年度をEPSの対象期へ貸さず、未証明の複数指標を拒否する', () => {
+  const eps = '2026年3月期の1株当たり当期利益は株式分割を期首に行ったと仮定して算定しています。';
+  const dividend = '2027年3月期の配当は株式分割後の金額です。';
+  expect(splitNoteApplies(eps + dividend, '1株当たり当期利益', '2026年3月期')).toBe(true);
+  expect(splitNoteApplies(eps + dividend, '1株当たり当期利益', '2027年3月期')).toBe(false);
+  expect(() =>
+    splitNoteApplies(eps.replace('。', '、') + dividend, '1株当たり当期利益', '2027年3月期')
+  ).toThrow('期間対応');
+});
+
 it.each([
   '基本的1株当たり当期利益',
   '1株当たり四半期利益',
