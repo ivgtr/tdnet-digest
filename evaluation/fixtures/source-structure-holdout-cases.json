@@ -347,61 +347,34 @@
     "sourceHash": "9598bfdfdd6c38c964b51e9f3e9f6d305ffbcf2087e1b8078392510d46f9c863"
   },
   {
-    "id": "holdout-makuake-20260901",
-    "title": "通期業績予想の修正に関するお知らせ",
+    "id": "holdout-remix-20260611",
+    "title": "2027年３月期連結業績予想の公表に関するお知らせ",
     "documentType": "earningsRevision",
-    "url": "https://ssl4.eir-parts.net/doc/4479/tdnet/2880180/00.pdf",
-    "publishedDate": "2026-09-01",
-    "code": "44790",
-    "sourceHash": "326cb1f5963513a4672e48d57cc610646a79e687baeb4efbad58020957531bb9",
+    "url": "https://www2.jpx.co.jp/disc/38250/140120260611566919.pdf",
+    "publishedDate": "2026-06-11",
+    "code": "38250",
+    "sourceHash": "4f538931a9845b44c7a57b1f2611ecb54f410ae24f460d774f8eaa1784bff858",
     "expected": [
       {
         "labels": [
           "売上高"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2026年3月期",
+          "2026年3月期通期"
         ],
         "variants": [
           {
-            "value": 5400,
+            "value": 17751,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastBefore",
-          "metricKind": "amount",
-          "periodKind": "fullYear",
-          "polarity": "affirmative"
-        }
-      },
-      {
-        "labels": [
-          "売上高"
-        ],
-        "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
-        ],
-        "variants": [
-          {
-            "value": 5850,
-            "unit": "百万円",
-            "page": 1
-          }
-        ],
-        "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
-          "basis": null,
-          "state": "forecastAfter",
+          "state": "actual",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -412,22 +385,21 @@
           "営業利益"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2026年3月期",
+          "2026年3月期通期"
         ],
         "variants": [
           {
-            "value": 860,
+            "value": -5477,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastAfter",
+          "state": "actual",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -438,22 +410,21 @@
           "経常利益"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2026年3月期",
+          "2026年3月期通期"
         ],
         "variants": [
           {
-            "value": 860,
+            "value": -5501,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastAfter",
+          "state": "actual",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -461,25 +432,24 @@
       },
       {
         "labels": [
-          "当期純利益"
+          "親会社株主に帰属する当期純利益"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2026年3月期",
+          "2026年3月期通期"
         ],
         "variants": [
           {
-            "value": 740,
+            "value": -4740,
             "unit": "百万円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastAfter",
+          "state": "actual",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -487,25 +457,24 @@
       },
       {
         "labels": [
-          "1株当たり当期純利益"
+          "1株あたり当期純利益"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2026年3月期",
+          "2026年3月期通期"
         ],
         "variants": [
           {
-            "value": 58.03,
+            "value": -33.89,
             "unit": "円",
             "page": 1
           }
         ],
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastAfter",
+          "state": "actual",
           "metricKind": "perShare",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -515,22 +484,45 @@
     "expectedRanges": [
       {
         "labels": [
-          "営業利益"
+          "売上高"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
         ],
-        "lower": 670,
-        "upper": 800,
+        "lower": 48777,
+        "upper": 56112,
         "unit": "百万円",
         "page": 1,
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastBefore",
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
+        ],
+        "lower": 6723,
+        "upper": 14058,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecast",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -541,19 +533,19 @@
           "経常利益"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
         ],
-        "lower": 670,
-        "upper": 800,
+        "lower": 6485,
+        "upper": 13820,
         "unit": "百万円",
         "page": 1,
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastBefore",
+          "state": "forecast",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -561,22 +553,22 @@
       },
       {
         "labels": [
-          "当期純利益"
+          "親会社株主に帰属する当期純利益"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
         ],
-        "lower": 590,
-        "upper": 700,
+        "lower": 5319,
+        "upper": 11443,
         "unit": "百万円",
         "page": 1,
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastBefore",
+          "state": "forecast",
           "metricKind": "amount",
           "periodKind": "fullYear",
           "polarity": "affirmative"
@@ -584,22 +576,22 @@
       },
       {
         "labels": [
-          "1株当たり当期純利益"
+          "1株あたり当期純利益"
         ],
         "periods": [
-          "2026年9月期",
-          "2026年9月期通期",
-          "2026年9月期(予想)"
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
         ],
-        "lower": 46.28,
-        "upper": 54.91,
+        "lower": 36.28,
+        "upper": 78.06,
         "unit": "円",
         "page": 1,
         "semantics": {
-          "subject": "株式会社マクアケ",
-          "scope": null,
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
           "basis": null,
-          "state": "forecastBefore",
+          "state": "forecast",
           "metricKind": "perShare",
           "periodKind": "fullYear",
           "polarity": "affirmative"

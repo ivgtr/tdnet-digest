@@ -2222,5 +2222,266 @@
         }
       }
     ]
+  },
+  {
+    "id": "holdout-makuake-20260901",
+    "title": "通期業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://ssl4.eir-parts.net/doc/4479/tdnet/2880180/00.pdf",
+    "publishedDate": "2026-09-01",
+    "code": "44790",
+    "sourceHash": "326cb1f5963513a4672e48d57cc610646a79e687baeb4efbad58020957531bb9",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 5400,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 5850,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 860,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 860,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 740,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 58.03,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ],
+    "expectedRanges": [
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 670,
+        "upper": 800,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 670,
+        "upper": 800,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 590,
+        "upper": 700,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 46.28,
+        "upper": 54.91,
+        "unit": "円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ]
   }
 ]
