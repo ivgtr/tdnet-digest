@@ -30,24 +30,31 @@ it.each(['。', '、', 'EPS別名', '希薄化後EPS別名'])(
     const punctuation = separator.endsWith('EPS別名') ? '、' : separator;
     const p = make(before + punctuation + restated + '。');
     const id = p.quantities.find((q) => q.text === '10')!.id;
-    expect(applicableSplitNotes(p, id, label, '2026年3月期')[0].basis).toBe('beforeSplit');
-    expect(applicableSplitNotes(p, id, label, '2027年3月期')[0].basis).toBe('splitAdjusted');
+    expect(applicableSplitNotes(p, id, label, '2026年3月期', 'actual')[0].basis).toBe(
+      'beforeSplit'
+    );
+    expect(applicableSplitNotes(p, id, label, '2027年3月期', 'actual')[0].basis).toBe(
+      'splitAdjusted'
+    );
     const contradictory = make(before + punctuation + restated.replace('2027', '2026') + '。');
-    expect(() => applicableSplitNotes(contradictory, id, label, '2026年3月期')).toThrow('適用基準');
+    expect(() => applicableSplitNotes(contradictory, id, label, '2026年3月期', 'actual')).toThrow(
+      '適用基準'
+    );
   }
 );
 
 it('基本・希薄化後と当期・四半期の指標を注記の明記に対応させる', () => {
   const note = '2027年3月期の基本的1株当たり当期利益は株式分割の影響を考慮しています。';
-  expect(splitNoteApplies(note, '希薄化後1株当たり当期利益', '2027年3月期')).toBe(false);
-  expect(splitNoteApplies(note, '1株当たり四半期利益', '2027年3月期')).toBe(false);
-  expect(splitNoteApplies(note, '基本的1株当たり当期利益', '2027年3月期')).toBe(true);
+  expect(splitNoteApplies(note, '希薄化後1株当たり当期利益', '2027年3月期', 'actual')).toBe(false);
+  expect(splitNoteApplies(note, '1株当たり四半期利益', '2027年3月期', 'actual')).toBe(false);
+  expect(splitNoteApplies(note, '基本的1株当たり当期利益', '2027年3月期', 'actual')).toBe(true);
   // Splitting a note must not silently erase an unassigned common period declaration.
   expect(() =>
     splitNoteApplies(
       '2027年3月期について。基本的1株当たり当期利益は株式分割の影響を考慮しています。',
       '基本的1株当たり当期利益',
-      '2026年3月期'
+      '2026年3月期',
+      'actual'
     )
   ).toThrow('期間対応');
 });
@@ -103,7 +110,8 @@ it.each([
     splitNoteApplies(
       note,
       note.includes('四半期利益') ? '1株当たり四半期利益' : '基本的1株当たり当期利益',
-      period
+      period,
+      'actual'
     )
   ).toBe(expected);
 });
@@ -130,8 +138,8 @@ it('EPSの分割調整は注記が明示した対象期だけに適用する', (
     1
   );
   const valueId = p.quantities.find((q) => q.text === '10')!.id;
-  expect(applicableSplitNotes(p, valueId, label, '2027年3月期')).toHaveLength(1);
-  expect(applicableSplitNotes(p, valueId, label, '2026年3月期')).toEqual([]);
+  expect(applicableSplitNotes(p, valueId, label, '2027年3月期', 'actual')).toHaveLength(1);
+  expect(applicableSplitNotes(p, valueId, label, '2026年3月期', 'actual')).toEqual([]);
   const separated = cells(
     [
       ...p.spans
@@ -147,16 +155,23 @@ it('EPSの分割調整は注記が明示した対象期だけに適用する', (
     ],
     1
   );
-  expect(applicableSplitNotes(separated, valueId, label, '2027年3月期')).toEqual([]);
+  expect(applicableSplitNotes(separated, valueId, label, '2027年3月期', 'actual')).toEqual([]);
 });
 
 it('同じ注記内の配当の年度をEPSの対象期へ貸さず、未証明の複数指標を拒否する', () => {
   const eps = '2026年3月期の1株当たり当期利益は株式分割を期首に行ったと仮定して算定しています。';
   const dividend = '2027年3月期の配当は株式分割後の金額です。';
-  expect(splitNoteApplies(eps + dividend, '1株当たり当期利益', '2026年3月期')).toBe(true);
-  expect(splitNoteApplies(eps + dividend, '1株当たり当期利益', '2027年3月期')).toBe(false);
+  expect(splitNoteApplies(eps + dividend, '1株当たり当期利益', '2026年3月期', 'actual')).toBe(true);
+  expect(splitNoteApplies(eps + dividend, '1株当たり当期利益', '2027年3月期', 'actual')).toBe(
+    false
+  );
   expect(() =>
-    splitNoteApplies(eps.replace('。', '、') + dividend, '1株当たり当期利益', '2027年3月期')
+    splitNoteApplies(
+      eps.replace('。', '、') + dividend,
+      '1株当たり当期利益',
+      '2027年3月期',
+      'actual'
+    )
   ).toThrow('期間対応');
 });
 
@@ -187,17 +202,18 @@ it.each([
     `${label === 'EPS' ? '2025年3月期に株式分割を実施しました。' : ''}株式分割を期首に行ったと仮定して${noteMetric}を算定しています。`
   );
   const q = p.quantities.find((q) => q.text === '10')!;
-  expect(applicableSplitNotes(p, q.id, label, '2026年3月期')).toEqual([
+  expect(applicableSplitNotes(p, q.id, label, '2026年3月期', 'actual')).toEqual([
     expect.objectContaining({ basis: 'splitAdjusted', text: expect.stringContaining(noteMetric) }),
   ]);
-  expect(applicableSplitNotes(p, q.id, '売上高', '2026年3月期')).toEqual([]);
+  expect(applicableSplitNotes(p, q.id, '売上高', '2026年3月期', 'actual')).toEqual([]);
   const unresolved = make(`株式分割と${label}については別途記載しています。`);
   expect(() =>
     applicableSplitNotes(
       unresolved,
       unresolved.quantities.find((q) => q.text === '10')!.id,
       label,
-      '2026年3月期'
+      '2026年3月期',
+      'actual'
     )
   ).toThrow('適用基準');
 });
@@ -227,29 +243,29 @@ it('配当の分割注記を対象年度・配当区分へ限定し、矛盾や�
         'なお、株式分割を考慮しない場合の2027年3月期(予想)の1株当たり期末配当金は20円となります。'
     ),
     id = p.quantities.find((q) => q.text === '10')!.id;
-  expect(applicableSplitNotes(p, id, '年間配当金期末', '2026年3月期')).toEqual([]);
-  expect(applicableSplitNotes(p, id, '年間配当金第2四半期末', '2027年3月期')).toEqual([]);
-  expect(applicableSplitNotes(p, id, '年間配当金合計', '2027年3月期')).toEqual([]);
-  expect(applicableSplitNotes(p, id, '年間配当金期末', '2027年3月期')).toEqual([
+  expect(applicableSplitNotes(p, id, '年間配当金期末', '2026年3月期', 'actual')).toEqual([]);
+  expect(applicableSplitNotes(p, id, '年間配当金第2四半期末', '2027年3月期', 'actual')).toEqual([]);
+  expect(applicableSplitNotes(p, id, '年間配当金合計', '2027年3月期', 'actual')).toEqual([]);
+  expect(applicableSplitNotes(p, id, '年間配当金期末', '2027年3月期', 'actual')).toEqual([
     expect.objectContaining({ basis: 'afterSplit' }),
   ]);
   const mixed = make(
     '2026年3月期及び2027年3月期第2四半期末については株式分割前の配当金です。' + text
   );
-  expect(applicableSplitNotes(mixed, id, '年間配当金期末', '2026年3月期')[0].basis).toBe(
+  expect(applicableSplitNotes(mixed, id, '年間配当金期末', '2026年3月期', 'actual')[0].basis).toBe(
     'beforeSplit'
   );
-  expect(applicableSplitNotes(mixed, id, '年間配当金第2四半期末', '2027年3月期')[0].basis).toBe(
-    'beforeSplit'
-  );
+  expect(
+    applicableSplitNotes(mixed, id, '年間配当金第2四半期末', '2027年3月期', 'actual')[0].basis
+  ).toBe('beforeSplit');
   const contradictory = make(text + text.replace('分割後', '分割前'));
-  expect(() => applicableSplitNotes(contradictory, id, '年間配当金期末', '2027年3月期')).toThrow(
-    '適用基準'
-  );
+  expect(() =>
+    applicableSplitNotes(contradictory, id, '年間配当金期末', '2027年3月期', 'actual')
+  ).toThrow('適用基準');
   const unresolved = make('株式分割と配当金については別途記載しています。');
-  expect(() => applicableSplitNotes(unresolved, id, '年間配当金期末', '2027年3月期')).toThrow(
-    '適用基準'
-  );
+  expect(() =>
+    applicableSplitNotes(unresolved, id, '年間配当金期末', '2027年3月期', 'actual')
+  ).toThrow('適用基準');
 });
 
 it.each(['。', '、'])(
@@ -274,17 +290,18 @@ it.each(['。', '、'])(
         1
       ),
       id = p.quantities.find((q) => q.text === '10')!.id;
-    expect(applicableSplitNotes(p, id, '年間配当金期末', '2026年3月期')[0].basis).toBe(
+    expect(applicableSplitNotes(p, id, '年間配当金期末', '2026年3月期', 'actual')[0].basis).toBe(
       'beforeSplit'
     );
-    expect(applicableSplitNotes(p, id, '年間配当金期末', '2027年3月期')[0].basis).toBe(
+    expect(applicableSplitNotes(p, id, '年間配当金期末', '2027年3月期', 'actual')[0].basis).toBe(
       'afterSplit'
     );
     expect(() =>
       splitNoteApplies(
         '2026年3月期のEPSと2027年3月期の配当金は株式分割後の金額です。',
         '年間配当金期末',
-        '2026年3月期'
+        '2026年3月期',
+        'actual'
       )
     ).toThrow('期間対応');
   }
@@ -294,9 +311,30 @@ it.each(['(予想)', '(実績)', '(予想)の', '(実績)の'])(
   '配当区分を状態の括弧で失わず期末以外へ渡さない: %s',
   (qualifier) => {
     const note = `2027年3月期${qualifier}期末配当金については株式分割後の金額です。`;
-    expect(splitNoteApplies(note, '年間配当金期末', '2027年3月期')).toBe(true);
-    expect(splitNoteApplies(note, '年間配当金第2四半期末', '2027年3月期')).toBe(false);
-    expect(splitNoteApplies(note, '年間配当金合計', '2027年3月期')).toBe(false);
+    expect(
+      splitNoteApplies(
+        note,
+        '年間配当金期末',
+        '2027年3月期',
+        qualifier.includes('予想') ? 'forecast' : 'actual'
+      )
+    ).toBe(true);
+    expect(
+      splitNoteApplies(
+        note,
+        '年間配当金第2四半期末',
+        '2027年3月期',
+        qualifier.includes('予想') ? 'forecast' : 'actual'
+      )
+    ).toBe(false);
+    expect(
+      splitNoteApplies(
+        note,
+        '年間配当金合計',
+        '2027年3月期',
+        qualifier.includes('予想') ? 'forecast' : 'actual'
+      )
+    ).toBe(false);
   }
 );
 it.each([
@@ -309,7 +347,7 @@ it.each([
 ])('EPS注記の括弧内の形・累計単独を対象期間に保持する: %s', (shape) => {
   const note = `2027年3月期${shape}の1株当たり四半期利益は株式分割の影響を考慮しています。`;
   const target = shape.includes('単独') ? '2027年3月期第2四半期単独' : '2027年3月期第2四半期累計';
-  expect(splitNoteApplies(note, '1株当たり四半期利益', target)).toBe(true);
+  expect(splitNoteApplies(note, '1株当たり四半期利益', target, 'actual')).toBe(true);
   expect(
     splitNoteApplies(
       note,
@@ -317,14 +355,17 @@ it.each([
       target.replace(
         shape.includes('単独') ? '単独' : '累計',
         shape.includes('単独') ? '累計' : '単独'
-      )
+      ),
+      'actual'
     )
   ).toBe(false);
-  expect(splitNoteApplies(note, '1株当たり四半期利益', '2027年3月期第3四半期累計')).toBe(false);
+  expect(splitNoteApplies(note, '1株当たり四半期利益', '2027年3月期第3四半期累計', 'actual')).toBe(
+    false
+  );
   const restated =
     note.replace('。', '、') +
     `2027年3月期(第3四半期累計)の1株当たり四半期利益は株式分割前の金額です。`;
-  expect(splitNoteApplies(restated, '1株当たり四半期利益', target)).toBe(true);
+  expect(splitNoteApplies(restated, '1株当たり四半期利益', target, 'actual')).toBe(true);
 });
 
 it.each(['(第5四半期累計)', '(第2四半期累計単独)', '(予想)(実績)', '(未定)'])(
@@ -334,8 +375,47 @@ it.each(['(第5四半期累計)', '(第2四半期累計単独)', '(予想)(実�
       splitNoteApplies(
         `2027年3月期${qualifier}のEPSは株式分割の影響を考慮しています。`,
         'EPS',
-        '2027年3月期'
+        '2027年3月期',
+        'actual'
       )
     ).toThrow('期間限定');
   }
+);
+
+it.each(['年間配当金期末', '基本的1株当たり当期利益'])(
+  '同年度でも予想・実績の注記を異なる状態へ貸さない: %s',
+  (label) => {
+    const subject = /配当/.test(label) ? '期末配当金' : label;
+    for (const [qualifier, states] of [
+      ['予想', ['forecast', 'forecastBefore', 'forecastAfter']],
+      ['実績', ['actual']],
+    ] as const) {
+      const note = `2027年3月期(${qualifier})の${subject}は株式分割後の金額です。`;
+      for (const state of ['actual', 'forecast', 'forecastBefore', 'forecastAfter', null] as const)
+        expect(splitNoteApplies(note, label, '2027年3月期', state)).toBe(
+          (states as readonly (string | null)[]).includes(state)
+        );
+      expect(
+        splitNoteApplies(
+          `2027年3月期の${subject}は株式分割後の金額です。`,
+          label,
+          '2027年3月期',
+          'actual'
+        )
+      ).toBe(true);
+    }
+  }
+);
+
+it.each(['EPS(予想)', '2027年3月期のEPS(予想)', '2027年3月期の期末配当金(実績)'])(
+  '所属できない注記の状態限定を無視しない: %s',
+  (subject) =>
+    expect(() =>
+      splitNoteApplies(
+        `${subject}は株式分割後の金額です。`,
+        subject.includes('配当') ? '年間配当金期末' : 'EPS',
+        '2027年3月期',
+        'actual'
+      )
+    ).toThrow('状態限定')
 );

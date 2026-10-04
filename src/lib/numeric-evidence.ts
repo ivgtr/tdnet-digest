@@ -1,4 +1,10 @@
-import { isPerShareProfit, proseReportingMetrics } from './metric-semantics';
+import {
+  isPerShareProfit,
+  proseReportingMetrics,
+  reportingMetricKey,
+  proseMetricPrefixMatches,
+  proseFieldText,
+} from './metric-semantics';
 import {
   explicitCalendarAxisMatches,
   periodKind,
@@ -731,10 +737,10 @@ function verifyReportingListSuffix(suffix: string, currentLabel: string): void {
     return;
   }
   let rest = suffix;
-  const names = new Set([compact(currentLabel)]);
+  const names = new Set([reportingMetricKey(currentLabel)]);
   while (rest) {
     const metric = proseReportingMetrics(rest)[0];
-    if (!metric || names.has(compact(metric.label))) break;
+    if (!metric || names.has(reportingMetricKey(metric.label))) break;
     const boundary = rest.slice(0, metric.start);
     if (!/[、。;；]$/.test(boundary)) break;
     verifyQuantityAssertion(boundary.slice(0, -1));
@@ -744,7 +750,7 @@ function verifyReportingListSuffix(suffix: string, currentLabel: string): void {
     const start = metric.end + bridge;
     const quantity = proseQuantities({ id: 'list', text: rest }).find((q) => q.start === start);
     if (!quantity || !parseExactNumeric(quantity.raw)?.unit) break;
-    names.add(compact(metric.label));
+    names.add(reportingMetricKey(metric.label));
     rest = rest.slice(quantity.start + quantity.raw.length);
   }
   verifyQuantityAssertion(rest);
@@ -795,36 +801,40 @@ export function verifyProseQuantity(
   // PDF paragraphs may merge consecutive numbered fields. Only a numbered
   // field at a physical line start is a new prefix boundary; a wrapped noun is not.
   const assertionText = (text: string) =>
-    compact(text.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；')).replace(/[△▲−](?=\d)/g, '-');
+    compact(proseFieldText(text)).replace(/[△▲−](?=\d)/g, '-');
   const normalized = assertionText(quote);
+  const metricKey = reportingMetricKey(claim.label);
+  const owners = [claim.subject, claim.scope].filter((x): x is string => !!x);
+  const directMetrics = proseReportingMetrics(normalized, '', owners);
+  const ownsFullMetric = (index: number) =>
+    !directMetrics.some((m) => m.start < index && m.end > index);
+  if (
+    metricKey &&
+    directMetrics.filter((m) => reportingMetricKey(m.label) === metricKey).length > 1
+  )
+    throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
   const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
-  const heads = [...normalized.matchAll(new RegExp(`${labelPattern}${bridge}(${token})`, 'gu'))];
+  const heads = [
+    ...normalized.matchAll(new RegExp(`${labelPattern}${bridge}(${token})`, 'gu')),
+  ].filter((m) => ownsFullMetric(m.index!));
   if (heads.length > 1)
     throw new Error('STRUCTURE:本文の同じ指標に複数の数量があり対応を一意に証明できません');
   const match = [...normalized.matchAll(new RegExp(binding, 'gu'))].find(
     (m) =>
-      m[1].replace(perShare ? /1株当たり|それぞれ/g : /$^/g, '').length <= 6 && corresponds(m[2])
+      ownsFullMetric(m.index!) &&
+      m[1].replace(perShare ? /1株当たり|それぞれ/g : /$^/g, '').length <= 6 &&
+      corresponds(m[2])
   );
   if (match) {
     // Only explicit periods, resolved subject/scope and grammatical separators
     // may precede a metric. A suffix of an unproven parent metric is not proof.
-    let prefix =
+    const prefix =
       normalized
         .slice(0, match.index)
         .split(/[。;；、:「」]/)
         .slice(-1)[0] ?? '';
-    prefix = prefix.replace(/^\(\d+\)/, '').replace(/^\(+/, '');
-    for (const owner of [claim.subject, claim.scope, '当社', '当グループ'].filter(
-      (x): x is string => !!x
-    ))
-      prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
-    prefix = prefix.replace(
-      /^20\d{2}年\d{1,2}月(?:期(?:(?:第[1-4]四半期|[1-4]Q|中間期)(?:\(?(?:累計|単独)\)?(?:期間)?)?|通期)?|\d{1,2}日|度)?(?:の|は|における)?/i,
-      ''
-    );
-    for (const owner of [claim.subject, claim.scope].filter((x): x is string => !!x))
-      prefix = prefix.replace(new RegExp(`^${escape(owner)}(?:の|は)?`), '');
-    if (prefix) throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
+    if (!proseMetricPrefixMatches(prefix, owners))
+      throw new Error('STRUCTURE:本文指標の前の限定を省略できません');
     const suffix = normalized.slice(match.index! + match[0].length);
     if (
       sharedDividend &&

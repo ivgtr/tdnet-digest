@@ -1,7 +1,7 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
-import { reportingPeriodText, reportingPeriodOwner } from './period-semantics';
+import { reportingPeriodText, reportingPeriodOwner, numericValueKind } from './period-semantics';
 import {
   normalized,
   reportingScope,
@@ -305,7 +305,8 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
                   return splitNoteApplies(
                     note.text,
                     metric,
-                    years.length === 1 ? years[0] + shape : null
+                    years.length === 1 ? years[0] + shape : null,
+                    numericValueKind(axis, inherited)
                   );
                 })
                 .map((note) => note.id)

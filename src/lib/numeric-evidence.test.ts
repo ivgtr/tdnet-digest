@@ -709,3 +709,31 @@ it.each([
   if (valid) expect(verify()).toBe(0);
   else expect(verify).toThrow();
 });
+
+it.each([
+  ['EPS', '基本的1株当たり当期利益', '円', false],
+  ['EPS', 'eps', '円', false],
+  ['希薄化後EPS', '潜在株式調整後1株当たり当期利益', '円', false],
+  ['売上高', '売上収益', '百万円', false],
+  ['経常利益', '経常損失', '百万円', false],
+  ['当期純利益', '親会社株主に帰属する当期純利益', '百万円', false],
+  ['EPS', '希薄化後EPS', '円', true],
+  ['1株当たり四半期利益', '1株当たり当期利益', '円', true],
+] as const)('本文の指標再指定を表記でなく区分で照合する: %s / %s', (first, second, unit, valid) => {
+  const quote = `株式会社テストの${first}は42${unit}、${second}は43${unit}です。`;
+  for (const [label, value] of [
+    [first, 42],
+    [second, 43],
+  ] as const) {
+    const verify = () =>
+      verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, {
+        ...claim,
+        label,
+        value,
+        unit,
+        subject: '株式会社テスト',
+      });
+    if (valid) expect(verify()).toBe(0);
+    else expect(verify).toThrow();
+  }
+});

@@ -49,11 +49,15 @@ export function preflightCandidateSource(
         const metric = slot.requirement.match(
           /revenue|operatingProfit|ordinaryProfit|netProfit|1株当たり利益/
         )?.[0];
+        const binding = context.bindings.find((b) => b.anchorId === id)!;
         const labels = slot.expected.label
           ? [slot.expected.label]
           : proseReportingMetrics(
               block.text,
-              '株式の取得価額の総額|取得価額の総額|取得する株式の総数'
+              '株式の取得価額の総額|取得価額の総額|取得する株式の総数',
+              binding.declarations
+                .filter((d) => d.role === 'subject' || d.role === 'scope')
+                .map((d) => d.value)
             )
               .map((m) => m.label)
               .filter((label) => !metric || revisionMetricLabel(label) === metric);
@@ -81,7 +85,6 @@ export function preflightCandidateSource(
                 subject: slot.expected.subject ?? null,
                 scope: slot.expected.scope ?? null,
               };
-              const binding = context.bindings.find((b) => b.anchorId === id)!;
               const inherited = binding.contextIds
                 .map(
                   (id) =>

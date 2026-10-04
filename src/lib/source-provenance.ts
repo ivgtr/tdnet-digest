@@ -108,7 +108,19 @@ export function splitNotes(page: ExtractedPage, valueId: string) {
   );
 }
 function splitReportingPeriods(clause: string) {
-  return [...clause.matchAll(new RegExp(REPORTING_FISCAL_PERIOD_PATTERN, 'g'))].filter((m) => {
+  const periods = [...clause.matchAll(new RegExp(REPORTING_FISCAL_PERIOD_PATTERN, 'g'))];
+  if (
+    [...clause.matchAll(new RegExp(REPORTING_STATE_QUALIFIER_PATTERN, 'g'))].some(
+      (state) =>
+        !periods.some(
+          (period) =>
+            period.index! <= state.index! &&
+            period.index! + period[0].length >= state.index! + state[0].length
+        )
+    )
+  )
+    throw new Error('STRUCTURE:株式分割注記の状態限定の所属を確定できません');
+  return periods.filter((m) => {
     const following = clause.slice(m.index! + m[0].length);
     if (/^(?:の)?(?:\(|第\d+四半期|中間期|通期|累計|単独)/.test(following))
       throw new Error('STRUCTURE:株式分割注記の期間限定を確定できません');
@@ -123,7 +135,20 @@ function splitReportingPeriods(clause: string) {
     );
   });
 }
-function splitPeriodMatches(clause: string, period: string | null): boolean {
+function splitStateMatches(declaration: string, valueKind: VerifiedFact['valueKind']): boolean {
+  const state = declaration.match(/\((予想|実績)\)/)?.[1];
+  return (
+    !state ||
+    (state === '実績'
+      ? valueKind === 'actual'
+      : valueKind === 'forecast' || valueKind === 'forecastBefore' || valueKind === 'forecastAfter')
+  );
+}
+function splitPeriodMatches(
+  clause: string,
+  period: string | null,
+  valueKind: VerifiedFact['valueKind']
+): boolean {
   const periods = splitReportingPeriods(clause);
   if (!periods.length) return true;
   const target = reportingPeriodText(period ?? '');
@@ -131,6 +156,7 @@ function splitPeriodMatches(clause: string, period: string | null): boolean {
   return periods.some(
     ([p]) =>
       p.match(/20\d{2}年\d{1,2}月期/)?.[0] === fy &&
+      splitStateMatches(p, valueKind) &&
       (!reportingPeriodShape(p) ||
         reportingPeriodShape(p) === (reportingPeriodShape(target) ?? '通期')) &&
       (!/累計|単独|中間期/.test(p) ||
@@ -138,7 +164,12 @@ function splitPeriodMatches(clause: string, period: string | null): boolean {
           (/単独/.test(target) ? '単独' : /累計|中間期/.test(target) ? '累計' : null))
   );
 }
-function matchingEpsClauses(text: string, label: string, period: string | null): string[] {
+function matchingEpsClauses(
+  text: string,
+  label: string,
+  period: string | null,
+  valueKind: VerifiedFact['valueKind']
+): string[] {
   const names = perShareProfitKeys(label);
   if (names.length !== 1) return [];
   // A comma starts another clause only when it explicitly restates a fiscal
@@ -163,11 +194,16 @@ function matchingEpsClauses(text: string, label: string, period: string | null):
       new Set(splitReportingPeriods(clause).map(([p]) => p)).size > 1
     )
       throw new Error('STRUCTURE:複数指標の株式分割注記の期間対応を確定できません');
-    return splitPeriodMatches(clause, period);
+    return splitPeriodMatches(clause, period, valueKind);
   });
 }
 /** A fiscal declaration may cover the whole year's dividends or a named component. */
-function matchingDividendClauses(text: string, label: string, period: string | null): string[] {
+function matchingDividendClauses(
+  text: string,
+  label: string,
+  period: string | null,
+  valueKind: VerifiedFact['valueKind']
+): string[] {
   if (!/配当/.test(text)) return [];
   const target = reportingPeriodText(period ?? '').match(/20\d{2}年\d{1,2}月期/)?.[0];
   const component = label.match(/第[1-4]四半期末|中間期末|中間|期末|合計|年間$/)?.[0];
@@ -212,6 +248,7 @@ function matchingDividendClauses(text: string, label: string, period: string | n
       )?.[1];
       return (
         fiscal === target &&
+        splitStateMatches(match[0], valueKind) &&
         (!stated ||
           (stated.startsWith('年間') ? /合計|年間$/.test(component ?? '') : stated === component))
       );
@@ -234,25 +271,33 @@ function splitBasis(
   return bases[0][0];
 }
 /** The same matched clauses own the input qualifier and persisted basis. */
-export function splitNoteApplies(text: string, label: string, period: string | null): boolean {
+export function splitNoteApplies(
+  text: string,
+  label: string,
+  period: string | null,
+  valueKind: VerifiedFact['valueKind']
+): boolean {
   if (/配当/.test(normalized(label)))
-    return matchingDividendClauses(normalized(text), normalized(label), period).length > 0;
-  return matchingEpsClauses(text, label, period).length > 0;
+    return (
+      matchingDividendClauses(normalized(text), normalized(label), period, valueKind).length > 0
+    );
+  return matchingEpsClauses(text, label, period, valueKind).length > 0;
 }
 export function applicableSplitNotes(
   page: ExtractedPage,
   valueId: string,
   label: string,
-  period: string | null
+  period: string | null,
+  valueKind: VerifiedFact['valueKind']
 ): SourceProvenance['adjustments'] {
   const result: SourceProvenance['adjustments'] = [];
   for (const note of splitNotes(page, valueId)) {
     const text = normalized(note.text),
       metric = normalized(label);
-    if (!splitNoteApplies(text, metric, period)) continue;
+    if (!splitNoteApplies(text, metric, period, valueKind)) continue;
     const clauses = /配当/.test(metric)
-      ? matchingDividendClauses(text, metric, period)
-      : matchingEpsClauses(text, metric, period);
+      ? matchingDividendClauses(text, metric, period, valueKind)
+      : matchingEpsClauses(text, metric, period, valueKind);
     result.push({
       kind: 'stockSplit',
       noteId: note.id,
@@ -264,7 +309,7 @@ export function applicableSplitNotes(
 }
 /** Computed from original ranges and structural roles; never supplied as free model semantics. */
 export function sourceProvenance(
-  fact: Pick<VerifiedFact, 'evidence' | 'label' | 'page' | 'period' | 'kind'> & {
+  fact: Pick<VerifiedFact, 'evidence' | 'label' | 'page' | 'period' | 'kind' | 'valueKind'> & {
     semantics: Pick<VerifiedFact['semantics'], 'metricKind'>;
   },
   pages: ExtractedPage[]
@@ -315,7 +360,8 @@ export function sourceProvenance(
             continuationPage(pages, page, ev.valueId),
             ev.valueId,
             fact.label,
-            fact.period
+            fact.period,
+            fact.valueKind
           )
         : [],
   };

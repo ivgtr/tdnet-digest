@@ -1,4 +1,5 @@
 import type { FactSemantics } from './fact-contract';
+import { REPORTING_FISCAL_PERIOD_PATTERN, reportingPeriodText } from './period-semantics';
 import { unchangedDividendReference } from './dividend-semantics';
 
 const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
@@ -15,18 +16,68 @@ const currency = /^(?:千|百万|億)?円$|^(?:ドル|USD|EUR)$/;
 const perShareProfitName = '1株(?:当たり|あたり)(?:当期|四半期|中間)?純?(?:利益|損失)|\\bEPS\\b';
 export const PER_SHARE_PROFIT_METRIC = `(?:(?:基本的|希薄化後|潜在株式調整後)?(?:${perShareProfitName}))`;
 export const BASIC_PER_SHARE_PROFIT_METRIC = `(?:(?:基本的)?(?:${perShareProfitName}))`;
+/** A numbered field at a physical line start is a boundary, unlike a wrapped noun. */
+export const proseFieldText = (text: string) =>
+  text.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；');
+/** Only explicit owners, calendar/fiscal axes and field punctuation may precede a bare metric. */
+export function proseMetricPrefixMatches(prefix: string, owners: string[] = []): boolean {
+  let rest = reportingPeriodText(prefix)
+    .replace(/^\(\d+\)/, '')
+    .replace(/^\(+/, '');
+  const declared = [...owners, '当社', '当グループ'];
+  const removeOwners = () => {
+    for (const owner of declared) {
+      const escaped = compact(owner).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      rest = rest.replace(new RegExp(`^${escaped}(?:の|は)?`), '');
+    }
+  };
+  removeOwners();
+  rest = rest.replace(
+    new RegExp(
+      `^(?:${REPORTING_FISCAL_PERIOD_PATTERN}|20\\d{2}年\\d{1,2}月(?:\\d{1,2}日|度)?)(?:の|は|における)?`
+    ),
+    ''
+  );
+  removeOwners();
+  return rest === '';
+}
 /** Direct metric occurrences are shared by declaration, allocation and quantity boundaries. */
 export const PROSE_REPORTING_METRIC_PATTERN = `(?:${PER_SHARE_PROFIT_METRIC}|(?:売上高)?営業利益率|年間配当金|売上高|売上収益|営業収益|営業利益|営業損失|経常利益|経常損失|${NET_PROFIT_METRIC}|MRR|ARR)`;
 export function proseReportingMetrics(
   text: string,
-  extraPattern = ''
+  extraPattern = '',
+  owners: string[] = []
 ): Array<{ label: string; start: number; end: number }> {
   const pattern = `(${PROSE_REPORTING_METRIC_PATTERN}${extraPattern ? '|' + extraPattern : ''})(?:について(?:は|が)?|は|が|[:：]|(?=[0-9]))`;
-  return [...compact(text).matchAll(new RegExp(pattern, 'gi'))].map((m) => ({
-    label: m[1],
-    start: m.index!,
-    end: m.index! + m[0].length,
-  }));
+  const source = compact(proseFieldText(text));
+  return [...source.matchAll(new RegExp(pattern, 'gi'))]
+    .filter((m) => {
+      // A suffix of an adjusted/qualified name is not a declaration of the bare metric.
+      const prefix = source
+        .slice(0, m.index)
+        .split(/[、,。;；:「」]/)
+        .slice(-1)[0]!;
+      return proseMetricPrefixMatches(prefix, owners);
+    })
+    .map((m) => ({
+      label: m[1],
+      start: m.index!,
+      end: m.index! + m[0].length,
+    }));
+}
+/** Reporting aliases share an identity; EPS basis, period and profit/loss remain distinct. */
+export function reportingMetricKey(label: string): string | null {
+  const text = compact(label);
+  if (new RegExp(`^${PER_SHARE_PROFIT_METRIC}$`, 'i').test(text))
+    return `eps:${perShareProfitKeys(text)[0]}`;
+  if (/^(売上高|売上収益|営業収益)$/.test(text)) return 'revenue';
+  if (/^営業(?:利益|損失)$/.test(text)) return 'operatingProfit';
+  if (/^経常(?:利益|損失)$/.test(text)) return 'ordinaryProfit';
+  if (new RegExp(`^${NET_PROFIT_METRIC}$`).test(text)) return 'netProfit';
+  if (/^(?:売上高)?営業利益率$/.test(text)) return 'operatingMargin';
+  if (text === '年間配当金') return 'annualDividend';
+  if (/^(MRR|ARR)$/i.test(text)) return text.toUpperCase();
+  return null;
 }
 /** Bare EPS denotes basic annual profit; explicit qualifiers remain distinct. */
 export function perShareProfitKeys(text: string): string[] {

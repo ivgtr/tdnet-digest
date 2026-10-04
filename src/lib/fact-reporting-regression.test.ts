@@ -3076,6 +3076,8 @@ it.each([
   ['table', '希薄化後1株当たり当期利益', false],
   ['prose', '希薄化後EPS', false],
   ['table', '1株当たり配当金', false],
+  ['table', '調整後1株当たり当期利益', false],
+  ['prose', '修正EPS', false],
 ] as const)(
   'EPS別名の実績・予想を原文宣言から必須とし、対応欠落でも義務を保持する: %s / %s',
   (format, label, required) => {
@@ -3210,10 +3212,10 @@ it('配当注記の適用範囲を生成入力・候補受理・保存で共有�
         ['年間配当金第2四半期末', 430, 60, 210],
         ['円', 230, 85, 80],
         ['円', 430, 85, 80],
-        ['2026年3月期', 0, 110, 180],
+        ['2027年3月期(実績)', 0, 110, 180],
         ['10', 230, 110, 80],
         ['5', 430, 110, 80],
-        ['2027年3月期', 0, 140, 180],
+        ['2027年3月期(予想)', 0, 140, 180],
         ['20', 230, 140, 80],
         ['7', 430, 140, 80],
         [
@@ -3237,8 +3239,9 @@ it('配当注記の適用範囲を生成入力・候補受理・保存で共有�
       pages[0],
       index % 2 ? '年間配当金第2四半期末' : '年間配当金期末',
       value,
-      `${index < 2 ? 2026 : 2027}年3月期`
+      '2027年3月期'
     );
+    f.valueKind = f.semantics.state = index < 2 ? 'actual' : 'forecast';
     f.unit = '円';
     f.semantics.metricKind = 'perShare';
     f.semantics.scope = f.semantics.basis = null;
@@ -3305,7 +3308,7 @@ it.each(['人', '株', '百万円', '円'])(
 it('初回予想の同じ本文段落から全指標を選択し、他の数量で義務を代替しない', () => {
   const pages = [
     textPage(
-      '会社名 株式会社テスト\n2027年3月期 連結業績予想\n売上高は100百万円、営業利益は10百万円、当期純利益は8百万円です。'
+      '会社名 株式会社テスト\n2027年3月期 連結業績予想\n売上高は100百万円、営業利益は10百万円、当期純利益は8百万円です。\n調整後経常利益は9百万円です。'
     ),
   ];
   const ctx = buildDocumentContext(pages),
@@ -3355,4 +3358,41 @@ it('初回予想の同じ本文段落から全指標を選択し、他の数量�
   expect(() =>
     preflightCandidateSource('earningsRevision', pages, ctx, JSON.stringify(input))
   ).toThrow('operatingProfit');
+});
+
+it('表の修飾付き経常利益も標準指標の義務へ縮めない', () => {
+  const pages = [
+    cells(
+      [
+        ['会社名 株式会社テスト', 0, 0, 240],
+        ['2027年3月期 連結業績予想', 0, 30, 300],
+        ['売上高', 200, 60, 80],
+        ['営業利益', 340, 60, 80],
+        ['当期純利益', 480, 60, 100],
+        ['調整後経常利益', 650, 60, 140],
+        ['百万円', 200, 85, 80],
+        ['百万円', 340, 85, 80],
+        ['百万円', 480, 85, 80],
+        ['百万円', 680, 85, 80],
+        ['2027年3月期(予想)', 0, 110, 170],
+        ['100', 200, 110, 80],
+        ['10', 340, 110, 80],
+        ['8', 480, 110, 80],
+        ['9', 680, 110, 80],
+      ],
+      1
+    ),
+  ];
+  const ctx = buildDocumentContext(pages);
+  const slots = coverageReport('earningsRevision', pages, [], [], ctx);
+  expect(slots).toHaveLength(3);
+  expect(slots.some((s) => s.requirement.includes('ordinaryProfit'))).toBe(false);
+  expect(() =>
+    preflightCandidateSource(
+      'earningsRevision',
+      pages,
+      ctx,
+      serializeCandidateSource(pages, ctx, 'earningsRevision')
+    )
+  ).not.toThrow();
 });

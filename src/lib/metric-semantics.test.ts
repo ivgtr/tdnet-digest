@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { classifyMetric, perShareProfitKeys, isPerShareDividend } from './metric-semantics';
+import {
+  classifyMetric,
+  perShareProfitKeys,
+  isPerShareDividend,
+  proseReportingMetrics,
+} from './metric-semantics';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary } from './fact-summary';
 import { toValue, validateScoreInput } from './score-extraction';
@@ -131,3 +136,32 @@ it.each([
     expect(classifyMetric(label, unit, source)).toBe(perShare ? 'perShare' : 'amount');
   }
 );
+
+it.each([
+  ['(1)調整後経常利益は9百万円\n(2)経常利益は10百万円', ['経常利益']],
+  ['調整後経常\n利益は9百万円', []],
+  ['調整後経常利益は9百万円', []],
+  ['コア営業利益は9百万円', []],
+  ['調整後の経常利益は9百万円', []],
+  ['非経常利益は9百万円', []],
+  ['調整後純利益は9百万円', []],
+  ['修正EPSは9円', []],
+  ['経常利益は9百万円、調整後経常利益は10百万円', ['経常利益']],
+  ['2027年3月期の経常利益は9百万円', ['経常利益']],
+  ['2027年1月の売上高は9百万円', ['売上高']],
+  ['当社の売上高は100百万円、営業利益は10百万円', ['売上高', '営業利益']],
+  ['基本的1株当たり当期利益は42円、希薄化後EPSは40円', ['基本的1株当たり当期利益', '希薄化後EPS']],
+])('本文の修飾語を標準指標の境界へ読み替えない: %s', (text, labels) => {
+  expect(proseReportingMetrics(text).map((m) => m.label)).toEqual(labels);
+});
+
+it('指標の前置きは明示された主体だけを使い、未知の修飾を補わない', () => {
+  const text = '株式会社テストの2027年3月期(予想)の経常利益は9百万円';
+  expect(proseReportingMetrics(text)).toEqual([]);
+  expect(proseReportingMetrics(text, '', ['株式会社テスト']).map((m) => m.label)).toEqual([
+    '経常利益',
+  ]);
+  expect(
+    proseReportingMetrics('株式会社テストの調整後経常利益は9百万円', '', ['株式会社テスト'])
+  ).toEqual([]);
+});

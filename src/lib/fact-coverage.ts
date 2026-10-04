@@ -8,7 +8,7 @@ import {
   NET_PROFIT_METRIC,
   BASIC_PER_SHARE_PROFIT_METRIC,
   proseReportingMetrics,
-  perShareProfitKeys,
+  reportingMetricKey,
 } from './metric-semantics';
 import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
@@ -131,10 +131,19 @@ function standardMetricLabel(source: string): string | null {
 export function revisionMetricLabel(label: string): string | null {
   const metric = standardMetricLabel(label);
   if (metric) return metric;
-  const text = normalized(label);
-  if (/^経常(?:利益|損失)$/.test(text)) return 'ordinaryProfit';
-  if (new RegExp(`^${BASIC_PER_SHARE_PROFIT_METRIC}$`, 'i').test(text)) return '1株当たり利益';
+  const key = reportingMetricKey(label);
+  if (key === 'ordinaryProfit') return key;
+  if (key?.startsWith('eps:basic:')) return '1株当たり利益';
   return null;
+}
+function proseMetricsAt(text: string, binding: ContextBinding) {
+  return proseReportingMetrics(
+    text,
+    '',
+    binding.declarations
+      .filter((d) => d.role === 'subject' || d.role === 'scope')
+      .map((d) => d.value)
+  );
 }
 /** A publication table declares its comparative actuals and ordinary forecasts.
  * Keep source roles even if their quantities cannot yet be verified. */
@@ -194,7 +203,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
     const period = sourceFiscalPeriod(own, inherited),
       state = numericValueKind(own, inherited);
     if (!period || (state !== 'actual' && state !== 'forecast')) continue;
-    for (const { label } of proseReportingMetrics(own)) {
+    for (const { label } of proseMetricsAt(own, binding)) {
       const metric = revisionMetricLabel(label);
       if (metric)
         result.push({
@@ -314,21 +323,18 @@ function declaredReportingMetrics(
         (revision && (!/前回|修正前/.test(text) || !/今回|修正後/.test(text)))
       )
         continue;
-      if (/経常(?:利益|損失)/.test(text)) declared.add('ordinaryProfit');
-      if (/親会社|当期(?:純)?利益|当期純損失/.test(text)) declared.add('netProfit');
-      if (
-        tableHeaderColumns(
-          region,
-          page.spans.filter((s) => region.spanIds.includes(s.id))
-        ).some((column) =>
-          perShareProfitKeys(
-            normalized(
-              column.metricIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
-            )
-          ).some((key) => key.startsWith('basic:'))
+      const metrics = tableHeaderColumns(
+        region,
+        page.spans.filter((s) => region.spanIds.includes(s.id))
+      ).map((column) =>
+        revisionMetricLabel(
+          normalized(
+            column.metricIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
+          )
         )
-      )
-        declared.add('1株当たり利益');
+      );
+      for (const metric of ['ordinaryProfit', 'netProfit', '1株当たり利益'])
+        if (metrics.includes(metric)) declared.add(metric);
     }
   for (const block of issuerBlocks(
     pages.filter((p) => p.selection === 'selected'),
@@ -349,7 +355,7 @@ function declaredReportingMetrics(
         .join('')
     );
     if (sourceFiscalPeriod(text, inherited) !== report || /^\(?注\)?|^※/.test(text)) continue;
-    for (const { label } of proseReportingMetrics(text)) {
+    for (const { label } of proseMetricsAt(text, bindingFor(context, block.id))) {
       const metric = revisionMetricLabel(label);
       if (metric === 'ordinaryProfit' || metric === '1株当たり利益') declared.add(metric);
     }
@@ -1311,9 +1317,9 @@ export function coverageReport(
   }));
   for (const page of pages)
     for (const block of page.blocks.filter((b) => b.kind === 'paragraph')) {
-      const labels = proseReportingMetrics(block.text);
-      if (!labels.length || !proseQuantities(block).length) continue;
       const binding = bindingFor(context, block.id);
+      const labels = proseMetricsAt(block.text, binding);
+      if (!labels.length || !proseQuantities(block).length) continue;
       if (
         !isReportingMetricSource(
           block.id,
