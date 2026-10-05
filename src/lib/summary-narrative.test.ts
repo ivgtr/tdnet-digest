@@ -296,12 +296,45 @@ describe('説明要約の生成・点検・数値参照', () => {
     ).values;
     expect(unitValues.find((v) => v.decimal === '120')?.unit).toBe('百万円');
     expect(unitValues.find((v) => v.decimal === '90')?.unit).toBeNull();
+    const columnPage = layoutPage(
+      [
+        ['百万円', 100, 0, 30],
+        ['％', 200, 0, 10],
+        ['売上高', 0, 20, 40],
+        ['120', 100, 20, 30],
+        ['5.0', 180, 20, 30],
+        ['別の説明です。', 0, 40, 80],
+        ['別項目', 0, 60, 40],
+        ['90', 110, 60, 20],
+        ['8.0', 180, 60, 30],
+      ].map(([text, x, y, width], i) => ({
+        id: `p1s${i + 1}`,
+        text: text as string,
+        x: x as number,
+        y: y as number,
+        width: width as number,
+        height: 10,
+      }))
+    );
+    const columns = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [columnPage]
+    ).values;
+    expect(columns.find((v) => v.decimal === '120')?.unit).toBe('百万円');
+    expect(columns.find((v) => v.decimal === '5.0')?.unit).toBe('%');
+    expect(columns.find((v) => v.decimal === '90')?.unit).toBeNull();
     const labels = structuredClone(draft.excerpts);
-    labels[0].text += ' ToSTNeT-3、午前8時45分、会社法第165条第3項。';
+    labels[0].text += ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。';
     const named = structuredClone(good);
     named.sections[0].summary[0].text =
       '会社法第165条第３項に基づき、午前８時45分のToSTNeT-3で取引する。';
     validateNarrativeContent(named, facts, draft.values, labels);
+    named.sections[0].summary[0].text = '1UP投資部屋で紹介。基本的１株当たり利益。';
+    validateNarrativeContent(named, facts, draft.values, labels);
+    named.sections[0].summary[0].text = '2UP投資部屋で紹介。';
+    expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
+    named.sections[0].summary[0].text = '100JPYを取得する。';
+    expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('QUANTITY');
     named.sections[0].summary[0].text = '午前9時45分のToSTNeT-4で取引する。';
     expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
     for (const [mutate, message] of [
