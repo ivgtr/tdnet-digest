@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { FactSummary } from './fact-contract';
 import { generateText } from './llm-client';
 import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { reviewCandidates } from './fact-candidates';
@@ -253,9 +254,13 @@ describe('説明要約の生成・点検・数値参照', () => {
     ).toEqual([
       { effort: 'low', enabled: undefined },
       { effort: undefined, enabled: false },
-      { effort: 'low', enabled: undefined },
+      { effort: undefined, enabled: false },
     ]);
     expect(attempts.map((a) => a.phase)).toEqual(['first', 'summary', 'summaryReview']);
+    const generationInput = vi.mocked(generateText).mock.calls[1][1][1].content;
+    expect(generationInput).toContain('sourceUnitColumns');
+    expect(generationInput).not.toContain('valueColumns');
+    for (const e of draft.excerpts) expect(generationInput).toContain(JSON.stringify(e.text));
     expect(generated.repairAttempted).toBe(false);
     const restored = revalidatePresentation(
       JSON.parse(JSON.stringify(generated.presentation)),
@@ -396,6 +401,37 @@ describe('説明要約の生成・点検・数値参照', () => {
       applyNarrativeEdits(editBase, { version: 2, edits: [edits.edits[0], edits.edits[0]] })
     ).toThrow('SCHEMA');
     expect(() => applyNarrativeEdits(editBase, editBase)).toThrow('SCHEMA');
+    const addressPages = [textPage('取引先の所在地は東京都中央区1丁目2番です。', 1)];
+    const addressFacts: FactSummary = {
+      version: 6,
+      documentType: 'other',
+      facts: [],
+      unverified: [],
+    };
+    const addressDraft = buildPresentation(addressFacts, addressPages);
+    const addressResponse = {
+      version: 3,
+      overview: [],
+      sections: [
+        {
+          title: '取引条件',
+          summary: [
+            {
+              text: '所在地は東京都中央区1丁目2番。',
+              sourceIds: addressDraft.excerpts.map((e) => e.id),
+            },
+          ],
+          tables: [],
+        },
+      ],
+    };
+    expect(() =>
+      assembleNarrative(addressResponse, addressFacts, addressDraft.values, addressDraft.excerpts)
+    ).not.toThrow();
+    addressResponse.sections[0].summary[0].text = '所在地は東京都中央区3丁目2番。';
+    expect(() =>
+      assembleNarrative(addressResponse, addressFacts, addressDraft.values, addressDraft.excerpts)
+    ).toThrow('REFERENCE');
     const dropped = applyNarrativeEdits(editBase, {
       version: 2,
       edits: [{ op: 'remove', path: '/sections/0' }],
@@ -757,7 +793,7 @@ describe('説明要約の生成・点検・数値参照', () => {
       vi
         .mocked(generateText)
         .mock.calls.slice(2)
-        .every(([c]) => c.reasoningEffort === 'low' && c.reasoningEnabled === undefined)
+        .every(([c]) => c.reasoningEffort === undefined && c.reasoningEnabled === false)
     ).toBe(true);
     for (const index of [2, 4, 5])
       expect(vi.mocked(generateText).mock.calls[index][0].maxOutputTokens).toBe(8192);
