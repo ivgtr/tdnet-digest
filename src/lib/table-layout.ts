@@ -212,7 +212,15 @@ export function buildTableRegions(page: {
   for (const unitRow of rows.filter((r) => r.length >= 2)) {
     const unitY = unitRow[0].y,
       height = unitRow[0].height;
-    const nextUnit = rows.find((r) => r[0].y > unitY + height * 0.3)?.[0].y ?? Infinity;
+    const nextUnit =
+      rows.find(
+        (r) =>
+          r[0].y > unitY + height * 0.3 &&
+          (r.length >= 2 ||
+            physical
+              .find((run) => run.some((s) => r[0].ids.includes(s.id)))!
+              .every((s) => r.some((unit) => unit.ids.includes(s.id))))
+      )?.[0].y ?? Infinity;
     const boundary = physical
       .filter(
         (run) =>
@@ -429,7 +437,7 @@ function closedAxisParts(
         normalized(runs[0].map((s) => s.text).join(''))
       );
     const parts = members.filter((s) => sharedPeriod || (cy(s) > band.top && cy(s) < band.bottom));
-    return lineRuns(parts)
+    return physicalRows(parts)
       .filter((run) => {
         const text = normalized(run.map((s) => s.text).join(''));
         return !/20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(text) && !tableUnit(text);

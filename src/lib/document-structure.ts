@@ -5,6 +5,8 @@ import {
   calendarDatePattern,
   calendarIntervalSeparator,
   explicitCalendarAxisMatches,
+  REPORTING_PERIOD_SHAPE_PATTERN,
+  reportingPeriodShapes,
 } from './period-semantics';
 import {
   tableRowAxis,
@@ -106,10 +108,10 @@ export function forecastReportingTitle(text: string): { period: string | null } 
   const title = normalized(text).replace(/^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/, '');
   const match = title.match(
     new RegExp(
-      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の)?)?(?:通期)?(?:${reportingScopeHeading})?業績予想(?:数値)?(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
+      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の?${REPORTING_PERIOD_SHAPE_PATTERN})?(?:\\(中間期\\))?(?:の)?)?(?:通期)?(?:${reportingScopeHeading})?業績予想(?:数値)?(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
     )
   );
-  if (match) return { period: match[1] ?? null };
+  if (match && reportingPeriodShapes(title).length <= 1) return { period: match[1] ?? null };
   return /^(?:20\d{2}年\d{1,2}月期(?:の)?)?今後の見通し(?:について)?$/.test(title)
     ? { period: null }
     : null;

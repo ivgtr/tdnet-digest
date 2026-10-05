@@ -49,6 +49,40 @@ async function sourceBuildDigest(): Promise<string> {
       digest.update(`${directory}/${file}`).update(await readFile(`${directory}/${file}`));
   return digest.digest('hex');
 }
+/** Verify both the selectable JSON and the actual clipboard, after the user's click. */
+async function copiedDiagnostic(row: any, page: any, blocked = false) {
+  await row.getByRole('button', { name: '診断をコピー', exact: true }).click();
+  if (blocked)
+    await row
+      .getByRole('alert')
+      .filter({ hasText: 'コピーできませんでした' })
+      .waitFor({ timeout: 10000 });
+  else
+    await row.getByRole('status').filter({ hasText: 'コピーしました' }).waitFor({ timeout: 10000 });
+  if (!blocked) await row.getByText('診断JSONを表示', { exact: true }).click();
+  const text = await row.getByRole('textbox', { name: '診断JSON', exact: true }).inputValue();
+  if (blocked) {
+    const box = row.getByRole('textbox', { name: '診断JSON', exact: true });
+    await box.focus();
+    assert.equal(
+      await box.evaluate((el: HTMLTextAreaElement) =>
+        el.value.slice(el.selectionStart, el.selectionEnd)
+      ),
+      text
+    );
+    return JSON.parse(text);
+  }
+  // Grant read only after copying; the extension must write through the click itself.
+  await page
+    .context()
+    .grantPermissions(['clipboard-read'], { origin: 'https://www.release.tdnet.info' });
+  try {
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), text);
+  } finally {
+    await page.context().clearPermissions();
+  }
+  return JSON.parse(text);
+}
 /** Read each visible fact with its shared table context; never use the entire body as one fact. */
 async function displayedFacts(summary: any): Promise<string[]> {
   return summary.evaluate(
@@ -127,6 +161,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     : null;
   if (reviewCase && (!args.includes('--fixed-api') || !args.includes('--fixture-source')))
     throw new Error('追加レビューは固定API・固定PDF専用です');
+  const copyBlocked = args.includes('--review-copy-blocked');
+  if (copyBlocked && !args.includes('--review-rejected-url'))
+    throw new Error('コピー拒否検証は生成前エラーの固定経路専用です');
   const reviewFixture = reviewCase ? await additionalReviewFixture(reviewCase) : null;
   if (reviewFixture)
     item = {
@@ -134,6 +171,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       ...(reviewCase === 'summary-format-kyokuto' ? { id: 'kyokuto-20261005', code: '2300' } : {}),
       ...(reviewCase === 'summary-format-karura' ? { id: 'karura-20261005', code: '2789' } : {}),
       ...(reviewCase === 'summary-format-daiseki' ? { id: 'daiseki-20261005', code: '9793' } : {}),
+      ...(reviewCase === 'summary-format-echo' ? { id: 'echo-20261005', code: '7427' } : {}),
       ...(reviewCase === 'summary-format-world' ? { id: 'world-20261005', code: '3612' } : {}),
       ...(reviewCase?.startsWith('summary-format-nachi')
         ? {
@@ -146,17 +184,19 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         : {}),
       documentType: reviewFixture.documentType,
       title:
-        reviewCase === 'summary-format-world'
-          ? '2027年２月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）'
-          : reviewCase === 'summary-format-kyokuto'
-            ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
-            : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
-              ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
-              : reviewCase?.startsWith('summary-format-nachi')
-                ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
-                : reviewFixture.documentType === 'earnings'
-                  ? '2027年3月期 決算短信〔日本基準〕（連結）'
-                  : '追加セルフレビュー用開示',
+        reviewCase === 'summary-format-echo'
+          ? '2027年２月期第２四半期（中間期）業績予想の修正に関するお知らせ'
+          : reviewCase === 'summary-format-world'
+            ? '2027年２月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）'
+            : reviewCase === 'summary-format-kyokuto'
+              ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
+              : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
+                ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
+                : reviewCase?.startsWith('summary-format-nachi')
+                  ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
+                  : reviewFixture.documentType === 'earnings'
+                    ? '2027年3月期 決算短信〔日本基準〕（連結）'
+                    : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure =
@@ -230,7 +270,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           reviewCase === 'summary-format-karura' ||
           reviewCase?.startsWith('summary-format-nachi') ||
           reviewCase === 'summary-format-daiseki' ||
-          reviewCase === 'summary-format-world'
+          reviewCase === 'summary-format-world' ||
+          reviewCase === 'summary-format-echo'
           ? 'public-PDF-through-offscreen'
           : 'synthetic-PDF-through-offscreen'
         : fixtureSource
@@ -460,12 +501,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await context.route('https://www.release.tdnet.info/inbs/fixture-main.html', (route: any) =>
         route.fulfill({
           contentType: 'text/html',
+          headers: copyBlocked ? { 'Permissions-Policy': 'clipboard-write=()' } : {},
           body: '<html><meta charset="utf-8"><iframe id="main_list" src="fixture-list.html" style="width:100%;height:880px"></iframe></html>',
         })
       );
       await context.route('https://www.release.tdnet.info/inbs/fixture-list.html', (route: any) =>
         route.fulfill({
           contentType: 'text/html',
+          headers: copyBlocked ? { 'Permissions-Policy': 'clipboard-write=()' } : {},
           body: `<html><meta charset="utf-8"><table id="list-head"><tr><td class="header-R">表題</td></tr></table><table id="main-list-table"><tbody><tr><td class="kjTime oddnew-L">15:00</td><td class="kjCode oddnew-M">${item.code ?? (item.id.startsWith('bluememe') ? '4069' : item.id.startsWith('buyback') ? '9313' : '3979')}</td><td class="kjName oddnew-M">公開PDF検証</td><td class="kjTitle oddnew-M"><a href="${pdfUrl}">${item.title}</a></td><td class="oddnew-R"></td></tr></tbody></table></html>`,
         })
       );
@@ -548,16 +591,15 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.equal(trace.resultId, null);
       assert.deepEqual(trace.attempts, []);
       assert.deepEqual(trace.usage, []);
-      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const downloaded = await downloadEvent;
-      assert.deepEqual(JSON.parse(await readFile(await downloaded.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page, copyBlocked), trace);
       assert.equal(apiCalls, 0);
       assert.equal(pdfRequests, 0);
       evidence.trace = trace;
       evidence.pdfRequests = pdfRequests;
       evidence.stages.push(
-        'rejected URL → own failed run → diagnostic download; PDF/API requests 0'
+        copyBlocked
+          ? 'rejected URL → clipboard denied → selectable JSON; PDF/API requests 0'
+          : 'rejected URL → own failed run → diagnostic clipboard copy; PDF/API requests 0'
       );
       await context.close();
       context = null;
@@ -663,10 +705,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         trace.attempts.map((a: any) => a.phase),
         ['first', 'repair']
       );
-      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const download = await downloadEvent;
-      assert.deepEqual(JSON.parse(await readFile(await download.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
       assert.equal(apiCalls, 2);
       evidence.stages.push(
         reviewCase === 'assertion-conflict'
@@ -989,12 +1028,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         'real normal generation PDF/input/model/mode/contract/request limits match CLI conditions'
       );
     }
-    const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
-    await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-    const download = await downloadEvent;
-    const exported = JSON.parse(await readFile(await download.path(), 'utf8'));
+    const exported = await copiedDiagnostic(row, page);
     assert.deepEqual(exported, trace);
-    evidence.stages.push('phase/raw/diagnostics/hash/usage trace exported from UI');
+    evidence.stages.push('phase/raw/diagnostics/hash/usage trace copied from UI');
     evidence.sourceHash = stored.value.metadata.documentHash;
     evidence.facts = stored.value.facts;
     evidence.metadata = stored.value.metadata;
@@ -1206,19 +1242,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
 
     if (reviewDiagnostics) {
       // A cached result has no current request ID, but its exact result ID must match.
-      const restoredDownload = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const restored = await restoredDownload;
-      assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
       evidence.stages.push('cached result ID matches diagnostic export after reload');
       await worker.evaluate(async () => chrome.storage.sync.set({ apiKey: '' }));
       await summary.getByRole('button', { name: '再要約', exact: true }).click();
       await summary
         .getByText('APIキーが設定されていません', { exact: false })
         .waitFor({ timeout: 10000 });
-      const failedDownload = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const failed = await failedDownload;
+      const failed = await copiedDiagnostic(row, page);
       assert.equal(apiCalls, callsBefore);
       const failure = await worker.evaluate(
         async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
@@ -1232,7 +1263,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.equal(failure.inputHash, null);
       assert.deepEqual(failure.attempts, []);
       assert.deepEqual(failure.usage, []);
-      assert.deepEqual(JSON.parse(await readFile(await failed.path(), 'utf8')), failure);
+      assert.deepEqual(failed, failure);
       evidence.earlyFailureTrace = failure;
       evidence.stages.push(
         'same-PDF settings failure exports its own trace without stale response or API call'
@@ -1245,10 +1276,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
 
     if (reviewFixture) {
       const priorCalls = apiCalls;
-      const restoredDownload = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const restored = await restoredDownload;
-      assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
       evidence.stages.push('restored result ID matches exported diagnostic');
       const altered = structuredClone(stored.value.facts);
       if (reviewCase === 'attributes') {

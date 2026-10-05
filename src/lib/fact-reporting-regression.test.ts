@@ -27,6 +27,114 @@ import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { buildPresentation } from './summary-presentation';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+it('中間期の予想修正を実際の表範囲と分割された前回・今回の行で照合し、通期の代用を拒否する', () => {
+  const target = '2027年3月期';
+  const rows: [string, number, number, number][] = [
+    ['会社名 株式会社テスト', 0, 0, 230],
+    [`${target}第2四半期（中間期）業績予想の修正に関するお知らせ`, 0, 30, 630],
+    ['1. 業績予想の修正について', 0, 60, 300],
+    [`${target}第2四半期（中間期）の連結業績予想数値の修正`, 0, 80, 630],
+    ['売上高', 310, 110, 60],
+    ['営業利益', 510, 110, 70],
+    ['百万円', 310, 140, 60],
+    ['百万円', 510, 140, 60],
+    ['前', 10, 170, 10],
+    ['回', 35, 170, 10],
+    ['発表予想（A）', 60, 170, 140],
+    ['100', 310, 170, 30],
+    ['10', 510, 170, 30],
+    ['今', 10, 200, 10],
+    ['回', 35, 200, 10],
+    ['修正予想（B）', 60, 200, 140],
+    ['200', 310, 200, 30],
+    ['5', 510, 200, 30],
+  ];
+  const paths = [
+    ...[0, 250, 450, 650].map((x) => [0, x, -100, 1, x, -220]),
+    ...[100, 160, 190, 220].map((y) => [0, 0, -y, 1, 650, -y]),
+  ];
+  const page = extractPageLayout(
+    rows.map(([str, x, y, width]) => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, -y],
+      width,
+      height: 10,
+      hasEOL: false,
+      fontName: 'test',
+    })) as TextItem[],
+    1,
+    paths.map((commands, index) => ({
+      index,
+      fn: 'constructPath',
+      args: ['stroke', [commands], null],
+    }))
+  );
+  const ctx = buildDocumentContext([page]);
+  expect(ctx.tableMappings).toHaveLength(4);
+  const fs = ctx.tableMappings.map((h) => {
+    const f = numberCandidate(page, '売上高');
+    f.label = h.metricIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
+    f.value = Number(page.quantities.find((q) => q.id === h.valueId)!.text);
+    f.period = target + '中間期';
+    f.semantics.periodKind = 'cumulativeQ2';
+    f.semantics.basis = null;
+    f.valueKind = f.semantics.state = h.periodIds
+      .map((id) => page.spans.find((s) => s.id === id)!.text)
+      .join('')
+      .includes('前回')
+      ? 'forecastBefore'
+      : 'forecastAfter';
+    f.evidence = { kind: 'table', ...h, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const result = reviewCandidates(
+    candidateResponse(fs, [page], 'earningsRevision'),
+    'earningsRevision',
+    [page]
+  );
+  expect(result.unverified).toEqual([]);
+  expect(result.facts).toHaveLength(4);
+  expect(() => verifyCoverage('earningsRevision', [page], result.facts)).not.toThrow();
+  expect(
+    parseFactSummary(
+      JSON.stringify({
+        version: 6,
+        documentType: 'earningsRevision',
+        facts: result.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      [page]
+    ).facts
+  ).toEqual(result.facts);
+  const slots = coverageReport('earningsRevision', [page], []);
+  expect(
+    slots.every(
+      (s) =>
+        s.sourceIds.length > 0 &&
+        s.expected.periodKind === 'cumulativeQ2' &&
+        s.expected.scope === '連結'
+    )
+  ).toBe(true);
+  preflightCandidateSource(
+    'earningsRevision',
+    [page],
+    ctx,
+    serializeCandidateSource([page], ctx, 'earningsRevision')
+  );
+  const wrong = structuredClone(result.facts).map((f) => ({
+    ...f,
+    period: target,
+    semantics: { ...f.semantics, periodKind: 'fullYear' as const },
+  }));
+  expect(() => verifyCoverage('earningsRevision', [page], wrong)).toThrow('予想修正の前後');
+  expect(
+    reviewCandidates(candidateResponse(wrong, [page], 'earningsRevision'), 'earningsRevision', [
+      page,
+    ]).facts
+  ).toEqual([]);
+});
 it('長い注記を挟む同じ業績節の基本EPSを照合・保存し、別節への見出しの流用を拒否する', () => {
   const rows: [string, number, number, number][] = [
     ['上場会社名 株式会社テスト', 0, 0, 240],

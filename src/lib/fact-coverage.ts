@@ -527,7 +527,8 @@ function reportingPeriodSource(axis: string, context: string, period: string): b
 function declaredForecastUnit(
   pages: ExtractedPage[],
   context: DocumentContext
-): { period: string; blockId: string } | null {
+): { period: string; blockId: string; quarter?: string } | null {
+  const declarations: Array<{ period: string; blockId: string; quarter?: string }> = [];
   for (const block of pages.flatMap((p) => p.blocks)) {
     const text = compact(block.text);
     const explanation = text.match(/^(.*業績予想)について説明(?:します|いたします)。?$/);
@@ -562,11 +563,32 @@ function declaredForecastUnit(
           )
         ),
       ];
-      if (owners.length === 1 && owners[0] === documentSubject(context))
-        return { period, blockId: block.id };
+      if (owners.length === 1 && owners[0] === documentSubject(context)) {
+        const shape = reportingPeriodShape(title!);
+        declarations.push({
+          period,
+          blockId: block.id,
+          ...(shape && shape !== '通期'
+            ? { quarter: shape + (/単独/.test(title!) ? '単独' : '') }
+            : {}),
+        });
+      }
     }
   }
-  return null;
+  const first = declarations[0];
+  if (!first) return null;
+  // A document headline may omit the scope supplied by its actual reporting table.
+  // Prefer that table's direct caption only for the same issuer and reporting period.
+  return (
+    declarations.find(
+      (d) =>
+        d.period === first.period &&
+        d.quarter === first.quarter &&
+        context.tableMappings.some(
+          (m) => bindingFor(context, m.valueId).sectionIds.slice(-1)[0] === d.blockId
+        )
+    ) ?? first
+  );
 }
 function isIssuerSource(anchor: string, context: DocumentContext): boolean {
   const owners = [
@@ -702,7 +724,11 @@ function earningsTargets(pages: ExtractedPage[], context: DocumentContext) {
       );
     });
     const binding = source ?? bindingFor(context, declaration.blockId);
-    forecast = { period: declaration.period, attributes: reportingAttributesAt(binding) };
+    forecast = {
+      period: declaration.period,
+      quarter: declaration.quarter,
+      attributes: reportingAttributesAt(binding),
+    };
   }
   return { actual, forecast, declaration };
 }
@@ -715,7 +741,9 @@ function sourceFiscalPeriod(axis: string, context: string): string | null {
 function targetPeriodKind(target: ReportingTarget): VerifiedFact['semantics']['periodKind'] | null {
   if (!target.quarter) return 'fullYear';
   const q = target.quarter.match(/第([1-3])四半期/)?.[1];
-  return q ? (`cumulativeQ${q}` as VerifiedFact['semantics']['periodKind']) : null;
+  return q
+    ? (`${/単独/.test(target.quarter) ? 'standalone' : 'cumulative'}Q${q}` as VerifiedFact['semantics']['periodKind'])
+    : null;
 }
 function matchesTargetSource(
   anchor: string,
@@ -1199,8 +1227,7 @@ export function verifyCoverage(
       (f) =>
         f.semantics.subject &&
         issuer === normalized(f.semantics.subject ?? '') &&
-        f.semantics.periodKind === 'fullYear' &&
-        compact(f.period ?? '').match(/^(20\d{2}年\d{1,2}月期)(?:通期)?(?:予想)?$/)?.[1] === report
+        compact(f.period ?? '').match(/^(20\d{2}年\d{1,2}月期)/)?.[1] === report
     );
     for (const kind of ['forecastBefore', 'forecastAfter'])
       for (const metric of declaredReportingMetrics(pages, context, report, 'forecast', true))
@@ -1208,6 +1235,7 @@ export function verifyCoverage(
           !candidates.some(
             (f) =>
               (f.kind === 'number' || f.kind === 'range') &&
+              matchesReportingPeriod(f, report, target?.quarter) &&
               revisionMetricLabel(f.label) === metric &&
               f.semantics.metricKind === (metric === '1株当たり利益' ? 'perShare' : 'amount') &&
               (metric !== 'netProfit' ||
@@ -1226,7 +1254,9 @@ export function verifyCoverage(
               )
           )
         )
-          missing.push(`COVERAGE:予想修正の前後 ${kind}/${metric} 対象期=${report}`);
+          missing.push(
+            `COVERAGE:予想修正の前後 ${kind}/${metric} 対象期=${report}${target?.quarter ?? ''}`
+          );
     for (const dividend of unchangedDividendSources(pages, context, report))
       if (
         !candidates.some(

@@ -36,7 +36,7 @@ import {
   verifyProseQuantity,
 } from './numeric-evidence';
 import { classifyMetric } from './metric-semantics';
-import { validateFact, periodKind } from './fact-validation';
+import { validateFact, periodKind, verifyEventPeriod } from './fact-validation';
 import {
   assertionPolarity,
   quantityAssertionPolarity,
@@ -409,18 +409,27 @@ function compose(
         verifyAssertionState(meaning.state, block.text + '\n' + applicableText)
       );
   }
-  // Event periods are proved once by validateFact, also used for saved facts.
-  if (!numeric) attempt('state', () => verifyAssertionState(meaning.state, block.text));
+  if (!numeric) {
+    const notes = binding.qualifierIds
+      .map(
+        (id) =>
+          pages.flatMap((p) => p.blocks).find((b) => b.id === id)?.text ??
+          pages.flatMap((p) => p.spans).find((s) => s.id === id)?.text ??
+          ''
+      )
+      .join('\n');
+    attempt('period', () => verifyEventPeriod(base, block.text, applicableText, notes));
+    attempt('state', () => verifyAssertionState(meaning.state, block.text));
+  }
   attempt('polarity', () => {
-    if (
-      meaning.polarity !==
-      (s.kind === 'table'
+    const expected =
+      s.kind === 'table'
         ? assertionPolarity(text(s.metricIds) + text(s.periodIds))
         : numeric
           ? quantityAssertionPolarity(block.text, label)
-          : assertionPolarity(block.text))
-    )
-      throw new Error('POLARITY:原文の否定区分が不一致です');
+          : assertionPolarity(block.text);
+    if (meaning.polarity !== expected)
+      throw new Error(`POLARITY:原文の否定区分が不一致です。原文で確定できる区分=${expected}`);
   });
   return base;
 }

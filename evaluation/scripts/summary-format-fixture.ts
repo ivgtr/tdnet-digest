@@ -500,3 +500,116 @@ export async function worldSummaryFormatFixture() {
     expected: ['77.11', '82.74', '142489', '300000'],
   };
 }
+
+/** Public interim revision: all five before/after figures are independently read from p.1. */
+export async function echoSummaryFormatFixture() {
+  const { pdf, pages } = await publicPdf(
+    'echo',
+    'db4dae9bb3c06482d374f99c7a87ee8649f77e2f0d86220ecae68a9d78d7e8bb'
+  );
+  const candidates: Candidate[] = [];
+  for (const [state, ids] of [
+    ['forecastBefore', ['p1s78', 'p1s79', 'p1s80', 'p1s81', 'p1s82']],
+    ['forecastAfter', ['p1s90', 'p1s91', 'p1s92', 'p1s93', 'p1s94']],
+  ] as const) {
+    ids.forEach((valueId, i) =>
+      candidates.push({
+        candidateId: `c${candidates.length + 1}`,
+        importance: 'key',
+        kind: 'number',
+        source: {
+          kind: 'table',
+          valueId,
+          tableId: sourceTableId(pages[0], valueId),
+          contextBindingId: `ctx:${valueId}`,
+        },
+        meaning: {
+          subject: 'エコートレーディング株式会社',
+          scope: '連結',
+          basis: null,
+          period: '2027年2月期第2四半期',
+          periodKind: 'cumulativeQ2',
+          metricKind: i === 4 ? 'perShare' : 'amount',
+          state,
+          polarity: 'affirmative',
+        },
+      })
+    );
+  }
+  for (const [blockId, polarity] of [
+    ['p2b2', 'affirmative'],
+    ['p2b3', 'affirmative'],
+    ['p2b4', 'mixed'],
+  ] as const)
+    candidates.push({
+      candidateId: `c${candidates.length + 1}`,
+      importance: 'detail',
+      kind: 'event',
+      source: {
+        kind: 'prose',
+        blockId,
+        assertionId: `${blockId}:a1`,
+        quantityId: null,
+        metric: null,
+        contextBindingId: `ctx:${blockId}`,
+      },
+      meaning: {
+        subject: 'エコートレーディング株式会社',
+        scope: null,
+        basis: null,
+        period: null,
+        periodKind: 'none',
+        metricKind: 'none',
+        state: 'unspecified',
+        polarity,
+      },
+    });
+  const first = JSON.stringify({
+    candidateVersion: 4,
+    documentType: 'earningsRevision',
+    candidates,
+    unverified: [],
+  });
+  const review = reviewCandidates(first, 'earningsRevision', pages);
+  assert.deepEqual(review.unverified, []);
+  assert.equal(review.facts.length, 13);
+  assert.deepEqual(
+    review.facts.filter((f) => f.kind === 'number').map((f) => f.value),
+    [54500, 555, 554, 371, 61.09, 55064, 330, 314, 187, 30.84]
+  );
+  const legacy = parseFactSummary(
+    JSON.stringify({
+      version: 6,
+      documentType: 'earningsRevision',
+      facts: review.facts,
+      unverified: [],
+    }),
+    'earningsRevision',
+    pages
+  );
+  return {
+    pdf,
+    pages,
+    documentType: 'earningsRevision' as const,
+    repairRequired: false,
+    first,
+    repair: first,
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [],
+    expected: [
+      '55064',
+      '54500',
+      '330',
+      '555',
+      '314',
+      '554',
+      '187',
+      '371',
+      '30.84',
+      '61.09',
+      '↑上方修正',
+      '↓下方修正',
+    ],
+  };
+}

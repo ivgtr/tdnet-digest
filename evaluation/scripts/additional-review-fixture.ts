@@ -70,6 +70,8 @@ function textPdf(texts: string[], columns = [30, 280, 500]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
+  if (mode === 'summary-format-echo')
+    return (await import('./summary-format-fixture')).echoSummaryFormatFixture();
   if (mode === 'summary-format-world')
     return (await import('./summary-format-fixture')).worldSummaryFormatFixture();
   if (mode === 'summary-format-daiseki')

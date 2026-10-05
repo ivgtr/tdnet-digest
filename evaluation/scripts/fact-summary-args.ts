@@ -10,6 +10,7 @@ const flags = new Set([
   '--review-upgrade',
   '--review-rejected-url',
   '--review-diagnostics',
+  '--review-copy-blocked',
   '--review-settings-change',
   '--live-followups',
 ]);

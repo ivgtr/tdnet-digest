@@ -761,12 +761,16 @@ describe('生成専用候補と原文文脈の契約', () => {
       scope: '個別',
       state: 'actual',
       polarity: 'negative',
+      period: '2027年3月期',
+      periodKind: 'fullYear',
     });
     expect(
       review([c])
         .diagnostics.filter((d) => d.status === 'invalid')
         .map((d) => d.check)
-    ).toEqual(expect.arrayContaining(['scope.subject', 'scope.scope', 'state', 'polarity']));
+    ).toEqual(
+      expect.arrayContaining(['scope.subject', 'scope.scope', 'state', 'polarity', 'period'])
+    );
     c.source.contextBindingId = 'ctx:missing';
     const r = review([c]);
     expect(r.diagnostics).toHaveLength(1);
