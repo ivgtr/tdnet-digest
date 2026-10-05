@@ -217,6 +217,18 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     throw new Error('比較固定試験はBlueMemeの固定APIでのみ使用します');
   const fixed = args.includes('--fixed-api'),
     fixtureSource = args.includes('--fixture-source');
+  const narrativeReplay = args.includes('--narrative-replay')
+    ? JSON.parse(await readFile(arg('--narrative-replay'), 'utf8'))
+    : null;
+  if (
+    narrativeReplay &&
+    (!fixed ||
+      !fixtureSource ||
+      reviewCase ||
+      !narrativeReplay.success ||
+      narrativeReplay.item.id !== item.id)
+  )
+    throw new Error('説明要約の再生は同じ資料の成功記録・固定API・固定PDF専用です');
   const reviewUpgrade = args.includes('--review-upgrade');
   if (
     reviewUpgrade &&
@@ -286,6 +298,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     buildDigest,
     sourceBuildDigest: sourceDigest,
     stages: [],
+    narrativeReplay: narrativeReplay ? arg('--narrative-replay') : null,
     success: false,
   };
   try {
@@ -361,14 +374,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
     if (fixed) {
       const source = expectations.find((e) => e.id === item.id);
-      if (!source && !reviewFixture) throw new Error('固定候補がありません');
+      if (!source && !reviewFixture && !narrativeReplay) throw new Error('固定候補がありません');
       const fixedFacts = (reviewFixture
         ? []
-        : structuredClone(source!.facts)) as unknown as CandidateFact[];
+        : structuredClone(source?.facts ?? [])) as unknown as CandidateFact[];
       const fixture = corpus.find((c) => c.id === item.id)!;
       const sourcePages = reviewFixture
         ? reviewFixture.pages
-        : fixture.pages.map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber));
+        : (fixture?.pages ?? []).map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber));
       await context.route('https://api.openai.com/**', async (route: any) => {
         const prompt = route
           .request()
@@ -381,6 +394,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           await firstResponse;
         }
         let result: any;
+        if (narrativeReplay) {
+          const attempt = narrativeReplay.attempts[apiCalls - 1];
+          if (!attempt) throw new Error('固定した説明要約の応答を使い切りました');
+          await route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{ message: { content: attempt.response }, finish_reason: 'stop' }],
+            }),
+          });
+          return;
+        }
         if (reviewFixture && !prompt.includes('"interpretation"')) {
           await route.fulfill({
             contentType: 'application/json',
@@ -762,7 +786,61 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    assert.ok(stored.value.presentation?.version === 2);
+    assert.ok(stored.value.presentation?.version === 3);
+    if (narrativeReplay) {
+      assert.deepEqual(expectedErrors(item, stored.value.facts), []);
+      assert.deepEqual(stored.value.presentation, narrativeReplay.presentation);
+      assert.deepEqual(stored.value.facts, narrativeReplay.result);
+      assert.equal(stored.value.metadata.generationCalls, apiCalls);
+      assert.equal(apiCalls, narrativeReplay.attempts.length);
+      const reading = (await summary.innerText()).normalize('NFKC').replace(/\s|,/g, '');
+      assert.ok(!reading.includes('原文抜粋'));
+      assert.ok(!reading.includes('本資料に記載されている業績予想につきましては'));
+      const tokens = item.id.startsWith('world')
+        ? ['B2C', 'B2B', '共通部門', '4559', '3089', '637', 'IFRS']
+        : item.id.startsWith('kyokuto')
+          ? ['営業', '投資', '財務', '374683', '64186', '265834', '311963', '267301']
+          : [];
+      for (const token of tokens)
+        assert.ok(reading.includes(token), `通常表示の要点欠落: ${token}`);
+      const toggles = summary.locator('details.tdnet-digest-source');
+      assert.ok(await toggles.count());
+      assert.ok(
+        await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
+      );
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-top.png` });
+      await page.setViewportSize({ width: 600, height: 800 });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-narrow.png` });
+      await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
+        nodes.forEach((n) => (n.open = true))
+      );
+      const original = (await summary.innerText()).normalize('NFKC').replace(/\s/g, '');
+      for (const excerpt of stored.value.presentation.excerpts)
+        assert.ok(
+          original.includes(excerpt.text.normalize('NFKC').replace(/\s/g, '')),
+          `原文欠落: ${excerpt.id}`
+        );
+      await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
+        nodes.forEach((n) => (n.open = false))
+      );
+      await row.getByRole('button', { name: '非表示', exact: true }).click();
+      assert.equal(await frame.locator('.tdnet-digest-summary-row').count(), 0);
+      await row.getByRole('button', { name: '表示', exact: true }).click();
+      await summary.waitFor();
+      assert.equal((await summary.innerText()).normalize('NFKC').replace(/\s|,/g, ''), reading);
+      assert.equal(apiCalls, narrativeReplay.attempts.length);
+      evidence.presentation = stored.value.presentation;
+      evidence.metadata = stored.value.metadata;
+      evidence.reading = reading;
+      evidence.pdfHash = pdfHash;
+      evidence.stages.push(
+        'public PDF → Offscreen → replayed extraction/synthesis/review → exact facts/presentation → closed source toggles → full original → cache restore without API'
+      );
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
     if (
       !reviewFixture &&
       !withComparison &&

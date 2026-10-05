@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generateText } from './llm-client';
-import { textPage, numberCandidate } from './fixtures/v4-test-source';
+import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { reviewCandidates } from './fact-candidates';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import {
@@ -16,6 +16,7 @@ import {
 import { generateVerifiedFactSummary, renderFacts } from './fact-summary';
 import {
   narrativeClaims,
+  assembleNarrative,
   validateNarrativeContent,
   type NarrativeContent,
 } from './summary-narrative';
@@ -192,14 +193,34 @@ function content(): NarrativeContent {
   return result;
 }
 
+function synthesisResponse(content: NarrativeContent) {
+  const line = (c: { text: string; sourceIds: string[] }) => ({
+    text: c.text,
+    sourceIds: c.sourceIds,
+  });
+  return {
+    version: 1,
+    overview: content.overview.map(line),
+    sections: content.sections.map((s) => ({
+      title: s.title,
+      summary: s.summary.map(line),
+      tables: s.tables.map((t) => ({
+        caption: line(t.caption),
+        headers: t.headers,
+        rows: t.rows.map((r) => ({ cells: r.cells, sourceIds: r.sourceIds })),
+      })),
+    })),
+  };
+}
 describe('説明要約の生成・点検・数値参照', () => {
   it('通常の生成経路を原文照合→要約→独立点検→同じ保存表示へ接続する', async () => {
-    const summary = content();
+    const response = synthesisResponse(content());
+    const summary = assembleNarrative(response, facts, draft.values, draft.excerpts);
     const review = fixedNarrativeReview(summary, facts, draft);
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
-      .mockResolvedValueOnce(JSON.stringify(summary))
+      .mockResolvedValueOnce(JSON.stringify(response))
       .mockResolvedValueOnce(JSON.stringify(review));
     const attempts: SummaryAttempt[] = [];
     const generated = await generateVerifiedFactSummary(config, 'other', page.text, [page], (a) => {
@@ -242,6 +263,47 @@ describe('説明要約の生成・点検・数値参照', () => {
   it('数字の直書き・未知根拠・数量の欠落・単位混在と保存後の文変更を拒否する', () => {
     const good = content();
     validateNarrativeContent(good, facts, draft.values, draft.excerpts);
+    expect(() => assembleNarrative(good, facts, draft.values, draft.excerpts)).toThrow('SCHEMA');
+    const emptyCell = structuredClone(good);
+    emptyCell.sections[1].tables[0].rows[0].cells[5] = '';
+    validateNarrativeContent(emptyCell, facts, draft.values, draft.excerpts);
+    const cells = [
+      ['（単位：百万円）', 0, 0],
+      ['売上高', 0, 20],
+      ['120', 100, 20],
+      ['100', 200, 20],
+      ['利益', 0, 40],
+      ['20', 100, 40],
+      ['10', 200, 40],
+      ['別の説明です。', 0, 60],
+      ['数量', 0, 80],
+      ['90', 100, 80],
+      ['80', 200, 80],
+    ] as const;
+    const unitPage = layoutPage(
+      cells.map(([text, x, y], i) => ({
+        id: `p1s${i + 1}`,
+        text,
+        x,
+        y,
+        width: text.length * 10,
+        height: 10,
+      }))
+    );
+    const unitValues = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [unitPage]
+    ).values;
+    expect(unitValues.find((v) => v.decimal === '120')?.unit).toBe('百万円');
+    expect(unitValues.find((v) => v.decimal === '90')?.unit).toBeNull();
+    const labels = structuredClone(draft.excerpts);
+    labels[0].text += ' ToSTNeT-3、午前8時45分、会社法第165条第3項。';
+    const named = structuredClone(good);
+    named.sections[0].summary[0].text =
+      '会社法第165条第３項に基づき、午前８時45分のToSTNeT-3で取引する。';
+    validateNarrativeContent(named, facts, draft.values, labels);
+    named.sections[0].summary[0].text = '午前9時45分のToSTNeT-4で取引する。';
+    expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
     for (const [mutate, message] of [
       [
         (c: NarrativeContent) => {
@@ -293,17 +355,18 @@ describe('説明要約の生成・点検・数値参照', () => {
   });
 
   it('重要条件の欠落を独立点検で修復し、再失敗は原文抜粋で代用しない', async () => {
-    const summary = content();
+    const response = synthesisResponse(content());
+    const summary = assembleNarrative(response, facts, draft.values, draft.excerpts);
     const badReview = {
       ...fixedNarrativeReview(summary, facts, draft),
-      issues: [{ claimId: 'delivery', sourceIds: sources, reason: '納期長期化の条件が欠落' }],
+      issues: [{ claimId: 'summary-2-0', sourceIds: sources, reason: '納期長期化の条件が欠落' }],
     };
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
-      .mockResolvedValueOnce(JSON.stringify(summary))
+      .mockResolvedValueOnce(JSON.stringify(response))
       .mockResolvedValueOnce(JSON.stringify(badReview))
-      .mockResolvedValueOnce(JSON.stringify(summary))
+      .mockResolvedValueOnce(JSON.stringify(response))
       .mockResolvedValueOnce(JSON.stringify(badReview));
     const attempts: SummaryAttempt[] = [];
     await expect(

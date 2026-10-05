@@ -134,7 +134,10 @@ for (const item of selected) {
       item.documentType,
       serializePagesForAnalysis(pages),
       pages,
-      (attempt) => attempts.push(attempt)
+      (attempt) => {
+        attempts.push(attempt);
+        console.log(`${item.id}: ${attempt.phase} ${attempt.error ? '拒否' : '完了'}`);
+      }
     );
   } catch (error) {
     errors = [error instanceof Error ? error.message : String(error)];
