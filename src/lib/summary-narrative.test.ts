@@ -199,7 +199,7 @@ function synthesisResponse(content: NarrativeContent) {
     sourceIds: c.sourceIds,
   });
   return {
-    version: 1,
+    version: 2,
     overview: content.overview.map(line),
     sections: content.sections.map((s) => ({
       title: s.title,
@@ -278,6 +278,37 @@ describe('説明要約の生成・点検・数値参照', () => {
   it('数字の直書き・未知根拠・数量の欠落・単位混在と保存後の文変更を拒否する', () => {
     const good = content();
     validateNarrativeContent(good, facts, draft.values, draft.excerpts);
+    const literal = synthesisResponse(good);
+    literal.sections[0].summary[0].text = '製品売上は１２０百万円。';
+    const bound = assembleNarrative(literal, facts, draft.values, draft.excerpts);
+    expect(bound.sections[0].summary[0].text).toContain(value(q('120', '製品事業')));
+    literal.sections[0].summary[0].text = '製品売上は121百万円。';
+    expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
+      '一意に対応'
+    );
+    literal.sections[0].summary[0].text = '製品売上は120千円。';
+    expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
+      '一意に対応'
+    );
+    literal.sections[0].summary[0].text = '製品売上は100百万円。';
+    expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
+      '一意に対応'
+    );
+    literal.sections[0].summary[0].text = '製品売上は120百万円。';
+    literal.sections[0].summary[0].sourceIds = draft.excerpts
+      .filter((e) => e.text.includes('大型案件'))
+      .map((e) => e.id);
+    expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
+      '一意に対応'
+    );
+    expect(() =>
+      assembleNarrative(
+        { ...synthesisResponse(good), version: 1 },
+        facts,
+        draft.values,
+        draft.excerpts
+      )
+    ).toThrow('version=2');
     expect(() => assembleNarrative(good, facts, draft.values, draft.excerpts)).toThrow('SCHEMA');
     const doubledUnit = structuredClone(good);
     doubledUnit.sections[0].tables[0].rows[0].cells[1] += '百万円';
@@ -344,13 +375,18 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(columns.find((v) => v.decimal === '5.0')?.unit).toBe('%');
     expect(columns.find((v) => v.decimal === '90')?.unit).toBeNull();
     const labels = structuredClone(draft.excerpts);
-    labels[0].text += ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。B2C事業。';
+    labels[0].text +=
+      ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。B2C事業。第20期定時株主総会。第3回会議。';
     const named = structuredClone(good);
     named.sections[0].summary[0].text =
       '会社法第165条第３項に基づき、午前８時45分のToSTNeT-3で取引する。';
     validateNarrativeContent(named, facts, draft.values, labels);
     named.sections[0].summary[0].text = '1UP投資部屋で紹介。基本的１株当たり利益。';
     validateNarrativeContent(named, facts, draft.values, labels);
+    named.sections[0].summary[0].text = '第20期定時株主総会で承認、第3回会議で検討。';
+    validateNarrativeContent(named, facts, draft.values, labels);
+    named.sections[0].summary[0].text = '第21期定時株主総会で承認。';
+    expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
     named.sections[0].summary[0].text = '2UP投資部屋で紹介。';
     expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
     named.sections[0].summary[0].text = 'B2事業。';
