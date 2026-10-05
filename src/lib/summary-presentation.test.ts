@@ -17,6 +17,7 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { VerifiedFact } from './fact-contract';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { reviewCandidates } from './fact-candidates';
+import { summaryComparison, comparisonLabel } from './summary-comparison';
 
 const page = textPage(expectation.text);
 const facts = parseFactSummary(
@@ -33,8 +34,129 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 
 describe('冒頭と本文の保持・復元・原文参照', () => {
+  it('目次・定型注意書き・記載省略・該当なしを冒頭の理由や条件にせず全文は保持する', () => {
+    const notice =
+      '本資料に記載されている業績見通し等の将来に関する記述は、当社が現在入手している情報及び合理的であると判断する一定の前提に基づいており、その達成を当社として約束する趣旨のものではありません。また、実際の業績等は様々な要因により大きく異なる可能性があります。';
+    const toc =
+      '１．経営成績等の概況……………………２\n（１）当中間期の経営成績の概況……………………２\n２．財務諸表……………………４';
+    const routine =
+      '（セグメント情報等の注記）【セグメント情報】前中間連結会計期間(自2025年３月１日至2025年８月31日)\n当社グループの報告セグメントはレストラン事業のみであり、他の事業セグメントの重要性が乏しいため、記載を省略しております。';
+    const absence = '（株主資本の金額に著しい変動があった場合の注記）該当事項はありません。';
+    const risk = '新規事業は承認を条件に実施する予定です。';
+    const source = textPage(
+      expectation.text +
+        '\n' +
+        notice +
+        '\n○添付資料の目次\n' +
+        toc +
+        '\n４．セグメント情報等の注記\n' +
+        routine +
+        '\n' +
+        absence +
+        '\n５．取引条件\n' +
+        risk
+    );
+    const display = buildPresentation(facts, [source]);
+    const html = buildSummaryHtml(renderFacts(facts, display), null, {
+      companyName: 'テスト',
+      title: '決算',
+      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
+    });
+    const reading = html.replace(/<details\b[\s\S]*?<\/details>/g, '');
+    for (const text of [notice, routine, absence].flatMap((text) => text.split('\n')))
+      expect(reading).not.toContain(text);
+    expect(reading).not.toContain('……………………');
+    expect(reading).toContain(risk);
+    for (const text of [notice, routine, absence].flatMap((text) => text.split('\n')))
+      expect(html).toContain(text);
+    expect(
+      display.excerpts
+        .filter((e) => e.text.includes('……………………') || e.text === notice)
+        .every((e) => e.role === 'document')
+    ).toBe(true);
+  });
+  it('比較条件が一致する確定値から増減・赤字変化を示し、異なる条件や範囲値は比較しない', () => {
+    const current = facts.facts.find((f) => f.label === '営業利益')!;
+    const previous = {
+      ...current,
+      id: 'previous',
+      period: '2025年3月期',
+      value: 120,
+      quantity: { ...current.quantity!, decimal: '120' },
+    } as VerifiedFact;
+    const comparison = summaryComparison(current, [current, previous])!;
+    expect(comparisonLabel(current, comparison)).toBe('↓減益');
+    const loss = {
+      ...current,
+      quantity: { ...current.quantity!, decimal: '-100' },
+    } as VerifiedFact;
+    const oldLoss = {
+      ...previous,
+      quantity: { ...previous.quantity!, decimal: '-120' },
+    } as VerifiedFact;
+    expect(comparisonLabel(loss, summaryComparison(loss, [loss, oldLoss])!)).toBe('↑赤字縮小');
+    const lossAmount = { ...current, label: '営業損失' };
+    const previousLossAmount = { ...previous, label: '営業損失' };
+    expect(
+      comparisonLabel(lossAmount, summaryComparison(lossAmount, [lossAmount, previousLossAmount])!)
+    ).toBe('↑損失縮小');
+    expect(
+      summaryComparison(current, [
+        current,
+        { ...previous, semantics: { ...previous.semantics, scope: '非連結' } },
+      ])
+    ).toBeNull();
+    expect(
+      summaryComparison(
+        {
+          ...current,
+          kind: 'range',
+          quantity: { raw: '100～150', decimal: null, lower: '100', upper: '150', sourceIds: [] },
+        },
+        [previous]
+      )
+    ).toBeNull();
+  });
+  it('修正前後の数値と上方・下方・据え置きを冒頭に表示する', () => {
+    const id = 'revision-20260910';
+    const pages = corpus
+      .find((c) => c.id === id)!
+      .pages.map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber));
+    const native = reviewCandidates(
+      candidateResponse(
+        candidates.find((c) => c.id === id)!.facts as unknown as VerifiedFact[],
+        pages,
+        'earningsRevision'
+      ),
+      'earningsRevision',
+      pages
+    ).facts;
+    const summary = { ...facts, documentType: 'earningsRevision' as const, facts: native };
+    const overview = renderFacts(summary, buildPresentation(summary, pages)).split(
+      '## 修正内容'
+    )[0]!;
+    expect(overview).toContain('**↑上方修正** 2,800百万円 → 2,900百万円');
+    expect(overview).toContain('親会社の所有者に帰属する当期利益');
+    const after = native.find(
+      (f) => f.label === '営業利益' && f.semantics.state === 'forecastAfter'
+    )!;
+    const same = { ...after, quantity: { ...after.quantity!, decimal: '2800' } } as VerifiedFact;
+    const lower = { ...after, quantity: { ...after.quantity!, decimal: '2700' } } as VerifiedFact;
+    expect(
+      comparisonLabel(
+        same,
+        summaryComparison(same, [...native.filter((f) => f.id !== after.id), same])!
+      )
+    ).toBe('→据え置き');
+    expect(
+      comparisonLabel(
+        lower,
+        summaryComparison(lower, [...native.filter((f) => f.id !== after.id), lower])!
+      )
+    ).toBe('↓下方修正');
+  });
   it('一般的な前置きと結果の重複を外し、原因・季節性を抜粋して条件と全文を保持する', () => {
-    const introduction = 'わが国経済は物価上昇が続いています。個人消費も低迷しています。';
+    const introduction = 'わが国経済は物価上昇が続いています。一方、個人消費も低迷しています。';
     const reason =
       '以上の結果、当期の業績は、需要の減少と節約志向の強まりから利用の出し控えが見られたことなどにより、売上高は1,000百万円と前年同期に比べ100百万円（10.0%）の減収となりました。';
     const season =

@@ -179,9 +179,46 @@ export function factRole(
 export function explanationRole(text: string): 'reason' | 'condition' | 'change' | null {
   const source = text.normalize('NFKC').replace(/\s/g, '');
   if (/季節|偏る|条件|場合|可能性|不確実|速報|未定|困難/.test(source)) return 'condition';
-  if (/要因|理由|ため|により|による|減収|減益|増収|増益/.test(source)) return 'reason';
+  if (/要因|理由|ため|により|による|減収|減益|増収|増益|(?:費|コスト)の上昇分.*吸収/.test(source))
+    return 'reason';
   if (/変更はありません|修正の有無[:：]無/.test(source)) return 'change';
   return null;
+}
+
+/** Complete navigation/standard notice blocks only. Mixed substantive paragraphs stay readable. */
+export function isSourceMetadata(text: string): boolean {
+  const source = text.normalize('NFKC').replace(/\s/g, '');
+  if (!/。/.test(source) && /(?:\.{3,}|…{2,}|⋯{2,}|‥{2,})\d/.test(source)) return true;
+  const sentences = source.match(/[^。]+。?/g) ?? [];
+  return (
+    sentences.length > 0 &&
+    sentences.every(
+      (sentence) =>
+        /^(?:本資料|本決算短信)に記載.*(?:業績見通し|業績予想).*将来.*(?:約束|保証).*ありません。?$/.test(
+          sentence
+        ) ||
+        /^(?:また、)?実際の業績.*(?:様々|さまざま)な要因.*異なる可能性があります。?$/.test(sentence)
+    )
+  );
+}
+
+export function isRoutineExplanation(text: string): boolean {
+  const source = text.normalize('NFKC').replace(/\s/g, '');
+  const body = source
+    .replace(
+      /[（(](?:継続企業の前提に関する注記|株主資本の金額に著しい変動があった場合の注記|セグメント情報等の注記)[）)]|【セグメント情報】/g,
+      ''
+    )
+    .replace(
+      /^(?:前|当)(?:中間|四半期)?(?:連結)?会計期間[（(]自\d{4}年\d{1,2}月\d{1,2}日至\d{4}年\d{1,2}月\d{1,2}日[）)]/,
+      ''
+    );
+  return (
+    /^(?:該当事項はありません。?)+$/.test(body) ||
+    /^当社(?:グループ)?(?:は|の報告セグメントは)[^。]*(?:のみ|単一)[^。]*記載(?:を)?省略[^。]*。?$/.test(
+      body
+    )
+  );
 }
 
 /** Literal cover field, not a verified date claim or an inferred dividend period. */

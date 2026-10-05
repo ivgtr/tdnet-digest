@@ -9,6 +9,7 @@ import { unchangedDividend, unchangedDividendReference } from './dividend-semant
 import { paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 import { explanationRole } from './summary-content-policy';
 import { companyExcerpt } from './summary-company-excerpt';
+import { summaryComparison, comparisonLabel } from './summary-comparison';
 
 export const stateLabels = {
   actual: '実績',
@@ -80,9 +81,11 @@ function valueNotes(f: VerifiedFact): string[] {
 function statementText(f: VerifiedFact): string {
   const source = f.statement!.normalize('NFKC').replace(/\s/g, '');
   const unchanged = source.match(
-    /^\(?注\)?直近に公表されている(配当予想|業績予想)からの修正の有無[:：]?無$/
+    /^\(?注\)?直近に公表されている(配当予想|業績予想)からの修正の有無[:：]?(無|有)$/
   );
-  return literalMarkdown(unchanged ? `${unchanged[1]}：変更なし` : f.statement!);
+  return literalMarkdown(
+    unchanged ? `${unchanged[1]}：${unchanged[2] === '無' ? '変更なし' : '修正あり'}` : f.statement!
+  );
 }
 function context(
   f: VerifiedFact,
@@ -130,42 +133,19 @@ function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
   return key(amount) === key(rate);
 }
 function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
+  const comparison = summaryComparison(f, facts.facts);
+  if (comparison) {
+    const before = comparison.reference;
+    const values =
+      comparison.axis === 'revision'
+        ? `${numberText(before)} → ${numberText(f)}`
+        : `${numberText(f)}（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${numberText(before)}）`;
+    const rate = facts.facts.find((r) => canPair(f, r));
+    return `${literalMarkdown(f.label)}：**${comparisonLabel(f, comparison)}** ${values}${rate ? `（原文の増減率 ${numberText(rate)}）` : ''}`;
+  }
   const rate = facts.facts.find((r) => canPair(f, r));
   if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;
-  const axis = f.period?.match(/^(20\d{2})年(\d{1,2})月期/);
-  const previous =
-    axis &&
-    ['fullYear', 'cumulativeQ1', 'cumulativeQ2', 'cumulativeQ3'].includes(f.semantics.periodKind) &&
-    f.semantics.state === 'actual' &&
-    f.provenance?.tableId
-      ? facts.facts.filter(
-          (p) =>
-            numeric(p) &&
-            p.label === f.label &&
-            p.unit === f.unit &&
-            p.provenance?.tableId === f.provenance!.tableId &&
-            p.period?.startsWith(`${Number(axis[1]) - 1}年${axis[2]}月期`) &&
-            p.semantics.state === f.semantics.state &&
-            p.semantics.periodKind === f.semantics.periodKind &&
-            canonicalJSON([
-              p.semantics.subject,
-              p.semantics.scope,
-              p.semantics.basis,
-              p.semantics.qualifiers,
-              p.semantics.conditions,
-              p.provenance?.adjustments,
-            ]) ===
-              canonicalJSON([
-                f.semantics.subject,
-                f.semantics.scope,
-                f.semantics.basis,
-                f.semantics.qualifiers,
-                f.semantics.conditions,
-                f.provenance?.adjustments,
-              ])
-        )
-      : [];
-  return `${literalMarkdown(f.label)}：${numberText(f)}${previous.length === 1 ? `（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${numberText(previous[0])}）` : ''}`;
+  return `${literalMarkdown(f.label)}：${numberText(f)}${f.semantics.state === 'actual' || f.semantics.state === 'forecastAfter' ? '（比較未確認）' : ''}`;
 }
 function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
   if (['reason', 'condition'].includes(explanationRole(f.statement!) ?? '')) {
@@ -173,6 +153,12 @@ function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
     return `会社説明（原文抜粋）：${literalMarkdown(excerpt === null ? f.statement! : excerpt)}`;
   }
   const text = statementText(f);
+  if (text === '業績予想：修正あり') {
+    const compared = facts.facts.some(
+      (value) => summaryComparison(value, facts.facts)?.axis === 'revision'
+    );
+    return `業績予想：**修正あり**${compared ? '' : '（修正前の数値・方向は本資料では未確認）'}`;
+  }
   if (!/^(?:配当予想|業績予想)：変更なし$/.test(text)) return text;
   const forecasts = facts.facts.filter(
     (value) => numeric(value) && value.valueKind?.startsWith('forecast')
@@ -363,6 +349,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         if (
           !next ||
           context(next, shared, true, subjects) !== current ||
+          (numeric(f) && ['earnings', 'earningsRevision'].includes(facts.documentType)) ||
           numeric(f) !== numeric(next)
         )
           break;

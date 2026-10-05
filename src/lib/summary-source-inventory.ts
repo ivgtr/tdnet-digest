@@ -6,6 +6,7 @@ import {
   headingRole,
   dividendPaymentExcerpt,
   type ContentRole,
+  isSourceMetadata,
 } from './summary-content-policy';
 import type { DocumentType } from './document-type';
 import { proseQuantities } from './quantity';
@@ -91,7 +92,8 @@ export function sourceInventory(
               'unclassified')
             : (headings[headings.length - 1]?.role ?? 'unclassified');
       const documentOnly =
-        (/目次|決算短信/.test(block.text) && !/単位|資産の部|負債の部/.test(block.text)) ||
+        isSourceMetadata(block.text) ||
+        (/目次|決算短信/.test(block.text) && !/。|単位|資産の部|負債の部/.test(block.text)) ||
         /上場会社名.*代表者/.test(block.text.normalize('NFKC').replace(/\s/g, '')) ||
         /^\(?百万円未満切捨て\)?$/.test(block.text.normalize('NFKC').replace(/\s/g, ''));
       return [

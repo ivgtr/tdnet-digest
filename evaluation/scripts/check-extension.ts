@@ -132,13 +132,16 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     item = {
       ...item,
       ...(reviewCase === 'summary-format-kyokuto' ? { id: 'kyokuto-20261005', code: '2300' } : {}),
+      ...(reviewCase === 'summary-format-karura' ? { id: 'karura-20261005', code: '2789' } : {}),
       documentType: reviewFixture.documentType,
       title:
         reviewCase === 'summary-format-kyokuto'
           ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
-          : reviewFixture.documentType === 'earnings'
-            ? '2027年3月期 決算短信〔日本基準〕（連結）'
-            : '追加セルフレビュー用開示',
+          : reviewCase === 'summary-format-karura'
+            ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
+            : reviewFixture.documentType === 'earnings'
+              ? '2027年3月期 決算短信〔日本基準〕（連結）'
+              : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure =
@@ -208,7 +211,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     source: reviewRejectedUrl
       ? 'rejected-link'
       : reviewFixture
-        ? reviewCase === 'summary-format-kyokuto'
+        ? reviewCase === 'summary-format-kyokuto' || reviewCase === 'summary-format-karura'
           ? 'public-PDF-through-offscreen'
           : 'synthetic-PDF-through-offscreen'
         : fixtureSource
@@ -706,6 +709,36 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
     assert.ok(stored.value.presentation?.version === 2);
+    if (reviewCase === 'summary-format-karura') {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of [
+        '売上高:↑増収3,989百万円(前年同期3,935百万円)',
+        '営業利益:↓減益211百万円(前年同期264百万円)',
+        '経常利益:↓減益215百万円(前年同期262百万円)',
+        '純利益:↓減益83百万円(前年同期245百万円)',
+        '修正あり',
+        '修正前の数値・方向は本資料では未確認',
+        '人件費及び原材料費',
+      ])
+        assert.ok(reading.includes(term), `冒頭の変化・説明が欠落: ${term}`);
+      for (const blockId of ['p2b14', 'p3b3', 'p3b4', 'p11b4', 'p11b7', 'p11b9']) {
+        const original = stored.value.presentation.excerpts.find((e: any) => e.blockId === blockId);
+        assert.ok(original, `原文保持が欠落: ${blockId}`);
+        assert.ok(
+          !reading.includes(original.text.normalize('NFKC').replace(/\s/g, '')),
+          `定型文が通常表示へ混入: ${blockId}`
+        );
+      }
+      assert.ok(
+        stored.value.presentation.sections
+          .find((s: any) => s.title === '通期見通し・前提')
+          .excerptIds.includes('source:p5b11')
+      );
+      evidence.reading = reading;
+    }
     if (reviewCase === 'summary-format-kyokuto') {
       const headings = await summary.locator('h2').allTextContents();
       for (const title of ['業績と増減要因', '通期見通し・前提', '配当', '財政状態・資金の動き'])

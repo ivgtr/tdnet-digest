@@ -1,4 +1,9 @@
-import { dividendPaymentExcerpt, explanationRole } from './summary-content-policy';
+import {
+  dividendPaymentExcerpt,
+  explanationRole,
+  isSourceMetadata,
+  isRoutineExplanation,
+} from './summary-content-policy';
 import type { SourceExcerpt } from './summary-source-inventory';
 
 const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
@@ -18,22 +23,24 @@ export function companyExcerpt(
   const payment = dividendPaymentExcerpt(text);
   if (/上場会社名.*代表者/.test(normalized)) return payment;
   if (source.role === 'document' || source.role === 'unclassified') return null;
+  if (isSourceMetadata(text) || isRoutineExplanation(text)) return null;
   if (payment) return payment;
 
   const sentences = text.match(/[^。]+(?:。|$)/g) ?? [];
   if (!sentences.length) return null;
-  if (qualification.test(normalized) || /場合/.test(normalized.replace(/通常の場合/g, '')))
-    return text;
-
   // General economic introductions and bridges do not explain this company's result.
   if (
     source.role === 'performance' &&
-    ((/^(?:当[^。]*期間における)?(?:わが国|我が国|世界|国内|日本)経済/.test(normalized) &&
+    ((/^(?:(?:当[^。]*期間における)?(?:わが国|我が国|世界|国内|日本)経済|[^。]{1,15}(?:産業|業界)におきましては)/.test(
+      normalized
+    ) &&
       !/当社|当グループ|売上高|営業利益/.test(normalized)) ||
       (/^このような.*(?:環境|状況).*中、(?:当社|当グループ)/.test(normalized) &&
         !/[0-9]|条件|可能性|未定/.test(normalized)))
   )
     return null;
+  if (qualification.test(normalized) || /場合/.test(normalized.replace(/通常の場合/g, '')))
+    return text;
 
   if (source.role === 'finance' && /^(?:収入|支出)の(?:主な)?内訳/.test(normalized)) return null;
   const seasonal = sentences.filter((sentence) => /季節|偏る/.test(compact(sentence)));
@@ -75,7 +82,7 @@ export function companyExcerpt(
     (sentence) =>
       explanationRole(sentence) !== null ||
       (['performance', 'operations'].includes(source.role) &&
-        /開始|稼働|出店|閉鎖|変更|改定|計上|取得|契約/.test(sentence))
+        /開始|稼働|出店|閉鎖|変更|改定|計上|取得|契約|導入|整備/.test(sentence))
   );
   if (reasons.length)
     return reasons

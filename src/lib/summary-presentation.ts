@@ -12,6 +12,8 @@ import {
   sectionPolicies,
   explanationRole,
   dividendPaymentExcerpt,
+  isSourceMetadata,
+  isRoutineExplanation,
 } from './summary-content-policy';
 import { companyExcerpt } from './summary-company-excerpt';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
@@ -106,11 +108,32 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
     take(
       primary.find(
         (f) =>
-          f.semantics.metricKind !== 'rate' &&
-          /営業(?:利益|損失)/.test(f.label) &&
+          f.semantics.metricKind === 'amount' &&
+          /^(?:営業利益|営業損失)$/.test(f.label) &&
           f.valueKind !== 'forecastBefore'
       )
     );
+    take(
+      primary.find(
+        (f) =>
+          f.semantics.metricKind === 'amount' &&
+          /^(?:経常利益|経常損失)$/.test(f.label) &&
+          f.valueKind !== 'forecastBefore'
+      )
+    );
+    take(
+      primary.find(
+        (f) =>
+          f.semantics.metricKind === 'amount' &&
+          /(?:純利益|純損失|当期利益|当期損失)$/.test(f.label) &&
+          f.valueKind !== 'forecastBefore'
+      )
+    );
+    if (facts.documentType === 'earnings')
+      for (const f of primary.filter(
+        (f) => f.semantics.state === 'forecastAfter' && f.semantics.metricKind === 'amount'
+      ))
+        take(f);
   } else {
     take(
       facts.facts.find(
@@ -131,7 +154,16 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
     .map((id) => paragraphs.find((e) => e.id === id)!);
   for (const role of ['reason', 'condition'] as const) {
     const verified = facts.facts.filter(
-      (f) => !numeric(f) && explanationRole(f.statement!) === role
+      (f) =>
+        !numeric(f) &&
+        explanationRole(f.statement!) === role &&
+        !isSourceMetadata(f.statement!) &&
+        !isRoutineExplanation(f.statement!) &&
+        factRole(
+          f,
+          facts.documentType,
+          excerpts.find((e) => e.blockId === anchor(f))?.role ?? 'unclassified'
+        ) !== 'document'
     );
     if (facts.documentType === 'earnings' && role === 'reason') {
       const resultFacts = verified.filter((f) => /減収|減益|増収|増益/.test(f.statement!));
@@ -149,7 +181,9 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
     }
     if (verified.length) take(verified[0]);
     else {
-      const excerpt = highlights.find((e) => explanationRole(e.text) === role);
+      const excerpt = highlights.find(
+        (e) => e.role !== 'notes' && explanationRole(e.text) === role
+      );
       if (excerpt) overview.push(excerpt.id);
     }
   }
@@ -163,7 +197,7 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
             facts.documentType,
             excerpts.find((e) => e.blockId === anchor(f))?.role ?? 'unclassified'
           ) === role &&
-          /修正の有無|変更はありません/.test(f.statement!)
+          /修正の有無|変更はありません|上方修正|下方修正/.test(f.statement!)
       )
     );
   if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
