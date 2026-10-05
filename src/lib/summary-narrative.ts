@@ -2,6 +2,7 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import { canonicalJSON, exact, hashText, record, type FactSummary } from './fact-contract';
 import { generateText, type LLMConfig } from './llm-client';
 import { getProviderCapabilities } from './structured-output';
+import { getModel } from './llm-providers';
 import {
   parseExactNumeric,
   proseQuantities,
@@ -682,6 +683,11 @@ export async function generateSummaryNarrative(
       raw = await generateText(
         {
           ...options,
+          ...(config.provider === 'openrouter' &&
+          getModel(config.provider, config.model)?.optionalReasoning &&
+          (phase === 'summary' || phase === 'summaryRepair')
+            ? { reasoningEnabled: false, reasoningEffort: undefined }
+            : {}),
           onResponse: (response) => {
             raw = response;
             config.onResponse?.(response);

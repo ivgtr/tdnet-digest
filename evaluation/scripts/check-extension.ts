@@ -839,8 +839,18 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.metadata = stored.value.metadata;
       evidence.reading = reading;
       evidence.pdfHash = pdfHash;
+      const trace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.equal(trace.outcome, 'success');
+      assert.deepEqual(
+        trace.attempts.map((a: any) => a.phase),
+        narrativeReplay.attempts.map((a: any) => a.phase)
+      );
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
+      evidence.trace = trace;
       evidence.stages.push(
-        'public PDF → Offscreen → replayed extraction/synthesis/review → exact facts/presentation → closed source toggles → full original → cache restore without API'
+        'public PDF → Offscreen → replayed extraction/synthesis/review → exact facts/presentation → closed source toggles → full original → cache restore without API → diagnostic clipboard'
       );
       await context.close();
       context = null;

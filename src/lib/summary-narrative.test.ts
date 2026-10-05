@@ -223,9 +223,24 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockResolvedValueOnce(JSON.stringify(response))
       .mockResolvedValueOnce(JSON.stringify({ version: 2, issues: review.issues }));
     const attempts: SummaryAttempt[] = [];
-    const generated = await generateVerifiedFactSummary(config, 'other', page.text, [page], (a) => {
-      attempts.push(a);
-    });
+    const generated = await generateVerifiedFactSummary(
+      { ...config, provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
+      'other',
+      page.text,
+      [page],
+      (a) => {
+        attempts.push(a);
+      }
+    );
+    expect(
+      vi
+        .mocked(generateText)
+        .mock.calls.map(([c]) => ({ effort: c.reasoningEffort, enabled: c.reasoningEnabled }))
+    ).toEqual([
+      { effort: 'low', enabled: undefined },
+      { effort: undefined, enabled: false },
+      { effort: 'low', enabled: undefined },
+    ]);
     expect(attempts.map((a) => a.phase)).toEqual(['first', 'summary', 'summaryReview']);
     expect(generated.repairAttempted).toBe(false);
     const restored = revalidatePresentation(

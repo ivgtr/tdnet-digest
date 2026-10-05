@@ -14,6 +14,8 @@ export interface LLMProvider {
 export interface LLMModel {
   id: string;
   name: string;
+  /** Explicitly confirmed provider capability; unknown models are not assumed optional. */
+  optionalReasoning?: boolean;
 }
 
 /**
@@ -69,7 +71,11 @@ export const LLM_PROVIDERS: LLMProvider[] = [
     defaultModel: 'anthropic/claude-4.5-sonnet',
     models: [
       { id: 'anthropic/claude-4.5-sonnet', name: 'Claude 4.5 Sonnet' },
-      { id: 'deepseek/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' },
+      {
+        id: 'deepseek/deepseek-v4.1-flash',
+        name: 'DeepSeek V4.1 Flash',
+        optionalReasoning: true,
+      },
       { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
       { id: 'x-ai/grok-code-fast-1', name: 'Grok Code Fast' },
       { id: 'xiaomi/mimo-v2-flash:free', name: 'Mimo V2 Flash Free' },

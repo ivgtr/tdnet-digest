@@ -126,3 +126,30 @@ describe('Anthropicの出力予算と完了判定', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+// Transport semantics belong here; narrative policy is checked by its existing owner.
+describe('OpenRouterの任意推論', () => {
+  it('推論無効を明示し、強度との競合は送信前に拒否する', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] }),
+          { status: 200 }
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const router = {
+      provider: 'openrouter',
+      model: 'deepseek/deepseek-v4.1-flash',
+      apiKey: 'test',
+      reasoningEnabled: false,
+    };
+    await generateText(router, messages);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).reasoning).toEqual({ enabled: false });
+    await expect(generateText({ ...router, reasoningEffort: 'low' }, messages)).rejects.toThrow(
+      '同時に指定'
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
