@@ -355,6 +355,7 @@ async function attachScore(
     const scoringText = scoringExtraction.text;
     const original: ScoreDocument = {
       url: pdfUrl,
+      documentHash: await hashPdf(pdfData),
       text: scoringText,
       pages: scoringExtraction.pages,
       issuer: companyName,
@@ -390,6 +391,7 @@ async function attachScore(
           const result = await extractTextFromPDF(data, documentType, 'full');
           const candidate: ScoreDocument = {
             url,
+            documentHash: await hashPdf(data),
             text: result.text,
             pages: result.pages,
             issuer: companyName,

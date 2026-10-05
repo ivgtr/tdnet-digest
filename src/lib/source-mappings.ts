@@ -1,20 +1,30 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import {
   normalized,
+  headingLevel,
+  fiscalHeadingRuns,
   tableReferenceHints,
   isPerformanceReportingTitle,
   forecastReportingTitle,
+  resolveForecastReportingTitle,
+  forecastTablePeriodSources,
 } from './document-structure';
-import { tableContinuations, continuationSpans } from './document-links';
-import { declaredQuantityUnit, parseExactQuantity, isUncaptionedUnit } from './quantity';
+import { tableContinuations, continuationPage } from './document-links';
+import { tableUnitRuns } from './table-layout';
+import {
+  declaredQuantityUnit,
+  parseExactQuantity,
+  parseExactNumeric,
+  isUncaptionedUnit,
+} from './quantity';
 export type TableMapping = ReturnType<typeof tableReferenceHints>[number];
 function inlineMappings(page: ExtractedPage): TableMapping[] {
   const result: TableMapping[] = [];
-  for (const row of page.blocks.filter((b) => b.kind === 'row')) {
+  for (const row of page.blocks.filter((b) => b.kind === 'row' && headingLevel(b) === null)) {
     const cells = page.quantities.filter((q) => row.spanIds.includes(q.id));
     const units = cells
       .flatMap((q) => {
-        const inline = parseExactQuantity(q.text)?.unit;
+        const inline = parseExactNumeric(q.text)?.unit;
         if (inline && isUncaptionedUnit(inline)) return [{ q, unit: inline, unitIds: [q.id] }];
         const suffix = page.spans.filter(
           (s) =>
@@ -31,15 +41,14 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
       .filter((c) => !/^(年|月|日)$/.test(c.unit))
       .sort((a, b) => a.q.x - b.q.x);
     if (units.length < 2) continue;
-    const fiscal = page.spans.filter(
-      (s) =>
-        s.y < row.y &&
-        row.y - s.y < row.height * 32 &&
-        /20\d{2}年\d{1,2}月期/.test(normalized(s.text))
+    const fiscal = fiscalHeadingRuns(
+      page.spans.filter((s) => s.y < row.y && row.y - s.y < row.height * 32)
     );
     if (!fiscal.length) continue;
-    const top = Math.max(...fiscal.map((s) => s.y));
-    const axes = fiscal.filter((s) => top - s.y <= s.height * 1.2).sort((a, b) => a.x - b.x);
+    const top = Math.max(...fiscal.map((run) => run[0].y));
+    const axes = fiscal
+      .filter((run) => top - run[0].y <= run[0].height * 1.2)
+      .sort((a, b) => a[0].x - b[0].x);
     const left = page.spans.filter(
       (s) => row.spanIds.includes(s.id) && s.x + s.width < units[0].q.x
     );
@@ -61,14 +70,18 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
       const caption = page.blocks
         .filter((b) => b.y < top && /20\d{2}年\d{1,2}月(?!期)/.test(normalized(b.text)))
         .sort((a, b) => b.y - a.y)[0];
-      if (!caption) continue;
+      if (
+        !caption ||
+        page.blocks.some((b) => b.y > caption.y && b.y <= row.y && headingLevel(b) !== null)
+      )
+        continue;
       for (const [i, c] of amounts.entries())
         result.push({
           valueId: c.q.id,
           metricIds: [metrics[0].id],
           periodIds: left.map((s) => s.id),
           unitIds: c.unitIds,
-          contextIds: [...caption.spanIds, axes[i].id],
+          contextIds: [...caption.spanIds, ...axes[i].map((s) => s.id)],
         });
     } else {
       if (units.length !== axes.length || !left.length) continue;
@@ -91,11 +104,14 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
           )
           .map((s) => s.id);
       if (!context.length) continue;
+      const contextY = Math.max(...context.map((id) => page.spans.find((s) => s.id === id)!.y));
+      if (page.blocks.some((b) => b.y > contextY && b.y <= row.y && headingLevel(b) !== null))
+        continue;
       for (const [i, c] of units.entries())
         result.push({
           valueId: c.q.id,
           metricIds: left.map((s) => s.id),
-          periodIds: [axes[i].id],
+          periodIds: axes[i].map((s) => s.id),
           unitIds: c.unitIds,
           contextIds: context,
         });
@@ -106,18 +122,57 @@ function inlineMappings(page: ExtractedPage): TableMapping[] {
 /** Structural proposals; complete geometry and semantic ownership are still verified on use. */
 export function buildTableMappings(pages: ExtractedPage[]): TableMapping[] {
   const mappings = pages.flatMap((p) => [...tableReferenceHints(p), ...inlineMappings(p)]);
+  for (const mapping of mappings) {
+    const page = pages.find((p) => p.quantities.some((q) => q.id === mapping.valueId))!;
+    const caption = page.blocks.find(
+      (b) =>
+        forecastReportingTitle(b.text) && b.spanIds.every((id) => mapping.contextIds.includes(id))
+    );
+    const tables = page.tableRegions.filter((t) => t.valueIds.includes(mapping.valueId));
+    const table = tables.length === 1 ? tables[0] : undefined;
+    const declarations =
+      caption && table ? forecastTablePeriodSources(caption, page.blocks, page.spans, table) : [];
+    mapping.contextIds = [
+      ...new Set([...mapping.contextIds, ...declarations.flatMap((b) => b.spanIds)]),
+    ];
+    const resolved =
+      caption && resolveForecastReportingTitle(caption, page.blocks, page.spans, table);
+    if (resolved) mapping.contextIds = [...new Set([...mapping.contextIds, ...resolved.sourceIds])];
+  }
   for (const link of tableContinuations(pages)) {
     const page = pages.find((p) => p.pageNumber === link.toPage)!;
-    const ids = page.quantities
-      .filter((q) =>
-        page.blocks.some((b) => link.rowIds.includes(b.id) && b.spanIds.includes(q.id))
-      )
-      .map((q) => q.id);
+    const ids = link.valueIds;
     if (!ids.length) continue;
-    const projected = { ...page, spans: continuationSpans(pages, page, ids[0]) };
-    for (const mapping of [...tableReferenceHints(projected), ...inlineMappings(projected)].filter(
-      (h) => ids.includes(h.valueId)
-    ))
+    const projected = continuationPage(pages, page, ids[0]);
+    const inheritedUnits = tableUnitRuns(
+      projected.spans.filter((s) => link.unitIds.includes(s.id))
+    );
+    const continuedRows: TableMapping[] = [];
+    if (inheritedUnits.length === link.periodColumns.length) {
+      for (const row of page.blocks.filter((b) => link.rowIds.includes(b.id))) {
+        const values = page.quantities
+          .filter((q) => row.spanIds.includes(q.id) && ids.includes(q.id))
+          .sort((a, b) => a.x - b.x);
+        if (values.length !== link.periodColumns.length) continue;
+        const metricIds = page.spans
+          .filter((s) => row.spanIds.includes(s.id) && s.x + s.width < values[0].x)
+          .map((s) => s.id);
+        if (!metricIds.length) continue;
+        for (const [i, q] of values.entries())
+          continuedRows.push({
+            valueId: q.id,
+            metricIds,
+            periodIds: link.periodColumns[i],
+            unitIds: inheritedUnits[i].map((s) => s.id),
+            contextIds: link.contextIds,
+          });
+      }
+    }
+    for (const mapping of [
+      ...tableReferenceHints(projected),
+      ...inlineMappings(projected),
+      ...continuedRows,
+    ].filter((h) => ids.includes(h.valueId)))
       if (!mappings.some((h) => JSON.stringify(h) === JSON.stringify(mapping)))
         mappings.push({ ...mapping, contextIds: link.contextIds });
   }

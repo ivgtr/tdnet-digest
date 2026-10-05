@@ -3,9 +3,11 @@ import {
   verifyTableEvidence,
   verifyPeriodAndKind,
   verifyProseEvidence,
+  verifyProseQuantity,
   type NumericClaim,
   type TableEvidence,
 } from './numeric-evidence';
+import { proseQuantities } from './quantity';
 import { extractPageLayout } from './pdf-layout';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { PdfSpan } from './pdf-layout';
@@ -686,4 +688,163 @@ it('片側だけの日付を区間として扱わない', () => {
       ''
     )
   ).toThrow();
+});
+
+it.each([
+  ['売上高は100百万円です。営業利益は10百万円です。', true],
+  ['売上高は100百万円、営業利益については10百万円です。', true],
+  ['売上高は100百万円、EPSは1株当たり42円です。', true],
+  ['売上高は100百万円、営業利益は10～20百万円と見込んでおります。', true],
+  ['売上高は100百万円、調整後営業利益は10百万円です。', false],
+  ['売上高は100百万円、営業利益は10百万円ではありません。', false],
+  ['売上高は100百万円、営業利益は10百万円です。売上高の予想は撤回しました。', false],
+  ['売上高は100百万円、営業利益は10百万円、売上高は120百万円です。', false],
+  ['売上高は100百万円（営業利益は10百万円）です。', false],
+] as const)('直接財務数量の列挙だけを照合し否定・限定・再指定を拒否する: %s', (quote, valid) => {
+  const verify = () =>
+    verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, {
+      ...claim,
+      label: '売上高',
+      value: 100,
+      unit: '百万円',
+    });
+  if (valid) expect(verify()).toBe(0);
+  else expect(verify).toThrow();
+});
+
+it.each([
+  ['EPS', '基本的1株当たり当期利益', '円', false],
+  ['EPS', 'eps', '円', false],
+  ['希薄化後EPS', '潜在株式調整後1株当たり当期利益', '円', false],
+  ['売上高', '売上収益', '百万円', false],
+  ['経常利益', '経常損失', '百万円', false],
+  ['当期純利益', '親会社株主に帰属する当期純利益', '百万円', false],
+  ['EPS', '希薄化後EPS', '円', true],
+  ['1株当たり四半期利益', '1株当たり当期利益', '円', true],
+] as const)('本文の指標再指定を表記でなく区分で照合する: %s / %s', (first, second, unit, valid) => {
+  const quote = `株式会社テストの${first}は42${unit}、${second}は43${unit}です。`;
+  for (const [label, value] of [
+    [first, 42],
+    [second, 43],
+  ] as const) {
+    const verify = () =>
+      verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, {
+        ...claim,
+        label,
+        value,
+        unit,
+        subject: '株式会社テスト',
+      });
+    if (valid) expect(verify()).toBe(0);
+    else expect(verify).toThrow();
+  }
+});
+
+it.each([
+  ['売上高については、売上高は100百万円を見込んでおります。', true],
+  ['売上高については、売上収益は100百万円を見込んでおります。', true],
+  ['売上高は100百万円、売上高については、売上高は120百万円を見込んでおります。', false],
+  ['売上高は100百万円、売上収益は100百万円です。', false],
+])('指標の話題への言及と、複数の数量による再指定を区別する: %s', (quote, valid) => {
+  const label = quote.includes('売上収益は') ? '売上収益' : '売上高';
+  const verify = () =>
+    verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, {
+      ...claim,
+      label,
+      value: 100,
+      unit: '百万円',
+    });
+  if (valid) expect(verify()).toBe(0);
+  else expect(verify).toThrow();
+});
+it.each(['\n', '\r\n', '\n  '])('物理的な番号付き項目だけを独立させる: %j', (separator) => {
+  const quote = `(1)EPSは42円です。${separator}（２）基本的1株当たり当期利益は43円です。`;
+  for (const [label, value] of [
+    ['EPS', 42],
+    ['基本的1株当たり当期利益', 43],
+  ] as const)
+    expect(
+      verifyProseEvidence({ pageNumber: 1, text: quote, spans: [] }, quote, {
+        ...claim,
+        label,
+        value,
+        unit: '円',
+      })
+    ).toBe(0);
+});
+
+it.each(['42円', '42～43円'])(
+  '番号付き項目の同じ値も選択済みの原数量で所属を確定する: %s',
+  (amount) => {
+    const quote = `(1)EPSは${amount}です。\n(2)基本的1株当たり当期利益は${amount}です。`;
+    const quantities = proseQuantities({ id: 'source', text: quote }).filter(
+      (q) => q.raw === amount.normalize('NFKC')
+    );
+    expect(quantities).toHaveLength(2);
+    const range = amount.includes('～');
+    for (const [i, label] of ['EPS', '基本的1株当たり当期利益'].entries()) {
+      const current = { ...claim, label, unit: '円', value: range ? null : 42, range };
+      const page = { pageNumber: 1, text: quote, spans: [] };
+      expect(verifyProseQuantity(page, quote, current, quantities[i]).start).toBe(
+        quantities[i].start
+      );
+      expect(() => verifyProseQuantity(page, quote, current, quantities[1 - i])).toThrow();
+    }
+  }
+);
+
+it.each([
+  [';', '売上高', '売上高', '100百万円', '120百万円'],
+  ['；', '売上高', '売上高', '100百万円', '120百万円'],
+  ['；', 'EPS', '基本的1株当たり当期利益', '42円', '43円'],
+  ['；', '売上高', '売上収益', '100百万円', '100百万円'],
+  ['；', '売上高', '売上収益', '100～120百万円', '100～120百万円'],
+])(
+  '原文の同一行の記号から番号付き項目の所属を作らない: %s / %s / %s / %s / %s',
+  (separator, first, second, a, b) => {
+    const quote = `(1)${first}は${a}です。${separator}（２）${second}は${b}です。`;
+    const quantities = proseQuantities({ id: 'source', text: quote }).filter((q) =>
+      q.raw.includes('円')
+    );
+    expect(quantities).toHaveLength(2);
+    for (const [i, label] of [first, second].entries()) {
+      const raw = quantities[i].raw;
+      const unit = raw.includes('百万円') ? '百万円' : '円';
+      const range = raw.includes('~');
+      const current = {
+        ...claim,
+        label,
+        unit,
+        value: range ? null : Number(raw.replace(unit, '')),
+        range,
+      };
+      expect(() =>
+        verifyProseQuantity(
+          { pageNumber: 1, text: quote, spans: [] },
+          quote,
+          current,
+          quantities[i]
+        )
+      ).toThrow('STRUCTURE:');
+    }
+  }
+);
+
+it('実改行の別項目と同じ行のセミコロンを混在しても所属を保つ', () => {
+  const quote =
+    '(1)売上高は100百万円です。\n(2)売上高は120百万円です。；(3)売上高は140百万円です。';
+  const quantities = proseQuantities({ id: 'source', text: quote }).filter((q) =>
+    q.raw.includes('百万円')
+  );
+  for (const [i, value] of [100, 120, 140].entries()) {
+    const verify = () =>
+      verifyProseQuantity(
+        { pageNumber: 1, text: quote, spans: [] },
+        quote,
+        { ...claim, label: '売上高', value, unit: '百万円' },
+        quantities[i]
+      );
+    if (i === 0) expect(verify().start).toBe(quantities[i].start);
+    else expect(verify).toThrow('STRUCTURE:');
+  }
 });

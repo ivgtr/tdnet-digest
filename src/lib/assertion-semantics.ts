@@ -1,10 +1,18 @@
 import type { FactSemantics } from './fact-contract';
+import { unchangedDividendReference } from './dividend-semantics';
 import { normalized } from './document-structure';
 import {
   reportingPeriodText,
   calendarIntervalSeparator,
   calendarDatePattern,
 } from './period-semantics';
+
+/** A status is an explicit disclosure state; a conditional event is still an event. */
+export function assertionKinds(text: string): Array<'event' | 'status'> {
+  return /非開示|未定|該当.*なし|該当事項.*ございません/.test(text)
+    ? ['event', 'status']
+    : ['event'];
+}
 
 const passiveForecast = /見込まれ(?:る|ます|て(?:いる|います|おります))/;
 const outlookForecast = /(?:となる|の)見通し(?:です|であります|である)/;
@@ -103,9 +111,16 @@ export function planClauseBindings(text: string) {
   return bindings;
 }
 export function assertionPolarity(text: string): FactSemantics['polarity'] {
+  if (/修正の有無[:：]無$/.test(normalized(text))) return 'negative';
   const clauses = assertionClauses(text);
   const n = clauses.filter((c) => negative.test(c)).length;
   return n === 0 ? 'affirmative' : n === clauses.length ? 'negative' : 'mixed';
+}
+/** No change negates a revision, not the explicitly retained dividend amount. */
+export function quantityAssertionPolarity(text: string, label: string): FactSemantics['polarity'] {
+  return label === '配当予想' && unchangedDividendReference(text)
+    ? 'affirmative'
+    : assertionPolarity(text);
 }
 
 /** A direct quantity needs a complete supported continuation, not absence of a bad word. */
@@ -129,6 +144,7 @@ export function verifyQuantityAssertion(suffix: string): void {
 /** Proof is deliberately bounded to explicit predicates, never a role word anywhere in a heading. */
 export function assertionStates(text: string): FactSemantics['state'][] {
   const states = new Set<FactSemantics['state']>();
+  if (unchangedDividendReference(text)) states.add('forecast');
   for (const binding of planClauseBindings(text)) {
     const clause = binding.text;
     const negations = [...clause.matchAll(new RegExp(negativePredicate.source, 'g'))];
@@ -152,6 +168,7 @@ export function assertionStates(text: string): FactSemantics['state'][] {
     if (binding.planned && activePlan(positive)) states.add('planned');
     if (
       /見込まれ|見込んで|見込み|予想して|見込め|想定して/.test(positive) ||
+      /業績予想について[^。]*修正いたします$/.test(positive) ||
       new RegExp(`${outlookForecast.source}$`).test(positive)
     )
       states.add('forecast');

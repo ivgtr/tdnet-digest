@@ -812,7 +812,17 @@
         }
       }
     ],
-    "expectedEvidence": []
+    "expectedEvidence": [],
+    "expectedConditions": [
+      {
+        "page": 1,
+        "text": "なお、市場動向等により一部又は全部の取得が行われない可能性もある。"
+      },
+      {
+        "page": 1,
+        "text": "当該買付注文は当該取引時間限りの注文とする。"
+      }
+    ]
   },
   {
     "id": "monthly-20260714",
@@ -985,6 +995,1491 @@
           "state": "decided",
           "polarity": "affirmative",
           "conditions": []
+        }
+      }
+    ]
+  },
+  {
+    "id": "140120261002545326",
+    "title": "業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://www.release.tdnet.info/inbs/140120261002545326.pdf",
+    "publishedDate": "2026-10-02",
+    "code": "6652",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 75500,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 7200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 6750,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 6000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "１株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 203.25,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 85000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 9400,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 8950,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 8600,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "１株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 290.46,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "ＩＤＥＣ株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "中間配当金"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 65,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "IDEC株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "planned",
+          "polarity": "mixed"
+        }
+      },
+      {
+        "labels": [
+          "期末配当金"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 65,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "IDEC株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "planned",
+          "polarity": "mixed"
+        }
+      },
+      {
+        "labels": [
+          "年間配当金"
+        ],
+        "periods": [
+          "2027年3月期"
+        ],
+        "variants": [
+          {
+            "value": 130,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "IDEC株式会社",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "planned",
+          "polarity": "mixed"
+        }
+      }
+    ],
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b21",
+        "kind": "event",
+        "semantics": {
+          "subject": "IDEC株式会社",
+          "state": "forecast"
+        }
+      }
+    ]
+  },
+  {
+    "id": "140120260930543358",
+    "title": "2026年11月期 第3四半期決算短信〔日本基準〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120260930543358.pdf",
+    "publishedDate": "2026-09-30",
+    "code": "4394",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
+        "variants": [
+          {
+            "value": 1062,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
+        "variants": [
+          {
+            "value": 155,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
+        "variants": [
+          {
+            "value": 160,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
+        "variants": [
+          {
+            "value": 103,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "１株当たり四半期純利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期累計",
+          "2026年11月期第3四半期"
+        ],
+        "variants": [
+          {
+            "value": 17.05,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative"
+        },
+        "adjustmentBasis": "splitAdjusted"
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
+        "variants": [
+          {
+            "value": 1451,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
+        "variants": [
+          {
+            "value": 204,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
+        "variants": [
+          {
+            "value": 206,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
+        "variants": [
+          {
+            "value": 133,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "１株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
+        "variants": [
+          {
+            "value": 22.01,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative"
+        },
+        "adjustmentBasis": "splitAdjusted"
+      },
+      {
+        "labels": [
+          "年間配当金期末"
+        ],
+        "periods": [
+          "2026年11月期"
+        ],
+        "variants": [
+          {
+            "value": 10,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative"
+        },
+        "adjustmentBasis": "afterSplit"
+      }
+    ],
+    "forbidden": [
+      {
+        "label": "年間配当金",
+        "value": 15,
+        "period": "2026年11月期",
+        "state": "forecast"
+      },
+      {
+        "label": "年間配当金",
+        "value": 25,
+        "period": "2026年11月期",
+        "state": "forecast"
+      },
+      {
+        "label": "年間配当金合計",
+        "value": 0,
+        "period": "2026年11月期",
+        "state": "forecast"
+      },
+      {
+        "label": "親会社株主に帰属する四半期純利益",
+        "value": 250,
+        "period": "2026年11月期第3四半期累計",
+        "state": "actual"
+      }
+    ],
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b37",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "state": "unspecified",
+          "polarity": "negative"
+        }
+      },
+      {
+        "page": 1,
+        "blockId": "p1b46",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社エクスモーション",
+          "state": "unspecified",
+          "polarity": "negative"
+        }
+      }
+    ]
+  },
+  {
+    "id": "140120260713591990",
+    "title": "2026年５月期 決算短信〔日本基準〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www2.jpx.co.jp/disc/464A0/140120260713591990.pdf",
+    "publishedDate": "2026-07-14",
+    "code": "464A0",
+    "sourceHash": "343aa9d1ff34e539a2ccce148653a7345122b83596fb51af19a1ddba91c5a932",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年5月期"
+        ],
+        "variants": [
+          {
+            "value": 3803,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ＱＰＳホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年5月期"
+        ],
+        "variants": [
+          {
+            "value": -833,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ＱＰＳホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年5月期"
+        ],
+        "variants": [
+          {
+            "value": 1152,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ＱＰＳホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      }
+    ]
+  },
+  {
+    "id": "140120260714593203",
+    "title": "通期業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://www.nse.or.jp/listing/search/files/140120260714593203.pdf",
+    "publishedDate": "2026-07-14",
+    "code": "62250",
+    "sourceHash": "c7463314f1490c420632bdd8c24cd3403e96579d7b35b37412b50a09bfebe3e7",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
+        "variants": [
+          {
+            "value": 2800,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
+        "variants": [
+          {
+            "value": 401,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
+        "variants": [
+          {
+            "value": 288,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
+        "variants": [
+          {
+            "value": 2650,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
+        "variants": [
+          {
+            "value": 488,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年7月期"
+        ],
+        "variants": [
+          {
+            "value": 331,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社エコム",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      }
+    ]
+  },
+  {
+    "id": "holdout-insource-20260924",
+    "title": "2026年９月期 通期連結業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://www.insource.co.jp/resource/pdf/ir/26092401.pdf",
+    "publishedDate": "2026-09-24",
+    "code": "62000",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 16000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6380,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6430,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 4400,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 52.39,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 15600,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6150,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 6200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 4250,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 50.86,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "配当予想"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 35,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社インソース",
+          "scope": null,
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ],
+    "sourceHash": "152096cf4d74014350b571d3a8ccc97d19b3a93222402d46ef9b722eac88107c",
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b23",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社インソース",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "metricKind": "none",
+          "periodKind": "none"
+        }
+      },
+      {
+        "page": 1,
+        "blockId": "p1b24",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社インソース",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "metricKind": "none",
+          "periodKind": "none"
+        }
+      }
+    ]
+  },
+  {
+    "id": "holdout-makuake-20260901",
+    "title": "通期業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://ssl4.eir-parts.net/doc/4479/tdnet/2880180/00.pdf",
+    "publishedDate": "2026-09-01",
+    "code": "44790",
+    "sourceHash": "326cb1f5963513a4672e48d57cc610646a79e687baeb4efbad58020957531bb9",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 5400,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 5850,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 860,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 860,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 740,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 58.03,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastAfter",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ],
+    "expectedRanges": [
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 670,
+        "upper": 800,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 670,
+        "upper": 800,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 590,
+        "upper": 700,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "lower": 46.28,
+        "upper": 54.91,
+        "unit": "円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社マクアケ",
+          "scope": null,
+          "basis": null,
+          "state": "forecastBefore",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
         }
       }
     ]

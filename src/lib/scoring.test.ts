@@ -21,6 +21,7 @@ function value(
     unit: '百万円',
     source: {
       url: 'https://issuer.example/report.pdf',
+      documentHash: 'a'.repeat(64),
       page: 1,
       evidence: null,
       quote: `${year}年3月期 ${metric}${n}百万円`,
@@ -32,6 +33,7 @@ function value(
       basis: '日本基準',
       scope: '連結',
       factId: `${metric}-${year}`,
+      perShareBasis: null,
       semantics: {
         subject: '会社',
         scope: '連結',

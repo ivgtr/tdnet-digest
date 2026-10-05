@@ -1,0 +1,602 @@
+[
+  {
+    "id": "holdout-falcom-20260812",
+    "title": "2026年９月期 第３四半期決算短信〔日本基準〕（非連結）",
+    "documentType": "earnings",
+    "url": "https://www.falcom.co.jp/page/wp-content/uploads/2026/08/2026_3Q.pdf",
+    "publishedDate": "2026-08-12",
+    "code": "37230",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 2203,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "cumulativeQ3",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 1258,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "cumulativeQ3",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 1281,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "cumulativeQ3",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "四半期純利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 889,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "cumulativeQ3",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり四半期純利益"
+        ],
+        "periods": [
+          "2026年9月期第3四半期",
+          "2026年9月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 88.83,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "actual",
+          "metricKind": "perShare",
+          "periodKind": "cumulativeQ3",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 3600,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 2200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 2200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 1500,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 145.91,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "state": "forecast",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "年間配当金",
+          "年間配当金合計"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 10,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": null,
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "期末配当金",
+          "年間配当金期末"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 10,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": null,
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "第2四半期末配当金",
+          "年間配当金第2四半期末"
+        ],
+        "periods": [
+          "2026年9月期",
+          "2026年9月期通期",
+          "2026年9月期(予想)"
+        ],
+        "variants": [
+          {
+            "value": 0,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "日本ファルコム株式会社",
+          "scope": null,
+          "basis": null,
+          "state": "actual",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ],
+    "sourceHash": "9598bfdfdd6c38c964b51e9f3e9f6d305ffbcf2087e1b8078392510d46f9c863"
+  },
+  {
+    "id": "holdout-remix-20260611",
+    "title": "2027年３月期連結業績予想の公表に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://www2.jpx.co.jp/disc/38250/140120260611566919.pdf",
+    "publishedDate": "2026-06-11",
+    "code": "38250",
+    "sourceHash": "4f538931a9845b44c7a57b1f2611ecb54f410ae24f460d774f8eaa1784bff858",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年3月期",
+          "2026年3月期通期"
+        ],
+        "variants": [
+          {
+            "value": 17751,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年3月期",
+          "2026年3月期通期"
+        ],
+        "variants": [
+          {
+            "value": -5477,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年3月期",
+          "2026年3月期通期"
+        ],
+        "variants": [
+          {
+            "value": -5501,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2026年3月期",
+          "2026年3月期通期"
+        ],
+        "variants": [
+          {
+            "value": -4740,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "actual",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株あたり当期純利益"
+        ],
+        "periods": [
+          "2026年3月期",
+          "2026年3月期通期"
+        ],
+        "variants": [
+          {
+            "value": -33.89,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "actual",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ],
+    "expectedRanges": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
+        ],
+        "lower": 48777,
+        "upper": 56112,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
+        ],
+        "lower": 6723,
+        "upper": 14058,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
+        ],
+        "lower": 6485,
+        "upper": 13820,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
+        ],
+        "lower": 5319,
+        "upper": 11443,
+        "unit": "百万円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "amount",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株あたり当期純利益"
+        ],
+        "periods": [
+          "2027年3月期",
+          "2027年3月期通期",
+          "2027年3月期(予想)"
+        ],
+        "lower": 36.28,
+        "upper": 78.06,
+        "unit": "円",
+        "page": 1,
+        "semantics": {
+          "subject": "株式会社リミックスポイント",
+          "scope": "連結",
+          "basis": null,
+          "state": "forecast",
+          "metricKind": "perShare",
+          "periodKind": "fullYear",
+          "polarity": "affirmative"
+        }
+      }
+    ]
+  }
+]

@@ -23,7 +23,7 @@ function parse(index: number, facts: unknown[], coverage = false) {
     ['earnings', 'shareRepurchase', 'businessUpdate', 'ma', 'earningsRevision', 'ma'] as const
   )[index];
   return parseFactSummary(
-    JSON.stringify({ version: 4, documentType, facts, unverified: [] }),
+    JSON.stringify({ version: 5, documentType, facts, unverified: [] }),
     documentType,
     sources[index],
     coverage
@@ -83,7 +83,7 @@ describe('実PDFの意味を保った利用経路', () => {
     const planPage = pages.find((page) => page.pageNumber === plan.page)!;
     planPage.selection = 'omitted';
     const raw = JSON.stringify({
-      version: 4,
+      version: 5,
       documentType: 'earnings',
       facts: expectations[0].facts.filter((f) => f.page !== plan.page),
       unverified: [],
@@ -135,6 +135,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url: corpus[1].url,
       pages: sources[1],
       text: sources[1].map((p) => p.text).join('\n'),
+      documentHash: 'a'.repeat(64),
       publishedDate: '2026-07-14',
       issuer: '株式会社丸八倉庫',
       code: '9313',
@@ -192,6 +193,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url: corpus[4].url,
       pages: sources[4],
       text: sources[4].map((p) => p.text).join('\n'),
+      documentHash: 'a'.repeat(64),
       publishedDate: '2026-09-10',
       issuer: current.semantics.subject!,
       code: '4051',
@@ -253,11 +255,18 @@ describe('実PDFの意味を保った利用経路', () => {
       expect(buildScoreHtml(score)).toContain('範囲の指定なし');
       expect(buildScoreHtml(score)).toContain('125→127円');
       expect(buildScoreHtml(score)).not.toContain('連結');
-      validateSavedScore(JSON.parse(JSON.stringify(score)), facts, document.url);
+      validateSavedScore(
+        JSON.parse(JSON.stringify(score)),
+        facts,
+        document.url,
+        document.documentHash
+      );
       const altered = structuredClone(score);
       altered.breakdown[0].current.source.scope = '連結';
       altered.breakdown[0].current.source.semantics.scope = '連結';
-      expect(() => validateSavedScore(altered, facts, document.url)).toThrow('不一致');
+      expect(() => validateSavedScore(altered, facts, document.url, document.documentHash)).toThrow(
+        '不一致'
+      );
       const mismatched = structuredClone(score);
       mismatched.breakdown[0].previous!.source.scope = '普通株式';
       mismatched.breakdown[0].previous!.source.semantics.scope = '普通株式';
@@ -272,6 +281,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url: corpus[0].url,
       pages: sources[0],
       text: '',
+      documentHash: 'a'.repeat(64),
       publishedDate: null,
       issuer: '株式会社BlueMeme',
       code: '4069',
@@ -314,7 +324,7 @@ describe('実PDFの意味を保った利用経路', () => {
     expect(parse(3, [candidate]).facts).toHaveLength(0);
   });
   it('分割した単位見出しを含む修正表の構造候補から配当の前後も照合する', () => {
-    for (const original of expectations[4].facts) {
+    for (const original of expectations[4].facts.filter((f) => f.evidence.kind === 'table')) {
       const candidate = structuredClone(original);
       if (!('valueId' in candidate.evidence)) throw new Error('table expected');
       const valueId = candidate.evidence.valueId;
@@ -390,6 +400,7 @@ describe('実PDFの意味を保った利用経路', () => {
         url: corpus[0].url,
         pages: sources[0],
         text: sources[0].map((p) => p.text).join('\n'),
+        documentHash: 'a'.repeat(64),
         publishedDate: '2026-09-30',
         issuer: '株式会社BlueMeme',
         code: '4069',
@@ -417,15 +428,33 @@ describe('実PDFの意味を保った利用経路', () => {
   });
   it('修正表の上下にずれた行区分と期間キャプションを区別し、他行・未知基準を拒否する', () => {
     const summary = parse(4, expectations[4].facts, true);
-    expect(summary.facts.map((f) => f.value)).toEqual([19730, 2800, 22000, 2900, 125, 127]);
+    expect(summary.facts.filter((f) => f.kind === 'number').map((f) => f.value)).toEqual([
+      19730, 2800, 22000, 2900, 125, 127, 1870, 226.5, 1903, 230.5,
+    ]);
     expect(() => parse(4, expectations[4].facts.slice(0, 4), true)).toThrow('配当予想修正');
+    const bareProfit = fact(4, 6);
+    const p = sources[4][0];
+    const bareSource = tableReferenceHints(p).find(
+      (h) => p.quantities.find((q) => q.id === h.valueId)?.text === '1,874'
+    )!;
+    Object.assign(bareProfit.evidence, bareSource);
+    bareProfit.label = '当期利益';
+    bareProfit.value = 1874;
+    const bare = parse(4, [bareProfit]);
+    expect(bare.unverified).toEqual([]);
+    expect(() =>
+      verifyCoverage('earningsRevision', sources[4], [
+        ...summary.facts.filter((f) => f.value !== 1870),
+        ...bare.facts,
+      ])
+    ).toThrow('forecastBefore/netProfit');
     const caption = fact(4, 2);
     if (caption.evidence.kind !== 'table') throw new Error('table expected');
     caption.evidence.periodIds.push('p1s46', 'p1s47');
     caption.evidence.contextIds = ['p1s80'];
     // The fiscal caption belongs to context, not the axis for a different row.
     expect(parse(4, [caption]).facts).toHaveLength(0);
-    expect(parse(4, [fact(4,2)]).unverified).toEqual([]);
+    expect(parse(4, [fact(4, 2)]).unverified).toEqual([]);
     const wrong = fact(4);
     if (wrong.evidence.kind !== 'table') throw new Error('table expected');
     wrong.evidence.periodIds = ['p1s80'];
@@ -461,7 +490,7 @@ describe('実PDFの意味を保った利用経路', () => {
     candidate.valueKind = 'forecast';
     candidate.semantics.state = 'forecast';
     const summary = parseFactSummary(
-      JSON.stringify({ version: 4, documentType: 'other', facts: [candidate], unverified: [] }),
+      JSON.stringify({ version: 5, documentType: 'other', facts: [candidate], unverified: [] }),
       'other',
       [page]
     );
@@ -555,7 +584,7 @@ describe('実PDFの意味を保った利用経路', () => {
               : 'ma';
       const summary = parseFactSummary(
         JSON.stringify({
-          version: 4,
+          version: 5,
           documentType: type,
           facts: expectations[index].facts,
           unverified: [],
@@ -582,6 +611,7 @@ describe('実PDFの意味を保った利用経路', () => {
       url,
       text: '',
       pages: [],
+      documentHash: 'a'.repeat(64),
       publishedDate: null,
       issuer: '',
       code: '',
@@ -611,10 +641,17 @@ describe('実PDFの意味を保った利用経路', () => {
         { ...claim, impact: 'positive', strength: 'small', comparison: assessClaim(claim) },
       ],
     };
-    validateSavedScore(score, facts, url);
+    validateSavedScore(score, facts, url, current.source.documentHash);
     const changed = structuredClone(score);
     changed.breakdown[0].current.value = 1;
-    expect(() => validateSavedScore(changed, facts, url)).toThrow('不一致');
+    expect(() => validateSavedScore(changed, facts, url, current.source.documentHash)).toThrow(
+      '不一致'
+    );
+    const changedHash = structuredClone(score);
+    changedHash.breakdown[0].current.source.documentHash = 'b'.repeat(64);
+    expect(() => validateSavedScore(changedHash, facts, url, current.source.documentHash)).toThrow(
+      '不一致'
+    );
     const reordered = JSON.parse(
       JSON.stringify(score, (_key, value) =>
         value && typeof value === 'object' && !Array.isArray(value)
@@ -626,6 +663,6 @@ describe('実PDFの意味を保った利用経路', () => {
           : value
       )
     );
-    validateSavedScore(reordered, facts, url);
+    validateSavedScore(reordered, facts, url, current.source.documentHash);
   });
 });

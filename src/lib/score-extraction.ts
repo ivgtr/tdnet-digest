@@ -16,6 +16,7 @@ import {
 } from './scoring';
 export interface ScoreDocument {
   url: string;
+  documentHash: string;
   text: string;
   pages: ExtractedPage[];
   publishedDate: string | null;
@@ -33,14 +34,20 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
     !fact.unit ||
     !fact.period ||
     !fact.quantity ||
-    !hasComparableScope(fact.semantics.scope, fact.label, fact.semantics.metricKind, fact.unit) ||
+    !hasComparableScope(
+      fact.semantics.scope,
+      fact.label,
+      fact.semantics.metricKind,
+      fact.unit,
+      fact.quote
+    ) ||
     !fact.semantics.subject ||
     fact.semantics.polarity !== 'affirmative' ||
     fact.semantics.state === 'unspecified' ||
     ['interval', 'relativeYear', 'none'].includes(fact.semantics.periodKind)
   )
     throw new Error('比較可能な数値・期間・主体・範囲がありません');
-  if (fact.semantics.metricKind !== classifyMetric(fact.label, fact.unit))
+  if (fact.semantics.metricKind !== classifyMetric(fact.label, fact.unit, fact.quote))
     throw new Error('採点の指標区分と原文指標・単位が一致しません');
   const fiscalYear = Number(fact.period.normalize('NFKC').match(/(20\d{2})年/)?.[1]);
   if (!Number.isInteger(fiscalYear)) throw new Error('対象年がありません');
@@ -58,6 +65,7 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
     unit: fact.unit,
     source: {
       url: document.url,
+      documentHash: document.documentHash,
       page: fact.page,
       quote: fact.quote,
       evidence:
@@ -78,6 +86,10 @@ export function toValue(fact: VerifiedFact, document: ScoreDocument): ScoreValue
       basis: fact.semantics.basis,
       scope: fact.semantics.scope,
       factId: fact.id,
+      perShareBasis:
+        fact.semantics.metricKind === 'perShare'
+          ? fact.provenance!.adjustments.map((a) => ({ ...a }))
+          : null,
       semantics: fact.semantics,
     },
   };
@@ -214,7 +226,7 @@ export async function extractScoreInput(
   searchStatus: string,
   facts?: FactSummary
 ): Promise<ScoreInput> {
-  if (!facts || facts.version !== 4 || !documents.length)
+  if (!facts || facts.version !== 5 || !documents.length)
     throw new Error('採点にはv4の共通確定事実が必要です');
   const registry: ScoreFacts[] = [{ document: documents[0], facts }];
   for (const document of documents.slice(1)) {

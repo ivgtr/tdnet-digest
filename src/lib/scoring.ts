@@ -39,6 +39,7 @@ export interface ScoreSource {
   factId: string;
   semantics: FactSemantics;
   url: string;
+  documentHash: string;
   page: number;
   quote: string;
   evidence: TableEvidence | null;
@@ -49,6 +50,12 @@ export interface ScoreSource {
   metric: string;
   basis: string | null;
   scope: string | null;
+  perShareBasis: Array<{
+    kind: 'stockSplit';
+    noteId: string;
+    text: string;
+    basis: 'splitAdjusted' | 'beforeSplit' | 'afterSplit';
+  }> | null;
 }
 export interface ScoreValue {
   value: number;
@@ -106,20 +113,26 @@ export function hasComparableScope(
   scope: unknown,
   metric: string,
   metricKind: FactSemantics['metricKind'],
-  unit: string
+  unit: string,
+  quote = ''
 ): boolean {
   return (
     (typeof scope === 'string' && !!scope.trim()) ||
-    (scope === null && metricKind === 'perShare' && isPerShareDividend(metric, unit))
+    (scope === null && metricKind === 'perShare' && isPerShareDividend(metric, unit, quote))
   );
 }
 export function compatible(a: ScoreValue, b: ScoreValue, forecast = false): boolean {
   const x = a.source,
     y = b.source;
   return (
-    hasComparableScope(x.scope, x.metric, x.semantics.metricKind, a.unit) &&
-    hasComparableScope(y.scope, y.metric, y.semantics.metricKind, b.unit) &&
+    hasComparableScope(x.scope, x.metric, x.semantics.metricKind, a.unit, x.quote) &&
+    hasComparableScope(y.scope, y.metric, y.semantics.metricKind, b.unit, y.quote) &&
     a.unit === b.unit &&
+    // A generic adjustment category does not prove the same share denominator.
+    // Cross-document split events remain incomparable without an event proof.
+    ((!x.perShareBasis?.length && !y.perShareBasis?.length) ||
+      (/^[a-f0-9]{64}$/.test(x.documentHash) && x.documentHash === y.documentHash)) &&
+    JSON.stringify(x.perShareBasis) === JSON.stringify(y.perShareBasis) &&
     x.semantics.polarity === y.semantics.polarity &&
     JSON.stringify(x.semantics.qualifiers) === JSON.stringify(y.semantics.qualifiers) &&
     JSON.stringify(x.semantics.conditions) === JSON.stringify(y.semantics.conditions) &&
@@ -216,8 +229,20 @@ function ownershipRatio(claim: ScoreClaim): number | null {
     a.source.fiscalYear !== b.source.fiscalYear ||
     a.source.period !== b.source.period ||
     a.source.periodKind !== b.source.periodKind ||
-    !hasComparableScope(a.source.scope, a.source.metric, a.source.semantics.metricKind, a.unit) ||
-    !hasComparableScope(b.source.scope, b.source.metric, b.source.semantics.metricKind, b.unit) ||
+    !hasComparableScope(
+      a.source.scope,
+      a.source.metric,
+      a.source.semantics.metricKind,
+      a.unit,
+      a.source.quote
+    ) ||
+    !hasComparableScope(
+      b.source.scope,
+      b.source.metric,
+      b.source.semantics.metricKind,
+      b.unit,
+      b.source.quote
+    ) ||
     a.source.scope !== b.source.scope
   )
     return null;

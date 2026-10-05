@@ -1,5 +1,8 @@
 import { expect, it } from 'vitest';
-import { parseQuantity, proseQuantities } from './quantity';
+import { parseQuantity, proseQuantities, parseExactNumeric } from './quantity';
+import { quantityCells } from './document-structure';
+import type { PdfSpan } from './pdf-layout';
+import { buildTableCells, buildTableRegions, type TableCell } from './table-layout';
 
 it.each([
   ['120店舗', 120, '店舗'],
@@ -70,4 +73,95 @@ it.each(['10円50銭', '１０円５０銭', '-0円05銭'])('円銭の本文原�
   expect(proseQuantities({ id: 'b', text: `配当金は${raw}です。` })).toEqual([
     { id: 'b:q1', raw: raw.normalize('NFKC'), start: 4 },
   ]);
+});
+
+function wrappedSpans(lines: string[]): PdfSpan[] {
+  return lines.map((text, i) => ({
+    id: `s${i}`,
+    text,
+    x: 10,
+    y: 10 + i * 12,
+    width: 30,
+    height: 10,
+  }));
+}
+function physicalCell(spans: PdfSpan[], id = 'cell'): TableCell {
+  return { id, left: 0, top: 0, right: 50, bottom: 100, spanIds: spans.map((s) => s.id) };
+}
+it.each([
+  ['670', '～800'],
+  ['670～', '800'],
+  ['670', '～', '800'],
+  ['△4～', '△2'],
+])('同じ閉じたセルの範囲構文は改行と全原文IDを保つ: %j', (...lines) => {
+  const spans = wrappedSpans(lines),
+    original = structuredClone(spans);
+  const quantities = quantityCells(spans, [physicalCell(spans)]);
+  expect(quantities).toHaveLength(1);
+  expect(quantities[0].spanIds).toEqual(spans.map((s) => s.id));
+  expect(quantities[0].text).toBe(lines.join('\n'));
+  expect(parseExactNumeric(quantities[0].text)?.kind).toBe('range');
+  expect(spans).toEqual(original);
+});
+it('範囲記号のない複数行・介在文字・別セル・未証明セルを近さで結合しない', () => {
+  for (const lines of [
+    ['100', '200'],
+    ['100百万円', '10%'],
+    ['670', '内訳', '～800'],
+  ]) {
+    const spans = wrappedSpans(lines);
+    expect(quantityCells(spans, [physicalCell(spans)]).every((q) => q.spanIds.length === 1)).toBe(
+      true
+    );
+  }
+  const spans = wrappedSpans(['670', '～800']);
+  for (const cells of [[], spans.map((s, i) => physicalCell([s], `cell${i}`))])
+    expect(quantityCells(spans, cells).map((q) => q.text)).toEqual(['670']);
+});
+
+it('表の最終行が複数行数量でも全断片を表の所属へ渡す', () => {
+  const labels: [string, number, number][] = [
+    ['2027年3月期業績予想', 0, 10],
+    ['売上高', 110, 30],
+    ['営業利益', 210, 30],
+    ['百万円', 110, 45],
+    ['百万円', 210, 45],
+    ['通期', 0, 70],
+    ['100～', 110, 70],
+    ['200～', 210, 70],
+    ['150', 110, 82],
+    ['250', 210, 82],
+  ];
+  const spans = labels.map(([text, x, y], i) => ({
+    id: `s${i}`,
+    text,
+    x,
+    y,
+    width: text.length * 5,
+    height: 10,
+  }));
+  const drawingLines = [
+    [90, 55, 180, 90],
+    [190, 55, 280, 90],
+  ].flatMap(([l, t, r, b], i) =>
+    [
+      [l, t, r, t],
+      [r, t, r, b],
+      [r, b, l, b],
+      [l, b, l, t],
+    ].map(([x1, y1, x2, y2], j) => ({
+      id: `rule${i}-${j}`,
+      x1: Math.min(x1, x2),
+      y1: Math.min(y1, y2),
+      x2: Math.max(x1, x2),
+      y2: Math.max(y1, y2),
+      operatorIndices: [i * 4 + j],
+    }))
+  );
+  const quantities = quantityCells(spans, buildTableCells(drawingLines, spans, 1));
+  const table = buildTableRegions({ pageNumber: 1, spans, quantities, drawingLines })[0];
+  const ranges = quantities.filter((q) => parseExactNumeric(q.text)?.kind === 'range');
+  expect(ranges).toHaveLength(2);
+  expect(table.valueIds).toEqual(ranges.map((q) => q.id));
+  expect(ranges.flatMap((q) => q.spanIds).every((id) => table.spanIds.includes(id))).toBe(true);
 });

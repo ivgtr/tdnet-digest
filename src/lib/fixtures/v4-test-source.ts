@@ -1,18 +1,18 @@
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { extractPageLayout, type PdfSpan } from '../pdf-layout';
 import type { VerifiedFact } from '../fact-contract';
+import { assertionId } from '../source-provenance';
+import { proseQuantities, parseExactQuantity, parseExactRange } from '../quantity';
 export function textPage(text: string, pageNumber = 1) {
-  const items = text
-    .split('\n')
-    .map((str, i) => ({
-      str,
-      dir: 'ltr',
-      transform: [10, 0, 0, 10, 0, 800 - i * 24],
-      width: str.length * 10,
-      height: 10,
-      hasEOL: true,
-      fontName: 'test',
-    }));
+  const items = text.split('\n').map((str, i) => ({
+    str,
+    dir: 'ltr',
+    transform: [10, 0, 0, 10, 0, 800 - i * 24],
+    width: str.length * 10,
+    height: 10,
+    hasEOL: true,
+    fontName: 'test',
+  }));
   return extractPageLayout(items as TextItem[], pageNumber);
 }
 export function layoutPage(spans: PdfSpan[], pageNumber = 1) {
@@ -50,6 +50,12 @@ export function numberCandidate(
     evidence: {
       kind: 'prose',
       blockId: block.id,
+      assertionId: assertionId(block.id),
+      quantityId:
+        proseQuantities(block).find(
+          (q) =>
+            Number(parseExactQuantity(q.raw)?.decimal) === value || parseExactRange(q.raw) !== null
+        )?.id ?? `${block.id}:q0`,
       contextIds: [page.blocks[1].id],
       scopeIds: [page.blocks[0].id],
       qualifierIds: [],
@@ -67,5 +73,6 @@ export function numberCandidate(
     },
     quantity: null,
     dateRoles: null,
+    provenance: null,
   };
 }

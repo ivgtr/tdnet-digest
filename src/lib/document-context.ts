@@ -1,18 +1,22 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
-import { reportingPeriodText } from './period-semantics';
-import { parseExactQuantity, proseQuantities } from './quantity';
+import { reportingPeriodText, reportingPeriodOwner, numericValueKind } from './period-semantics';
 import {
   normalized,
   reportingScope,
   reportingScopeHeading,
   isPerformanceReportingTitle,
   forecastReportingTitle,
+  forecastPeriodDeclaration,
+  forecastTablePeriodSources,
+  declaredSubjectsIn,
+  headingLevel,
   type TextBlock,
 } from './document-structure';
 import { buildTableMappings, type TableMapping } from './source-mappings';
-import { continuationFor, noteLinks, paragraphNoteLinks } from './document-links';
+import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
+import { splitNotes, splitNoteApplies } from './source-provenance';
 
 export type DeclarationRole = 'subject' | 'scope' | 'basis';
 export interface ContextDeclaration {
@@ -40,44 +44,7 @@ export interface DocumentContext {
 }
 const unique = <T>(items: T[]) => [...new Set(items)];
 const reportingBasis = '日本基準|IFRS|国際会計基準|米国基準';
-export function declaredSubjectsIn(block: TextBlock): string[] {
-  return unique(
-    block.text.split('\n').flatMap((line) => {
-      const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
-      const field = text.match(/^(?:上場会社名|会社名|名称):?([^:].*)$/)?.[1];
-      if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
-      return /^(?:株式会社|有限会社|合同会社|投資法人)[\p{L}\p{N}・&.-]+$|^[\p{L}\p{N}・&.-]+(?:株式会社|有限会社|合同会社|投資法人)$/u.test(
-        text
-      )
-        ? [text]
-        : [];
-    })
-  ).filter(Boolean);
-}
-/** A numbered title is a boundary, not every body mention of a scope/period. */
-export function headingLevel(block: TextBlock): number | null {
-  const text = normalized(block.text);
-  const quantities = proseQuantities({ id: block.id, text });
-  if (
-    text.length > 180 ||
-    /[。；]/.test(text) ||
-    quantities.some((q) =>
-      /^(?:十|百|千|万|百万|千万|億|兆)?(?:円|株)$/.test(parseExactQuantity(q.raw)?.unit ?? '')
-    ) ||
-    (/^20\d{2}年/.test(text) && quantities.length)
-  )
-    return null;
-  if (/^■/.test(text)) return 1;
-  if (/^20\d{2}年.*(?:経営成績|予想|配当|月度|実績|取得予定)/.test(text)) return 3;
-  if (/^\d+[.．]/.test(text)) return 1;
-  if (/^\(\d+\)/.test(text)) return 2;
-  if (/^\(?[①-⑳]\)?/.test(text)) return 3;
-  if (
-    /^\((?:連結|個別)?(?:損益計算書|貸借対照表|キャッシュ.*|重要な.*|追加情報|.*関係)\)$/.test(text)
-  )
-    return 3;
-  return null;
-}
+export { declaredSubjectsIn, headingLevel } from './document-structure';
 function captionText(block: TextBlock): string {
   return reportingPeriodText(block.text)
     .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
@@ -88,7 +55,10 @@ function isReportingCover(block: TextBlock): boolean {
   return /^(?:四半期|中間)?決算短信/.test(captionText(block));
 }
 /** A role field supplies its entire value; a caption needs an explicit reporting object. */
-function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value: string }[] {
+function reportingAttributes(
+  block: TextBlock,
+  tableCaption = false
+): { role: 'scope' | 'basis'; value: string }[] {
   const attributes: { role: 'scope' | 'basis'; value: string }[] = [];
   for (const part of block.text.normalize('NFKC').split(/[\n|]/)) {
     const text = part.trim().replace(/^(?:\(\d+\)|\d+[.．])/, '');
@@ -117,7 +87,7 @@ function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value
       new RegExp(`〔(${reportingBasis})〕|\\[(${reportingBasis})\\]`, 'gi')
     ))
       attributes.push({ role: 'basis', value: match[1] ?? match[2] });
-  } else if (headingLevel(block) !== null) {
+  } else if (headingLevel(block) !== null || (tableCaption && forecastReportingTitle(block.text))) {
     const scope = caption.match(
       new RegExp(
         `^\\(?${reportingScopeHeading}(?:経営成績|業績|財政状態|財務諸表|損益計算書|貸借対照表|キャッシュ.*フロー)`
@@ -129,7 +99,8 @@ function reportingAttributes(block: TextBlock): { role: 'scope' | 'basis'; value
 }
 function declarations(
   block: TextBlock,
-  origin: ContextDeclaration['origin']
+  origin: ContextDeclaration['origin'],
+  tableCaption = false
 ): ContextDeclaration[] {
   const text = normalized(block.text);
   const result: ContextDeclaration[] = declaredSubjectsIn(block).map((value) => ({
@@ -138,8 +109,13 @@ function declarations(
     id: block.id,
     origin,
   }));
-  for (const attribute of reportingAttributes(block))
-    result.push({ ...attribute, id: block.id, origin });
+  for (const attribute of reportingAttributes(block, tableCaption))
+    result.push({
+      ...attribute,
+      id: block.id,
+      origin,
+      ...(tableCaption || forecastReportingTitle(block.text) ? { financialOnly: true } : {}),
+    });
   const fieldStock = text.match(/株式種類([^|｜]+)/)?.[1];
   if (fieldStock) result.push({ role: 'scope', value: fieldStock, id: block.id, origin });
   const stock = block.text.split('\n').find((line) => /取得対象株式.*種類/.test(normalized(line)));
@@ -164,7 +140,11 @@ function declarations(
     result.push({ role: 'scope', value: namedScope, id: block.id, origin: 'local' });
   return result.map((d) => ({
     ...d,
-    financialOnly: origin === 'document' && /決算短信/.test(text) && d.role !== 'subject',
+    financialOnly:
+      d.role !== 'subject' &&
+      (/決算短信/.test(text) ||
+        isPerformanceReportingTitle(captionText(block)) ||
+        !!forecastReportingTitle(captionText(block))),
   }));
 }
 /** Later explicit fields replace prior fields of that role, retaining same-field ambiguity. */
@@ -273,13 +253,65 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
           )
         );
         const hint = table ? hints.find((h) => h.valueId === anchorId) : undefined;
+        const regions = page.tableRegions.filter((r) => r.valueIds.includes(anchorId));
+        if (hint && regions.length === 1) {
+          const caption = page.blocks.find(
+            (b) =>
+              forecastReportingTitle(b.text) &&
+              b.spanIds.every((id) => hint.contextIds.includes(id)) &&
+              b.spanIds.every((id) => regions[0].spanIds.includes(id))
+          );
+          if (caption) ownDeclarations.push(...declarations(caption, 'local', true));
+        }
         const contexts =
           continued?.contextIds ??
           hint?.contextIds ??
           semanticSections.slice(-1).flatMap((b) => (table ? b.spanIds : [b.id]));
-        const qualifiers = unique(
-          localNotes.filter((l) => l.blockId === block.id).map((l) => l.noteId)
-        );
+        const qualifiers = unique([
+          ...localNotes.filter((l) => l.blockId === block.id).map((l) => l.noteId),
+          ...(hint
+            ? splitNotes(continuationPage(pages, page, anchorId), anchorId)
+                .filter((note) => {
+                  const metric = normalized(
+                    hint.metricIds
+                      .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+                      .join('')
+                  );
+                  const axis = normalized(
+                    hint.periodIds
+                      .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
+                      .join('')
+                  );
+                  const inherited = normalized(
+                    contexts
+                      .map(
+                        (id) =>
+                          pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!
+                            .text
+                      )
+                      .join('')
+                  );
+                  const years = [
+                    ...new Set(
+                      axis.match(/20\d{2}年\d{1,2}月期/g) ??
+                        inherited.match(/20\d{2}年\d{1,2}月期/g) ??
+                        []
+                    ),
+                  ];
+                  const shape =
+                    reportingPeriodOwner(axis, inherited, true).match(
+                      /第[1-4]四半期(?:累計|単独)?|中間期|通期/
+                    )?.[0] ?? '';
+                  return splitNoteApplies(
+                    note.text,
+                    metric,
+                    years.length === 1 ? years[0] + shape : null,
+                    numericValueKind(axis, inherited)
+                  );
+                })
+                .map((note) => note.id)
+            : []),
+        ]);
         const binding: ContextBinding = {
           id: `ctx:${anchorId}`,
           page: page.pageNumber,
@@ -394,7 +426,7 @@ export function applicableDeclarations(
     (d) =>
       d.role === role &&
       !(role !== 'subject' && otherOwner && d.origin === 'document') &&
-      (d.origin === 'local' || !d.financialOnly || financial)
+      (!d.financialOnly || financial)
   );
   const local = candidates.filter((d) => d.origin === 'local');
   return local.length ? local : candidates;
@@ -434,6 +466,26 @@ export function reportingUnitTitle(binding: ContextBinding, pages: ExtractedPage
     .slice(-1)
     .map((id) => blocks.find((b) => b.id === id)!.text)
     .join('');
+  // A table's separate period header qualifies its own financial caption.
+  // Arbitrary child business sections still own their role and cannot borrow it.
+  const page = pages.find((p) => p.pageNumber === binding.page);
+  const tables = page?.tableRegions.filter((t) => t.valueIds.includes(binding.anchorId)) ?? [];
+  if (tables.length === 1 && (!section || forecastPeriodDeclaration(section))) {
+    const caption = page!.blocks.find(
+      (b) =>
+        forecastReportingTitle(b.text) &&
+        b.spanIds.every((id) => binding.contextIds.includes(id)) &&
+        b.spanIds.every((id) => tables[0].spanIds.includes(id))
+    );
+    if (
+      caption &&
+      (!section ||
+        forecastTablePeriodSources(caption, page!.blocks, page!.spans, tables[0]).some(
+          (b) => normalized(b.text) === normalized(section)
+        ))
+    )
+      return normalized(caption.text);
+  }
   return normalized(
     section ||
       binding.contextIds

@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:real-pdf": "node evaluation/scripts/check-real-pdfs.mjs",
     "test:real-llm": "node --env-file=.env --import tsx evaluation/scripts/run-real-llm.ts",
+    "test:fact-source": "node --import tsx evaluation/scripts/check-holdout-source.ts",
     "test:fact-summary": "node --env-file=.env --import tsx evaluation/scripts/run-fact-summary.ts",
     "type-check": "tsc --noEmit"
   },

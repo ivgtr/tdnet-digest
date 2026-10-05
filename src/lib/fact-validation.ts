@@ -14,14 +14,19 @@ import {
 } from './document-context';
 import {
   assertionPolarity,
+  quantityAssertionPolarity,
   verifyAssertionState,
   isLossRecordingPlan,
   lossRecordingPeriods,
   activePlan,
   planClauseBindings,
+  assertionKinds,
 } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { parseExactQuantity, parseExactRange, quantityNumber } from './quantity';
+import { drawingLines } from './pdf-drawing';
+import { buildTableRegions, buildTableCells } from './table-layout';
+import { sourceProvenance } from './source-provenance';
+import { parseExactQuantity, parseExactRange, quantityNumber, proseQuantities } from './quantity';
 import {
   verifyTableEvidence,
   verifyProseQuantity,
@@ -32,12 +37,7 @@ import {
 import { normalized, quantityCells, buildBlocks } from './document-structure';
 import { classifyMetric as metricKind } from './metric-semantics';
 export { classifyMetric as metricKind } from './metric-semantics';
-import {
-  continuationFor,
-  continuationSpans,
-  noteLinks,
-  paragraphNoteLinks,
-} from './document-links';
+import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
 import {
   checkSemantics,
   exact,
@@ -66,6 +66,7 @@ export const FACT_KEYS = [
   'semantics',
   'quantity',
   'dateRoles',
+  'provenance',
 ];
 const ekeys = ['contextIds', 'scopeIds', 'qualifierIds'];
 const fail = (code: string): never => {
@@ -90,6 +91,9 @@ export function validatePages(pages: ExtractedPage[]): void {
         'selection',
         'blocks',
         'quantities',
+        'drawingOperations',
+        'drawingLines',
+        'tableRegions',
       ]) ||
       typeof p.text !== 'string' ||
       !Number.isInteger(p.pageNumber) ||
@@ -99,7 +103,10 @@ export function validatePages(pages: ExtractedPage[]): void {
       !Array.isArray(p.spans) ||
       !Array.isArray(p.sourceItems) ||
       !Array.isArray(p.blocks) ||
-      !Array.isArray(p.quantities)
+      !Array.isArray(p.quantities) ||
+      !Array.isArray(p.drawingOperations) ||
+      !Array.isArray(p.drawingLines) ||
+      !Array.isArray(p.tableRegions)
     )
       fail('SOURCE:原文字・構造・抽出状態がありません');
     if (p.status === 'failed') fail(`SOURCE:PDF p.${p.pageNumber}の抽出失敗`);
@@ -162,7 +169,12 @@ export function validatePages(pages: ExtractedPage[]): void {
     )
       fail('SOURCE:派生セルと原文字の座標が不一致です');
     if (
-      canonicalJSON(quantityCells(p.spans)) !== canonicalJSON(p.quantities) ||
+      canonicalJSON(drawingLines(p.drawingOperations, p.pageNumber)) !==
+        canonicalJSON(p.drawingLines) ||
+      canonicalJSON(buildTableRegions(p)) !== canonicalJSON(p.tableRegions) ||
+      canonicalJSON(
+        quantityCells(p.spans, buildTableCells(p.drawingLines, p.spans, p.pageNumber))
+      ) !== canonicalJSON(p.quantities) ||
       canonicalJSON(buildBlocks(p)) !== canonicalJSON(p.blocks)
     )
       fail('SOURCE:派生構造の不一致');
@@ -333,7 +345,7 @@ export function validateFact(
   const expected =
     ev.kind === 'table'
       ? ['kind', 'valueId', 'metricIds', 'periodIds', 'unitIds', ...ekeys]
-      : ['kind', 'blockId', ...ekeys];
+      : ['kind', 'blockId', 'assertionId', 'quantityId', ...ekeys];
   if (
     !['table', 'prose'].includes(ev.kind) ||
     !exact(ev as unknown as Record<string, unknown>, expected)
@@ -372,7 +384,7 @@ export function validateFact(
       valueKind: fact.valueKind ?? 'actual',
     };
     const checked = verifyTableEvidence(
-      { ...page, spans: continuationSpans(pages, page, ev.valueId) },
+      continuationPage(pages, page, ev.valueId),
       {
         valueId: ev.valueId,
         metricIds: ev.metricIds,
@@ -436,7 +448,12 @@ export function validateFact(
         subject: fact.semantics.subject,
         scope: fact.semantics.scope,
       };
-      const proved = verifyProseQuantity(page, source, proseClaim);
+      const selected =
+        proseQuantities(block).find((q) => q.id === ev.quantityId) ??
+        fail('QUANTITY:選択した本文数量がありません');
+      const proved = verifyProseQuantity(page, source, proseClaim, selected);
+      if (!selected || selected.start !== proved.start || selected.raw !== proved.raw)
+        fail('QUANTITY:選択した数量の範囲が指標の根拠と不一致です');
       verifyProsePeriod(proseClaim, source, context);
       const raw = /円\d{2}銭$/.test(normalized(proved.raw))
         ? normalized(proved.raw)
@@ -470,7 +487,7 @@ export function validateFact(
         fail('SEMANTICS:主語・否定・条件を含む完結した原文が必要です');
       if (normalized(fact.label) !== normalized(source))
         fail('SEMANTICS:出来事のlabelも完結した原文です。自由な主張文へ変更できません');
-      if (fact.kind === 'status' && !/非開示|未定|該当.*なし|該当事項.*ございません/.test(source))
+      if (!assertionKinds(source).includes(fact.kind as 'event' | 'status'))
         fail('SEMANTICS:明示状態がありません');
     }
   }
@@ -596,7 +613,8 @@ export function validateFact(
           },
           axis || source,
           context,
-          nearest?.text ?? ''
+          nearest?.text ?? '',
+          ev.kind === 'table' && page.tableRegions.some((t) => t.valueIds.includes(ev.valueId))
         );
       else {
         if (!normalized(local).includes(normalized(fact.period)))
@@ -612,9 +630,20 @@ export function validateFact(
           fail('PERIOD:日付の役割が不一致です');
       }
     }
-    if (fact.semantics.periodKind !== periodKind(fact.period, axis || source, context))
+    if (
+      fact.semantics.periodKind !==
+      periodKind(
+        fact.period,
+        axis || source,
+        context,
+        ev.kind === 'table' && page.tableRegions.some((t) => t.valueIds.includes(ev.valueId))
+      )
+    )
       fail('PERIOD:期間区分の不一致');
-    if (fact.semantics.metricKind !== metricKind(fact.label, fact.unit))
+    if (
+      fact.semantics.metricKind !==
+      metricKind(fact.label, fact.unit, ev.kind === 'prose' ? source : '')
+    )
       fail('METRIC:量の種類の不一致');
     if (
       fact.valueKind !==
@@ -707,7 +736,10 @@ export function validateFact(
       JSON.stringify(conditions.map(normalized).sort())
   )
     fail(`CONDITION:条件の欠落・不一致。原文の条件文全体=${JSON.stringify(conditions)}`);
-  const polarity = assertionPolarity(source);
+  const polarity =
+    ev.kind === 'prose' && (fact.kind === 'number' || fact.kind === 'range')
+      ? quantityAssertionPolarity(source, fact.label)
+      : assertionPolarity(source);
   if (fact.semantics.polarity !== polarity)
     fail(`POLARITY:否定の不一致。完結した原文の区分=${polarity}（混在する文はmixed）`);
   for (const k of ['subject', 'scope', 'basis'] as const) {
@@ -803,12 +835,19 @@ export function validateFact(
   ].flatMap((item) => datedStates(item.text).map((d) => ({ ...d, sourceId: item.id })));
   if (fact.dateRoles !== null && canonicalJSON(fact.dateRoles) !== canonicalJSON(dateRoles))
     fail('PERIOD:保存した日付役割が原文と不一致です');
+  const provenance = sourceProvenance({ ...fact, evidence: resultEvidence }, pages);
+  if (
+    (fact.id.startsWith('fact-') || fact.provenance !== null) &&
+    canonicalJSON(fact.provenance) !== canonicalJSON(provenance)
+  )
+    fail('REFERENCE:保存した原文範囲・分母・調整基準が不一致です');
   const checked = {
     ...fact,
     quote: source,
     evidence: resultEvidence,
     quantity,
     dateRoles,
+    provenance,
     semantics: { ...fact.semantics, qualifiers: allQualifiers, conditions },
   };
   checkSemantics(checked.semantics);

@@ -18,22 +18,35 @@ import {
   type DocumentContext,
 } from './document-context';
 import { coverageReport } from './fact-coverage';
-import { continuationSpans } from './document-links';
+import { continuationSpans, continuationPage } from './document-links';
 import { sourceDateOptions } from './source-periods';
 import { uniqueTableMapping } from './source-mappings';
 import {
   parseExactQuantity,
   parseExactRange,
+  parseExactNumeric,
   quantityNumber,
   declaredQuantityUnit,
   proseQuantities,
 } from './quantity';
-import { verifyPeriodAndKind, verifyProsePeriod, verifyTableEvidence } from './numeric-evidence';
+import {
+  verifyPeriodAndKind,
+  verifyProsePeriod,
+  verifyTableEvidence,
+  verifyProseQuantity,
+} from './numeric-evidence';
 import { classifyMetric } from './metric-semantics';
 import { validateFact, periodKind } from './fact-validation';
-import { assertionPolarity, assertionStates, verifyAssertionState } from './assertion-semantics';
+import {
+  assertionPolarity,
+  quantityAssertionPolarity,
+  assertionStates,
+  verifyAssertionState,
+  assertionKinds,
+} from './assertion-semantics';
+import { assertionId, sourceTableId } from './source-provenance';
 
-export const CANDIDATE_VERSION = 2;
+export const CANDIDATE_VERSION = 3;
 export interface Candidate {
   candidateId: string;
   importance: VerifiedFact['importance'];
@@ -42,11 +55,13 @@ export interface Candidate {
     | {
         kind: 'table';
         valueId: string;
+        tableId: string;
         contextBindingId: string;
       }
     | {
         kind: 'prose';
         blockId: string;
+        assertionId: string;
         quantityId: string | null;
         metric: string | null;
         contextBindingId: string;
@@ -110,12 +125,17 @@ export function checkCandidate(item: unknown): asserts item is Candidate {
     throw new Error('SCHEMA:候補の原文単位が不正です');
   const s = item.source;
   if (s.kind === 'table') {
-    if (!exact(s, ['kind', 'valueId', 'contextBindingId']) || typeof s.valueId !== 'string')
+    if (
+      !exact(s, ['kind', 'valueId', 'tableId', 'contextBindingId']) ||
+      typeof s.valueId !== 'string' ||
+      typeof s.tableId !== 'string'
+    )
       throw new Error('SCHEMA:表候補の形式が不正です');
   } else if (s.kind === 'prose') {
     if (
-      !exact(s, ['kind', 'blockId', 'quantityId', 'metric', 'contextBindingId']) ||
+      !exact(s, ['kind', 'blockId', 'assertionId', 'quantityId', 'metric', 'contextBindingId']) ||
       typeof s.blockId !== 'string' ||
+      typeof s.assertionId !== 'string' ||
       ![s.quantityId, s.metric].every((v) => v === null || typeof v === 'string')
     )
       throw new Error('SCHEMA:本文候補の形式が不正です');
@@ -164,6 +184,10 @@ function compose(
   if (page.selection !== 'selected')
     throw new Error('REFERENCE:未選択ページの事実は採用できません');
   const block = page.blocks.find((b) => b.id === binding.blockId)!;
+  if (s.kind === 'table' && s.tableId !== sourceTableId(page, s.valueId))
+    throw new Error('REFERENCE:数量の表への所属が不一致です');
+  if (s.kind === 'prose' && s.assertionId !== assertionId(block.id))
+    throw new Error('REFERENCE:主張範囲への所属が不一致です');
   const text = (ids: string[]) =>
     ids
       .map(
@@ -184,19 +208,26 @@ function compose(
     throw new Error('SCHEMA:出来事に数量・指標を設定できません');
   if (s.kind === 'table' && !numeric) throw new Error('SCHEMA:表を出来事へ変換できません');
   if (s.kind === 'prose' && numeric && quantity && 'raw' in quantity) {
-    const escaped = (s.metric ?? '')
-      .normalize('NFKC')
-      .replace(/\s/g, '')
-      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const prefix = new RegExp(
-      `${escaped}(?:について|に関して|に対して|において|として|[はがをにでと、:()])*`,
-      'g'
+    const parsed =
+      candidate.kind === 'range' ? parseExactRange(quantity.raw) : parseExactQuantity(quantity.raw);
+    if (!parsed || !parsed.unit) throw new Error('QUANTITY:本文数量の単位を確認できません');
+    const proved = verifyProseQuantity(
+      page,
+      block.text,
+      {
+        label: s.metric ?? '',
+        value: 'decimal' in parsed ? quantityNumber(parsed.decimal)!.value : null,
+        unit: parsed.unit,
+        period: candidate.meaning.period ?? '',
+        valueKind: candidate.meaning.state,
+        range: candidate.kind === 'range',
+        subject: candidate.meaning.subject,
+        scope: candidate.meaning.scope,
+      },
+      quantity
     );
-    const normalizedSource = block.text.normalize('NFKC');
-    const plain = normalizedSource.replace(/\s/g, '');
-    const positions = [...plain.matchAll(prefix)].map((m) => m.index! + m[0].length);
-    const at = normalizedSource.slice(0, quantity.start).replace(/\s/g, '').length;
-    if (!positions.includes(at)) throw new Error('QUANTITY:選択した数量は指標に直接対応しません');
+    if (proved.start !== quantity.start || proved.raw !== quantity.raw)
+      throw new Error('QUANTITY:選択した数量は指標に直接対応しません');
   }
   const raw = quantity ? ('text' in quantity ? quantity.text : quantity.raw) : '';
   const parsed = numeric
@@ -253,6 +284,8 @@ function compose(
         : {
             kind: 'prose',
             blockId: s.blockId,
+            assertionId: s.assertionId,
+            quantityId: s.quantityId,
             contextIds: binding.contextIds,
             scopeIds: [],
             qualifierIds: binding.qualifierIds,
@@ -260,12 +293,13 @@ function compose(
     semantics: { ...meaning, qualifiers: null, conditions: null },
     quantity: null,
     dateRoles: null,
+    provenance: null,
   };
   if (s.kind === 'prose' && block.kind !== 'paragraph')
     throw new Error('STRUCTURE:表を本文候補で代用できません');
   if (s.kind === 'table')
     verifyTableEvidence(
-      { ...page, spans: continuationSpans(pages, page, s.valueId) },
+      continuationPage(pages, page, s.valueId),
       {
         valueId: s.valueId,
         metricIds: s.metricIds,
@@ -326,7 +360,7 @@ function compose(
     .join('\n');
   if (numeric) {
     attempt('metric', () => {
-      if (meaning.metricKind !== classifyMetric(label, unit))
+      if (meaning.metricKind !== classifyMetric(label, unit, s.kind === 'prose' ? block.text : ''))
         throw new Error('METRIC:原文指標・単位と量の種類が不一致です');
     });
     attempt('period', () => {
@@ -343,7 +377,15 @@ function compose(
           axis,
           applicableText
         );
-      if (meaning.periodKind !== periodKind(period, axis, applicableText))
+      if (
+        meaning.periodKind !==
+        periodKind(
+          period,
+          axis,
+          applicableText,
+          s.kind === 'table' && page.tableRegions.some((t) => t.valueIds.includes(s.valueId))
+        )
+      )
         throw new Error('PERIOD:期間区分の不一致です');
       if (['actual', 'forecast', 'forecastBefore', 'forecastAfter'].includes(meaning.state))
         verifyPeriodAndKind(
@@ -357,7 +399,8 @@ function compose(
           },
           axis,
           applicableText,
-          ''
+          '',
+          s.kind === 'table' && page.tableRegions.some((t) => t.valueIds.includes(s.valueId))
         );
     });
     if (s.kind === 'prose' && assertionStates(block.text + '\n' + applicableText).length)
@@ -370,7 +413,11 @@ function compose(
   attempt('polarity', () => {
     if (
       meaning.polarity !==
-      assertionPolarity(s.kind === 'table' ? text(s.metricIds) + text(s.periodIds) : block.text)
+      (s.kind === 'table'
+        ? assertionPolarity(text(s.metricIds) + text(s.periodIds))
+        : numeric
+          ? quantityAssertionPolarity(block.text, label)
+          : assertionPolarity(block.text))
     )
       throw new Error('POLARITY:原文の否定区分が不一致です');
   });
@@ -403,7 +450,7 @@ export function reviewCandidates(
       !Array.isArray(parsed.unverified) ||
       !parsed.unverified.every((x) => typeof x === 'string' && x.length <= 1000)
     )
-      throw new Error('SCHEMA:候補応答の形式が不正です（candidateVersion=2が必要）');
+      throw new Error('SCHEMA:候補応答の形式が不正です（candidateVersion=3が必要）');
     const ids = new Set<string>();
     for (const item of parsed.candidates) {
       if (!record(item) || typeof item.candidateId !== 'string' || ids.has(item.candidateId))
@@ -489,7 +536,11 @@ export function serializeCandidateSource(
     const owner = selected
       .find((p) => p.pageNumber === b.page)!
       .blocks.find((block) => block.id === b.blockId)!;
-    if ((owner.kind === 'paragraph') !== (b.anchorId === b.blockId)) continue;
+    if (
+      (owner.kind === 'paragraph') !== (b.anchorId === b.blockId) &&
+      !hintsByPage.get(b.page)!.some((h) => h.valueId === b.anchorId)
+    )
+      continue;
     const ds = [...new Set(b.declarations.map((d) => JSON.stringify(d)))].map((key) => {
       if (!declarationIds.has(key)) {
         const id = `d${declarations.length + 1}`;
@@ -573,7 +624,18 @@ export function serializeCandidateSource(
         id: b.id,
         kind: b.kind,
         ...(b.kind === 'paragraph'
-          ? { text: b.text, quantities: proseQuantities(b) }
+          ? {
+              text: b.text,
+              assertions: [
+                {
+                  id: assertionId(b.id),
+                  start: 0,
+                  end: b.text.normalize('NFKC').length,
+                  allowedKinds: assertionKinds(b.text),
+                },
+              ],
+              quantities: proseQuantities(b),
+            }
           : { spanIds: b.spanIds }),
       })),
       // Coordinates are rounded hints for selection; original coordinates/items
@@ -582,8 +644,63 @@ export function serializeCandidateSource(
         .filter((s) => tableRefs.has(s.id))
         .map((s) => [s.id, s.text, Math.round(s.x * 10) / 10, Math.round(s.y * 10) / 10]),
       quantities: p.quantities
-        .filter((q) => p.blocks.some((b) => b.kind === 'row' && b.spanIds.includes(q.id)))
-        .map((q) => ({ id: q.id, text: q.text, spanIds: q.spanIds })),
+        .filter(
+          (q) =>
+            hints.some((h) => h.valueId === q.id) ||
+            p.blocks.some((b) => b.kind === 'row' && b.spanIds.includes(q.id))
+        )
+        .map((q) => {
+          const choices = hints.filter((h) => h.valueId === q.id);
+          let reason: string | null =
+            choices.length !== 1
+              ? 'STRUCTURE:表の根拠対応が一意ではありません'
+              : !units[q.id]
+                ? 'REFERENCE:適用文脈がありません'
+                : null;
+          if (reason === null) {
+            const h = choices[0],
+              spans = continuationSpans(pages, p, q.id);
+            const text = (ids: string[]) =>
+              ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
+            const parsed = parseExactQuantity(q.text),
+              range = parseExactRange(q.text);
+            const unit = parsed?.unit ?? range?.unit ?? declaredQuantityUnit(text(h.unitIds));
+            try {
+              if (!unit || (!parsed && !range))
+                throw new Error('QUANTITY:原文数量の単位を確認できません');
+              verifyTableEvidence(
+                continuationPage(pages, p, q.id),
+                h,
+                {
+                  label: text(h.metricIds),
+                  value: range ? null : quantityNumber(parsed!.decimal)!.value,
+                  range: range !== null,
+                  unit,
+                  period: '',
+                  valueKind: 'actual',
+                },
+                false
+              );
+            } catch (error) {
+              reason = message(error);
+            }
+          }
+          return {
+            id: q.id,
+            text: q.text,
+            kind: parseExactNumeric(q.text)!.kind,
+            spanIds: q.spanIds,
+            tableId: sourceTableId(p, q.id),
+            eligibility: reason === null ? { status: 'selectable' } : { status: 'blocked', reason },
+          };
+        }),
+      tables: p.tableRegions.map((t) => ({
+        id: t.id,
+        method: t.method,
+        valueIds: t.valueIds,
+        unitIds: t.unitIds,
+        spanIds: t.spanIds,
+      })),
       hints,
     };
   });

@@ -5,6 +5,7 @@ export interface Expected {
   periods: string[];
   variants: { value: number; unit: string; page: number }[];
   semantics: Partial<VerifiedFact['semantics']>;
+  adjustmentBasis?: 'splitAdjusted' | 'beforeSplit' | 'afterSplit';
 }
 export interface Case {
   id: string;
@@ -12,12 +13,25 @@ export interface Case {
   documentType: DocumentType;
   url: string;
   expected: Expected[];
+  expectedRanges?: Array<
+    Omit<Expected, 'variants' | 'adjustmentBasis'> & {
+      lower: number;
+      upper: number;
+      unit: string;
+      page: number;
+    }
+  >;
+  publishedDate?: string;
+  code?: string;
+  sourceHash?: string;
+  forbidden?: Array<{ label: string; value: number; period: string; state: string }>;
   expectedEvidence?: {
     page: number;
     blockId: string;
     kind: string;
     semantics: Partial<VerifiedFact['semantics']>;
   }[];
+  expectedConditions?: { page: number; text: string }[];
 }
 const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
 const attributesMatch = (fact: VerifiedFact, expected: Partial<VerifiedFact['semantics']>) =>
@@ -33,7 +47,10 @@ const attributesMatch = (fact: VerifiedFact, expected: Partial<VerifiedFact['sem
       );
     return actual === value;
   });
-export function expectedErrors(item: Case, result: { facts: VerifiedFact[] }): string[] {
+export function expectedErrors(
+  item: Case,
+  result: { facts: VerifiedFact[]; unverified?: string[] }
+): string[] {
   const errors: string[] = [];
   for (const expected of item.expected) {
     if (
@@ -43,6 +60,9 @@ export function expectedErrors(item: Case, result: { facts: VerifiedFact[] }): s
           expected.labels.some((label) => compact(fact.label) === compact(label)) &&
           expected.periods.some((period) => compact(fact.period ?? '') === compact(period)) &&
           attributesMatch(fact, expected.semantics) &&
+          (!expected.adjustmentBasis ||
+            (fact.provenance?.denominator?.value === 1 &&
+              fact.provenance.adjustments.some((a) => a.basis === expected.adjustmentBasis))) &&
           expected.variants.some(
             (v) =>
               fact.value === v.value &&
@@ -68,5 +88,119 @@ export function expectedErrors(item: Case, result: { facts: VerifiedFact[] }): s
     )
       errors.push(`完結した原文の重要事項が不足: p.${expected.page} ${expected.blockId}`);
   }
+  for (const expected of item.expectedRanges ?? []) {
+    if (
+      !result.facts.some(
+        (fact) =>
+          fact.kind === 'range' &&
+          expected.labels.some((label) => compact(fact.label) === compact(label)) &&
+          expected.periods.some((period) => compact(fact.period ?? '') === compact(period)) &&
+          attributesMatch(fact, expected.semantics) &&
+          fact.page === expected.page &&
+          compact(fact.unit ?? '') === compact(expected.unit) &&
+          fact.quantity &&
+          'lower' in fact.quantity &&
+          Number(fact.quantity.lower) === expected.lower &&
+          Number(fact.quantity.upper) === expected.upper
+      )
+    )
+      errors.push(
+        `意味を保った重要範囲が不足: ${expected.labels.join('/')} ${expected.lower}～${expected.upper}${expected.unit}`
+      );
+  }
+  for (const expected of item.expectedConditions ?? []) {
+    if (
+      !result.facts.some(
+        (fact) =>
+          fact.page === expected.page &&
+          (fact.semantics.conditions?.some(
+            (condition) => compact(condition) === compact(expected.text)
+          ) ||
+            ((fact.kind === 'event' || fact.kind === 'status') &&
+              compact(fact.statement ?? '').includes(compact(expected.text))))
+      )
+    )
+      errors.push(`原文の重要条件が不足: p.${expected.page} ${expected.text}`);
+  }
+  for (const forbidden of item.forbidden ?? [])
+    if (
+      result.facts.some(
+        (f) =>
+          compact(f.label) === compact(forbidden.label) &&
+          f.value === forbidden.value &&
+          compact(f.period ?? '') === compact(forbidden.period) &&
+          f.semantics.state === forbidden.state
+      )
+    )
+      errors.push(`禁止する重要数値の対応: ${forbidden.label} ${forbidden.value}`);
+  if (result.unverified?.length)
+    errors.push(`未確認が残っています: ${result.unverified.join(' / ')}`);
   return errors;
+}
+/** Keep the strict verdict while separating independently missing facts from
+ * residual rejection diagnostics. Candidate importance/kind never define this oracle.
+ */
+export function independentAssessment(
+  item: Case,
+  result: { facts: VerifiedFact[]; unverified?: string[] }
+) {
+  const missingFacts = expectedErrors(item, { facts: result.facts });
+  return {
+    missingFacts,
+    diagnostics: result.unverified ?? [],
+    importantFactsSatisfied: missingFacts.length === 0,
+    strictSuccess: missingFacts.length === 0 && !result.unverified?.length,
+  };
+}
+/** A fact's value, metric and meaning must appear together in one rendered list item. */
+export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): string[] {
+  const stateLabels: Record<string, string> = {
+    actual: '実績',
+    forecast: '予想',
+    forecastBefore: '修正前予想',
+    forecastAfter: '修正後予想',
+    planned: '実施予定',
+    decided: '決議・決定',
+    contracted: '契約',
+    completed: '実施済み',
+    unspecified: '状態未特定',
+  };
+  const basisLabels = {
+    splitAdjusted: '株式分割調整済み',
+    beforeSplit: '株式分割前',
+    afterSplit: '株式分割後',
+  };
+  return facts.flatMap((f) => {
+    const value =
+      f.kind === 'number'
+        ? `${f.label}:${f.quantity!.decimal}${f.unit}`
+        : f.kind === 'range' && 'lower' in f.quantity!
+          ? `${f.label}:${f.quantity!.lower}～${f.quantity!.upper}${f.unit}`
+          : f.statement!;
+    const required = [
+      value,
+      f.semantics.subject,
+      f.semantics.scope,
+      f.semantics.basis,
+      f.period,
+      ...(f.kind === 'number' || f.kind === 'range'
+        ? [stateLabels[f.semantics.state], ...(f.semantics.polarity === 'negative' ? ['否定'] : [])]
+        : []),
+      `PDFp.${f.page}`,
+      ...f.semantics.qualifiers,
+      ...(f.semantics.periodKind.startsWith('cumulativeQ') ? ['累計'] : []),
+      ...(f.semantics.periodKind.startsWith('standaloneQ') ? ['単独'] : []),
+      ...(f.provenance?.adjustments.map((a) => basisLabels[a.basis]) ?? []),
+      ...(f.provenance?.denominator ? ['1株当たり'] : []),
+      ...(/配当予想の変更はありません/.test(compact(f.quote)) &&
+      f.semantics.metricKind === 'perShare'
+        ? ['配当予想の変更なし']
+        : []),
+    ]
+      .filter((v): v is string => !!v)
+      .map(compact);
+    return lines.some((line) => required.every((term) => compact(line).includes(term)))
+      ? []
+      : [`表示の数値・指標・期間・意味が同一項目に揃いません: ${f.id} ${f.label}`];
+  });
 }

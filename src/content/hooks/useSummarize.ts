@@ -124,7 +124,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   }, [cacheKey, pdfUrl]);
 
   const restoreStages = useCallback(
-    async (id: string, facts: FactSummary) => {
+    async (id: string, facts: FactSummary, documentHash: string) => {
       const data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
       if (idRef.current !== id) return;
       const cachedScore = data[SCORE_PREFIX + id] as ExperimentalScore | undefined;
@@ -134,7 +134,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       }
       try {
         if (cachedScore && cachedScore.value !== null) {
-          validateSavedScore(cachedScore, facts, normalizeTdnetPdfUrl(pdfUrl));
+          validateSavedScore(cachedScore, facts, normalizeTdnetPdfUrl(pdfUrl), documentHash);
           setScore({ loading: false, data: cachedScore, error: null });
         } else setScore(emptyStage());
       } catch {
@@ -191,7 +191,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       diagnosticRunId: null,
       error: null,
     });
-    await restoreStages(entry.resultId, entry.facts);
+    await restoreStages(entry.resultId, entry.facts, entry.metadata.documentHash!);
   }, [restoreStages, pdfUrl]);
 
   const summarize = useCallback(
