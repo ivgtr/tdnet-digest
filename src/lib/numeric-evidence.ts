@@ -4,6 +4,7 @@ import {
   reportingMetricKey,
   proseMetricPrefixMatches,
   proseFieldText,
+  proseFields,
   PROSE_METRIC_BRIDGE_PATTERN,
 } from './metric-semantics';
 import {
@@ -825,14 +826,17 @@ export function verifyProseQuantity(
   const match = matches[0];
   // A physical numbered field owns its own quantities, even when PDF layout
   // combines fields into one paragraph. Keep the full source and quantity IDs.
-  const fieldStarts = [
-    0,
-    ...[...normalized.matchAll(/[;；](?=\(\d+\))/g)].map((m) => m.index! + 1),
-  ];
-  const fieldStart = match ? Math.max(...fieldStarts.filter((start) => start <= match.index!)) : 0;
-  const fieldEnd = match
-    ? (fieldStarts.find((start) => start > match.index!) ?? normalized.length + 1) - 1
-    : normalized.length;
+  let offset = 0;
+  const fields = proseFields(quote).map((text) => {
+    const start = offset;
+    const end = start + assertionText(text).length;
+    offset = end + 1; // The inserted separator occupies one normalized character.
+    return { start, end };
+  });
+  const field =
+    match && fields.find(({ start, end }) => match.index! >= start && match.index! < end);
+  const fieldStart = field ? field.start : 0;
+  const fieldEnd = field ? field.end : normalized.length;
   const token = '-?\\d+(?:\\.\\d+)?(?:[～〜~]-?\\d+(?:\\.\\d+)?)?';
   const heads = [
     ...normalized.matchAll(new RegExp(`${labelPattern}${bridge}(${token})`, 'gu')),

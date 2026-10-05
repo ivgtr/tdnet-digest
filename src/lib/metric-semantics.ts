@@ -17,8 +17,9 @@ const perShareProfitName = '1株(?:当たり|あたり)(?:当期|四半期|中�
 export const PER_SHARE_PROFIT_METRIC = `(?:(?:基本的|希薄化後|潜在株式調整後)?(?:${perShareProfitName}))`;
 export const BASIC_PER_SHARE_PROFIT_METRIC = `(?:(?:基本的)?(?:${perShareProfitName}))`;
 /** A numbered field at a physical line start is a boundary, unlike a wrapped noun. */
-export const proseFieldText = (text: string) =>
-  text.normalize('NFKC').replace(/\n(?=\s*\(\d+\))/g, '；');
+export const proseFields = (text: string): string[] =>
+  text.normalize('NFKC').split(/\n(?=\s*\(\d+\))/);
+export const proseFieldText = (text: string) => proseFields(text).join('；');
 /** Only explicit owners, calendar/fiscal axes and field punctuation may precede a bare metric. */
 export function proseMetricPrefixMatches(prefix: string, owners: string[] = []): boolean {
   let rest = reportingPeriodText(prefix)

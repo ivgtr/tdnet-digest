@@ -52,6 +52,12 @@ describe('本文数量の完結した意味照合', () => {
     expect(r.facts).toHaveLength(1);
     expect(saved(r.facts, pages, 'other', true).facts).toEqual(r.facts);
   });
+  it('同じ行のセミコロンと番号で数値再指定を候補・保存から受理しない', () => {
+    const { pages, f } = prose(`(1)${period}の売上高は100百万円です。；(2)売上高は120百万円です。`);
+    expect(f.quote).not.toContain('\n');
+    expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
+    expect(saved([evidence(f, pages)], pages).facts).toEqual([]);
+  });
   it.each(rejected)('後続を含む原文の意味を確定額へ変換しない: %s', (tail) => {
     const { pages, f } = prose(`${period}の売上高は${tail}`);
     const r = reviewCandidates(candidateResponse([f], pages), 'other', pages);

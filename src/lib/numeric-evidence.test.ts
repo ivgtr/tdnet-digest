@@ -757,8 +757,8 @@ it.each([
   if (valid) expect(verify()).toBe(0);
   else expect(verify).toThrow();
 });
-it('物理的な番号付き項目の数量だけを検証し、別項目の同指標を再指定としない', () => {
-  const quote = '(1)EPSは42円です。\n(2)基本的1株当たり当期利益は43円です。';
+it.each(['\n', '\r\n', '\n  '])('物理的な番号付き項目だけを独立させる: %j', (separator) => {
+  const quote = `(1)EPSは42円です。${separator}（２）基本的1株当たり当期利益は43円です。`;
   for (const [label, value] of [
     ['EPS', 42],
     ['基本的1株当たり当期利益', 43],
@@ -792,3 +792,59 @@ it.each(['42円', '42～43円'])(
     }
   }
 );
+
+it.each([
+  [';', '売上高', '売上高', '100百万円', '120百万円'],
+  ['；', '売上高', '売上高', '100百万円', '120百万円'],
+  ['；', 'EPS', '基本的1株当たり当期利益', '42円', '43円'],
+  ['；', '売上高', '売上収益', '100百万円', '100百万円'],
+  ['；', '売上高', '売上収益', '100～120百万円', '100～120百万円'],
+])(
+  '原文の同一行の記号から番号付き項目の所属を作らない: %s / %s / %s / %s / %s',
+  (separator, first, second, a, b) => {
+    const quote = `(1)${first}は${a}です。${separator}（２）${second}は${b}です。`;
+    const quantities = proseQuantities({ id: 'source', text: quote }).filter((q) =>
+      q.raw.includes('円')
+    );
+    expect(quantities).toHaveLength(2);
+    for (const [i, label] of [first, second].entries()) {
+      const raw = quantities[i].raw;
+      const unit = raw.includes('百万円') ? '百万円' : '円';
+      const range = raw.includes('~');
+      const current = {
+        ...claim,
+        label,
+        unit,
+        value: range ? null : Number(raw.replace(unit, '')),
+        range,
+      };
+      expect(() =>
+        verifyProseQuantity(
+          { pageNumber: 1, text: quote, spans: [] },
+          quote,
+          current,
+          quantities[i]
+        )
+      ).toThrow('STRUCTURE:');
+    }
+  }
+);
+
+it('実改行の別項目と同じ行のセミコロンを混在しても所属を保つ', () => {
+  const quote =
+    '(1)売上高は100百万円です。\n(2)売上高は120百万円です。；(3)売上高は140百万円です。';
+  const quantities = proseQuantities({ id: 'source', text: quote }).filter((q) =>
+    q.raw.includes('百万円')
+  );
+  for (const [i, value] of [100, 120, 140].entries()) {
+    const verify = () =>
+      verifyProseQuantity(
+        { pageNumber: 1, text: quote, spans: [] },
+        quote,
+        { ...claim, label: '売上高', value, unit: '百万円' },
+        quantities[i]
+      );
+    if (i === 0) expect(verify().start).toBe(quantities[i].start);
+    else expect(verify).toThrow('STRUCTURE:');
+  }
+});
