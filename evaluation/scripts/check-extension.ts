@@ -724,6 +724,32 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.ok(finance.excerptIds.includes('source:p7b5'), '貸借対照表の続きは同じ話題へ保持');
       assert.ok(body.includes('前年同期 3,130') && body.includes('前年同期 309'));
       for (const term of ['燃料費', '節約志向', '季節', '年間11']) assert.ok(body.includes(term));
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of [
+        '燃料費',
+        '節約志向',
+        '3月から5月に偏る',
+        '新規出店3店舗',
+        '470店舗',
+        '長期化した場合',
+        '4.9%',
+        '20.2%',
+        '18.8%',
+        '15.5%',
+      ])
+        assert.ok(reading.includes(term), `通常表示の説明が欠落: ${term}`);
+      for (const block of ['p4b3', 'p4b4', 'p4b7', 'p4b8', 'p4b9']) {
+        const original = stored.value.presentation.excerpts.find(
+          (e: any) => e.blockId === block
+        ).text;
+        assert.ok(
+          !reading.includes(original.normalize('NFKC').replace(/\s/g, '')),
+          `段落全文が抜粋として重複: ${block}`
+        );
+      }
     }
     const sourceToggles = summary.locator('details.tdnet-digest-source');
     assert.equal(

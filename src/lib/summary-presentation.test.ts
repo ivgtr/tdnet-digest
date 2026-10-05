@@ -33,6 +33,45 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 
 describe('冒頭と本文の保持・復元・原文参照', () => {
+  it('一般的な前置きと結果の重複を外し、原因・季節性を抜粋して条件と全文を保持する', () => {
+    const introduction = 'わが国経済は物価上昇が続いています。個人消費も低迷しています。';
+    const reason =
+      '以上の結果、当期の業績は、需要の減少と節約志向の強まりから利用の出し控えが見られたことなどにより、売上高は1,000百万円と前年同期に比べ100百万円（10.0%）の減収となりました。';
+    const season =
+      'なお、当社の属する業界は、通常の場合、春に需要期を迎えます。したがって、当社の売上高は３月から５月に偏る傾向があり、業績に季節的変動があります。';
+    const qualified =
+      '取引先との契約により売上高は増加しました。ただし、承認を条件としており、実施時期は未定です。';
+    const operation =
+      '設備投資は、昨年の事業譲受による拠点取得を踏まえ、業務効率化を目的として、４月より新工場の稼働を開始しました。加えて、新規出店３店舗と既存店のリニューアル14店舗を実施しました。';
+    const source = textPage(
+      expectation.text +
+        '\n１．増減要因\n' +
+        [introduction, reason, season, qualified, operation].join('\n')
+    );
+    const display = buildPresentation(facts, [source]);
+    const html = buildSummaryHtml(renderFacts(facts, display), null, {
+      companyName: 'テスト',
+      title: '決算',
+      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
+    });
+    const reading = html.replace(/<details\b[\s\S]*?<\/details>/g, '');
+    expect(reading).toContain('需要の減少と節約志向の強まりから利用の出し控えが見られた');
+    expect(reading).toContain('売上高…前年同期に比べ…（10.0%）の減収');
+    expect(reading).toContain(
+      '当社の売上高は３月から５月に偏る傾向があり、業績に季節的変動があります。'
+    );
+    expect(reading).toContain(qualified);
+    expect(reading).toContain('設備投資は、…４月より新工場の稼働を開始しました。');
+    expect(reading).toContain('新規出店３店舗と既存店のリニューアル14店舗');
+    expect(reading).not.toContain(introduction);
+    expect(reading).not.toContain('売上高は1,000百万円と前年同期に比べ100百万円');
+    expect(reading).not.toContain('通常の場合、春に需要期を迎えます。');
+    for (const original of [introduction, reason, season, qualified, operation])
+      expect(html).toContain(original);
+    expect(display.excerpts.map((e) => e.text)).toEqual(
+      sourceInventory([source], undefined, 'earnings').map((e) => e.text)
+    );
+  });
   it('出来事に別段落から適用される条件を通常表示の同じ項目に残す', () => {
     const id = 'revision-20260910';
     const pages = corpus

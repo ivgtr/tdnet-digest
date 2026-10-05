@@ -13,6 +13,7 @@ import {
   explanationRole,
   dividendPaymentExcerpt,
 } from './summary-content-policy';
+import { companyExcerpt } from './summary-company-excerpt';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 
 export interface SummarySection {
@@ -71,6 +72,7 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
           (explanationRole(e.text) !== null ||
             dividendPaymentExcerpt(e.text) !== null ||
             (e.role !== 'notes' && /。/.test(e.text))) &&
+          companyExcerpt(e) !== null &&
           !members.some((f) => f.statement === e.text)
         );
       })

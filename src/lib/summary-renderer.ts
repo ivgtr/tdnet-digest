@@ -7,7 +7,8 @@ import {
 import { validatePresentation, type SummaryPresentation } from './summary-presentation';
 import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
 import { paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
-import { explanationRole, dividendPaymentExcerpt } from './summary-content-policy';
+import { explanationRole } from './summary-content-policy';
+import { companyExcerpt } from './summary-company-excerpt';
 
 export const stateLabels = {
   actual: '実績',
@@ -166,30 +167,11 @@ function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
       : [];
   return `${literalMarkdown(f.label)}：${numberText(f)}${previous.length === 1 ? `（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${numberText(previous[0])}）` : ''}`;
 }
-/** Keep complete paragraphs so a reason never loses a qualification or a contrasting sentence. */
-function companyExplanation(e: SourceExcerpt): string {
-  const cover = /上場会社名.*代表者/.test(e.text.normalize('NFKC').replace(/\s/g, ''));
-  return literalMarkdown((cover ? dividendPaymentExcerpt(e.text) : null) ?? e.text);
-}
-/** Only the overview may abbreviate an excerpt. Conditions and contrasting claims stay complete. */
-function overviewExplanation(e: Pick<SourceExcerpt, 'text'>): string {
-  const text = e.text.replace(/\n/g, '');
-  // Extract a literal causal clause; complete results remain in the body.
-  const cause = text.match(
-    /^(?:以上の結果、)?(?:当[^、。]*業績は、|利益につきましては、)(.+?)こと(?:など)?(?:により|から)、(?:売上高|営業利益)/
-  );
-  if (cause && !/場合|条件|可能|ただし|但し|なお|しかし|ではなく/.test(text))
-    return literalMarkdown(cause[1]);
-  return literalMarkdown(
-    text.length > 140 &&
-      !/場合|条件|可能|ただし|但し|なお|未定|予定|季節|偏る|しかし|ではなく/.test(text)
-      ? `${text.slice(0, 140)}…（全文は本文）`
-      : text
-  );
-}
 function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
-  if (['reason', 'condition'].includes(explanationRole(f.statement!) ?? ''))
-    return `会社説明（原文抜粋）：${overviewExplanation({ text: f.statement! })}`;
+  if (['reason', 'condition'].includes(explanationRole(f.statement!) ?? '')) {
+    const excerpt = companyExcerpt({ text: f.statement!, role: 'reason' }, { comparisons: false });
+    return `会社説明（原文抜粋）：${literalMarkdown(excerpt === null ? f.statement! : excerpt)}`;
+  }
   const text = statementText(f);
   if (!/^(?:配当予想|業績予想)：変更なし$/.test(text)) return text;
   const forecasts = facts.facts.filter(
@@ -394,11 +376,11 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       lines.push('- ' + text);
     } else {
       const e = explanations.get(id)!;
-      let text = overviewExplanation(e);
+      let text = literalMarkdown(companyExcerpt(e, { comparisons: false })!);
       while (explanationRole(e.text) === 'reason' && index + 1 < presentation.overview.length) {
         const next = explanations.get(presentation.overview[index + 1]);
         if (!next || explanationRole(next.text) !== 'reason') break;
-        text += '／' + overviewExplanation(next);
+        text += '／' + literalMarkdown(companyExcerpt(next, { comparisons: false })!);
         index++;
       }
       lines.push(`- 会社説明（原文抜粋）：${text}`);
@@ -438,7 +420,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     if (section.highlights.length) {
       lines.push('', '**会社説明（原文抜粋）**');
       for (const id of section.highlights)
-        lines.push('- ' + companyExplanation(explanations.get(id)!));
+        lines.push('- ' + literalMarkdown(companyExcerpt(explanations.get(id)!)!));
       lines.push('', `根拠：${references(section.highlights.map((id) => sources.get(id)!.page))}`);
     }
     if (excerpts.length) lines.push('', `### 原文を見る`, ...renderExcerpts(excerpts));
