@@ -1375,3 +1375,16 @@ review7-expanded-focused.logは400テスト/4ファイル成功、review7-final-
 重点3資料各3回は必須事実9/9、説明・条件の保持期待値9/9、未確認診断のない厳密成功3/9。9要約・10 API呼出しで止め、失敗を分母に残した。保存した9結果は最終の表示で既存内容を保持することを再照合した。管理情報として誤って除かれていた月次のサービス説明1ブロックも本文へ追加した。固定API画面は決算・業績修正・自己株取得・月次を扱い、本文の全引用、表と共通文脈、キャッシュ復元、後続失敗、旧形式拒否を確認する。smartの本文不足はAPIなしで止まり、明示的なfull再試行へ進む。固定APIの成功を実モデルの成功に含めない。
 
 ローカル集計は `results/local/summary-format-model-runs.json`、再表示照合は `results/local/summary-format-final-replay.json`。通常テストは既存の責務へ集約し、新しい表示・保持契約は6件、総数は1,104件から1,107件へ純増3件。
+
+**表示構成v2の最終確認（2026-10-05、指紋v81）。** 表示変更の正本と判断は[開発ガイドの最終仕様](../docs/development.md)へ更新した。基準 `51215f5` から生成入力・プロンプトは変えていない。既存9応答の入力hash・確定事実・未確認診断の一致と全内容保持を `results/local/summary-format-v81-replay.json` に記録した。外部API0回。従前の通常生成9試行中の未確認6試行を成功へ読み替えない。
+
+最終固定API画面5件の参照は `results/local/summary-format-v81-browser.json`。きょくとうは利用者が提示した公開PDFをPDF.js/offscreenで抽出し、表紙から独立に読んだ値・期間を固定候補として生成する。模擬応答を実モデルの候補提案の成功へ含めない。画面と復元では全確定事実・全原文、話題の重複、貸借対照表の続き、理由・季節性・支払予定、予想対象期の不一致を確認した。
+
+再実行が必要な場合のきょくとう入力は以下。PDFはGit管理外で、hash `1a830c4c97addb7a4eb6f418eb45c444a326ea13f4e8bb7fb67a0f70391a5775` を固定している。公開URLの保存期限後は元の保存PDFが必要で、別資料で代用しない。
+
+```bash
+curl -fL https://www.release.tdnet.info/inbs/140120261005545843.pdf -o evaluation/fixtures/real-pdfs/kyokuto-20261005.pdf
+npm run test:fact-summary -- bluememe-20260930 --browser --fixed-api --fixture-source --additional-review-case summary-format-kyokuto --browser-module /既存の/playwright/index.mjs --browser-executable /既存の/chromium
+```
+
+全1,109テスト、型、lint、ビルドが成功。条件の表示欠落を担当する代表例一件だけ追加した。意味照合のEPS期間軸のID順依存を修正したが、原文の金額・期間の正解や候補生成契約は変えていない。既存の実モデル・未知形式の限界は継続する。途中の失敗画面・読み取りスクリプトの失敗も保持し、現在の成功へ上書きしない。

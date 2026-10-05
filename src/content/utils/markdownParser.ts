@@ -69,7 +69,8 @@ function createStyledRenderer(pdfUrl?: string): Partial<import('marked').Rendere
     },
     paragraph(token: Tokens.Paragraph) {
       const text = this.parser.parseInline(token.tokens);
-      return `<p style="${MARKDOWN_STYLES.p}">${text}</p>`;
+      const reference = token.text.startsWith('根拠：') ? 'font-size:11px;color:#6b7280;' : '';
+      return `<p style="${MARKDOWN_STYLES.p}${reference}">${text}</p>`;
     },
     list(token: Tokens.List) {
       const tag = token.ordered ? 'ol' : 'ul';
@@ -192,7 +193,11 @@ export function parseSummaryMarkdown(markdown: string, pdfUrl?: string): string 
   let start = 0;
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    if (token.type !== 'heading' || token.depth !== 3 || token.text !== '説明・補足（原文）')
+    if (
+      token.type !== 'heading' ||
+      token.depth !== 3 ||
+      !['原文を見る', '確認の詳細（原文）'].includes(token.text)
+    )
       continue;
     html += parser.parser(tokens.slice(start, i));
     let end = i + 1;
@@ -201,9 +206,22 @@ export function parseSummaryMarkdown(markdown: string, pdfUrl?: string): string 
       if (next.type === 'heading' && next.depth <= 3) break;
       end++;
     }
+    const pages = new Set<number>();
+    parser.walkTokens(tokens.slice(i + 1, end), (item) => {
+      if (item.type === 'link' && /^tdnet-page:[1-9]\d*$/.test(item.href))
+        pages.add(Number(item.href.slice('tdnet-page:'.length)));
+    });
+    const label =
+      token.text +
+      (pages.size
+        ? `（${[...pages]
+            .sort((a, b) => a - b)
+            .map((page) => `p.${page}`)
+            .join('、')}）`
+        : '');
     html +=
       '<details class="tdnet-digest-source" style="margin:8px 0;">' +
-      '<summary style="cursor:pointer;font-size:12px;color:#6b7280;padding:4px 0;">原文の説明・補足</summary>' +
+      `<summary style="cursor:pointer;font-size:12px;color:#6b7280;padding:4px 0;">${escapeHtml(label)}</summary>` +
       parser.parser(tokens.slice(i + 1, end)) +
       '</details>';
     start = end;

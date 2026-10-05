@@ -94,7 +94,8 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
         () => retryScoreRef.current(),
         undefined,
         undefined,
-        result.retryExtractionMode === 'full'
+        result.retryExtractionMode === 'full',
+        result.facts?.facts
       );
       triggerUpdate();
     }

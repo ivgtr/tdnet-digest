@@ -91,6 +91,13 @@ export function buildSummaryHtml(
   facts: VerifiedFact[] = []
 ): string {
   const metadataHtml = buildMetadataHtml(metadata, 'info');
+  const subjects = [...new Set(facts.map((fact) => fact.semantics.subject).filter(Boolean))];
+  const companyName =
+    metadata?.documentType &&
+    ['earnings', 'earningsRevision', 'businessUpdate'].includes(metadata.documentType) &&
+    subjects.length === 1
+      ? subjects[0]!
+      : rowData.companyName;
   const fullRetryButton =
     metadata?.extractionMode === 'smart'
       ? `<button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button>`
@@ -100,7 +107,7 @@ export function buildSummaryHtml(
     <div style="${SUMMARY_STYLES.summaryContainer}">
       <div style="${SUMMARY_STYLES.headerRow}">
         <h4 style="${SUMMARY_STYLES.headerTitle}">
-          AI要約: ${escapeMetadataText(rowData.companyName)} - ${escapeMetadataText(rowData.title)}
+          AI要約: ${escapeMetadataText(companyName)} - ${escapeMetadataText(rowData.title)}
         </h4>
         <div style="${SUMMARY_STYLES.buttonGroup}">
           ${fullRetryButton}

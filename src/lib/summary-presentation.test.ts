@@ -10,6 +10,13 @@ import {
 import { sourceInventory } from './summary-source-inventory';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import { summaryResultId } from './summary-result-id';
+import corpus from './fixtures/ir-semantic-corpus.json';
+import candidates from './fixtures/ir-semantic-expectations.json';
+import { extractPageLayout } from './pdf-layout';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import type { VerifiedFact } from './fact-contract';
+import { candidateResponse } from './fixtures/candidate-test-source';
+import { reviewCandidates } from './fact-candidates';
 
 const page = textPage(expectation.text);
 const facts = parseFactSummary(
@@ -26,10 +33,33 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 
 describe('冒頭と本文の保持・復元・原文参照', () => {
+  it('出来事に別段落から適用される条件を通常表示の同じ項目に残す', () => {
+    const id = 'revision-20260910';
+    const pages = corpus
+      .find((entry) => entry.id === id)!
+      .pages.map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber));
+    const response = candidateResponse(
+      candidates.find((entry) => entry.id === id)!.facts as unknown as VerifiedFact[],
+      pages,
+      'earningsRevision'
+    );
+    const event = reviewCandidates(response, 'earningsRevision', pages).facts.find(
+      (f) => f.kind === 'event' && f.statement?.includes('１株につき127円')
+    )!;
+    const summary = { ...facts, documentType: 'earningsRevision' as const, facts: [event] };
+    const html = buildSummaryHtml(renderFacts(summary, buildPresentation(summary, pages)), null, {
+      companyName: 'GMOフィナンシャルゲート',
+      title: '配当予想の修正',
+      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
+    });
+    const body = html.slice(html.indexOf('>配当</h2>'));
+    const item = body.match(/<li[^>]*>2026年９月期の配当予想[^<]*<\/li>/)![0];
+    expect(item.replace(/\s/g, '')).toContain('様々な要因により大きく異なる可能性があります。');
+  });
   it('説明の内訳・混在した状態・未分類の施策を原文のまま保持する', () => {
     expect(sourceInventory([page]).map((e) => e.text)).toEqual(expectation.retained);
     expect(revalidatePresentation(presentation, facts, [page])).toEqual(presentation);
-    const body = renderFacts(facts, presentation).split('## 2026')[1];
+    const body = renderFacts(facts, presentation).split('## 業績と増減要因')[1];
     expect(body).toContain('価格改定も行いました。');
     expect(body).toContain('承認を条件に実施する予定です。');
     expect(body).toContain('詳細は未定です。');
@@ -38,7 +68,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
   });
   it('冒頭の選択を減らしても本文の全事実と引用は変わらない', () => {
     const brief = { ...presentation, overview: [facts.facts[0].id] };
-    const body = (text: string) => text.slice(text.indexOf('\n\n##'));
+    const body = (text: string) => text.slice(text.indexOf('## 業績と増減要因'));
     expect(body(renderFacts(facts, brief))).toBe(body(renderFacts(facts, presentation)));
     expect(brief.sections.flatMap((s) => s.factIds)).toEqual(facts.facts.map((f) => f.id));
   });
@@ -49,12 +79,10 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     const second = textPage('３．その他の施策\n翌年度への影響は\n現時点では未定です。', 2);
     const display = buildPresentation(facts, [first, second]);
     const summary = renderFacts(facts, display);
-    const supplement = summary.slice(summary.indexOf('## ３'));
+    const supplement = summary.slice(summary.indexOf('## 事業・施策'));
     expect(supplement).toContain('共同開発は承認を条件に 実施する予定です。');
     expect(supplement).toContain('実施する予定です。\n\n開始時期は未定です。');
     expect(supplement).toContain('翌年度への影響は 現時点では未定です。');
-    expect(supplement.match(/\(tdnet-page:1\)/g)).toHaveLength(1);
-    expect(supplement.match(/\(tdnet-page:2\)/g)).toHaveLength(1);
     const html = buildSummaryHtml(summary, null, {
       companyName: 'テスト',
       title: '開示',
@@ -70,10 +98,11 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     expect(
       sourceToggles.every((toggle) => !toggle.includes('<h2') && !toggle.includes('<table'))
     ).toBe(true);
-    const lastToggle = sourceToggles[sourceToggles.length - 1];
+    const lastToggle = sourceToggles.find((toggle) => toggle.includes('共同開発'))!;
     expect(lastToggle).toContain('共同開発は承認を条件に 実施する予定です。');
     expect(lastToggle).toContain('翌年度への影響は 現時点では未定です。');
-    expect(html.slice(0, html.indexOf('class="tdnet-digest-source"'))).toContain('全体要約');
+    expect(lastToggle).toContain('原文を見る（p.1、p.2）');
+    expect(html.slice(0, html.indexOf('class="tdnet-digest-source"'))).toContain('開示の要点');
     expect(display.excerpts.map((e) => e.text)).toEqual([
       ...expectation.retained,
       '共同開発は承認を条件に',
@@ -92,6 +121,16 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     changed.excerpts[0].text = '変更された引用';
     expect(() => validatePresentation(changed, facts)).toThrow('欠落・変更');
     expect(() => validatePresentation({ ...presentation, unknown: true }, facts)).toThrow('不正');
+    expect(() => validatePresentation({ ...presentation, version: 1 }, facts)).toThrow('不正');
+    expect(() =>
+      validatePresentation(
+        {
+          ...presentation,
+          overview: [presentation.excerpts.find((e) => e.kind === 'heading')!.id],
+        },
+        facts
+      )
+    ).toThrow('冒頭');
     expect(() =>
       revalidatePresentation(presentation, facts, [
         textPage(expectation.text.replace('価格改定', '価格据置')),

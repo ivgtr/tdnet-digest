@@ -70,6 +70,8 @@ function textPdf(texts: string[], columns = [30, 280, 500]): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 export async function additionalReviewFixture(mode: string) {
+  if (mode === 'summary-format-kyokuto')
+    return (await import('./summary-format-fixture')).summaryFormatFixture();
   if (mode === 'semantic-ownership') return periodOutlookUnitsFixture(true);
   if (mode === 'period-outlook-units') return periodOutlookUnitsFixture();
   if (mode === 'inherited-outlook-yen') return inheritedOutlookYenFixture();

@@ -171,28 +171,40 @@ export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): stri
     afterSplit: '株式分割後',
   };
   return facts.flatMap((f) => {
+    const numeric = f.kind === 'number' || f.kind === 'range';
     const value =
       f.kind === 'number'
-        ? `${f.quantity!.decimal}${f.unit}`
+        ? f.quantity!.decimal
         : f.kind === 'range' && 'lower' in f.quantity!
-          ? `${f.quantity!.lower}～${f.quantity!.upper}${f.unit}`
-          : f.statement!;
+          ? `${f.quantity!.lower}～${f.quantity!.upper}`
+          : (() => {
+              const original = compact(f.statement!);
+              const note = original.match(
+                /^\(?注\)?直近に公表されている(配当予想|業績予想)からの修正の有無[:：]?無$/
+              );
+              return note ? `${note[1]}：変更なし` : f.statement!;
+            })();
     const required = [
       value,
+      ...(numeric ? [f.unit] : []),
       ...(f.kind === 'number' || f.kind === 'range' ? [f.label] : []),
       f.semantics.subject,
       f.semantics.scope,
       f.semantics.basis,
       f.period,
       ...(f.kind === 'number' || f.kind === 'range'
-        ? [stateLabels[f.semantics.state], ...(f.semantics.polarity === 'negative' ? ['否定'] : [])]
+        ? f.semantics.state === 'unspecified'
+          ? []
+          : [stateLabels[f.semantics.state]]
         : []),
       `p.${f.page}`,
       ...f.semantics.qualifiers,
-      ...(f.semantics.periodKind.startsWith('cumulativeQ') ? ['累計'] : []),
+      ...f.semantics.conditions,
+      ...(f.semantics.periodKind.startsWith('cumulativeQ') && !/中間期/.test(f.period ?? '')
+        ? ['累計']
+        : []),
       ...(f.semantics.periodKind.startsWith('standaloneQ') ? ['単独'] : []),
       ...(f.provenance?.adjustments.map((a) => basisLabels[a.basis]) ?? []),
-      ...(f.provenance?.denominator ? ['1株当たり'] : []),
       ...(/配当予想の変更はありません/.test(compact(f.quote)) &&
       f.semantics.metricKind === 'perShare'
         ? ['配当予想の変更なし']
@@ -200,7 +212,13 @@ export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): stri
     ]
       .filter((v): v is string => !!v)
       .map(compact);
-    return lines.some((line) => required.every((term) => compact(line).includes(term)))
+    return lines.some((line) =>
+      required.every((term) =>
+        compact(line)
+          .replace(/(?<=\d),(?=\d)/g, '')
+          .includes(term)
+      )
+    )
       ? []
       : [`表示の数値・指標・期間・意味が同一項目に揃いません: ${f.id} ${f.label}`];
   });

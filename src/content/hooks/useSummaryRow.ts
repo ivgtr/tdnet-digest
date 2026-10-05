@@ -63,7 +63,8 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       onRetryScore?: () => void,
       score?: Stage<ExperimentalScore>,
       analysis?: Stage<AdditionalAnalysis>,
-      fullRetryOnError = false
+      fullRetryOnError = false,
+      facts: VerifiedFact[] = []
     ) => {
       // 要約行を作成
       const summaryRow = iframeDoc.createElement('tr');
@@ -80,7 +81,14 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       if (errorText) {
         summaryCell.innerHTML = buildErrorHtml(errorText, fullRetryOnError);
       } else if (summaryText) {
-        summaryCell.innerHTML = buildSummaryHtml(summaryText, metadata, rowData, score, analysis);
+        summaryCell.innerHTML = buildSummaryHtml(
+          summaryText,
+          metadata,
+          rowData,
+          score,
+          analysis,
+          facts
+        );
 
         // 全文再要約ボタンのイベントリスナー（存在する場合のみ）
 

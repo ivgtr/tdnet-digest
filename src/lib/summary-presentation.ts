@@ -7,16 +7,22 @@ import {
   type FactSummary,
   type VerifiedFact,
 } from './fact-contract';
-import { CONTENT_TITLES } from './summary-content-policy';
-import { sourceInventory, type SourceExcerpt } from './summary-source-inventory';
+import {
+  factRole,
+  sectionPolicies,
+  explanationRole,
+  dividendPaymentExcerpt,
+} from './summary-content-policy';
+import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 
 export interface SummarySection {
   title: string;
   factIds: string[];
   excerptIds: string[];
+  highlights: string[];
 }
 export interface SummaryPresentation {
-  version: 1;
+  version: 2;
   sourceHash: string;
   overview: string[];
   sections: SummarySection[];
@@ -28,7 +34,7 @@ const anchor = (f: VerifiedFact) =>
 export class SummarySourceSelectionError extends Error {}
 
 export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): SummaryPresentation {
-  const excerpts = sourceInventory(pages);
+  const excerpts = sourceInventory(pages, undefined, facts.documentType);
   const omitted = excerpts.filter(
     (e) => pages.find((p) => p.pageNumber === e.page)!.selection !== 'selected'
   );
@@ -40,35 +46,36 @@ export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): S
 }
 
 function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): SummaryPresentation {
-  const sections: SummarySection[] = [];
-  const group = (title: string) => {
-    let section = sections.find((s) => s.title === title);
-    if (!section) {
-      section = { title, factIds: [], excerptIds: [] };
-      sections.push(section);
-    }
-    return section;
-  };
+  const policies = sectionPolicies(facts.documentType);
+  const sections: SummarySection[] = policies.map(([, title]) => ({
+    title,
+    factIds: [],
+    excerptIds: [],
+    highlights: [],
+  }));
+  const group = (role: string) => sections[policies.findIndex(([r]) => r === role)];
+  const paragraphs = paragraphGroups(excerpts);
   for (const f of facts.facts) {
-    const source = excerpts.find((e) => e.blockId === anchor(f));
-    const title =
-      source?.heading?.text ??
-      (numeric(f)
-        ? /配当/.test(f.label)
-          ? '配当'
-          : f.valueKind === 'actual'
-            ? '実績'
-            : f.valueKind === 'forecastBefore'
-              ? '修正前予想'
-              : f.valueKind === 'forecastAfter'
-                ? '修正後予想'
-                : f.valueKind === 'forecast'
-                  ? '会社予想'
-                  : CONTENT_TITLES[facts.documentType]
-        : '会社の説明・条件');
-    group(title).factIds.push(f.id);
+    const source = excerpts.find((e) => e.blockId === anchor(f) || e.spanIds.includes(anchor(f)));
+    group(factRole(f, facts.documentType, source?.role ?? 'unclassified')).factIds.push(f.id);
   }
-  for (const e of excerpts) group(e.heading?.text ?? '開示本文・補足').excerptIds.push(e.id);
+  for (const e of excerpts) group(e.role).excerptIds.push(e.id);
+  for (const section of sections) {
+    const members = section.factIds.map((id) => facts.facts.find((f) => f.id === id)!);
+    section.highlights = paragraphs
+      .filter((e) => {
+        return (
+          section.excerptIds.includes(e.id) &&
+          e.role !== 'document' &&
+          e.role !== 'unclassified' &&
+          (explanationRole(e.text) !== null ||
+            dividendPaymentExcerpt(e.text) !== null ||
+            (e.role !== 'notes' && /。/.test(e.text))) &&
+          !members.some((f) => f.statement === e.text)
+        );
+      })
+      .map((e) => e.id);
+  }
 
   // Choose different information roles, never the first three facts or the largest values.
   const overview: string[] = [];
@@ -82,9 +89,10 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
       (a, b) =>
         Number(b.semantics.state === preferredState) -
           Number(a.semantics.state === preferredState) ||
-        Number(b.importance === 'key') - Number(a.importance === 'key')
+        Number(b.importance === 'key') - Number(a.importance === 'key') ||
+        (b.period ?? '').localeCompare(a.period ?? '')
     );
-  if (['earnings', 'earningsRevision', 'businessUpdate'].includes(facts.documentType)) {
+  if (['earnings', 'earningsRevision'].includes(facts.documentType)) {
     take(
       primary.find(
         (f) =>
@@ -102,20 +110,66 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
       )
     );
   } else {
-    take(facts.facts.find((f) => !numeric(f) && f.semantics.state !== 'unspecified'));
-    take(primary.find((f) => f.importance === 'key'));
+    take(
+      facts.facts.find(
+        (f) => !numeric(f) && factRole(f, facts.documentType, 'unclassified') === 'content'
+      )
+    );
+    const selected = new Set<string>();
+    for (const f of primary.filter((f) => f.importance === 'key')) {
+      const metric = canonicalJSON([f.label, f.semantics.subject, f.semantics.scope]);
+      if (!selected.has(metric)) {
+        take(f);
+        selected.add(metric);
+      }
+    }
   }
-  take(
-    facts.facts.find(
-      (f) => !numeric(f) && /修正|変更|理由|要因|影響|条件|予定|可能性|未定/.test(f.statement!)
-    )
-  );
+  const highlights = sections
+    .flatMap((s) => s.highlights)
+    .map((id) => paragraphs.find((e) => e.id === id)!);
+  for (const role of ['reason', 'condition'] as const) {
+    const verified = facts.facts.filter(
+      (f) => !numeric(f) && explanationRole(f.statement!) === role
+    );
+    if (facts.documentType === 'earnings' && role === 'reason') {
+      const resultFacts = verified.filter((f) => /減収|減益|増収|増益/.test(f.statement!));
+      const resultExcerpts = highlights.filter(
+        (e) =>
+          e.role === 'performance' &&
+          explanationRole(e.text) === role &&
+          /減収|減益|増収|増益/.test(e.text)
+      );
+      if (resultFacts.length || resultExcerpts.length) {
+        resultFacts.forEach(take);
+        overview.push(...resultExcerpts.map((e) => e.id));
+        continue;
+      }
+    }
+    if (verified.length) take(verified[0]);
+    else {
+      const excerpt = highlights.find((e) => explanationRole(e.text) === role);
+      if (excerpt) overview.push(excerpt.id);
+    }
+  }
+  for (const role of ['outlook', 'dividend'] as const)
+    take(
+      facts.facts.find(
+        (f) =>
+          !numeric(f) &&
+          factRole(
+            f,
+            facts.documentType,
+            excerpts.find((e) => e.blockId === anchor(f))?.role ?? 'unclassified'
+          ) === role &&
+          /修正の有無|変更はありません/.test(f.statement!)
+      )
+    );
   if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
   return {
-    version: 1,
+    version: 2,
     sourceHash: hashText(canonicalJSON(excerpts)),
     overview,
-    sections,
+    sections: sections.filter((s) => s.factIds.length || s.excerptIds.length),
     excerpts,
   };
 }
@@ -128,7 +182,7 @@ export function validatePresentation(
   if (
     !record(value) ||
     !exact(value, ['version', 'sourceHash', 'overview', 'sections', 'excerpts']) ||
-    value.version !== 1 ||
+    value.version !== 2 ||
     !Array.isArray(value.overview) ||
     !Array.isArray(value.sections) ||
     !Array.isArray(value.excerpts)
@@ -139,7 +193,7 @@ export function validatePresentation(
   for (const e of value.excerpts) {
     if (
       !record(e) ||
-      !exact(e, ['id', 'page', 'blockId', 'kind', 'text', 'heading']) ||
+      !exact(e, ['id', 'page', 'blockId', 'kind', 'text', 'heading', 'spanIds', 'role']) ||
       typeof e.blockId !== 'string' ||
       !/^p\d+b\d+$/.test(e.blockId) ||
       e.id !== `source:${e.blockId}` ||
@@ -150,6 +204,9 @@ export function validatePresentation(
       !['paragraph', 'row', 'heading'].includes(String(e.kind)) ||
       typeof e.text !== 'string' ||
       !e.text.trim() ||
+      !Array.isArray(e.spanIds) ||
+      !e.spanIds.every((id) => typeof id === 'string' && /^p\d+s\d+$/.test(id)) ||
+      !sectionPolicies(facts.documentType).some(([role]) => role === e.role) ||
       (e.heading !== null &&
         (!record(e.heading) ||
           !exact(e.heading, ['id', 'text']) ||
@@ -165,15 +222,23 @@ export function validatePresentation(
     Array.isArray(v) &&
     new Set(v).size === v.length &&
     v.every((id) => typeof id === 'string' && allowed.has(id));
-  if (!refs(value.overview, ids)) throw new Error('冒頭要約の参照が不正です');
+  const expected = composePresentation(facts, value.excerpts as SourceExcerpt[]);
+  if (
+    !refs(
+      value.overview,
+      new Set([...ids, ...expected.sections.flatMap((section) => section.highlights)])
+    )
+  )
+    throw new Error('冒頭要約の参照が不正です');
   for (const s of value.sections)
     if (
       !record(s) ||
-      !exact(s, ['title', 'factIds', 'excerptIds']) ||
+      !exact(s, ['title', 'factIds', 'excerptIds', 'highlights']) ||
       typeof s.title !== 'string' ||
       !s.title.trim() ||
       !refs(s.factIds, ids) ||
-      !refs(s.excerptIds, sourceIds)
+      !refs(s.excerptIds, sourceIds) ||
+      !refs(s.highlights, new Set(s.excerptIds as string[]))
     )
       throw new Error('本文の参照が不正です');
   const shown = value.sections.flatMap((s) => s.factIds);
@@ -185,7 +250,6 @@ export function validatePresentation(
     new Set(quoted).size !== sourceIds.size
   )
     throw new Error('本文に事実・原文引用の欠落または重複があります');
-  const expected = composePresentation(facts, value.excerpts as SourceExcerpt[]);
   if (value.sourceHash !== expected.sourceHash)
     throw new Error('保存された原文引用が欠落・変更されています');
   // Headline selection may be adjusted independently; body membership stays deterministic.

@@ -6,7 +6,8 @@ import {
 } from './fact-contract';
 import { validatePresentation, type SummaryPresentation } from './summary-presentation';
 import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
-import type { SourceExcerpt } from './summary-source-inventory';
+import { paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
+import { explanationRole, dividendPaymentExcerpt } from './summary-content-policy';
 
 export const stateLabels = {
   actual: '実績',
@@ -19,7 +20,6 @@ export const stateLabels = {
   completed: '実施済み',
   unspecified: '状態未特定',
 };
-/** Source text must remain literal even when it contains Markdown/HTML delimiters. */
 export const literalMarkdown = (text: string) =>
   text
     .replace(/&/g, '&amp;')
@@ -28,6 +28,11 @@ export const literalMarkdown = (text: string) =>
     .replace(/[\\`*_{}[\]()#+!|~.:/@-]/g, '\\$&')
     .replace(/\n/g, ' ');
 const ref = (page: number) => `[p.${page}](tdnet-page:${page})`;
+const references = (pages: number[]) =>
+  [...new Set(pages)]
+    .sort((a, b) => a - b)
+    .map(ref)
+    .join('・');
 const numeric = (f: VerifiedFact) => f.kind === 'number' || f.kind === 'range';
 const periodText = (f: VerifiedFact) =>
   f.period && f.semantics.periodKind.startsWith('cumulativeQ') && !/累計|中間期/.test(f.period)
@@ -35,254 +40,441 @@ const periodText = (f: VerifiedFact) =>
     : f.period && f.semantics.periodKind.startsWith('standaloneQ') && !/単独/.test(f.period)
       ? `${f.period}単独`
       : f.period;
-function contextText(f: VerifiedFact): string {
-  return [
-    periodText(f),
-    f.semantics.subject,
-    f.semantics.scope,
-    f.semantics.basis,
-    numeric(f) ? stateLabels[f.semantics.state] : null,
-    f.semantics.polarity === 'negative'
-      ? '否定'
-      : f.semantics.polarity === 'mixed'
-        ? '肯定・否定を含む'
-        : null,
-    ...f.semantics.qualifiers,
-    ...(f.provenance?.denominator?.value === 1 && !/[1１]株(?:当たり|あたり)/.test(f.label)
-      ? ['1株当たり']
-      : []),
-    ...(f.semantics.metricKind === 'perShare' && unchangedDividend(f.quote)
-      ? ['配当予想の変更なし']
-      : []),
-    ...(unchangedDividendReference(f.quote)?.breakdown
-      ? [unchangedDividendReference(f.quote)!.breakdown!]
-      : []),
-    ...new Set(
-      f.provenance?.adjustments.map(
-        (a) =>
-          ({
-            splitAdjusted: '株式分割調整済み',
-            beforeSplit: '株式分割前',
-            afterSplit: '株式分割後',
-          })[a.basis]
-      ) ?? []
-    ),
-  ]
-    .filter(Boolean)
-    .map((s) => literalMarkdown(s!))
-    .join('、');
-}
-function commonContext(f: VerifiedFact): string {
-  return [
-    periodText(f),
-    f.semantics.subject,
-    f.semantics.scope,
-    f.semantics.basis,
-    stateLabels[f.semantics.state],
-  ]
-    .filter(Boolean)
-    .map((s) => literalMarkdown(s!))
-    .join('、');
-}
+const decimalText = (text: string) =>
+  text.replace(
+    /^(-?)(\d+)/,
+    (_, sign: string, digits: string) => sign + digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  );
+const numberText = (f: VerifiedFact, unit = true) =>
+  literalMarkdown(
+    (f.quantity!.decimal !== null
+      ? decimalText(f.quantity!.decimal)
+      : 'lower' in f.quantity!
+        ? `${decimalText(f.quantity!.lower)}～${decimalText(f.quantity!.upper)}`
+        : '') + (unit ? f.unit : '')
+  );
 function valueNotes(f: VerifiedFact): string[] {
   return [
-    ...(f.semantics.polarity === 'negative'
-      ? ['否定']
-      : f.semantics.polarity === 'mixed'
-        ? ['肯定・否定を含む']
+    ...new Set([
+      ...f.semantics.qualifiers,
+      ...f.semantics.conditions,
+      ...(f.provenance?.denominator?.value === 1 && !/[1１]株(?:当たり|あたり)/.test(f.label)
+        ? ['1株当たり']
         : []),
-    ...f.semantics.qualifiers,
-    ...(f.provenance?.denominator?.value === 1 && !/[1１]株(?:当たり|あたり)/.test(f.label)
-      ? ['1株当たり']
-      : []),
-    ...(f.semantics.metricKind === 'perShare' && unchangedDividend(f.quote)
-      ? ['配当予想の変更なし']
-      : []),
-    ...(unchangedDividendReference(f.quote)?.breakdown
-      ? [unchangedDividendReference(f.quote)!.breakdown!]
-      : []),
-    ...new Set(
-      f.provenance?.adjustments.map(
-        (a) =>
-          ({
-            splitAdjusted: '株式分割調整済み',
-            beforeSplit: '株式分割前',
-            afterSplit: '株式分割後',
-          })[a.basis]
-      ) ?? []
-    ),
-    ...f.semantics.conditions,
-    ...(f.provenance?.adjustments.map((a) => a.text) ?? []),
+      ...(f.semantics.metricKind === 'perShare' && unchangedDividend(f.quote)
+        ? ['配当予想の変更なし']
+        : []),
+      ...(unchangedDividendReference(f.quote)?.breakdown
+        ? [unchangedDividendReference(f.quote)!.breakdown!]
+        : []),
+      ...(f.provenance?.adjustments.flatMap((a) => [
+        { splitAdjusted: '株式分割調整済み', beforeSplit: '株式分割前', afterSplit: '株式分割後' }[
+          a.basis
+        ],
+        a.text,
+      ]) ?? []),
+    ]),
   ].map(literalMarkdown);
 }
-const numberText = (f: VerifiedFact) =>
-  literalMarkdown(
-    (f.quantity!.decimal ??
-      ('lower' in f.quantity! ? `${f.quantity!.lower}～${f.quantity!.upper}` : '')) + f.unit
+function statementText(f: VerifiedFact): string {
+  const source = f.statement!.normalize('NFKC').replace(/\s/g, '');
+  const unchanged = source.match(
+    /^\(?注\)?直近に公表されている(配当予想|業績予想)からの修正の有無[:：]?無$/
   );
-const conditions = (f: VerifiedFact) =>
-  f.semantics.conditions.length ? '。' + f.semantics.conditions.map(literalMarkdown).join(' ') : '';
-function factLine(f: VerifiedFact): string {
-  const content = numeric(f)
-    ? `${literalMarkdown(f.label)}: ${numberText(f)}`
-    : literalMarkdown(f.statement!);
-  return `${content}（${contextText(f)}）${ref(f.page)}${numeric(f) ? conditions(f) : ''}`;
+  return literalMarkdown(unchanged ? `${unchanged[1]}：変更なし` : f.statement!);
+}
+function context(
+  f: VerifiedFact,
+  shared: { scope: string | null; basis: string | null },
+  includePeriod: boolean,
+  subjects: boolean
+): string {
+  return [
+    includePeriod ? periodText(f) : null,
+    subjects ? f.semantics.subject : null,
+    f.semantics.scope !== shared.scope ? f.semantics.scope : null,
+    f.semantics.basis !== shared.basis ? f.semantics.basis : null,
+    numeric(f) && f.semantics.state !== 'unspecified' && includePeriod
+      ? stateLabels[f.semantics.state]
+      : null,
+  ]
+    .filter(Boolean)
+    .map((s) => literalMarkdown(s!))
+    .join('／');
 }
 function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
   if (
     rate.semantics.metricKind !== 'rate' ||
     amount.semantics.metricKind === 'rate' ||
+    amount.label !== rate.label ||
     amount.evidence.kind !== 'table' ||
-    rate.evidence.kind !== 'table' ||
-    amount.label !== rate.label
+    rate.evidence.kind !== 'table'
   )
     return false;
-  return (
+  const key = (f: VerifiedFact) =>
     canonicalJSON([
-      amount.period,
-      amount.valueKind,
-      amount.semantics.subject,
-      amount.semantics.scope,
-      amount.semantics.basis,
-      amount.evidence.metricIds,
-      amount.evidence.periodIds,
-      amount.evidence.contextIds,
-      amount.provenance?.tableId,
-      amount.semantics.qualifiers,
-      amount.semantics.conditions,
-      amount.provenance?.adjustments,
-    ]) ===
-    canonicalJSON([
-      rate.period,
-      rate.valueKind,
-      rate.semantics.subject,
-      rate.semantics.scope,
-      rate.semantics.basis,
-      rate.evidence.metricIds,
-      rate.evidence.periodIds,
-      rate.evidence.contextIds,
-      rate.provenance?.tableId,
-      rate.semantics.qualifiers,
-      rate.semantics.conditions,
-      rate.provenance?.adjustments,
-    ])
+      f.period,
+      f.valueKind,
+      f.semantics.subject,
+      f.semantics.scope,
+      f.semantics.basis,
+      f.evidence.kind === 'table'
+        ? [f.evidence.metricIds, f.evidence.periodIds, f.evidence.contextIds]
+        : null,
+      f.provenance?.tableId,
+      f.semantics.qualifiers,
+      f.semantics.conditions,
+      f.provenance?.adjustments,
+    ]);
+  return key(amount) === key(rate);
+}
+function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
+  const rate = facts.facts.find((r) => canPair(f, r));
+  if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;
+  const axis = f.period?.match(/^(20\d{2})年(\d{1,2})月期/);
+  const previous =
+    axis &&
+    ['fullYear', 'cumulativeQ1', 'cumulativeQ2', 'cumulativeQ3'].includes(f.semantics.periodKind) &&
+    f.semantics.state === 'actual' &&
+    f.provenance?.tableId
+      ? facts.facts.filter(
+          (p) =>
+            numeric(p) &&
+            p.label === f.label &&
+            p.unit === f.unit &&
+            p.provenance?.tableId === f.provenance!.tableId &&
+            p.period?.startsWith(`${Number(axis[1]) - 1}年${axis[2]}月期`) &&
+            p.semantics.state === f.semantics.state &&
+            p.semantics.periodKind === f.semantics.periodKind &&
+            canonicalJSON([
+              p.semantics.subject,
+              p.semantics.scope,
+              p.semantics.basis,
+              p.semantics.qualifiers,
+              p.semantics.conditions,
+              p.provenance?.adjustments,
+            ]) ===
+              canonicalJSON([
+                f.semantics.subject,
+                f.semantics.scope,
+                f.semantics.basis,
+                f.semantics.qualifiers,
+                f.semantics.conditions,
+                f.provenance?.adjustments,
+              ])
+        )
+      : [];
+  return `${literalMarkdown(f.label)}：${numberText(f)}${previous.length === 1 ? `（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${numberText(previous[0])}）` : ''}`;
+}
+/** Keep complete paragraphs so a reason never loses a qualification or a contrasting sentence. */
+function companyExplanation(e: SourceExcerpt): string {
+  const cover = /上場会社名.*代表者/.test(e.text.normalize('NFKC').replace(/\s/g, ''));
+  return literalMarkdown((cover ? dividendPaymentExcerpt(e.text) : null) ?? e.text);
+}
+/** Only the overview may abbreviate an excerpt. Conditions and contrasting claims stay complete. */
+function overviewExplanation(e: Pick<SourceExcerpt, 'text'>): string {
+  const text = e.text.replace(/\n/g, '');
+  // Extract a literal causal clause; complete results remain in the body.
+  const cause = text.match(
+    /^(?:以上の結果、)?(?:当[^、。]*業績は、|利益につきましては、)(.+?)こと(?:など)?(?:により|から)、(?:売上高|営業利益)/
+  );
+  if (cause && !/場合|条件|可能|ただし|但し|なお|しかし|ではなく/.test(text))
+    return literalMarkdown(cause[1]);
+  return literalMarkdown(
+    text.length > 140 &&
+      !/場合|条件|可能|ただし|但し|なお|未定|予定|季節|偏る|しかし|ではなく/.test(text)
+      ? `${text.slice(0, 140)}…（全文は本文）`
+      : text
   );
 }
-
-/** PDF extraction fragments are not separate quotations. Preserve the source order,
- * paragraph endings and table rows, with one page reference per continuous source group. */
+function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
+  if (['reason', 'condition'].includes(explanationRole(f.statement!) ?? ''))
+    return `会社説明（原文抜粋）：${overviewExplanation({ text: f.statement! })}`;
+  const text = statementText(f);
+  if (!/^(?:配当予想|業績予想)：変更なし$/.test(text)) return text;
+  const forecasts = facts.facts.filter(
+    (value) => numeric(value) && value.valueKind?.startsWith('forecast')
+  );
+  const periods = [...new Set(forecasts.map((value) => value.period).filter(Boolean))];
+  if (periods.length !== 1) return text;
+  const annual = forecasts.filter((value) => /配当.*(?:合計|年間)$|年間配当金$/.test(value.label));
+  return `${literalMarkdown(periods[0]!)} ${text}${/配当/.test(f.statement!) && annual.length === 1 ? `（年間${numberText(annual[0])}）` : ''}`;
+}
 function renderExcerpts(excerpts: SourceExcerpt[]): string[] {
   const lines: string[] = [];
   let paragraph: string[] = [];
   let previous: SourceExcerpt | undefined;
-  const flushParagraph = () => {
+  const flush = () => {
     if (paragraph.length) lines.push('', paragraph.join(' '));
     paragraph = [];
   };
-  for (const excerpt of excerpts) {
-    const sameSource =
-      previous && previous.page === excerpt.page && previous.heading?.id === excerpt.heading?.id;
-    if (previous && !sameSource) {
-      flushParagraph();
+  for (const e of excerpts) {
+    const same = previous && previous.page === e.page && previous.heading?.id === e.heading?.id;
+    if (previous && !same) {
+      flush();
       lines.push('', ref(previous.page));
     }
-    if (excerpt.kind === 'paragraph') {
+    if (e.kind === 'paragraph') {
       if (
         previous &&
         (previous.kind !== 'paragraph' || /[。！？!?][」』）)\]】]*\s*$/.test(previous.text))
       )
-        flushParagraph();
-      paragraph.push(literalMarkdown(excerpt.text));
+        flush();
+      paragraph.push(literalMarkdown(e.text));
     } else {
-      flushParagraph();
-      if (excerpt.kind === 'heading') lines.push('', `#### ${literalMarkdown(excerpt.text)}`);
+      flush();
+      if (e.kind === 'heading') lines.push('', `#### ${literalMarkdown(e.text)}`);
       else {
-        if (!sameSource || previous?.kind !== 'row') lines.push('');
-        lines.push(literalMarkdown(excerpt.text));
+        if (!same || previous?.kind !== 'row') lines.push('');
+        lines.push(literalMarkdown(e.text));
       }
     }
-    previous = excerpt;
+    previous = e;
   }
-  flushParagraph();
+  flush();
   if (previous) lines.push('', ref(previous.page));
   return lines;
 }
-
-/** No slicing of body content; the presentation validator proves every fact/source reference is retained. */
+function columnKey(f: VerifiedFact): string {
+  return canonicalJSON([periodText(f), f.semantics.state]);
+}
+function rowKey(f: VerifiedFact): string {
+  return canonicalJSON([
+    f.label,
+    f.unit,
+    f.semantics.metricKind,
+    f.semantics.polarity,
+    f.semantics.qualifiers,
+    f.semantics.conditions,
+    f.provenance?.adjustments,
+  ]);
+}
+function renderNumbers(
+  members: VerifiedFact[],
+  shared: { scope: string | null; basis: string | null },
+  subjects: boolean
+): string[] {
+  const lines: string[] = [];
+  const groups = new Map<string, VerifiedFact[]>();
+  for (const f of members.filter(numeric)) {
+    const family = f.semantics.state.startsWith('forecast') ? 'forecast' : f.semantics.state;
+    const key = canonicalJSON([
+      f.semantics.subject,
+      f.semantics.scope,
+      f.semantics.basis,
+      f.semantics.periodKind,
+      family,
+      // A shared original table/assertion proves a comparison relationship.
+      f.provenance?.tableId ?? f.provenance?.assertion?.id ?? f.id,
+    ]);
+    groups.set(key, [...(groups.get(key) ?? []), f]);
+  }
+  for (const group of groups.values()) {
+    const pairs = new Map<string, VerifiedFact>();
+    for (const amount of group) {
+      const rates = group.filter((r) => canPair(amount, r));
+      if (rates.length === 1 && group.filter((a) => canPair(a, rates[0])).length === 1)
+        pairs.set(amount.id, rates[0]);
+    }
+    const paired = new Set([...pairs.values()].map((f) => f.id));
+    const amounts = group.filter((f) => !paired.has(f.id));
+    const columns = [...new Map(amounts.map((f) => [columnKey(f), f])).values()].sort((a, b) =>
+      a.semantics.state === 'forecastBefore' && b.semantics.state === 'forecastAfter'
+        ? -1
+        : a.semantics.state === 'forecastAfter' && b.semantics.state === 'forecastBefore'
+          ? 1
+          : (b.period ?? '').localeCompare(a.period ?? '')
+    );
+    const units = [...new Set(amounts.map((f) => f.unit))];
+    const commonUnit = units.length === 1 ? units[0] : null;
+    const pages = [...new Set(group.map((f) => f.page))];
+    const individualRefs = pages.length > 1;
+    const notes = group.some((f) => valueNotes(f).length > 0);
+    const title = context(group[0], shared, false, subjects);
+    if (title) lines.push('', title);
+    const rateColumns = columns.map((c) =>
+      group.some((f) => columnKey(f) === columnKey(c) && pairs.has(f.id))
+    );
+    const headers = ['指標'];
+    const align = ['---'];
+    for (let i = 0; i < columns.length; i++) {
+      const c = columns[i];
+      headers.push(
+        `${literalMarkdown(periodText(c) ?? '')} ${c.semantics.state === 'unspecified' ? '' : stateLabels[c.semantics.state]}${commonUnit ? `（${literalMarkdown(commonUnit)}）` : ''}`.trim()
+      );
+      align.push('---:');
+      if (rateColumns[i]) {
+        headers.push('比率（％）');
+        align.push('---:');
+      }
+    }
+    if (notes) {
+      headers.push('条件・基準');
+      align.push('---');
+    }
+    lines.push('', `| ${headers.join(' | ')} |`, `| ${align.join(' | ')} |`);
+    const rows = new Map<string, VerifiedFact[]>();
+    for (const f of amounts) rows.set(rowKey(f), [...(rows.get(rowKey(f)) ?? []), f]);
+    for (const row of rows.values()) {
+      const queues = columns.map((c) => row.filter((f) => columnKey(c) === columnKey(f)));
+      while (queues.some((q) => q.length)) {
+        const cells = [literalMarkdown(row[0].label)];
+        const rowNotes: string[] = [];
+        for (let i = 0; i < columns.length; i++) {
+          const f = queues[i].shift();
+          const rate = f ? pairs.get(f.id) : undefined;
+          cells.push(
+            f ? numberText(f, !commonUnit) + (individualRefs ? ` ${ref(f.page)}` : '') : ''
+          );
+          if (rateColumns[i])
+            cells.push(
+              rate ? numberText(rate, false) + (individualRefs ? ` ${ref(rate.page)}` : '') : ''
+            );
+          if (f) rowNotes.push(...valueNotes(f));
+          if (rate) rowNotes.push(...valueNotes(rate));
+        }
+        if (notes) cells.push([...new Set(rowNotes)].join('。'));
+        lines.push(`| ${cells.join(' | ')} |`);
+      }
+    }
+    lines.push('', `根拠：${references(pages)}`);
+  }
+  return lines;
+}
 export function renderSummary(facts: FactSummary, presentation: SummaryPresentation): string {
   if (facts.version !== FACT_SCHEMA_VERSION) throw new Error('旧事実スキーマは表示できません');
   validatePresentation(presentation, facts);
   const byId = new Map(facts.facts.map((f) => [f.id, f]));
-  const lines = [
-    '## 全体要約',
-    ...presentation.overview.map((id) => '- ' + factLine(byId.get(id)!)),
-  ];
-  for (const section of presentation.sections) {
-    lines.push('', `## ${literalMarkdown(section.title)}`);
-    const members = section.factIds.map((id) => byId.get(id)!);
-    const groups = new Map<string, VerifiedFact[]>();
-    for (const f of members.filter(numeric)) {
-      const key = canonicalJSON([
-        periodText(f),
-        f.semantics.subject,
-        f.semantics.scope,
-        f.semantics.basis,
-        f.valueKind,
-        f.semantics.state,
-      ]);
-      groups.set(key, [...(groups.get(key) ?? []), f]);
-    }
-    for (const group of groups.values()) {
-      const first = group[0];
-      const pairs = new Map<string, VerifiedFact>();
-      for (const amount of group) {
-        const rates = group.filter((rate) => canPair(amount, rate));
-        if (rates.length === 1 && group.filter((other) => canPair(other, rates[0])).length === 1)
-          pairs.set(amount.id, rates[0]);
+  const sources = new Map(presentation.excerpts.map((e) => [e.id, e]));
+  const explanations = new Map(paragraphGroups(presentation.excerpts).map((e) => [e.id, e]));
+  const single = (field: 'scope' | 'basis') => {
+    const values = [...new Set(facts.facts.map((f) => f.semantics[field]).filter(Boolean))];
+    return values.length === 1 ? values[0] : null;
+  };
+  const shared = { scope: single('scope'), basis: single('basis') };
+  const subjects =
+    !['earnings', 'earningsRevision', 'businessUpdate'].includes(facts.documentType) ||
+    new Set(facts.facts.map((f) => f.semantics.subject).filter(Boolean)).size > 1;
+  const lines: string[] = [];
+  const financial = [shared.scope, shared.basis]
+    .filter(Boolean)
+    .map((s) => literalMarkdown(s!))
+    .join('／');
+  if (financial) lines.push(`財務情報：${financial}`, '');
+  lines.push('## 開示の要点');
+  let previousContext = '';
+  for (let index = 0; index < presentation.overview.length; index++) {
+    const id = presentation.overview[index];
+    const f = byId.get(id);
+    if (f) {
+      const current = context(f, shared, true, subjects);
+      if (current && current !== previousContext) {
+        lines.push('', current, '');
+        previousContext = current;
       }
-      const pairedIds = new Set([...pairs.values()].map((f) => f.id));
-      const hasRates = pairs.size > 0;
-      const hasNotes = group.some((f) => valueNotes(f).length > 0);
-      lines.push(
-        '',
-        commonContext(first),
-        '',
-        `| 指標 | 値（原文） |${hasRates ? ' 比率（原文） |' : ''}${hasNotes ? ' 条件・基準 |' : ''}`,
-        `| --- | ---: |${hasRates ? ' ---: |' : ''}${hasNotes ? ' --- |' : ''}`
-      );
-      for (const f of group) {
-        if (pairedIds.has(f.id)) continue;
-        const rate = pairs.get(f.id);
-        const notes = [...new Set([...valueNotes(f), ...(rate ? valueNotes(rate) : [])])].join(
-          '。'
-        );
-        lines.push(
-          `| ${literalMarkdown(f.label)} | ${numberText(f)} ${ref(f.page)} |` +
-            (hasRates ? ` ${rate ? `${numberText(rate)} ${ref(rate.page)}` : ''} |` : '') +
-            (hasNotes ? ` ${notes} |` : '')
-        );
-      }
-    }
-    for (const f of members.filter((f) => !numeric(f))) lines.push('- ' + factLine(f));
-    const excerpts = section.excerptIds.map(
-      (id) => presentation.excerpts.find((e) => e.id === id)!
-    );
-    const remainder = excerpts.filter(
-      (e) =>
-        !(e.kind === 'heading' && section.title === e.text) &&
-        !members.some(
-          (f) =>
-            !numeric(f) &&
-            f.evidence.kind === 'prose' &&
-            f.evidence.blockId === e.blockId &&
-            f.statement === e.text
+      const notes = valueNotes(f).join('。');
+      let text =
+        (numeric(f) ? overviewNumber(f, facts) : overviewStatement(f, facts)) +
+        (notes ? `（${notes}）` : '');
+      while (index + 1 < presentation.overview.length) {
+        const next = byId.get(presentation.overview[index + 1]);
+        if (
+          !next ||
+          context(next, shared, true, subjects) !== current ||
+          numeric(f) !== numeric(next)
         )
-    );
-    if (remainder.length) {
-      lines.push('', '### 説明・補足（原文）', ...renderExcerpts(remainder));
+          break;
+        index++;
+        const nextNotes = valueNotes(next).join('。');
+        text +=
+          '、' +
+          (numeric(next) ? overviewNumber(next, facts) : overviewStatement(next, facts)) +
+          (nextNotes ? `（${nextNotes}）` : '');
+      }
+      lines.push('- ' + text);
+    } else {
+      const e = explanations.get(id)!;
+      let text = overviewExplanation(e);
+      while (explanationRole(e.text) === 'reason' && index + 1 < presentation.overview.length) {
+        const next = explanations.get(presentation.overview[index + 1]);
+        if (!next || explanationRole(next.text) !== 'reason') break;
+        text += '／' + overviewExplanation(next);
+        index++;
+      }
+      lines.push(`- 会社説明（原文抜粋）：${text}`);
     }
   }
-  if (facts.unverified.length)
-    lines.push('', '## 未確認事項', ...facts.unverified.map((s) => '- ' + literalMarkdown(s)));
+  if (presentation.overview.length)
+    lines.push(
+      '',
+      `根拠：${references(presentation.overview.map((id) => byId.get(id)?.page ?? sources.get(id)!.page))}`
+    );
+  for (const section of presentation.sections) {
+    const members = section.factIds.map((id) => byId.get(id)!);
+    const excerpts = section.excerptIds.map((id) => sources.get(id)!);
+    if (!members.length && excerpts.every((e) => e.kind === 'heading')) {
+      // Heading-only content stays in a closed source group, never an empty reading heading.
+      lines.push('', '### 原文を見る', ...renderExcerpts(excerpts));
+      continue;
+    }
+    lines.push(
+      '',
+      `## ${literalMarkdown(section.title)}`,
+      ...renderNumbers(members, shared, subjects)
+    );
+    let previous = '';
+    for (const f of members.filter((f) => !numeric(f))) {
+      const ctx = context(f, shared, true, subjects);
+      if (ctx && ctx !== previous) {
+        lines.push('', ctx, '');
+        previous = ctx;
+      }
+      const statement = statementText(f);
+      const notes = valueNotes(f).filter((note) => !statement.includes(note));
+      lines.push('- ' + statement + (notes.length ? `（${notes.join('。')}）` : ''));
+    }
+    const prose = members.filter((f) => !numeric(f));
+    if (prose.length) lines.push('', `根拠：${references(prose.map((f) => f.page))}`);
+    if (section.highlights.length) {
+      lines.push('', '**会社説明（原文抜粋）**');
+      for (const id of section.highlights)
+        lines.push('- ' + companyExplanation(explanations.get(id)!));
+      lines.push('', `根拠：${references(section.highlights.map((id) => sources.get(id)!.page))}`);
+    }
+    if (excerpts.length) lines.push('', `### 原文を見る`, ...renderExcerpts(excerpts));
+  }
+  const forecasts = [
+    ...new Set(
+      facts.facts
+        .filter((f) => f.valueKind?.startsWith('forecast'))
+        .map((f) => f.period)
+        .filter(Boolean)
+    ),
+  ];
+  const conflicts = presentation.excerpts.filter(
+    (e) =>
+      e.role === 'outlook' &&
+      e.kind === 'paragraph' &&
+      /^20\d{2}年\d{1,2}月期(?:通期)?の業績予想/.test(
+        e.text.normalize('NFKC').replace(/\s/g, '')
+      ) &&
+      forecasts.length === 1 &&
+      !e.text
+        .normalize('NFKC')
+        .replace(/\s/g, '')
+        .startsWith(forecasts[0]!.normalize('NFKC').replace(/\s/g, ''))
+  );
+  if (facts.unverified.length || conflicts.length) {
+    lines.push('', '## 確認事項');
+    for (const e of conflicts)
+      lines.push(`- 業績予想の説明と数値表で対象期の表記が一致していません。${ref(e.page)}`);
+    if (facts.unverified.length)
+      lines.push(
+        '- 一部の事実を原文と照合できていません。対応する原文を確認してください。',
+        '',
+        '### 確認の詳細（原文）',
+        ...facts.unverified.map((s) => '- ' + literalMarkdown(s))
+      );
+  }
   return lines.join('\n');
 }

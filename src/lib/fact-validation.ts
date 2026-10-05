@@ -414,7 +414,12 @@ export function validateFact(
       quantity = { raw: cell.text, decimal: parsed.decimal, sourceIds };
     }
     source = checked.quote;
-    axis = referenceText(pages, ev.periodIds);
+    // Evidence IDs are a set; lexicographic ID order (s100 before s99) is not reading order.
+    axis = page.spans
+      .filter((span) => ev.periodIds.includes(span.id))
+      .sort((a, b) => a.y - b.y || a.x - b.x)
+      .map((span) => span.text)
+      .join('');
     atY = cell.y;
     resultEvidence = {
       ...checked.evidence,

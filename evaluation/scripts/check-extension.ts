@@ -13,6 +13,7 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { stableFactId, FACT_SCHEMA_VERSION, type VerifiedFact } from '../../src/lib/fact-contract';
 import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
 import { parseFactSummary } from '../../src/lib/fact-summary';
+import { buildPresentation } from '../../src/lib/summary-presentation';
 import { ANALYSIS_SCHEMA_VERSION } from '../../src/lib/analysis-version';
 import { additionalReviewFixture } from './additional-review-fixture';
 import { seedOldExtensionProfile } from './extension-upgrade-fixture';
@@ -50,14 +51,70 @@ async function sourceBuildDigest(): Promise<string> {
 }
 /** Read each visible fact with its shared table context; never use the entire body as one fact. */
 async function displayedFacts(summary: any): Promise<string[]> {
-  return summary.evaluate((root: HTMLElement) => [
-    ...Array.from(root.querySelectorAll('li')).map((node) => node.textContent ?? ''),
-    ...Array.from(root.querySelectorAll('tbody tr')).map((row) => {
-      const table = row.closest('table')!;
-      const context = table.parentElement!.previousElementSibling?.textContent ?? '';
-      return context + ' ' + row.textContent;
-    }),
-  ]);
+  return summary.evaluate(
+    new Function(
+      'root',
+      `
+    const text = (node) => node?.textContent ?? '';
+    const first = root.querySelector('h2');
+    const shared =
+      text(root.querySelector('h4')) +
+      ' ' +
+      (first?.previousElementSibling?.tagName === 'P' ? text(first.previousElementSibling) : '');
+    const context = (node) =>
+      node.previousElementSibling?.tagName === 'P' ? text(node.previousElementSibling) : '';
+    const refs = (node) =>
+      node.nextElementSibling?.tagName === 'P' && text(node.nextElementSibling).startsWith('根拠：')
+        ? text(node.nextElementSibling)
+        : '';
+    return [
+      ...Array.from(root.querySelectorAll('li'))
+        .filter((node) => !node.closest('details'))
+        .map(
+          (node) =>
+            shared +
+            ' ' +
+            context(node.closest('ul')) +
+            ' ' +
+            text(node) +
+            ' ' +
+            refs(node.closest('ul'))
+        ),
+      ...Array.from(root.querySelectorAll('tbody tr')).flatMap((row) => {
+        const table = row.closest('table');
+        const wrapper = table.parentElement;
+        const headers = Array.from(table.querySelectorAll('thead th'));
+        const cells = Array.from(row.children);
+        const notes =
+          text(headers.at(-1) ?? null) === '条件・基準' ? text(cells.at(-1) ?? null) : '';
+        return cells.slice(1, text(headers.at(-1) ?? null) === '条件・基準' ? -1 : undefined).map((cell, offset) => {
+          const index = offset + 1;
+          const header = text(headers[index]);
+          const period = header === '比率（％）' ? text(headers[index - 1]) : header;
+          const unit = header.match(/（([^）]+)）$/)?.[1] ?? '';
+          // One value cell with its own period, unit, row label and common context.
+          return (
+            shared +
+            ' ' +
+            context(wrapper) +
+            ' ' +
+            text(cells[0]) +
+            ' ' +
+            period +
+            ' ' +
+            text(cell) +
+            unit +
+            ' ' +
+            notes +
+            ' ' +
+            refs(wrapper)
+          );
+        });
+      }),
+    ];
+  `
+    )
+  );
 }
 /** Called by the existing evaluator after its ordinary configuration load. No secrets are logged. */
 export async function checkExtension(item: BrowserCase, config: LLMConfig, args: string[]) {
@@ -69,16 +126,19 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     ? arg('--additional-review-case')
     : null;
   if (reviewCase && (!args.includes('--fixed-api') || !args.includes('--fixture-source')))
-    throw new Error('追加レビューは固定API・合成PDF専用です');
+    throw new Error('追加レビューは固定API・固定PDF専用です');
   const reviewFixture = reviewCase ? await additionalReviewFixture(reviewCase) : null;
   if (reviewFixture)
     item = {
       ...item,
+      ...(reviewCase === 'summary-format-kyokuto' ? { id: 'kyokuto-20261005', code: '2300' } : {}),
       documentType: reviewFixture.documentType,
       title:
-        reviewFixture.documentType === 'earnings'
-          ? '2027年3月期 決算短信〔日本基準〕（連結）'
-          : '追加セルフレビュー用開示',
+        reviewCase === 'summary-format-kyokuto'
+          ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
+          : reviewFixture.documentType === 'earnings'
+            ? '2027年3月期 決算短信〔日本基準〕（連結）'
+            : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure =
@@ -148,7 +208,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     source: reviewRejectedUrl
       ? 'rejected-link'
       : reviewFixture
-        ? 'synthetic-PDF-through-offscreen'
+        ? reviewCase === 'summary-format-kyokuto'
+          ? 'public-PDF-through-offscreen'
+          : 'synthetic-PDF-through-offscreen'
         : fixtureSource
           ? 'fixture'
           : 'TDnet',
@@ -230,8 +292,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
     if (fixed) {
       const source = expectations.find((e) => e.id === item.id);
-      if (!source) throw new Error('固定候補がありません');
-      const fixedFacts = structuredClone(source.facts) as unknown as CandidateFact[];
+      if (!source && !reviewFixture) throw new Error('固定候補がありません');
+      const fixedFacts = (reviewFixture
+        ? []
+        : structuredClone(source!.facts)) as unknown as CandidateFact[];
       if (withComparison) {
         const previous = structuredClone(fixedFacts[0]);
         previous.id = 'f20';
@@ -243,9 +307,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         fixedFacts.push(previous);
       }
       const fixture = corpus.find((c) => c.id === item.id)!;
-      const sourcePages = fixture.pages.map((p) =>
-        extractPageLayout(p.items as TextItem[], p.pageNumber)
-      );
+      const sourcePages = reviewFixture
+        ? reviewFixture.pages
+        : fixture.pages.map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber));
       await context.route('https://api.openai.com/**', async (route: any) => {
         const prompt = route
           .request()
@@ -554,7 +618,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.smart = { error: completedTrace.error, attempts: completedTrace.attempts };
       await summary.getByRole('button', { name: '全文で再要約', exact: true }).click();
       await summary
-        .getByRole('heading', { name: '全体要約', exact: true })
+        .getByRole('heading', { name: '開示の要点', exact: true })
         .waitFor({ timeout: 330000 });
       Object.assign(
         completedTrace,
@@ -627,7 +691,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           : item.id.startsWith('monthly')
             ? ['2026年6月', '338214', 'NJSS', '速報', '修正する可能性']
             : [];
-    for (const term of expected) assert.ok(body.includes(term), `表示に必要な意味がない: ${term}`);
+    for (const term of expected)
+      assert.ok(
+        body.replace(/(?<=\d),(?=\d)/g, '').includes(term),
+        `表示に必要な意味がない: ${term}`
+      );
     const stored = await worker.evaluate(async (version: number) => {
       const data = await chrome.storage.local.get();
       const entry = Object.entries(data).find(
@@ -637,7 +705,26 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    assert.ok(stored.value.presentation?.version === 1);
+    assert.ok(stored.value.presentation?.version === 2);
+    if (reviewCase === 'summary-format-kyokuto') {
+      const headings = await summary.locator('h2').allTextContents();
+      for (const title of ['業績と増減要因', '通期見通し・前提', '配当', '財政状態・資金の動き'])
+        assert.equal(headings.filter((heading: string) => heading === title).length, 1);
+      assert.ok(!headings.some((heading: string) => /^[１-９1-9（(]/.test(heading)));
+      const performance = stored.value.presentation.sections.find(
+        (section: any) => section.title === '業績と増減要因'
+      );
+      assert.ok(
+        performance.excerptIds.includes('source:p1b8') &&
+          performance.excerptIds.includes('source:p4b7')
+      );
+      const finance = stored.value.presentation.sections.find(
+        (section: any) => section.title === '財政状態・資金の動き'
+      );
+      assert.ok(finance.excerptIds.includes('source:p7b5'), '貸借対照表の続きは同じ話題へ保持');
+      assert.ok(body.includes('前年同期 3,130') && body.includes('前年同期 309'));
+      for (const term of ['燃料費', '節約志向', '季節', '年間11']) assert.ok(body.includes(term));
+    }
     const sourceToggles = summary.locator('details.tdnet-digest-source');
     assert.equal(
       await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
@@ -914,7 +1001,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     const callsBefore = apiCalls;
     await row.getByRole('button', { name: '表示', exact: true }).click();
     await summary
-      .getByRole('heading', { name: '全体要約', exact: true })
+      .getByRole('heading', { name: '開示の要点', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
     assert.deepEqual(
@@ -937,7 +1024,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     await frame.locator('#main-list-table').waitFor({ timeout: 20000 });
     await row.getByRole('button', { name: '表示', exact: true }).click({ timeout: 20000 });
     await summary
-      .getByRole('heading', { name: '全体要約', exact: true })
+      .getByRole('heading', { name: '開示の要点', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
     const expectedRestored = stored.value.facts;
@@ -1003,7 +1090,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const restored = await restoredDownload;
       assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
       evidence.stages.push('restored result ID matches exported diagnostic');
-      const altered = structuredClone(reviewFixture.legacy);
+      const altered = structuredClone(stored.value.facts);
       if (reviewCase === 'attributes') {
         altered.facts[0].semantics.scope = '連結';
         altered.facts[0].semantics.basis = '日本基準';
@@ -1024,13 +1111,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           code: '1234',
           companyName: '株式会社テスト',
           facts: altered,
+          presentation: buildPresentation(altered, reviewFixture.pages),
           resultId: stored.value.resultId,
           fingerprint: stored.value.metadata.analysisFingerprint,
         }
       );
       await extensionPage.close();
       assert.equal(typeof invalid.error, 'string');
-      assert.ok(invalid.error.includes('識別子'));
+      assert.ok(/(?:冒頭要約|本文)の参照|識別子/.test(invalid.error), invalid.error);
       assert.equal(apiCalls, priorCalls);
       evidence.stages.push('altered saved facts refused before followup API');
     }
@@ -1053,7 +1141,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.analysis = analysis;
       assert.ok(analysis, '実API追加分析の現行キャッシュがありません');
       assert.equal(analysis.version, 2);
-      assert.ok((await summary.innerText()).includes('全体要約'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       evidence.stages.push(
         reviewFixture
           ? 'fixed additional analysis preserves rechecked facts'
@@ -1072,7 +1160,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         { timeout: 330000 }
       );
       evidence.followupRendered = await summary.innerText();
-      assert.ok(evidence.followupRendered.includes('全体要約'));
+      assert.ok(evidence.followupRendered.includes('開示の要点'));
       const score = await worker.evaluate(async () => {
         const entries = await chrome.storage.local.get();
         return Object.entries(entries).find(([k]) => k.startsWith('scoreCacheV4:'))?.[1];
@@ -1095,14 +1183,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         {},
         { timeout: 30000 }
       );
-      assert.ok((await summary.innerText()).includes('全体要約'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       evidence.stages.push('explicit additional analysis while scoring OFF');
       failScore = true;
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: true }));
       await summary
         .getByRole('button', { name: '採点を再試行', exact: true })
         .waitFor({ timeout: 30000 });
-      assert.ok((await summary.innerText()).includes('全体要約'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       evidence.stages.push('scoring ON failure preserves summary');
       failScore = false;
       await summary.getByRole('button', { name: '採点を再試行', exact: true }).click();
@@ -1115,7 +1203,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         withComparison,
         { timeout: 30000 }
       );
-      assert.ok((await summary.innerText()).includes('全体要約'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       if (withComparison) {
         const score = await worker.evaluate(async () => {
           const entries = await chrome.storage.local.get();
