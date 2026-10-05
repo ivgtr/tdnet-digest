@@ -552,7 +552,11 @@ describe('説明要約の生成・点検・数値参照', () => {
       vi
         .mocked(generateText)
         .mock.calls.slice(2)
-        .every(([c]) => c.reasoningEffort === 'low' && c.reasoningEnabled === undefined)
+        .every(([c], i) =>
+          [1, 4].includes(i)
+            ? c.reasoningEffort === 'low' && c.reasoningEnabled === undefined
+            : c.reasoningEffort === undefined && c.reasoningEnabled === false
+        )
     ).toBe(true);
     expect(repaired.repairAttempted).toBe(true);
     expect(repairedAttempts.map((a) => a.phase)).toEqual([

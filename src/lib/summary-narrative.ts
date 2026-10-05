@@ -817,7 +817,7 @@ export async function generateSummaryNarrative(
           ...options,
           ...(config.provider === 'openrouter' &&
           getModel(config.provider, config.model)?.optionalReasoning &&
-          phase === 'summary'
+          (phase === 'summary' || phase === 'summaryRepair')
             ? { reasoningEnabled: false, reasoningEffort: undefined }
             : {}),
           onResponse: (response) => {
