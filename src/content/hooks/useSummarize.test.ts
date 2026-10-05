@@ -6,6 +6,8 @@ import {
 } from '@/lib/analysis-version';
 import { textPage, numberCandidate } from '@/lib/fixtures/v4-test-source';
 import { parseFactSummary, renderFacts } from '@/lib/fact-summary';
+import { buildPresentation } from '@/lib/summary-presentation';
+import { summaryResultId } from '@/lib/summary-result-id';
 import { useSummarize } from './useSummarize';
 import { toValue } from '@/lib/score-extraction';
 import { assessClaim, scoreVerdict, type ExperimentalScore, type ScoreClaim } from '@/lib/scoring';
@@ -79,26 +81,42 @@ describe('要約モード別の表示とキャッシュ', () => {
         pdfUrl,
         buildAnalysisFingerprint({ provider: 'openai', model: 'gpt-4o', extractionMode: mode })
       );
-    const responseFor = (mode: 'smart' | 'full') => ({
-      error: null,
-      summary: `${mode}の要約`,
-      facts: { version: 5, documentType: 'other', facts: [], unverified: [] },
-      resultId: (mode === 'full' ? 'a' : 'b').repeat(64),
-      diagnosticRunId: `${mode}-run`,
-      metadata: {
-        analysisFingerprint: buildAnalysisFingerprint({
-          provider: 'openai',
-          model: 'gpt-4o',
-          extractionMode: mode,
-        }),
-      },
-    });
+    const source = textPage(
+      '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
+    );
+    const facts = parseFactSummary(
+      JSON.stringify({
+        version: 6,
+        documentType: 'other',
+        facts: [numberCandidate(source)],
+        unverified: [],
+      }),
+      'other',
+      [source]
+    );
+    const presentation = buildPresentation(facts, [source]);
+    const responseFor = async (mode: 'smart' | 'full') => {
+      const fingerprint = buildAnalysisFingerprint({
+        provider: 'openai',
+        model: 'gpt-4o',
+        extractionMode: mode,
+      });
+      return {
+        error: null,
+        summary: renderFacts(facts, presentation),
+        facts,
+        presentation,
+        resultId: await summaryResultId(pdfUrl, fingerprint, facts, 'c'.repeat(64), presentation),
+        diagnosticRunId: `${mode}-run`,
+        metadata: { analysisFingerprint: fingerprint, documentHash: 'c'.repeat(64) },
+      };
+    };
     const saved = vi.fn(async () => {});
     const onChanged = vi.fn();
     const sendMessage = vi
       .fn()
-      .mockResolvedValueOnce(responseFor('full'))
-      .mockResolvedValueOnce(responseFor('smart'));
+      .mockResolvedValueOnce(await responseFor('full'))
+      .mockResolvedValueOnce(await responseFor('smart'));
     vi.stubGlobal('chrome', {
       storage: {
         sync: {
@@ -114,7 +132,10 @@ describe('要約モード別の表示とキャッシュ', () => {
     const hook = useSummarize({ pdfUrl, title: '開示', code: '1234', companyName: '会社' });
     await hook.summarize('full');
     expect(stateSetters[1]).toHaveBeenLastCalledWith(
-      expect.objectContaining({ summary: 'fullの要約', diagnosticRunId: 'full-run' })
+      expect.objectContaining({
+        summary: renderFacts(facts, presentation),
+        diagnosticRunId: 'full-run',
+      })
     );
     expect(saved).toHaveBeenCalledWith(
       expect.objectContaining({ [`summaryCacheV2:${keyFor('full')}`]: expect.any(Object) })
@@ -125,7 +146,10 @@ describe('要約モード別の表示とキャッシュ', () => {
 
     await hook.summarize();
     expect(stateSetters[1]).toHaveBeenLastCalledWith(
-      expect.objectContaining({ summary: 'smartの要約', diagnosticRunId: 'smart-run' })
+      expect.objectContaining({
+        summary: renderFacts(facts, presentation),
+        diagnosticRunId: 'smart-run',
+      })
     );
     expect(saved).toHaveBeenCalledWith(
       expect.objectContaining({ [`summaryCacheV2:${keyFor('smart')}`]: expect.any(Object) })
@@ -217,7 +241,7 @@ describe('要約モード別の表示とキャッシュ', () => {
       model: 'gpt-4o',
       extractionMode: 'full',
     });
-    const facts = { version: 5, documentType: 'other', facts: [], unverified: [] };
+    const facts = { version: 6, documentType: 'other', facts: [], unverified: [] };
     stateOverrides.set(1, {
       summary: '検証済み要約',
       error: null,
@@ -261,7 +285,6 @@ describe('要約モード別の表示とキャッシュ', () => {
 
   it('過去に保存された算出不能スコアを削除して再採点できる状態にする', async () => {
     const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
-    const id = 'a'.repeat(64);
     const fingerprint = buildAnalysisFingerprint({
       provider: 'openai',
       model: 'gpt-4o',
@@ -272,7 +295,7 @@ describe('要約モード別の表示とキャッシュ', () => {
     );
     const facts = parseFactSummary(
       JSON.stringify({
-        version: 5,
+        version: 6,
         documentType: 'other',
         facts: [numberCandidate(source)],
         unverified: [],
@@ -280,6 +303,8 @@ describe('要約モード別の表示とキャッシュ', () => {
       'other',
       [source]
     );
+    const presentation = buildPresentation(facts, [source]);
+    const id = await summaryResultId(pdfUrl, fingerprint, facts, 'c'.repeat(64), presentation);
     const summaryKey = `summaryCacheV2:${buildSummaryCacheKey(pdfUrl, fingerprint)}`;
     const remove = vi.fn(async () => {});
     vi.stubGlobal('chrome', {
@@ -293,12 +318,13 @@ describe('要約モード別の表示とキャッシュ', () => {
             typeof key === 'string'
               ? {
                   [summaryKey]: {
-                    summary: renderFacts(facts),
+                    summary: renderFacts(facts, presentation),
+                    presentation,
                     facts,
                     resultId: id,
                     metadata: {
                       analysisFingerprint: fingerprint,
-                      analysisSchemaVersion: 5,
+                      analysisSchemaVersion: 6,
                       documentHash: 'c'.repeat(64),
                     },
                   },
@@ -351,7 +377,7 @@ describe('要約モード別の表示とキャッシュ', () => {
       );
       const facts = parseFactSummary(
         JSON.stringify({
-          version: 5,
+          version: 6,
           documentType: 'other',
           facts: [
             numberCandidate(current),
@@ -397,7 +423,8 @@ describe('要約モード別の表示とキャッシュ', () => {
         extractionMode: 'full',
       });
       const summaryKey = `summaryCacheV2:${buildSummaryCacheKey(pdfUrl, fingerprint)}`;
-      const id = 'a'.repeat(64);
+      const presentation = buildPresentation(facts, [current, previous]);
+      const id = await summaryResultId(pdfUrl, fingerprint, facts, 'c'.repeat(64), presentation);
       const sendMessage = vi.fn();
       vi.stubGlobal('chrome', {
         storage: {
@@ -410,12 +437,13 @@ describe('要約モード別の表示とキャッシュ', () => {
               typeof key === 'string'
                 ? {
                     [summaryKey]: {
-                      summary: renderFacts(facts),
+                      summary: renderFacts(facts, presentation),
+                      presentation,
                       facts,
                       resultId: id,
                       metadata: {
                         analysisFingerprint: fingerprint,
-                        analysisSchemaVersion: 5,
+                        analysisSchemaVersion: 6,
                         documentHash: 'c'.repeat(64),
                       },
                     },
@@ -435,7 +463,11 @@ describe('要約モード別の表示とキャッシュ', () => {
       });
       await hook.showCached();
       expect(stateSetters[1]).toHaveBeenLastCalledWith(
-        expect.objectContaining({ summary: renderFacts(facts), error: null })
+        expect.objectContaining({
+          summary: renderFacts(facts, presentation),
+          presentation,
+          error: null,
+        })
       );
       expect(stateSetters[2]).toHaveBeenLastCalledWith(
         valid

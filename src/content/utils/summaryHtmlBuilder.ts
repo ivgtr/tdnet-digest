@@ -10,14 +10,16 @@ import { parseMarkdown } from './markdownParser';
 import type { ExperimentalScore, ScoreValue } from '@/lib/scoring';
 import type { AdditionalAnalysis, AnalysisView } from '@/lib/additional-analysis';
 import type { Stage } from '../hooks/useSummarize';
+import type { VerifiedFact } from '@/lib/fact-contract';
 
 /**
  * エラー表示のHTMLを生成
  */
-export function buildErrorHtml(errorText: string): string {
+export function buildErrorHtml(errorText: string, fullRetry = false): string {
   return `
     <div style="${SUMMARY_STYLES.errorContainer}">
       <p style="${SUMMARY_STYLES.errorText}">${escapeMetadataText(errorText)}</p>
+      ${fullRetry ? `<button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button>` : ''}
     </div>
   `;
 }
@@ -25,7 +27,10 @@ export function buildErrorHtml(errorText: string): string {
 /**
  * メタデータ表示のHTMLを生成
  */
-export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
+export function buildMetadataHtml(
+  metadata: SummaryMetadata | null,
+  part: 'all' | 'info' | 'warning' = 'all'
+): string {
   if (!metadata) return '';
 
   const {
@@ -43,14 +48,17 @@ export function buildMetadataHtml(metadata: SummaryMetadata | null): string {
       ? ` | <span style="font-weight: bold;">要約:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・1回・v${analysisSchemaVersion ?? '?'}`
       : '';
 
-  let html = `
+  let html =
+    part === 'warning'
+      ? ''
+      : `
     <div style="${SUMMARY_STYLES.metadataInfo}">
       <span style="font-weight: bold;">抽出モード:</span> ${extractionMode === 'smart' ? 'スマート抽出' : '全文抽出'} |
       <span style="font-weight: bold;">ページ:</span> ${extractedPages?.length || totalPages}/${totalPages}ページ${analysisInfo}
     </div>
   `;
 
-  if (qualityWarning) {
+  if (qualityWarning && part !== 'info') {
     html += `
       <div style="${SUMMARY_STYLES.warningBox}">
         <strong>⚠️ 品質警告:</strong> ${escapeMetadataText(qualityWarning.message)}<br>
@@ -77,11 +85,12 @@ function escapeMetadataText(value: string): string {
 export function buildSummaryHtml(
   summaryText: string,
   metadata: SummaryMetadata | null,
-  rowData: { companyName: string; title: string },
+  rowData: { companyName: string; title: string; pdfUrl?: string },
   score?: Stage<ExperimentalScore>,
-  analysis?: Stage<AdditionalAnalysis>
+  analysis?: Stage<AdditionalAnalysis>,
+  facts: VerifiedFact[] = []
 ): string {
-  const metadataHtml = buildMetadataHtml(metadata);
+  const metadataHtml = buildMetadataHtml(metadata, 'info');
   const fullRetryButton =
     metadata?.extractionMode === 'smart'
       ? `<button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button>`
@@ -99,10 +108,11 @@ export function buildSummaryHtml(
           <button type="button" id="analyze-btn" style="${SUMMARY_STYLES.resummarizeButton}">追加分析</button>
         </div>
       </div>
-      ${metadataHtml}
-      <div style="${SUMMARY_STYLES.summaryText}">${parseMarkdown(summaryText)}</div>
+      ${buildMetadataHtml(metadata, 'warning')}
+      <div style="${SUMMARY_STYLES.summaryText}">${parseMarkdown(summaryText, rowData.pdfUrl)}</div>
       <div id="score-result">${buildScoreStageHtml(score)}</div>
-      <div id="analysis-result">${buildAnalysisStageHtml(analysis)}</div>
+      <div id="analysis-result">${buildAnalysisStageHtml(analysis, facts, rowData.pdfUrl)}</div>
+      ${metadataHtml ? `<details style="margin-top:8px;"><summary>生成情報</summary>${metadataHtml}</details>` : ''}
     </div>
   `;
 }
@@ -117,19 +127,36 @@ export function buildScoreStageHtml(score?: Stage<ExperimentalScore>): string {
         : '';
 }
 
-export function buildAnalysisStageHtml(analysis?: Stage<AdditionalAnalysis>): string {
+export function buildAnalysisStageHtml(
+  analysis?: Stage<AdditionalAnalysis>,
+  facts: VerifiedFact[] = [],
+  pdfUrl?: string
+): string {
   return analysis?.loading
     ? '追加分析中…'
     : analysis?.error
       ? `追加分析失敗: ${escapeMetadataText(analysis.error)}`
       : analysis?.data
-        ? buildAnalysisHtml(analysis.data)
+        ? buildAnalysisHtml(analysis.data, facts, pdfUrl)
         : '';
 }
 
-function buildAnalysisHtml(analysis: AdditionalAnalysis): string {
+function buildAnalysisHtml(
+  analysis: AdditionalAnalysis,
+  facts: VerifiedFact[],
+  pdfUrl?: string
+): string {
+  const reference = (id: string) => {
+    const fact = facts.find((f) => f.id === id);
+    if (!fact) throw new Error('追加分析の根拠事実が表示結果にありません');
+    const link = parseMarkdown(`[p.${fact.page}](tdnet-page:${fact.page})`, pdfUrl).replace(
+      /^<p[^>]*>|<\/p>$/g,
+      ''
+    );
+    return `${escapeMetadataText(fact.label)} ${link}`;
+  };
   const view = (label: string, item: AnalysisView) =>
-    `<p><strong>${label}:</strong> ${escapeMetadataText(item.text)}${item.factIds.length ? `（根拠: ${item.factIds.map(escapeMetadataText).join(', ')}）` : ''}</p>`;
+    `<p><strong>${label}:</strong> ${escapeMetadataText(item.text)}${item.factIds.length ? `（根拠: ${item.factIds.map(reference).join(', ')}）` : ''}</p>`;
   return `<section><h5>追加分析</h5>${view('解釈', analysis.interpretation)}${view('短期', analysis.shortTerm)}${view('中期', analysis.mediumTerm)}${view('長期', analysis.longTerm)}${analysis.watchPoints.map((item) => view('確認点', item)).join('')}</section>`;
 }
 

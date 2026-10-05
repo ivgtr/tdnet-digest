@@ -22,7 +22,7 @@ const previous = textPage(
 );
 const facts = parseFactSummary(
   JSON.stringify({
-    version: 5,
+    version: 6,
     documentType: 'other',
     facts: [
       numberCandidate(current),
@@ -177,7 +177,7 @@ it('据置配当の原文証明を採点入力・保存照合へ渡し、証明�
     return f;
   });
   const facts = parseFactSummary(
-    JSON.stringify({ version: 5, documentType: 'other', facts: candidates, unverified: [] }),
+    JSON.stringify({ version: 6, documentType: 'other', facts: candidates, unverified: [] }),
     'other',
     pages
   );

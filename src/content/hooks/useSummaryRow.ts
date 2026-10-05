@@ -13,6 +13,7 @@ import type { SummaryMetadata } from '../types/summaryMetadata';
 import type { Stage } from './useSummarize';
 import type { ExperimentalScore } from '@/lib/scoring';
 import type { AdditionalAnalysis } from '@/lib/additional-analysis';
+import type { VerifiedFact } from '@/lib/fact-contract';
 
 interface UseSummaryRowOptions {
   row: HTMLTableRowElement;
@@ -20,6 +21,7 @@ interface UseSummaryRowOptions {
   rowData: {
     companyName: string;
     title: string;
+    pdfUrl?: string;
   };
 }
 
@@ -60,7 +62,8 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       onAnalyze?: () => void,
       onRetryScore?: () => void,
       score?: Stage<ExperimentalScore>,
-      analysis?: Stage<AdditionalAnalysis>
+      analysis?: Stage<AdditionalAnalysis>,
+      fullRetryOnError = false
     ) => {
       // 要約行を作成
       const summaryRow = iframeDoc.createElement('tr');
@@ -75,20 +78,11 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
 
       // HTML生成
       if (errorText) {
-        summaryCell.innerHTML = buildErrorHtml(errorText);
+        summaryCell.innerHTML = buildErrorHtml(errorText, fullRetryOnError);
       } else if (summaryText) {
         summaryCell.innerHTML = buildSummaryHtml(summaryText, metadata, rowData, score, analysis);
 
         // 全文再要約ボタンのイベントリスナー（存在する場合のみ）
-        if (metadata?.extractionMode === 'smart' && onRetry) {
-          const fullRetryBtn = summaryCell.querySelector('#full-retry-btn');
-          fullRetryBtn?.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            summaryRow.remove();
-            onRetry();
-          });
-        }
 
         // 再要約ボタンのイベントリスナー
         if (onResummarize) {
@@ -114,6 +108,13 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
         });
       }
 
+      if (onRetry)
+        summaryCell.querySelector('#full-retry-btn')?.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          summaryRow.remove();
+          onRetry();
+        });
       summaryRow.appendChild(summaryCell);
 
       // DOM挿入
@@ -127,15 +128,20 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
   );
 
   const updateStages = useCallback(
-    (score?: Stage<ExperimentalScore>, analysis?: Stage<AdditionalAnalysis>) => {
+    (
+      score?: Stage<ExperimentalScore>,
+      analysis?: Stage<AdditionalAnalysis>,
+      facts: VerifiedFact[] = []
+    ) => {
       const summaryRow = row.nextElementSibling;
       if (!summaryRow?.classList.contains('tdnet-digest-summary-row')) return;
       const scoreCell = summaryRow.querySelector('#score-result');
       const analysisCell = summaryRow.querySelector('#analysis-result');
       if (scoreCell) scoreCell.innerHTML = buildScoreStageHtml(score);
-      if (analysisCell) analysisCell.innerHTML = buildAnalysisStageHtml(analysis);
+      if (analysisCell)
+        analysisCell.innerHTML = buildAnalysisStageHtml(analysis, facts, rowData.pdfUrl);
     },
-    [row]
+    [row, rowData.pdfUrl]
   );
 
   return { removeSummaryRow, insertSummaryRow, updateStages, isSummaryRowVisible };

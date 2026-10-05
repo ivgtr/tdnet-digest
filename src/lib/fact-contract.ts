@@ -1,7 +1,7 @@
 import type { TableEvidence } from './numeric-evidence';
 import type { DocumentType } from './document-type';
 import type { SourceProvenance } from './source-provenance';
-export const FACT_SCHEMA_VERSION = 5;
+export const FACT_SCHEMA_VERSION = 6;
 export type FactPeriodKind =
   | 'fullYear'
   | 'cumulativeQ1'
@@ -98,6 +98,12 @@ export function canonicalJSON(value: unknown): string {
         : v;
   return JSON.stringify(canonical(value));
 }
+export function hashText(text: string): string {
+  let hash = 14695981039346656037n;
+  for (const char of text)
+    hash = BigInt.asUintN(64, (hash ^ BigInt(char.codePointAt(0)!)) * 1099511628211n);
+  return hash.toString(16).padStart(16, '0');
+}
 export function stableFactId(fact: Omit<VerifiedFact, 'id'>): string {
   const text = canonicalJSON([
     fact.kind,
@@ -115,10 +121,7 @@ export function stableFactId(fact: Omit<VerifiedFact, 'id'>): string {
     fact.dateRoles,
     fact.provenance,
   ]);
-  let hash = 14695981039346656037n;
-  for (const char of text)
-    hash = BigInt.asUintN(64, (hash ^ BigInt(char.codePointAt(0)!)) * 1099511628211n);
-  return `fact-${hash.toString(16).padStart(16, '0')}`;
+  return `fact-${hashText(text)}`;
 }
 export const SEMANTIC_KEYS = [
   'subject',

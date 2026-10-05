@@ -115,7 +115,7 @@ it.each(['別セル', '年度結合セル', '先頭欠損'])(
       coverageReport('earningsRevision', pages, [], [], { ...context, tableMappings: [] })
     ).toHaveLength(6);
     const raw = JSON.stringify({
-      version: 5,
+      version: 6,
       documentType: 'earningsRevision',
       facts: reviewed.facts,
       unverified: [],
@@ -468,7 +468,7 @@ describe('義務の原文所有者と充足・修復先の一致', () => {
     expect(
       parseFactSummary(
         JSON.stringify({
-          version: 5,
+          version: 6,
           documentType: 'shareRepurchase',
           facts: good.facts,
           unverified: [],
@@ -527,7 +527,7 @@ describe('義務の原文所有者と充足・修復先の一致', () => {
     expect(() => verifyCoverage('ma', pages, r.facts.slice(1))).toThrow(requirement);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: r.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: r.facts, unverified: [] }),
         'ma',
         pages
       )
@@ -597,7 +597,7 @@ describe('義務の原文所有者と充足・修復先の一致', () => {
     expect(
       parseFactSummary(
         JSON.stringify({
-          version: 5,
+          version: 6,
           documentType: 'businessUpdate',
           facts: correct.facts,
           unverified: [],
@@ -631,7 +631,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     f.dateRoles = [];
     f.provenance = forgedProvenance(f, pages);
     f.id = stableFactId(f);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [f], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [f], unverified: [] });
     expect(saved([f], pages).facts).toEqual([]);
   });
   it('境界付き額を完結eventへ通常の意味照合で修復する', async () => {
@@ -700,7 +700,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
         wrong.period = period;
         wrong.semantics.periodKind = period.includes('～') ? 'interval' : 'eventDate';
         wrong.id = stableFactId(wrong);
-        validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+        validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
         expect(saved([wrong], pages).facts).toEqual([]);
         expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual(
           []
@@ -855,7 +855,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
       const wrong = structuredClone(all.facts[3]);
       wrong.valueKind = wrong.semantics.state = forecast ? 'actual' : 'forecast';
       wrong.id = stableFactId(wrong);
-      validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+      validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
       expect(saved([wrong], pages).facts).toEqual([]);
     }
   );
@@ -878,12 +878,12 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     expect(good.facts).toHaveLength(1);
     expect(saved(good.facts, pages).facts).toEqual(good.facts);
     expect(
-      renderFacts({ version: 5, documentType: 'other', facts: good.facts, unverified: [] })
+      renderFacts({ version: 6, documentType: 'other', facts: good.facts, unverified: [] })
     ).toContain(`100${unit}`);
     const wrong = structuredClone(good.facts[0]);
     wrong.unit = unit === '件/月' ? '件' : `${unit}です`;
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
   });
   it.each([
@@ -1048,7 +1048,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     const wrong = structuredClone(complete.facts[3]);
     wrong.valueKind = wrong.semantics.state = 'actual';
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
     vi.mocked(generateText)
       .mockReset()
@@ -1102,7 +1102,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     const wrong = structuredClone(good.facts[3]);
     wrong.period = period;
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
     expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
   });
@@ -1323,7 +1323,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       ]);
       expect(
         parseFactSummary(
-          JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+          JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
           'ma',
           pages
         ).facts
@@ -1353,13 +1353,13 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       expect(new Set(good.facts.map((f) => f.id)).size).toBe(2);
       expect(
         parseFactSummary(
-          JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+          JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
           'ma',
           pages
         ).facts
       ).toEqual(good.facts);
       expect(
-        renderFacts({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }).split(
+        renderFacts({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }).split(
           body
         )
       ).toHaveLength(2);
@@ -1456,7 +1456,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       expect(
         parseFactSummary(
           JSON.stringify({
-            version: 5,
+            version: 6,
             documentType: 'earningsRevision',
             facts: good.facts,
             unverified: [],
@@ -1687,7 +1687,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     const wrong = structuredClone(r.facts[0]);
     wrong.semantics.polarity = polarity === 'affirmative' ? 'negative' : 'affirmative';
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
     expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
     if (state !== 'unspecified') {
@@ -1711,13 +1711,13 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     expect(r.facts[0].quantity).toMatchObject({ raw: '10円50銭', decimal: '10.50' });
     expect(saved(r.facts, pages).facts).toEqual(r.facts);
     expect(
-      renderFacts({ version: 5, documentType: 'other', facts: r.facts, unverified: [] })
+      renderFacts({ version: 6, documentType: 'other', facts: r.facts, unverified: [] })
     ).toContain('10.50円');
     const wrong = structuredClone(r.facts[0]);
     wrong.value = 10;
     wrong.quantity = { ...wrong.quantity!, raw: '10', decimal: '10' };
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
   });
   it('複数断片の見出しを保存根拠から一部分だけ落として受理しない', () => {
@@ -1767,7 +1767,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       false
     ).quote;
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
   });
 });
@@ -2030,7 +2030,7 @@ describe('役割と必須対象の対応', () => {
     ]);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
         'ma',
         pages
       ).facts
@@ -2763,7 +2763,7 @@ it('自己株取得は他社の上限・条件で発行者の不足を隠さな�
   expect(() =>
     parseFactSummary(
       JSON.stringify({
-        version: 5,
+        version: 6,
         documentType: 'shareRepurchase',
         facts: good.facts,
         unverified: [],
@@ -2853,7 +2853,7 @@ it.each([
       expect(rejected.facts).toEqual([]);
       expect(rejected.unverified.join(' ')).toContain('PERIOD:');
       const restored = parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: [wrong], unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: [wrong], unverified: [] }),
         'ma',
         pages,
         false
@@ -2915,7 +2915,7 @@ it.each([
     expect(() => verifyCoverage('ma', pages, good.facts)).not.toThrow();
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
         'ma',
         pages,
         true
@@ -3335,7 +3335,7 @@ it('初回予想の同じ本文段落から全指標を選択し、他の数量�
   expect(
     parseFactSummary(
       JSON.stringify({
-        version: 5,
+        version: 6,
         documentType: 'earningsRevision',
         facts: result.facts,
         unverified: [],
@@ -3427,7 +3427,7 @@ it.each([
   expect(
     parseFactSummary(
       JSON.stringify({
-        version: 5,
+        version: 6,
         documentType: 'earningsRevision',
         facts: result.facts,
         unverified: [],

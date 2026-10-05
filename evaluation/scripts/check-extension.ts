@@ -48,6 +48,17 @@ async function sourceBuildDigest(): Promise<string> {
       digest.update(`${directory}/${file}`).update(await readFile(`${directory}/${file}`));
   return digest.digest('hex');
 }
+/** Read each visible fact with its shared table context; never use the entire body as one fact. */
+async function displayedFacts(summary: any): Promise<string[]> {
+  return summary.evaluate((root: HTMLElement) => [
+    ...Array.from(root.querySelectorAll('li')).map((node) => node.textContent ?? ''),
+    ...Array.from(root.querySelectorAll('tbody tr')).map((row) => {
+      const table = row.closest('table')!;
+      const context = table.parentElement!.previousElementSibling?.textContent ?? '';
+      return context + ' ' + row.textContent;
+    }),
+  ]);
+}
 /** Called by the existing evaluator after its ordinary configuration load. No secrets are logged. */
 export async function checkExtension(item: BrowserCase, config: LLMConfig, args: string[]) {
   const arg = (flag: string) => args[args.indexOf(flag) + 1];
@@ -536,6 +547,23 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       sourceDigest,
       '実行Workerと現在の製品ソースが一致しません'
     );
+    if (smartFull && completedTrace.outcome === 'failure') {
+      assert.ok(completedTrace.error.includes('全文で再要約'));
+      assert.equal(apiCalls, 0, '不足したsmart入力でAPIを呼びません');
+      assert.deepEqual(completedTrace.attempts, []);
+      evidence.smart = { error: completedTrace.error, attempts: completedTrace.attempts };
+      await summary.getByRole('button', { name: '全文で再要約', exact: true }).click();
+      await summary
+        .getByRole('heading', { name: '全体要約', exact: true })
+        .waitFor({ timeout: 330000 });
+      Object.assign(
+        completedTrace,
+        await worker.evaluate(
+          async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+        )
+      );
+      evidence.stages.push('smart completeness failure without API → explicit full retry');
+    }
     if (!fixedFailure && completedTrace.outcome === 'failure')
       throw new Error(completedTrace.error);
     if (fixedFailure) {
@@ -575,53 +603,6 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return;
     }
 
-    if (smartFull) {
-      const before = await worker.evaluate(async () => {
-        const entries = await chrome.storage.local.get();
-        return Object.entries(entries).find(
-          ([k, v]: [string, any]) =>
-            k.startsWith('summaryCacheV2:') && v.metadata?.extractionMode === 'smart'
-        )?.[1];
-      });
-      assert.ok(before?.facts?.facts.length, 'smart事実が確定しませんでした');
-      evidence.smart = before;
-      // Re-fetch through the built extension's offscreen route, then recheck exactly
-      // the same confirmed facts without generation or addition of full-page facts.
-      const fullExtraction = await worker.evaluate(async (url: string) => {
-        const data = await (await fetch(url)).arrayBuffer();
-        return chrome.runtime.sendMessage({
-          action: 'extractPdfText',
-          pdfData: Array.from(new Uint8Array(data)),
-          extractionMode: 'full',
-          documentType: 'earnings',
-        });
-      }, pdfUrl);
-      assert.ok(fullExtraction.success);
-      const checked = parseFactSummary(
-        JSON.stringify(before.facts),
-        'earnings',
-        fullExtraction.pages,
-        false
-      );
-      assert.deepEqual(
-        checked.facts.map((f) => f.id),
-        before.facts.facts.map((f: any) => f.id)
-      );
-      evidence.stages.push('smart facts retain IDs after extension full PDF retrieval');
-      const priorCalls = apiCalls;
-      await summary.getByRole('button', { name: '全文で再要約', exact: true }).click();
-      await page.waitForFunction(
-        () =>
-          document
-            .querySelector<HTMLIFrameElement>('#main_list')
-            ?.contentDocument?.querySelector('.tdnet-digest-summary-row')
-            ?.textContent?.includes('全文抽出'),
-        {},
-        { timeout: 330000 }
-      );
-      assert.ok(apiCalls > priorCalls);
-      evidence.stages.push('smart → full regenerates with the same candidate contract');
-    }
     const body = await summary.innerText();
     evidence.rendered = body;
     const expected = reviewFixture
@@ -656,7 +637,20 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    const renderedLines = await summary.locator('li').allTextContents();
+    assert.ok(stored.value.presentation?.version === 1);
+    const visibleText = (await summary.innerText()).normalize('NFKC').replace(/\s/g, '');
+    for (const excerpt of stored.value.presentation.excerpts)
+      assert.ok(
+        visibleText.includes(excerpt.text.normalize('NFKC').replace(/\s/g, '')),
+        `原文の表示が欠落: ${excerpt.id}`
+      );
+    assert.equal(await summary.locator('details').filter({ hasText: '生成情報' }).count(), 1);
+    evidence.presentation = stored.value.presentation;
+    await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-top.png` });
+    await page.setViewportSize({ width: 600, height: 800 });
+    await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-narrow.png` });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const renderedLines = await displayedFacts(summary);
     assert.deepEqual(renderedFactErrors(stored.value.facts.facts, renderedLines), []);
     evidence.renderedLines = renderedLines;
     if (reviewSettingsChange) {
@@ -887,11 +881,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     const callsBefore = apiCalls;
     await row.getByRole('button', { name: '表示', exact: true }).click();
     await summary
-      .getByRole('heading', { name: '確認できた事実', exact: true })
+      .getByRole('heading', { name: '全体要約', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
     assert.deepEqual(
-      renderedFactErrors(stored.value.facts.facts, await summary.locator('li').allTextContents()),
+      renderedFactErrors(stored.value.facts.facts, await displayedFacts(summary)),
       []
     );
     evidence.stages.push('hide/show/cache without API');
@@ -899,6 +893,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .frames()
       .find((f: any) => /I_list_|fixture-list/.test(f.url()))!
       .url();
+    if (smartFull)
+      await worker.evaluate(async () => chrome.storage.sync.set({ extractionMode: 'full' }));
     await page.reload();
     // Reload resets the list date. Restore the tested date before waiting for its table.
     await page.locator('#main_list').waitFor({ state: 'attached', timeout: 20000 });
@@ -908,14 +904,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     await frame.locator('#main-list-table').waitFor({ timeout: 20000 });
     await row.getByRole('button', { name: '表示', exact: true }).click({ timeout: 20000 });
     await summary
-      .getByRole('heading', { name: '確認できた事実', exact: true })
+      .getByRole('heading', { name: '全体要約', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
-    const expectedRestored = smartFull ? evidence.smart.facts : stored.value.facts;
-    assert.deepEqual(
-      renderedFactErrors(expectedRestored.facts, await summary.locator('li').allTextContents()),
-      []
-    );
+    const expectedRestored = stored.value.facts;
+    assert.deepEqual(renderedFactErrors(expectedRestored.facts, await displayedFacts(summary)), []);
     const restoredValue = await worker.evaluate(
       async (request: any) => {
         const settings = await chrome.storage.sync.get(['provider', 'model', 'extractionMode']);
@@ -927,7 +920,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       { version: ANALYSIS_SCHEMA_VERSION, pdfUrl }
     );
     assert.deepEqual(restoredValue.facts, expectedRestored);
-    assert.equal(restoredValue.metadata.extractionMode, smartFull ? 'smart' : 'full');
+    assert.equal(restoredValue.metadata.extractionMode, 'full');
     evidence.restoredFacts = restoredValue.facts;
     evidence.stages.push('page reload restores exact configured-mode facts without API');
 
@@ -1027,7 +1020,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.analysis = analysis;
       assert.ok(analysis, '実API追加分析の現行キャッシュがありません');
       assert.equal(analysis.version, 2);
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('全体要約'));
       evidence.stages.push(
         reviewFixture
           ? 'fixed additional analysis preserves rechecked facts'
@@ -1046,7 +1039,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         { timeout: 330000 }
       );
       evidence.followupRendered = await summary.innerText();
-      assert.ok(evidence.followupRendered.includes('確認できた事実'));
+      assert.ok(evidence.followupRendered.includes('全体要約'));
       const score = await worker.evaluate(async () => {
         const entries = await chrome.storage.local.get();
         return Object.entries(entries).find(([k]) => k.startsWith('scoreCacheV4:'))?.[1];
@@ -1069,14 +1062,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         {},
         { timeout: 30000 }
       );
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('全体要約'));
       evidence.stages.push('explicit additional analysis while scoring OFF');
       failScore = true;
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: true }));
       await summary
         .getByRole('button', { name: '採点を再試行', exact: true })
         .waitFor({ timeout: 30000 });
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('全体要約'));
       evidence.stages.push('scoring ON failure preserves summary');
       failScore = false;
       await summary.getByRole('button', { name: '採点を再試行', exact: true }).click();
@@ -1084,12 +1077,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         (compare) =>
           document
             .querySelector<HTMLIFrameElement>('#main_list')
-            ?.contentDocument?.querySelector('.tdnet-digest-summary-row')
+            ?.contentDocument?.querySelector('.tdnet-digest-summary-row #score-result')
             ?.textContent?.includes(compare ? '55' : '比較値'),
         withComparison,
         { timeout: 30000 }
       );
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('全体要約'));
       if (withComparison) {
         const score = await worker.evaluate(async () => {
           const entries = await chrome.storage.local.get();

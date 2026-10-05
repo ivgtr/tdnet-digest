@@ -23,7 +23,7 @@ function parse(index: number, facts: unknown[], coverage = false) {
     ['earnings', 'shareRepurchase', 'businessUpdate', 'ma', 'earningsRevision', 'ma'] as const
   )[index];
   return parseFactSummary(
-    JSON.stringify({ version: 5, documentType, facts, unverified: [] }),
+    JSON.stringify({ version: 6, documentType, facts, unverified: [] }),
     documentType,
     sources[index],
     coverage
@@ -83,7 +83,7 @@ describe('実PDFの意味を保った利用経路', () => {
     const planPage = pages.find((page) => page.pageNumber === plan.page)!;
     planPage.selection = 'omitted';
     const raw = JSON.stringify({
-      version: 5,
+      version: 6,
       documentType: 'earnings',
       facts: expectations[0].facts.filter((f) => f.page !== plan.page),
       unverified: [],
@@ -490,7 +490,7 @@ describe('実PDFの意味を保った利用経路', () => {
     candidate.valueKind = 'forecast';
     candidate.semantics.state = 'forecast';
     const summary = parseFactSummary(
-      JSON.stringify({ version: 5, documentType: 'other', facts: [candidate], unverified: [] }),
+      JSON.stringify({ version: 6, documentType: 'other', facts: [candidate], unverified: [] }),
       'other',
       [page]
     );
@@ -584,7 +584,7 @@ describe('実PDFの意味を保った利用経路', () => {
               : 'ma';
       const summary = parseFactSummary(
         JSON.stringify({
-          version: 5,
+          version: 6,
           documentType: type,
           facts: expectations[index].facts,
           unverified: [],

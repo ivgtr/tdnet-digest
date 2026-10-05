@@ -47,7 +47,7 @@ export function saved(
   coverage = false
 ) {
   return parseFactSummary(
-    JSON.stringify({ version: 5, documentType: type, facts, unverified: [] }),
+    JSON.stringify({ version: 6, documentType: type, facts, unverified: [] }),
     type,
     pages,
     coverage

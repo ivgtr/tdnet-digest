@@ -152,7 +152,7 @@ export function independentAssessment(
     strictSuccess: missingFacts.length === 0 && !result.unverified?.length,
   };
 }
-/** A fact's value, metric and meaning must appear together in one rendered list item. */
+/** A fact's value, metric and meaning must appear together in one visible item or table row/context. */
 export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): string[] {
   const stateLabels: Record<string, string> = {
     actual: '実績',
@@ -173,12 +173,13 @@ export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): stri
   return facts.flatMap((f) => {
     const value =
       f.kind === 'number'
-        ? `${f.label}:${f.quantity!.decimal}${f.unit}`
+        ? `${f.quantity!.decimal}${f.unit}`
         : f.kind === 'range' && 'lower' in f.quantity!
-          ? `${f.label}:${f.quantity!.lower}～${f.quantity!.upper}${f.unit}`
+          ? `${f.quantity!.lower}～${f.quantity!.upper}${f.unit}`
           : f.statement!;
     const required = [
       value,
+      ...(f.kind === 'number' || f.kind === 'range' ? [f.label] : []),
       f.semantics.subject,
       f.semantics.scope,
       f.semantics.basis,
@@ -186,7 +187,7 @@ export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): stri
       ...(f.kind === 'number' || f.kind === 'range'
         ? [stateLabels[f.semantics.state], ...(f.semantics.polarity === 'negative' ? ['否定'] : [])]
         : []),
-      `PDFp.${f.page}`,
+      `p.${f.page}`,
       ...f.semantics.qualifiers,
       ...(f.semantics.periodKind.startsWith('cumulativeQ') ? ['累計'] : []),
       ...(f.semantics.periodKind.startsWith('standaloneQ') ? ['単独'] : []),

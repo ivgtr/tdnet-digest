@@ -10,7 +10,7 @@ const page = textPage(
   '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
 );
 const fact = numberCandidate(page);
-const raw = (facts: VerifiedFact[], version = 5) =>
+const raw = (facts: VerifiedFact[], version = 6) =>
   JSON.stringify({ version, documentType: 'other', facts, unverified: [] });
 const parse = (candidate: VerifiedFact, source = [page]) =>
   parseFactSummary(raw([candidate]), 'other', source, false);
@@ -135,17 +135,15 @@ describe('v4の原文と意味の照合', () => {
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse([fact, event], sources));
-    const result = await generateVerifiedFactSummary(
-      { provider: 'openai', model: 'test', apiKey: 'test' },
-      'other',
-      page.text,
-      sources
-    );
-    expect(result.facts.facts).toHaveLength(1);
-    expect(result.facts.unverified.join(' ')).toContain('未選択ページ');
-    expect(vi.mocked(generateText).mock.calls[0][1][1].content).not.toContain(
-      '取得の方法は翌月の市場買付です。'
-    );
+    await expect(
+      generateVerifiedFactSummary(
+        { provider: 'openai', model: 'test', apiKey: 'test' },
+        'other',
+        page.text,
+        sources
+      )
+    ).rejects.toThrow('全文で再要約');
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
     omitted.status = 'failed';
     expect(() => parseFactSummary(raw([fact]), 'other', sources)).toThrow('抽出失敗');
   });

@@ -68,7 +68,7 @@ function table(
 const parse = (facts: VerifiedFact[], source = pages, coverage = false) =>
   parseFactSummary(
     JSON.stringify({
-      version: 5,
+      version: 6,
       documentType: 'earnings',
       facts: facts.map((f, i) => ({ ...f, id: `f${i + 1}` })),
       unverified: [],

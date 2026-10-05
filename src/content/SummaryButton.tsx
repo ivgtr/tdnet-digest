@@ -41,8 +41,12 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   });
 
   const summaryRowData = useMemo(
-    () => ({ companyName: rowData.companyName, title: rowData.title }),
-    [rowData.companyName, rowData.title]
+    () => ({
+      companyName: rowData.companyName,
+      title: rowData.title,
+      pdfUrl: rowData.pdfUrl,
+    }),
+    [rowData.companyName, rowData.title, rowData.pdfUrl]
   );
 
   const { removeSummaryRow, insertSummaryRow, updateStages, isSummaryRowVisible } = useSummaryRow({
@@ -87,14 +91,17 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           summarize();
         },
         () => analyzeRef.current(),
-        () => retryScoreRef.current()
+        () => retryScoreRef.current(),
+        undefined,
+        undefined,
+        result.retryExtractionMode === 'full'
       );
       triggerUpdate();
     }
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
 
   useEffect(() => {
-    updateStages(scoringEnabled ? score : undefined, analysis);
+    updateStages(scoringEnabled ? score : undefined, analysis, result?.facts?.facts);
     if (result?.summary && scoringEnabled) startScore();
   }, [score, analysis, scoringEnabled, result, updateStages, startScore]);
 

@@ -50,8 +50,7 @@ const MARKDOWN_STYLES: Record<string, string> = {
   pre: 'margin: 6px 0; padding: 8px; background-color: #f3f4f6; border-radius: 4px; overflow-x: auto;',
   'pre code':
     'font-family: monospace; font-size: 12px; background-color: transparent; padding: 0; border-radius: 0;',
-  table:
-    'border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%;',
+  table: 'border-collapse: collapse; margin: 6px 0; font-size: 12px; width: 100%;',
   th: 'border: 1px solid #d1d5db; padding: 4px 8px; background-color: #f3f4f6; font-weight: bold; text-align: left;',
   td: 'border: 1px solid #d1d5db; padding: 4px 8px;',
   hr: 'border: none; border-top: 1px solid #e5e7eb; margin: 8px 0;',
@@ -61,7 +60,7 @@ const MARKDOWN_STYLES: Record<string, string> = {
 /**
  * marked のレンダラーをカスタマイズしてインラインスタイルを付与
  */
-function createStyledRenderer(): Partial<import('marked').RendererObject> {
+function createStyledRenderer(pdfUrl?: string): Partial<import('marked').RendererObject> {
   return {
     heading(token: Tokens.Heading) {
       const tag = `h${token.depth}` as keyof typeof MARKDOWN_STYLES;
@@ -130,7 +129,7 @@ function createStyledRenderer(): Partial<import('marked').RendererObject> {
         body += '</tr>';
       }
 
-      return `<table style="${MARKDOWN_STYLES.table}"><thead>${header}</thead><tbody>${body}</tbody></table>`;
+      return `<div style="overflow-x:auto;max-width:100%;"><table style="${MARKDOWN_STYLES.table}"><thead>${header}</thead><tbody>${body}</tbody></table></div>`;
     },
     tablerow(token: Tokens.TableRow) {
       return `<tr>${token.text}</tr>`;
@@ -145,10 +144,17 @@ function createStyledRenderer(): Partial<import('marked').RendererObject> {
     },
     link(token: Tokens.Link) {
       const text = this.parser.parseInline(token.tokens);
-      if (!isSafeUrl(token.href)) {
+      let href = token.href;
+      if (/^tdnet-page:[1-9]\d*$/.test(href)) {
+        if (!pdfUrl || !isSafeUrl(pdfUrl)) return text;
+        const url = new URL(pdfUrl, 'https://www.release.tdnet.info/inbs/');
+        url.hash = `page=${href.slice('tdnet-page:'.length)}`;
+        href = url.href;
+      }
+      if (!isSafeUrl(href)) {
         return text;
       }
-      return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer" style="${MARKDOWN_STYLES.a}">${text}</a>`;
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="${MARKDOWN_STYLES.a}">${text}</a>`;
     },
   };
 }
@@ -163,8 +169,11 @@ const markedInstance = new Marked({
 /**
  * Markdown テキストをインラインスタイル付き HTML に変換する
  */
-export function parseMarkdown(markdown: string): string {
-  const result = markedInstance.parse(markdown);
+export function parseMarkdown(markdown: string, pdfUrl?: string): string {
+  const parser = pdfUrl
+    ? new Marked({ renderer: createStyledRenderer(pdfUrl), gfm: true, breaks: true })
+    : markedInstance;
+  const result = parser.parse(markdown);
   if (typeof result !== 'string') {
     return markdown;
   }

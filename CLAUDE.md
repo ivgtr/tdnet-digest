@@ -169,7 +169,7 @@ src/
 - **`llm-providers.ts`**: LLMプロバイダー定義
   - OpenAI、Anthropic、Google、OpenRouter、カスタムの5種類
   - 各プロバイダーのデフォルトURL、デフォルトモデル、モデルリスト
-- **`fact-summary.ts`**: 現行v4の根拠付き事実抽出と表示。`fact-validation.ts` が原文字・構造・数量全断片・主体/範囲・期間・限定/条件・状態を照合し、採点は確定IDだけを参照する。詳細と対応境界は docs/development.md の承認済み設計・実装記録を正本とする
+- **`fact-summary.ts`**: 候補v4・確定事実v6の根拠付き事実抽出。`summary-presentation.ts` / `summary-renderer.ts` は冒頭と本文を分け、全文の原文引用を確定事実と区別して保持・表示する。`fact-validation.ts` が原文字・構造・数量全断片・主体/範囲・期間・限定/条件・状態を照合し、採点は確定IDだけを参照する。詳細と対応境界は docs/development.md の承認済み設計・実装記録を正本とする
 - **`additional-analysis.ts`**: 検証済み事実IDに基づく追加分析
 - **`prompts.ts`**: 旧要約経路の文書タイプ別プロンプト。現行の要約では使用しない
 - **`format-prompts.ts`**: 2パス要約のパス2用プロンプト

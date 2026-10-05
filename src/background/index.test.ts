@@ -7,11 +7,7 @@ import { textPage, numberCandidate } from '../lib/fixtures/v4-test-source';
 import { parseFactSummary } from '../lib/fact-summary';
 import type { FactSummary } from '../lib/fact-summary';
 import type { ExtractedPage, ExtractionMode } from '../types/summaryMetadata';
-import type { TextItem } from 'pdfjs-dist/types/src/display/api';
-import { extractPageLayout } from '../lib/pdf-layout';
 import { serializePagesForAnalysis } from '../lib/page-text';
-import corpus from '../lib/fixtures/ir-semantic-corpus.json';
-import expectations from '../lib/fixtures/ir-semantic-expectations.json';
 
 const mocked = vi.hoisted(() => ({
   generateText: vi.fn(),
@@ -20,11 +16,13 @@ const mocked = vi.hoisted(() => ({
   searchDisclosureCandidates: vi.fn(),
 }));
 interface TestResponse {
+  retryExtractionMode?: 'full';
   error?: string;
   diagnosticRunId: string;
   summary: string;
   metadata: { analysisFingerprint: string; score?: unknown };
   facts: FactSummary;
+  presentation: import('../lib/summary-presentation').SummaryPresentation;
   resultId: string;
   analysis: { longTerm: { text: string } };
   score: { value: number };
@@ -61,7 +59,7 @@ const forecastFacts = [
 ];
 const facts: FactSummary = parseFactSummary(
   JSON.stringify({
-    version: 5,
+    version: 6,
     documentType: 'earningsRevision',
     facts: forecastFacts,
     unverified: [],
@@ -390,6 +388,7 @@ describe('要約・採点・追加分析の分離', () => {
     const analysis = await request({
       action: 'analyze',
       facts: summary.facts,
+      presentation: summary.presentation,
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     });
@@ -420,6 +419,7 @@ describe('要約・採点・追加分析の分離', () => {
     const score = await request({
       action: 'score',
       facts: summary.facts,
+      presentation: summary.presentation,
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     });
@@ -427,90 +427,20 @@ describe('要約・採点・追加分析の分離', () => {
     expect(mocked.extractScoreInput.mock.calls[0][4]).toEqual(summary.facts);
   });
 
-  it.each(['analyze', 'score'])(
-    'smart要約から%sへ進んでも未選択の損失予定を要求しない',
-    async (action) => {
-      const selectedPages = corpus[0].pages.map((page) =>
-        extractPageLayout(page.items as TextItem[], page.pageNumber)
-      );
-      const pages = Array.from({ length: 18 }, (_, index) => {
-        const pageNumber = index + 1;
-        const page =
-          selectedPages.find((p) => p.pageNumber === pageNumber) ?? textPage('', pageNumber);
-        return {
-          ...page,
-          selection:
-            pageNumber === 1 || pageNumber === 5 ? ('selected' as const) : ('omitted' as const),
-        };
-      });
-      const smartFacts = parseFactSummary(
-        JSON.stringify({
-          version: 5,
-          documentType: 'earnings',
-          facts: expectations[0].facts.filter((f) => f.page !== 18),
-          unverified: [],
-        }),
-        'earnings',
-        pages
-      );
-      mocked.generateText
-        .mockResolvedValueOnce(candidateResponse(smartFacts.facts, pages, smartFacts.documentType))
-        .mockResolvedValueOnce(
-          JSON.stringify({
-            version: 2,
-            interpretation: { text: '判断不能', factIds: [] },
-            shortTerm: { text: '判断不能', factIds: [] },
-            mediumTerm: { text: '判断不能', factIds: [] },
-            longTerm: { text: '判断不能', factIds: [] },
-            watchPoints: [],
-          })
-        );
-      mocked.extractScoreInput.mockResolvedValue({
-        claims: [{ category: 'coreForecast' }],
-        unverified: [],
-        searchStatus: '元PDF内',
-      });
-      mocked.inferExperimentalScore.mockResolvedValue({ value: 70 });
-      const request = await setup(true, false, false, false, { pages, mode: 'smart' });
-      const base = { title: '2026年3月期 決算短信' };
-      const summary = await request({ ...base, action: 'summarize' });
-      expect(summary.error).toBeUndefined();
-      expect(summary.summary).not.toContain('翌連結会計年度');
-      const followup = {
-        ...base,
-        action,
-        facts: summary.facts,
-        resultId: summary.resultId,
-        fingerprint: summary.metadata.analysisFingerprint,
-      };
-      const result = await request(followup);
-      expect(result.error).toBeUndefined();
-      if (action === 'analyze') expect(result.analysis.longTerm.text).toBe('判断不能');
-      else {
-        expect(result.score.value).toBe(70);
-        expect(mocked.extractScoreInput.mock.calls[0][4]).toEqual(summary.facts);
-      }
-      expect(chrome.runtime.sendMessage).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ extractionMode: 'smart' })
-      );
-      expect(chrome.runtime.sendMessage).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ extractionMode: 'full' })
-      );
-
-      const changed = structuredClone(summary.facts);
-      changed.facts[0].value = 1;
-      expect((await request({ ...followup, facts: changed })).error).toContain('識別子');
-      vi.mocked(fetch).mockResolvedValueOnce({
-        ok: true,
-        arrayBuffer: async () => new ArrayBuffer(5),
-      } as Response);
-      expect((await request(followup)).error).toContain('識別子');
-      pages[17].status = 'failed';
-      expect((await request(followup)).error).toContain('抽出失敗');
-    }
-  );
+  it('smartで本文が選択外なら生成前に全文再要約を促す', async () => {
+    const pages = [
+      nativePage,
+      {
+        ...textPage('会社名 株式会社テスト\n取得は承認を条件とします。', 2),
+        selection: 'omitted' as const,
+      },
+    ];
+    const request = await setup(false, false, false, false, { pages, mode: 'smart' });
+    const summary = await request({ action: 'summarize' });
+    expect(summary.error).toContain('全文で再要約');
+    expect(summary.retryExtractionMode).toBe('full');
+    expect(mocked.generateText).not.toHaveBeenCalled();
+  });
 
   it('過去資料の任意権限がない場合は別サイトを取得しない', async () => {
     mocked.generateText.mockResolvedValue(
@@ -535,6 +465,7 @@ describe('要約・採点・追加分析の分離', () => {
     const score = await request({
       action: 'score',
       facts: summary.facts,
+      presentation: summary.presentation,
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     });
@@ -570,6 +501,7 @@ describe('要約・採点・追加分析の分離', () => {
     const score = await request({
       action: 'score',
       facts: summary.facts,
+      presentation: summary.presentation,
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     });
@@ -592,6 +524,7 @@ describe('要約・採点・追加分析の分離', () => {
     const score = await request({
       action: 'score',
       facts: summary.facts,
+      presentation: summary.presentation,
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     });

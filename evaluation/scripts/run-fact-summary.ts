@@ -14,6 +14,7 @@ import {
   renderFacts,
   parseFactSummary,
 } from '../../src/lib/fact-summary';
+import contentExpectations from '../../src/lib/fixtures/summary-content-expectations.json';
 import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
 import { getProvider } from '../../src/lib/llm-providers';
@@ -74,6 +75,11 @@ const implementationFiles = [
   'src/lib/fact-validation.ts',
   'src/lib/fact-coverage.ts',
   'src/lib/fact-summary.ts',
+  'src/lib/summary-content-policy.ts',
+  'src/lib/summary-source-inventory.ts',
+  'src/lib/summary-presentation.ts',
+  'src/lib/summary-renderer.ts',
+  'src/lib/summary-result-id.ts',
   'src/lib/llm-client.ts',
 ];
 const implementationHash = createHash('sha256');
@@ -133,7 +139,14 @@ for (const item of selected) {
   }
   const elapsedSeconds = Number(((performance.now() - started) / 1000).toFixed(1));
   const result = attempt?.facts ?? null;
+  const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+  const retainedText = compact(attempt?.presentation.excerpts.map((e) => e.text).join('\n') ?? '');
+  const missingSourceContent =
+    contentExpectations.realPdfs
+      .find((c) => c.id === item.id)
+      ?.retained.filter((text) => !retainedText.includes(compact(text))) ?? [];
   if (result) {
+    errors.push(...missingSourceContent.map((text) => `原文の説明・条件が不足: ${text}`));
     errors.push(...expectedErrors(item, result));
     validateSavedFacts(result);
     const restored = parseFactSummary(JSON.stringify(result), item.documentType, pages);
@@ -153,6 +166,7 @@ for (const item of selected) {
     promptHash: createHash('sha256')
       .update(JSON.stringify(factPrompt(item.documentType, sourceInput)))
       .digest('hex'),
+    missingSourceContent,
     independentAssessment: result ? independentAssessment(item, result) : null,
     inputChars: serializeCandidateSource(pages, undefined, item.documentType).length,
     extractionMs,
@@ -168,7 +182,8 @@ for (const item of selected) {
     success: errors.length === 0,
     errors,
     result,
-    summary: result ? renderFacts(result) : null,
+    presentation: attempt?.presentation ?? null,
+    summary: result && attempt ? renderFacts(result, attempt.presentation) : null,
     attempts,
     failedResponses,
   };
@@ -177,6 +192,6 @@ for (const item of selected) {
   await writeFile(`evaluation/results/local/${item.id}-${runId}-fact-summary.json`, serialized);
   await writeFile(`evaluation/results/local/${item.id}-fact-summary.json`, serialized);
   console.log(`${item.id}: ${errors.length ? errors.join(' / ') : '成功'} (${elapsedSeconds}秒)`);
-  if (result) console.log(renderFacts(result));
+  if (result && attempt) console.log(renderFacts(result, attempt.presentation));
   if (errors.length) process.exitCode = 1;
 }

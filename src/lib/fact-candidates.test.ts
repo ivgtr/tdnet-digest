@@ -19,7 +19,7 @@ const fixture = expectations[0].facts as unknown as VerifiedFact[];
 const candidates = fixture.map((f, i) => candidateFixture(f, pages, `c${i + 1}`));
 const raw = (cs: Candidate[], extra: object = {}) =>
   JSON.stringify({
-    candidateVersion: 3,
+    candidateVersion: 4,
     documentType: 'earnings',
     candidates: cs,
     unverified: [],
@@ -81,7 +81,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(
       parseFactSummary(
         JSON.stringify({
-          version: 5,
+          version: 6,
           documentType: 'other',
           facts: result.facts,
           unverified: [],
@@ -137,7 +137,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(result.facts[0].semantics).toEqual(fact.semantics);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'other', facts: result.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'other', facts: result.facts, unverified: [] }),
         'other',
         source
       ).facts
@@ -169,7 +169,7 @@ describe('生成専用候補と原文文脈の契約', () => {
         altered.id = stableFactId(altered);
         expect(
           parseFactSummary(
-            JSON.stringify({ version: 5, documentType: 'other', facts: [altered], unverified: [] }),
+            JSON.stringify({ version: 6, documentType: 'other', facts: [altered], unverified: [] }),
             'other',
             source,
             false
@@ -258,11 +258,11 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(r.facts).toHaveLength(expectations[i].facts.length);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: type, facts: r.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: type, facts: r.facts, unverified: [] }),
         type,
         source
       )
-    ).toEqual({ version: 5, documentType: type, facts: r.facts, unverified: [] });
+    ).toEqual({ version: 6, documentType: type, facts: r.facts, unverified: [] });
     for (const f of r.facts.filter((f) => f.kind === 'number')) {
       expect(f.quantity?.sourceIds.length).toBeGreaterThan(0);
       expect(
@@ -348,7 +348,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     });
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'other', facts: result.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'other', facts: result.facts, unverified: [] }),
         'other',
         [p]
       ).facts
@@ -358,7 +358,7 @@ describe('生成専用候補と原文文脈の契約', () => {
       altered.id = stableFactId(altered);
       expect(
         parseFactSummary(
-          JSON.stringify({ version: 5, documentType: 'other', facts: [altered], unverified: [] }),
+          JSON.stringify({ version: 6, documentType: 'other', facts: [altered], unverified: [] }),
           'other',
           [p],
           false
@@ -453,7 +453,7 @@ describe('生成専用候補と原文文脈の契約', () => {
       return f;
     });
   it.each(['detail', 'key'] as const)(
-    '上限20件の補足が%sでも必須のdetailを保持し修復する',
+    '20件の補足が%sでも削らず必須のdetailを追加修復する',
     async (importance) => {
       const source = buybackSource();
       const initial = Array.from({ length: 19 }, (_, i) => {
@@ -489,7 +489,7 @@ describe('生成専用候補と原文文脈の契約', () => {
           attempts.push(a);
         }
       );
-      expect(result.facts.facts).toHaveLength(20);
+      expect(result.facts.facts).toHaveLength(21);
       expect(result.facts.facts.some((f) => f.id === countId)).toBe(true);
       expect(attempts[0].confirmedIds).toContain(countId);
       expect(attempts[0].slots?.find((s) => s.requirement.endsWith('count'))?.status).toBe(
@@ -574,7 +574,7 @@ describe('生成専用候補と原文文脈の契約', () => {
       .mockReset()
       .mockResolvedValueOnce(
         JSON.stringify({
-          candidateVersion: 3,
+          candidateVersion: 4,
           documentType: 'other',
           candidates: [initial],
           unverified: [],
@@ -615,7 +615,7 @@ describe('生成専用候補と原文文脈の契約', () => {
       expect(
         reviewCandidates(
           JSON.stringify({
-            candidateVersion: 3,
+            candidateVersion: 4,
             documentType: 'shareRepurchase',
             candidates: [c],
             unverified: [],
@@ -680,7 +680,7 @@ describe('生成専用候補と原文文脈の契約', () => {
       basis: '日本基準',
     });
     const final = {
-      version: 5,
+      version: 6,
       documentType: 'earnings' as const,
       facts: r.facts,
       unverified: r.unverified,
@@ -727,7 +727,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     f.id = stableFactId(f);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'earnings', facts: [f], unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'earnings', facts: [f], unverified: [] }),
         'earnings',
         pages,
         false
@@ -736,7 +736,7 @@ describe('生成専用候補と原文文脈の契約', () => {
   });
   it('旧生成応答・未知項目・不正unverifiedは根全体を拒否する', () => {
     for (const text of [
-      JSON.stringify({ version: 5, documentType: 'earnings', facts: fixture, unverified: [] }),
+      JSON.stringify({ version: 6, documentType: 'earnings', facts: fixture, unverified: [] }),
       raw(candidates, { extra: true }),
       raw(candidates, { unverified: [{}] }),
     ]) {
@@ -776,7 +776,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     c.meaning.basis = null;
     const r = reviewCandidates(
       JSON.stringify({
-        candidateVersion: 3,
+        candidateVersion: 4,
         documentType: 'other',
         candidates: [c],
         unverified: [],
@@ -834,7 +834,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(correct.facts[0].semantics).toMatchObject({ scope: null, basis: null });
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'other', facts: correct.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'other', facts: correct.facts, unverified: [] }),
         'other',
         source
       ).facts
@@ -858,7 +858,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     altered.id = stableFactId(altered);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'other', facts: [altered], unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'other', facts: [altered], unverified: [] }),
         'other',
         source,
         false
@@ -881,7 +881,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     );
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'other', facts: [fact], unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'other', facts: [fact], unverified: [] }),
         'other',
         source,
         false
@@ -902,7 +902,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(result.facts).toHaveLength(1);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'other', facts: result.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'other', facts: result.facts, unverified: [] }),
         'other',
         source
       ).facts
@@ -1045,7 +1045,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     f.evidence.contextIds = ['p1b1'];
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'earnings', facts: [f], unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'earnings', facts: [f], unverified: [] }),
         'earnings',
         pages,
         false
@@ -1100,46 +1100,4 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(attempts).toHaveLength(2);
     expect(attempts[1][1][1].content).toContain('修復方式=delta');
   });
-  it.each(['detail', 'key'] as const)(
-    '20件を埋めた初回の %s と必須修復の容量を明示する',
-    async (importance) => {
-      const source = textPage(
-        '会社名 株式会社テスト\n１．経営成績\n2026年3月期 実績\n' +
-          Array.from({ length: 20 }, (_, i) => `科目${i + 1}は${100 + i}百万円です。`).join('\n') +
-          '\n２．取得の内容\n2026年7月15日取得予定\n取得対象株式の種類 普通株式\n取得する株式の総数は200,000株（上限）です。\n株式の取得価額の総額は206,200,000円（上限）です。'
-      );
-      const initial = Array.from({ length: 20 }, (_, i) => {
-        const f = numberCandidate(source, `科目${i + 1}`, 100 + i);
-        f.importance = i === 0 ? 'key' : importance;
-        f.semantics.scope = f.semantics.basis = null;
-        return f;
-      });
-      const repair = [
-        ['取得する株式の総数', 200000, '株', 'count'],
-        ['株式の取得価額の総額', 206200000, '円', 'amount'],
-      ].map(([label, value, unit, metric]) => {
-        const f = numberCandidate(source, String(label), Number(value), '2026年7月15日');
-        f.unit = String(unit);
-        f.valueKind = null;
-        Object.assign(f.semantics, {
-          scope: '普通株式',
-          basis: null,
-          state: 'planned',
-          metricKind: metric,
-          periodKind: 'eventDate',
-          qualifiers: ['上限'],
-        });
-        return f;
-      });
-      vi.mocked(generateText)
-        .mockReset()
-        .mockResolvedValueOnce(candidateResponse(initial, [source], 'shareRepurchase'))
-        .mockResolvedValueOnce(candidateResponse(repair, [source], 'shareRepurchase'));
-      const run = generateVerifiedFactSummary(config, 'shareRepurchase', source.text, [source]);
-      const result = await run;
-      expect(result.facts.facts).toHaveLength(20);
-      expect(result.facts.unverified.join(' ')).toContain('CAPACITY');
-      expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
-    }
-  );
 });

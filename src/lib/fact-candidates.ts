@@ -45,8 +45,9 @@ import {
   assertionKinds,
 } from './assertion-semantics';
 import { assertionId, sourceTableId } from './source-provenance';
+import { selectableFactCapacity } from './summary-source-inventory';
 
-export const CANDIDATE_VERSION = 3;
+export const CANDIDATE_VERSION = 4;
 export interface Candidate {
   candidateId: string;
   importance: VerifiedFact['importance'];
@@ -446,11 +447,11 @@ export function reviewCandidates(
       parsed.candidateVersion !== CANDIDATE_VERSION ||
       parsed.documentType !== type ||
       !Array.isArray(parsed.candidates) ||
-      parsed.candidates.length > 20 ||
+      parsed.candidates.length > selectableFactCapacity(pages) ||
       !Array.isArray(parsed.unverified) ||
       !parsed.unverified.every((x) => typeof x === 'string' && x.length <= 1000)
     )
-      throw new Error('SCHEMA:候補応答の形式が不正です（candidateVersion=3が必要）');
+      throw new Error('SCHEMA:候補応答の形式が不正です（candidateVersion=4が必要）');
     const ids = new Set<string>();
     for (const item of parsed.candidates) {
       if (!record(item) || typeof item.candidateId !== 'string' || ids.has(item.candidateId))

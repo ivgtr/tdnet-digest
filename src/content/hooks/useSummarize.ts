@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { summaryResultId } from '@/lib/summary-result-id';
 import { normalizeTdnetPdfUrl } from '@/lib/tdnet-url';
 import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
 import { FACT_SCHEMA_VERSION, renderFacts } from '@/lib/fact-summary';
 import { validateSavedFacts, validateSavedScore } from '@/lib/fact-cache';
 import type { FactSummary } from '@/lib/fact-summary';
+import { validatePresentation, type SummaryPresentation } from '@/lib/summary-presentation';
 import { parseAnalysis, type AdditionalAnalysis } from '@/lib/additional-analysis';
 import type { ExperimentalScore } from '@/lib/scoring';
 import type { SummaryMetadata, ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
@@ -19,8 +21,10 @@ export interface SummaryResult {
   error: string | null;
   metadata: SummaryMetadata | null;
   facts: FactSummary | null;
+  presentation: SummaryPresentation | null;
   resultId: string | null;
   diagnosticRunId: string | null;
+  retryExtractionMode?: 'full';
 }
 export interface Stage<T> {
   loading: boolean;
@@ -36,6 +40,7 @@ function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is 
   const item = value as Partial<CachedSummary>;
   try {
     validateSavedFacts(item.facts);
+    validatePresentation(item.presentation, item.facts);
     return (
       typeof item.summary === 'string' &&
       typeof item.resultId === 'string' &&
@@ -46,7 +51,7 @@ function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is 
       /^[a-f0-9]{64}$/.test(item.metadata.documentHash) &&
       item.metadata?.analysisFingerprint !== undefined &&
       buildSummaryCacheKey(pdfUrl, item.metadata.analysisFingerprint) === key &&
-      renderFacts(item.facts) === item.summary
+      renderFacts(item.facts, item.presentation) === item.summary
     );
   } catch {
     return false;
@@ -116,10 +121,19 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
 
   useEffect(() => {
     if (!cacheKey) return;
-    chrome.storage.local.get(SUMMARY_PREFIX + cacheKey, (data) => {
+    chrome.storage.local.get(SUMMARY_PREFIX + cacheKey, async (data) => {
       if (cacheKey !== keyRef.current) return;
       const entry = data[SUMMARY_PREFIX + cacheKey] as CachedSummary | undefined;
-      setHasCached(isCachedSummary(entry, cacheKey, pdfUrl));
+      const valid =
+        isCachedSummary(entry, cacheKey, pdfUrl) &&
+        (await summaryResultId(
+          pdfUrl,
+          entry.metadata.analysisFingerprint!,
+          entry.facts,
+          entry.metadata.documentHash!,
+          entry.presentation
+        )) === entry.resultId;
+      if (cacheKey === keyRef.current) setHasCached(valid);
     });
   }, [cacheKey, pdfUrl]);
 
@@ -170,23 +184,37 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     const data = await chrome.storage.local.get(SUMMARY_PREFIX + key);
     if (key !== keyRef.current) return;
     const entry = data[SUMMARY_PREFIX + key] as CachedSummary | undefined;
-    if (!isCachedSummary(entry, key, pdfUrl)) {
+    const valid =
+      isCachedSummary(entry, key, pdfUrl) &&
+      (await summaryResultId(
+        pdfUrl,
+        entry.metadata.analysisFingerprint!,
+        entry.facts,
+        entry.metadata.documentHash!,
+        entry.presentation
+      )) === entry.resultId;
+    if (key !== keyRef.current) return;
+    if (!valid) {
       if (entry !== undefined)
         setResult({
           summary: null,
           metadata: null,
           facts: null,
+          presentation: null,
           resultId: null,
           diagnosticRunId: null,
           error: '保存された現行要約の形式・原数量・設定が不正です。再要約してください。',
         });
       return;
     }
+    if (key !== keyRef.current) return;
+    if (!entry) return;
     idRef.current = entry.resultId;
     setResult({
       summary: entry.summary,
       metadata: entry.metadata,
       facts: entry.facts,
+      presentation: entry.presentation,
       resultId: entry.resultId,
       diagnosticRunId: null,
       error: null,
@@ -205,6 +233,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       scoreStarted.current = null;
       idRef.current = null;
       let diagnosticRunId: string | null = null;
+      let retryExtractionMode: 'full' | undefined;
       try {
         const settings = settingsRef.current;
         if (!settings) throw new Error('設定の読み込みが完了していません');
@@ -227,7 +256,27 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (typeof response.diagnosticRunId !== 'string' || !response.diagnosticRunId)
           throw new Error('要約結果の実行IDが不正です');
         diagnosticRunId = response.diagnosticRunId;
+        if (response.retryExtractionMode !== undefined) {
+          if (response.retryExtractionMode !== 'full')
+            throw new Error('再要約の抽出方式が不正です');
+          retryExtractionMode = response.retryExtractionMode;
+        }
         if (response.error) throw new Error(response.error);
+        validateSavedFacts(response.facts);
+        validatePresentation(response.presentation, response.facts);
+        if (response.summary !== renderFacts(response.facts, response.presentation))
+          throw new Error('要約本文と表示構成が一致しません');
+        if (
+          (await summaryResultId(
+            pdfUrl,
+            response.metadata.analysisFingerprint,
+            response.facts,
+            response.metadata.documentHash,
+            response.presentation
+          )) !== response.resultId
+        )
+          throw new Error('要約結果の識別子が一致しません');
+        if (run !== runRef.current) return;
         const key = buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint);
         if (key !== expectedKey) throw new Error('要約結果の設定が一致しません');
         keyRef.current = key;
@@ -237,6 +286,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           summary: response.summary,
           metadata: response.metadata,
           facts: response.facts,
+          presentation: response.presentation,
           resultId: response.resultId,
           diagnosticRunId,
           error: null,
@@ -245,6 +295,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         const entry: CachedSummary = {
           summary: response.summary,
           facts: response.facts,
+          presentation: response.presentation,
           resultId: response.resultId,
           metadata: response.metadata,
           companyName,
@@ -260,8 +311,10 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
             summary: null,
             metadata: null,
             facts: null,
+            presentation: null,
             resultId: null,
             diagnosticRunId,
+            retryExtractionMode,
             error: error instanceof Error ? error.message : String(error),
           });
       } finally {
@@ -286,6 +339,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           code,
           companyName,
           facts: current.facts,
+          presentation: current.presentation,
           resultId: id,
           fingerprint: current.metadata.analysisFingerprint,
         });

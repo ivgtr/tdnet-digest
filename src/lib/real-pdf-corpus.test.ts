@@ -235,7 +235,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       ])
     );
     const summary = {
-      version: 5,
+      version: 6,
       documentType: 'other' as const,
       facts: review.facts,
       unverified: [],
@@ -319,7 +319,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       expect(
         reviewCandidates(
           JSON.stringify({
-            candidateVersion: 3,
+            candidateVersion: 4,
             documentType: 'earningsRevision',
             candidates: wrong,
             unverified: [],
@@ -359,7 +359,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
         )!;
         const wrong = reviewCandidates(
           JSON.stringify({
-            candidateVersion: 3,
+            candidateVersion: 4,
             documentType: 'other',
             candidates: [{ ...source, kind: 'number' }],
             unverified: [],
@@ -458,7 +458,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       );
       const full = reviewCandidates(
         JSON.stringify({
-          candidateVersion: 3,
+          candidateVersion: 4,
           documentType: 'earningsRevision',
           candidates: [...candidates, dividend, ...reasons],
           unverified: [],
@@ -468,7 +468,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       );
       expect(full.unverified).toEqual([]);
       const confirmed = {
-        version: 5,
+        version: 6,
         documentType: 'earningsRevision' as const,
         facts: full.facts,
         unverified: [],
@@ -499,7 +499,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       };
       const wrong = reviewCandidates(
         JSON.stringify({
-          candidateVersion: 3,
+          candidateVersion: 4,
           documentType: 'other',
           candidates: [wrongDividend],
           unverified: [],
