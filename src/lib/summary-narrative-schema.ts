@@ -1,5 +1,9 @@
 /** Wire schemas only. Native quantities and meanings still require local validation. */
-export function narrativeResponseSchema(sourceIds: string[], mode: 'draft' | 'edits' | 'review') {
+export function narrativeResponseSchema(
+  sourceIds: string[],
+  mode: 'draft' | 'edits' | 'review',
+  claimIds: string[] = []
+) {
   const string = { type: 'string' };
   const array = (items: unknown) => ({ type: 'array', items });
   const ref = (name: string) => ({ $ref: `#/$defs/${name}` });
@@ -20,10 +24,14 @@ export function narrativeResponseSchema(sourceIds: string[], mode: 'draft' | 'ed
   const root =
     mode === 'review'
       ? object({
-          version: version(2),
-          issues: array(
+          version: version(3),
+          findings: array(
             object({
-              claimId: { type: ['string', 'null'] },
+              status: {
+                type: 'string',
+                enum: ['supported', 'mismatch', 'importantOmission', 'detail', 'style'],
+              },
+              claimId: { type: ['string', 'null'], enum: [...claimIds, null] },
               sourceIds: ref('sources'),
               reason: string,
             })

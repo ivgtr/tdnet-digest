@@ -51,11 +51,11 @@ export function fixedNarrativeReview(
   display: Pick<SummaryPresentation, 'values' | 'excerpts'>
 ): NarrativeReview {
   return {
-    version: 1,
+    version: 2,
     contentHash: narrativeHash(content, display.values, facts),
     reviewedClaimIds: narrativeClaims(content).map((c) => c.id),
     reviewedSourceIds: display.excerpts.map((e) => e.id),
-    issues: [],
+    findings: [],
   };
 }
 export function completePresentation(

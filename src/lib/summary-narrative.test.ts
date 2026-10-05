@@ -232,11 +232,25 @@ describe('説明要約の生成・点検・数値参照', () => {
     const response = synthesisResponse(content());
     const summary = assembleNarrative(response, facts, draft.values, draft.excerpts);
     const review = fixedNarrativeReview(summary, facts, draft);
+    review.findings = [
+      {
+        status: 'supported',
+        claimId: 'row-0-0-0',
+        sourceIds: sources,
+        reason: '売上と比較対象は原文と整合する。',
+      },
+      {
+        status: 'detail',
+        claimId: 'summary-2-0',
+        sourceIds: sources,
+        reason: '主要なCFと主因は本文にあり、小科目の明細は不要。',
+      },
+    ];
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
       .mockResolvedValueOnce(JSON.stringify(response))
-      .mockResolvedValueOnce(JSON.stringify({ version: 2, issues: review.issues }));
+      .mockResolvedValueOnce(JSON.stringify({ version: 3, findings: review.findings }));
     const attempts: SummaryAttempt[] = [];
     const generated = await generateVerifiedFactSummary(
       { ...config, provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
@@ -262,6 +276,14 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(generationInput).not.toContain('valueColumns');
     for (const e of draft.excerpts) expect(generationInput).toContain(JSON.stringify(e.text));
     expect(generated.repairAttempted).toBe(false);
+    expect(generated.presentation.narrative!.review.findings).toEqual(review.findings);
+    const invalidReview = structuredClone(generated.presentation) as unknown as {
+      narrative: { review: { findings: Array<{ status: string }> } };
+    };
+    invalidReview.narrative.review.findings[0].status = 'unknown';
+    expect(() => revalidatePresentation(invalidReview, generated.facts, [page])).toThrow(
+      '点検結果の形式'
+    );
     const restored = revalidatePresentation(
       JSON.parse(JSON.stringify(generated.presentation)),
       generated.facts,
@@ -742,8 +764,15 @@ describe('説明要約の生成・点検・数値参照', () => {
     const response = synthesisResponse(content());
     const summary = assembleNarrative(response, facts, draft.values, draft.excerpts);
     const badReview = {
-      version: 2,
-      issues: [{ claimId: 'summary-2-0', sourceIds: sources, reason: '納期長期化の条件が欠落' }],
+      version: 3,
+      findings: [
+        {
+          status: 'importantOmission',
+          claimId: 'summary-2-0',
+          sourceIds: sources,
+          reason: '納期長期化の条件が欠落',
+        },
+      ],
     };
     // A structural repair must not consume the separate semantic repair.
     const malformedResponse = structuredClone(response);
@@ -770,7 +799,7 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockResolvedValueOnce(JSON.stringify(badReview))
       .mockResolvedValueOnce(JSON.stringify(wrongCorrection))
       .mockResolvedValueOnce(JSON.stringify(correction))
-      .mockResolvedValueOnce(JSON.stringify({ version: 2, issues: [] }));
+      .mockResolvedValueOnce(JSON.stringify({ version: 3, findings: [] }));
     const repairedAttempts: SummaryAttempt[] = [];
     const repaired = await generateVerifiedFactSummary(
       { ...config, provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
