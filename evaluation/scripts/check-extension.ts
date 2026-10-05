@@ -650,6 +650,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     await page.setViewportSize({ width: 600, height: 800 });
     await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-narrow.png` });
     await page.setViewportSize({ width: 1280, height: 900 });
+    assert.equal(await summary.locator('blockquote').count(), 0);
+    const supplement = summary.getByRole('heading', { name: '説明・補足（原文）', exact: true });
+    if (await supplement.count()) {
+      await supplement.first().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-supplement.png` });
+    }
     const renderedLines = await displayedFacts(summary);
     assert.deepEqual(renderedFactErrors(stored.value.facts.facts, renderedLines), []);
     evidence.renderedLines = renderedLines;

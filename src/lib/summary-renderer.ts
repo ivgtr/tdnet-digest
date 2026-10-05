@@ -6,6 +6,7 @@ import {
 } from './fact-contract';
 import { validatePresentation, type SummaryPresentation } from './summary-presentation';
 import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
+import type { SourceExcerpt } from './summary-source-inventory';
 
 export const stateLabels = {
   actual: '実績',
@@ -168,6 +169,45 @@ function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
   );
 }
 
+/** PDF extraction fragments are not separate quotations. Preserve the source order,
+ * paragraph endings and table rows, with one page reference per continuous source group. */
+function renderExcerpts(excerpts: SourceExcerpt[]): string[] {
+  const lines: string[] = [];
+  let paragraph: string[] = [];
+  let previous: SourceExcerpt | undefined;
+  const flushParagraph = () => {
+    if (paragraph.length) lines.push('', paragraph.join(' '));
+    paragraph = [];
+  };
+  for (const excerpt of excerpts) {
+    const sameSource =
+      previous && previous.page === excerpt.page && previous.heading?.id === excerpt.heading?.id;
+    if (previous && !sameSource) {
+      flushParagraph();
+      lines.push('', ref(previous.page));
+    }
+    if (excerpt.kind === 'paragraph') {
+      if (
+        previous &&
+        (previous.kind !== 'paragraph' || /[。！？!?][」』）)\]】]*\s*$/.test(previous.text))
+      )
+        flushParagraph();
+      paragraph.push(literalMarkdown(excerpt.text));
+    } else {
+      flushParagraph();
+      if (excerpt.kind === 'heading') lines.push('', `#### ${literalMarkdown(excerpt.text)}`);
+      else {
+        if (!sameSource || previous?.kind !== 'row') lines.push('');
+        lines.push(literalMarkdown(excerpt.text));
+      }
+    }
+    previous = excerpt;
+  }
+  flushParagraph();
+  if (previous) lines.push('', ref(previous.page));
+  return lines;
+}
+
 /** No slicing of body content; the presentation validator proves every fact/source reference is retained. */
 export function renderSummary(facts: FactSummary, presentation: SummaryPresentation): string {
   if (facts.version !== FACT_SCHEMA_VERSION) throw new Error('旧事実スキーマは表示できません');
@@ -239,8 +279,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         )
     );
     if (remainder.length) {
-      lines.push('', '### 原文の説明・補足');
-      for (const e of remainder) lines.push('', `> ${literalMarkdown(e.text)} ${ref(e.page)}`);
+      lines.push('', '### 説明・補足（原文）', ...renderExcerpts(remainder));
     }
   }
   if (facts.unverified.length)

@@ -42,6 +42,36 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     expect(body(renderFacts(facts, brief))).toBe(body(renderFacts(facts, presentation)));
     expect(brief.sections.flatMap((s) => s.factIds)).toEqual(facts.facts.map((f) => f.id));
   });
+  it('補足の分断された文をつなぎ、段落とページ境界を保って引用枠を出さない', () => {
+    const first = textPage(
+      expectation.text + '\n共同開発は承認を条件に\n実施する予定です。\n開始時期は未定です。'
+    );
+    const second = textPage('３．その他の施策\n翌年度への影響は\n現時点では未定です。', 2);
+    const display = buildPresentation(facts, [first, second]);
+    const summary = renderFacts(facts, display);
+    const supplement = summary.slice(summary.indexOf('## ３'));
+    expect(supplement).toContain('共同開発は承認を条件に 実施する予定です。');
+    expect(supplement).toContain('実施する予定です。\n\n開始時期は未定です。');
+    expect(supplement).toContain('翌年度への影響は 現時点では未定です。');
+    expect(supplement.match(/\(tdnet-page:1\)/g)).toHaveLength(1);
+    expect(supplement.match(/\(tdnet-page:2\)/g)).toHaveLength(1);
+    const html = buildSummaryHtml(summary, null, {
+      companyName: 'テスト',
+      title: '開示',
+      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
+    });
+    expect(html).not.toContain('<blockquote');
+    expect(html).toContain('test.pdf#page=2');
+    expect(display.excerpts.map((e) => e.text)).toEqual([
+      ...expectation.retained,
+      '共同開発は承認を条件に',
+      '実施する予定です。',
+      '開始時期は未定です。',
+      '３．その他の施策',
+      '翌年度への影響は',
+      '現時点では未定です。',
+    ]);
+  });
   it('本文欠落・引用変更・未知項目・PDFとの相違を拒否する', () => {
     const missing = structuredClone(presentation);
     missing.sections[0].factIds.pop();

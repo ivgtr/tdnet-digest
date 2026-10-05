@@ -1479,3 +1479,9 @@ v0.6の時間軸別の見方と次回確認点は、現行の `AdditionalAnalysi
 最終固定画面のsource digestは `7db0243398a5c7ebbfad65bd9bb6aae66d930b120d12631b8f96786800273469`、build digestは `b8fffb93b8d970a03fe1e38b84c8cc38a38a55652e6cecfa136b39f3159882ba`。決算・業績修正・自己株取得・月次とsmart→fullの5経路が同じビルドで成功し、`summary-format-final-browser.json` に時刻付き証拠への参照を記録した。最終差分で全1,107テスト、型チェック、lint、ビルドが成功した。
 
 ローカル証拠は `evaluation/results/local/summary-format-model-runs.json`（9試行への参照）、`summary-format-final-replay.json`（最終表示の再照合）、各caseの時刻付き `*-browser.json` と `*-summary-top.png` / `*-summary-narrow.png`。次の操作はこのブランチの表示例と差分のレビュー。抽出精度改善へ進む場合は、上の未確認が原文単位・意味検証・候補提案のどこで生じたかを既存の証拠から切り分け、変更対象と次の評価枠を先に決める。
+
+**利用者確認後の補足表示の修正（2026-10-05）。** 原文の抽出ブロックごとに引用枠とページリンクを並べた表示は、説明を細切れにしていた。原文引用の保存・照合は維持し、表示では引用枠を撤去した。同じ見出し・ページ内の文途中の断片をつなぎ、句点等で終わる段落・見出し・表の行・ページ境界を保つ。出典リンクは連続する同一ページの補足末尾へ集約し、「説明・補足（原文）」で確定事実との違いを示す。本文を省略・折り畳みせず、生成入力・意味検証・採点の扱いは変更していない。表示文の旧キャッシュを使わないよう分析指紋をv80へ更新した。
+
+恒久テストは分断文・段落・ページ・原文保持・引用枠なしを担当する代表例1件だけ追加した。担当5ファイル44件、型チェックを含むビルド、lintが成功した。最終ビルドのBlueMeme固定API画面では全文引用の表示、引用枠なし、ページ参照、生成・保存復元・後続失敗時の本文保持を確認した（22秒、模擬API4回、外部LLM0回）。画面は `evaluation/results/local/bluememe-20260930-summary-supplement.png`、実行ログは `/tmp/tdnet-supplement-final-browser.log`。冒頭の長い文脈や数値表の比較構成を含む出力全体の再整理は今回の補足修正では未実施で、利用者の再確認へ残す。
+
+利用者の動作確認先 `F:\Download\tdnet-digest-v0.5.0` もこの最終ビルドへ置換し、LICENSE込み24ファイルのSHA-256一致と旧アセットの除去を確認した。直前のビルドは `/tmp/tdnet-digest-supplement.Y29V9J/backup` へ退避した。Chrome側の拡張・TDnetページ再読込と利用者の表示確認は未実施。
