@@ -1357,3 +1357,10 @@ review7-expanded-focused.logは400テスト/4ファイル成功、review7-final-
 最終review9-final-tests.logは1,095テスト/32ファイル成功。型/lint/buildはreview9-final-{type,lint,build}.logで成功。review9-final-source-gate.json/logで同じPDF内容hashの15資料の全ページpreflight成功（IDEC14、エクスモーション13、インソース13、リミックスポイント10項目）。原PDF数値の受理/保存はreview9-final-acceptance.log / holdout-source-2026-10-04T17-21-30-510Z.jsonでファルコム13、リミックスポイント10が成功。調整後の再照合を独立初回成功へ数えず、凍結資料・期待値・評価区分・独立初回失敗を維持する。
 
 最終ビルドの固定画面はreview9-final-smart-browser.log / bluememe-20260930-2026-10-04T17-22-03-335Z-browser.jsonで成功。smart/full・比較・追加分析・保存復元・後続失敗時の要約保持・再試行・旧スキーマ拒否を確認し、模擬API6回・外部LLM0回。無関係な旧版更新画面は再実行せず、v72の履歴を維持しv77の更新確認とはしない。source digestはa26e2abdd582da974a1ba160eba73c2f3ccf5572511c5ae2e8f409d56229efc7、build digestは837989121ed25816043e21e7ebdfb732d099360260d0f81ed4becf506962c873。既存final-ledger.jsonへv76を履歴として保持し、今回の最終証拠・返信・再レビュー依頼を追記する。外部API累計12要約/15API・上限23要約/46API、指定実モデル/利用者Chrome未確認、全体未完了を維持する。
+
+
+**本文の物理境界の最終検証（2026-10-05、分析指紋v78、実装38558b2）。** 修正前8f7724bへ反例を適用したreview10-before.logは7件失敗/130件成功。このうち製品の誤受理は同一行のセミコロンに関する5件で、残り2件は、改行直前のセミコロンを正常語法と仮定したfixtureの過剰な期待だった。review10-focused.logにも後者を保持する。製品の語法を拡張せず、改行/CRLF/字下げの正常例と、実改行と同一行セミコロンの混在を確認するよう訂正した。review10-focused-fixed.logは331件/3ファイル成功。途中の失敗を保持し、凍結期待値を変更しない。
+
+最終review10-final-tests.logは1,104テスト/32ファイル成功。型/lint/buildはreview10-final-{type,lint,build}.logで成功。review10-final-source-gate.json/logで同じPDF内容hashの15資料の全ページpreflight成功（IDEC14、エクスモーション13、インソース13、リミックスポイント10項目）。原PDF数値の受理/保存はreview10-final-acceptance.log / holdout-source-2026-10-05T02-13-12-216Z.jsonでファルコム13、リミックスポイント10が成功。調整後の再照合を独立初回成功へ数えず、凍結資料・期待値・評価区分・独立初回失敗を維持する。
+
+最終ビルドの固定画面はreview10-final-smart-browser.log / bluememe-20260930-2026-10-05T02-19-11-278Z-browser.jsonで成功。smart/full・比較・追加分析・保存復元・後続失敗時の要約保持・再試行・旧スキーマ拒否を確認し、模擬API6回・外部LLM0回。無関係な旧版更新画面は再実行せず、v72の履歴を維持しv78の更新確認とはしない。source digestはdda36d61b128c272529882b416c6fb4eed6748a2b31a1249cd22bbfd05fc17a1、build digestは3ae16dad16f57e6c8acf1ccc07ea62f03cd8d18113fa594c7481458709bb0215。既存final-ledger.jsonへv77を履歴として保持し、今回の最終証拠・返信・再レビュー依頼を追記する。外部API累計12要約/15API・上限23要約/46API、指定実モデル/利用者Chrome未確認、全体未完了を維持する。
