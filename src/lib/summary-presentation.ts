@@ -15,6 +15,7 @@ import {
   isSourceMetadata,
   isRoutineExplanation,
 } from './summary-content-policy';
+import { reportingMetricKey } from './metric-semantics';
 import { companyExcerpt } from './summary-company-excerpt';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
@@ -103,7 +104,7 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
         (f) =>
           f.semantics.metricKind !== 'rate' &&
           /^(?:売上高|売上収益|営業収益)$/.test(f.label) &&
-          f.valueKind !== 'forecastBefore'
+          f.semantics.state === preferredState
       )
     );
     take(
@@ -111,7 +112,7 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
         (f) =>
           f.semantics.metricKind === 'amount' &&
           /^(?:営業利益|営業損失)$/.test(f.label) &&
-          f.valueKind !== 'forecastBefore'
+          f.semantics.state === preferredState
       )
     );
     take(
@@ -119,15 +120,15 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
         (f) =>
           f.semantics.metricKind === 'amount' &&
           /^(?:経常利益|経常損失)$/.test(f.label) &&
-          f.valueKind !== 'forecastBefore'
+          f.semantics.state === preferredState
       )
     );
     take(
       primary.find(
         (f) =>
           f.semantics.metricKind === 'amount' &&
-          /(?:純利益|純損失|当期利益|当期損失)$/.test(f.label) &&
-          f.valueKind !== 'forecastBefore'
+          reportingMetricKey(f.label) === 'netProfit' &&
+          f.semantics.state === preferredState
       )
     );
     if (facts.documentType === 'earnings')
@@ -175,15 +176,29 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
           /減収|減益|増収|増益/.test(e.text)
       );
       if (resultFacts.length || resultExcerpts.length) {
-        resultFacts.forEach(take);
-        overview.push(...resultExcerpts.map((e) => e.id));
+        if (resultFacts.length) take(resultFacts[0]);
+        else {
+          const reason = resultExcerpts.find((e) =>
+            /要因|寄与|牽引|影響|効果|反動|によ|価格|需要|コスト/.test(e.text)
+          );
+          if (reason) overview.push(reason.id);
+        }
         continue;
       }
     }
     if (verified.length) take(verified[0]);
     else {
       const excerpt = highlights.find(
-        (e) => e.role !== 'notes' && explanationRole(e.text) === role
+        (e) =>
+          e.role !== 'notes' &&
+          e.role !== 'dividend' &&
+          explanationRole(e.text) === role &&
+          (role !== 'condition' ||
+            facts.documentType !== 'earnings' ||
+            (['performance', 'outlook', 'operations'].includes(e.role) &&
+              /季節|偏る|業績予想|見通し|需要|コスト|為替|原材料|未定|影響/.test(e.text))) &&
+          (facts.documentType !== 'earnings' ||
+            /売上|収益|利益|損失|業績|配当|需要|費用|コスト|季節/.test(e.text))
       );
       if (excerpt) overview.push(excerpt.id);
     }

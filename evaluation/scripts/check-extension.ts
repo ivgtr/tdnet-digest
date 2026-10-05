@@ -173,6 +173,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       ...(reviewCase === 'summary-format-daiseki' ? { id: 'daiseki-20261005', code: '9793' } : {}),
       ...(reviewCase === 'summary-format-echo' ? { id: 'echo-20261005', code: '7427' } : {}),
       ...(reviewCase === 'summary-format-world' ? { id: 'world-20261005', code: '3612' } : {}),
+      ...(reviewCase === 'summary-format-createsd'
+        ? { id: 'createsd-20261005', code: '3148' }
+        : {}),
       ...(reviewCase?.startsWith('summary-format-nachi')
         ? {
             id:
@@ -188,15 +191,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           ? '2027年２月期第２四半期（中間期）業績予想の修正に関するお知らせ'
           : reviewCase === 'summary-format-world'
             ? '2027年２月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）'
-            : reviewCase === 'summary-format-kyokuto'
-              ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
-              : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
-                ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
-                : reviewCase?.startsWith('summary-format-nachi')
-                  ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
-                  : reviewFixture.documentType === 'earnings'
-                    ? '2027年3月期 決算短信〔日本基準〕（連結）'
-                    : '追加セルフレビュー用開示',
+            : reviewCase === 'summary-format-createsd'
+              ? '2027年５月期 第１四半期決算短信〔日本基準〕（連結）'
+              : reviewCase === 'summary-format-kyokuto'
+                ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
+                : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
+                  ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
+                  : reviewCase?.startsWith('summary-format-nachi')
+                    ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
+                    : reviewFixture.documentType === 'earnings'
+                      ? '2027年3月期 決算短信〔日本基準〕（連結）'
+                      : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure =
@@ -271,6 +276,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           reviewCase?.startsWith('summary-format-nachi') ||
           reviewCase === 'summary-format-daiseki' ||
           reviewCase === 'summary-format-world' ||
+          reviewCase === 'summary-format-createsd' ||
           reviewCase === 'summary-format-echo'
           ? 'public-PDF-through-offscreen'
           : 'synthetic-PDF-through-offscreen'
@@ -777,6 +783,31 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.reading = reading;
     }
     if (reviewCase === 'summary-format-world') {
+      const overview = body.split('業績と増減要因')[0].normalize('NFKC').replace(/\s|,/g, '');
+      assert.ok(overview.includes('親会社の所有者に帰属する中間利益'));
+      for (const term of ['約+4.2%', '5877百万円', '5640百万円'])
+        assert.ok(overview.includes(term), `中間利益の当期比較が欠落: ${term}`);
+      assert.ok(!overview.includes('12600百万円'), '通期予想が当期実績へ混入しました');
+      assert.ok(!overview.includes('サステナビリティ'));
+      assert.equal((overview.match(/会社説明\(原文抜粋\)/g) ?? []).length, 1);
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      const excerpts = await summary
+        .locator('li')
+        .evaluateAll((nodes: HTMLElement[]) =>
+          nodes.filter((n) => !n.closest('details')).map((n) => n.textContent?.trim() ?? '')
+        );
+      assert.ok(
+        !excerpts.some((text: string) => /^[)）]を早期適用/.test(text)),
+        '引用内の句点で文が分断されました'
+      );
+      assert.ok(reading.includes('人材オペレーション'), 'ページをまたぐ説明が分断されました');
+      assert.ok(!reading.includes('これらの業績予想のみに依拠して投資判断'));
+      assert.ok(!reading.includes('業績予想の前提となる条件及び業績予想のご利用'));
+      assert.ok(!excerpts.some((text: string) => text === '純損益に振替えられる可能性のある項目'));
+      evidence.reading = reading;
       const facts = stored.value.facts.facts;
       for (const [value, year] of [
         [77.11, 2027],
@@ -794,6 +825,19 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
       }
       assert.equal(completedTrace.outcome, 'firstSuccess');
+    }
+    if (reviewCase === 'summary-format-createsd') {
+      const facts = stored.value.facts.facts;
+      for (const [value, periodKind] of [
+        [262800, 'cumulativeQ2'],
+        [541000, 'fullYear'],
+      ] as const) {
+        const f = facts.find((f: any) => f.value === value && f.label === '売上高');
+        assert.equal(f?.semantics.periodKind, periodKind);
+        assert.equal(f?.semantics.state, 'forecast');
+      }
+      assert.equal(completedTrace.outcome, 'firstSuccess');
+      assert.deepEqual(stored.value.facts.unverified, []);
     }
     if (reviewCase === 'summary-format-daiseki') {
       const reading = (await displayedFacts(summary))

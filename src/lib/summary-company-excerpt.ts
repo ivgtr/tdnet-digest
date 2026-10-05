@@ -12,6 +12,25 @@ const qualification =
   /ただし|但し|しかし|一方|ものの|ではなく|ではありません|を除|に限|承認|条件|可能性|未定|不確実|速報|予定|上限|下限|概算|合理的に.*(?:見積|算定)/;
 const lead = /^(?:以上の結果、|なお、|したがって、|加えて、|この結果、|また、)/;
 
+/** Quoted full stops and parenthetical definitions stay inside their sentence. */
+function literalSentences(text: string): string[] {
+  const closing: string[] = [];
+  const pairs: Record<string, string> = { '「': '」', '『': '』', '（': '）', '(': ')' };
+  const sentences: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (pairs[c]) closing.push(pairs[c]);
+    else if (c === closing[closing.length - 1]) closing.pop();
+    else if (c === '。' && !closing.length) {
+      sentences.push(text.slice(start, i + 1));
+      start = i + 1;
+    }
+  }
+  if (start < text.length) sentences.push(text.slice(start));
+  return sentences;
+}
+
 /** Literal reading excerpts only; the complete source remains in its closed source group.
  * Select sentences or explicit causal clauses, never a character-count prefix or a paraphrase. */
 export function companyExcerpt(
@@ -26,7 +45,7 @@ export function companyExcerpt(
   if (isSourceMetadata(text) || isRoutineExplanation(text)) return null;
   if (payment) return payment;
 
-  const sentences = text.match(/[^。]+(?:。|$)/g) ?? [];
+  const sentences = literalSentences(text);
   if (!sentences.length) return null;
   // General economic introductions and bridges do not explain this company's result.
   if (

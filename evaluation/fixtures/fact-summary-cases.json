@@ -3814,5 +3814,416 @@
         }
       }
     ]
+  },
+  {
+    "id": "createsd-20261005",
+    "code": "3148",
+    "date": "2026-10-05",
+    "title": "2027年５月期 第１四半期決算短信〔日本基準〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261002545520.pdf",
+    "sourceHash": "f9b5c94eaf749f87e18842c3bf9ee04f27536e8c5c419a592c5af54114d0fa75",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 129540,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5404,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5630,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 3788,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり四半期純利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 58.64,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 121586,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5633,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5908,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 3996,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり四半期純利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 61.87,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 541000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 25300,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 26500,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 17000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 263.15,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      }
+    ]
   }
 ]

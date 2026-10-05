@@ -7,7 +7,6 @@ import {
   revalidatePresentation,
   validatePresentation,
 } from './summary-presentation';
-import { sourceInventory } from './summary-source-inventory';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import { summaryResultId } from './summary-result-id';
 import corpus from './fixtures/ir-semantic-corpus.json';
@@ -23,6 +22,8 @@ import {
   comparisonIssue,
   comparisonGrowth,
 } from './summary-comparison';
+import { companyExcerpt } from './summary-company-excerpt';
+import { paragraphGroups, sourceInventory } from './summary-source-inventory';
 import { isSourceMetadata } from './summary-content-policy';
 
 const page = textPage(expectation.text);
@@ -40,6 +41,40 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 
 describe('冒頭と本文の保持・復元・原文参照', () => {
+  it('中間利益の実績を通期予想と区別し、理由は一つ、引用中の句点とページをまたぐ文は保つ', () => {
+    const current = {
+      ...facts.facts[1],
+      id: 'actual-net',
+      label: '親会社の所有者に帰属する中間利益',
+    };
+    const future = {
+      ...current,
+      id: 'forecast-net',
+      label: '親会社の所有者に帰属する当期利益',
+      valueKind: 'forecast' as const,
+      semantics: { ...current.semantics, state: 'forecast' as const },
+    };
+    const document = { ...facts, facts: [...facts.facts, future, current] };
+    const reasons = ['新店効果により増収となりました。', '価格転嫁により増益となりました。'];
+    const first = textPage(
+      expectation.text + '\n1. 経営成績に関する説明\n' + reasons.join('\n') + '\n新事業は「ソリュー'
+    );
+    const second = textPage('株式会社テスト 2026年3月期 決算短信\nション」の提案を進めました。', 2);
+    const display = buildPresentation(document, [first, second]);
+    expect(display.overview).toContain(current.id);
+    expect(display.overview).not.toContain(future.id);
+    expect(display.overview.filter((id) => id.startsWith('source:')).length).toBeLessThanOrEqual(1);
+    const note =
+      '（注）基準「表示」（以下「本基準」という。）を早期適用しており、会計方針の変更を反映しています。';
+    expect(companyExcerpt({ text: note, role: 'performance' })).toBe(note);
+    expect(
+      paragraphGroups(sourceInventory([first, second], undefined, 'earnings'))
+        .map((e) => e.text)
+        .join('\n')
+    ).toContain('新事業は「ソリュー ション」の提案を進めました。');
+    expect(display.excerpts.some((e) => e.text === reasons[1])).toBe(true);
+  });
+
   it('目次・定型注意書き・記載省略・該当なしを冒頭の理由や条件にせず全文は保持する', () => {
     const notice =
       '※ 添付される四半期連結財務諸表に対する公認会計士又は監査法人によるレビュー：無\n※ 業績予想の適切な利用に関する説明、その他特記事項\n本資料に記載されている業績予想につきましては発表日現在のデータに基づき作成したものであり、予想につきましては様々な不確定要素が内在しておりますので、実際の業績はこれらの予想数値と異なる可能性があります。なお、上記予想に関する事項は、（添付資料）２ページ「（３）連結業績予想などの将来予測情報に関する説明」をご参照ください。';
@@ -51,6 +86,13 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     const risk = '新規事業は承認を条件に実施する予定です。';
     expect(isSourceMetadata(notice)).toBe(true);
     expect(isSourceMetadata(notice + risk)).toBe(false);
+    const wrappedNotice =
+      '※ 業績予想の適切な利用に関する説明、その他特記事項（将来に関する記述等についてのご注意）本資料に記載されている業績見通し等の将来に関する記述は、その達成を約束するものではありません。また、実際の業績は様々な要因により大きく異なる可能性があります。業績予想の前提となる条件及び業績予想のご利用にあたっての注意事項等については、添付資料Ｐ.６「１.連結業績予想などの将来予測情報に関する説明」をご覧ください。';
+    expect(isSourceMetadata(wrappedNotice)).toBe(true);
+    expect(isSourceMetadata(wrappedNotice + risk)).toBe(false);
+    expect(
+      companyExcerpt({ text: '純損益に振替えられる可能性のある項目', role: 'performance' })
+    ).toBeNull();
     const source = textPage(
       expectation.text +
         '\n' +

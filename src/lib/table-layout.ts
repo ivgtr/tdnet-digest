@@ -244,7 +244,7 @@ export function buildTableRegions(page: {
         (physical.some(
           (row) =>
             row.some((s) => Math.abs(s.y - q.y) <= Math.min(s.height, q.height) * 1.2) &&
-            /20\d{2}年\d{1,2}月(?:期|\d{1,2}日|度)?|通期|予想|実績|増減/.test(
+            /20\d{2}年\d{1,2}月(?:期|\d{1,2}日|度)?|第[1-4]四半期|中間期|通期|予想|実績|増減/.test(
               normalized(
                 row
                   .filter((s) => s.x + s.width < cx(unitRow[0]))
@@ -253,7 +253,7 @@ export function buildTableRegions(page: {
               )
             )
         ) ||
-          /予想|実績|通期|20\d{2}年/.test(
+          /予想|実績|第[1-4]四半期|中間期|通期|20\d{2}年/.test(
             normalized(
               tableRowAxis(
                 {

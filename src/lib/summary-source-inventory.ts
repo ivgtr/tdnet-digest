@@ -27,6 +27,8 @@ export function paragraphGroups(excerpts: SourceExcerpt[]): SourceExcerpt[] {
   const groups: SourceExcerpt[] = [];
   let previous: SourceExcerpt | undefined;
   for (const excerpt of excerpts) {
+    if (excerpt.role === 'document') continue;
+    if (/^\s*[-―－]\s*\d+\s*[-―－]\s*$/.test(excerpt.text)) continue;
     if (excerpt.kind !== 'paragraph') {
       previous = undefined;
       continue;
@@ -35,9 +37,10 @@ export function paragraphGroups(excerpts: SourceExcerpt[]): SourceExcerpt[] {
     if (
       previous &&
       last &&
-      previous.page === excerpt.page &&
+      (previous.page === excerpt.page || excerpt.page === previous.page + 1) &&
       previous.role === excerpt.role &&
-      previous.heading?.id === excerpt.heading?.id &&
+      (previous.heading?.id === excerpt.heading?.id ||
+        (excerpt.page === previous.page + 1 && excerpt.heading === null)) &&
       !/[。！？!?][」』）)\]】]*\s*$/.test(previous.text)
     ) {
       last.text += ' ' + excerpt.text;

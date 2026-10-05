@@ -3785,3 +3785,72 @@ it.each([
     ).facts
   ).toEqual(result.facts);
 });
+
+it('罫線セルを共有する四半期予想と通期予想を物理行ごとに照合し、別行の期間を代用しない', () => {
+  const rows: Array<[string, number, number, number]> = [
+    ['会社名 株式会社テスト', 0, 20, 240],
+    ['2027年3月期 決算短信〔日本基準〕（連結）', 0, 40, 400],
+    ['3. 2027年3月期の連結業績予想', 0, 70, 350],
+    ['売上高', 300, 110, 50],
+    ['営業利益', 500, 110, 60],
+    ['百万円', 300, 140, 50],
+    ['百万円', 500, 140, 50],
+    ['第2四半期(累計)', 10, 170, 140],
+    ['100', 310, 170, 30],
+    ['10', 510, 170, 30],
+    ['通期', 10, 200, 40],
+    ['200', 310, 200, 30],
+    ['20', 510, 200, 30],
+  ];
+  const paths = [
+    ...[0, 250, 450, 650].map((x) => [0, x, -100, 1, x, -220]),
+    ...[100, 160, 220].map((y) => [0, 0, -y, 1, 650, -y]),
+  ];
+  const page = extractPageLayout(
+    rows.map(([str, x, y, width]) => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, -y],
+      width,
+      height: 10,
+      hasEOL: false,
+      fontName: 'test',
+    })) as TextItem[],
+    1,
+    paths.map((commands, index) => ({
+      index,
+      fn: 'constructPath',
+      args: ['stroke', [commands], null],
+    }))
+  );
+  const ctx = buildDocumentContext([page]);
+  expect(ctx.tableMappings).toHaveLength(4);
+  const fs = ctx.tableMappings.map((h) => {
+    const axis = h.periodIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
+    expect(axis).not.toMatch(/四半期.*通期/);
+    const f = numberCandidate(page, '売上高');
+    f.label = h.metricIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
+    f.value = Number(page.quantities.find((q) => q.id === h.valueId)!.text);
+    f.period = '2027年3月期' + (axis.includes('四半期') ? '第2四半期' : '');
+    f.semantics.periodKind = axis.includes('四半期') ? 'cumulativeQ2' : 'fullYear';
+    f.valueKind = f.semantics.state = 'forecast';
+    f.evidence = { kind: 'table', ...h, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const source = serializeCandidateSource([page], undefined, 'earnings');
+  expect(source).toContain('通期');
+
+  const accepted = reviewCandidates(candidateResponse(fs, [page], 'earnings'), 'earnings', [page]);
+  expect(accepted.facts).toHaveLength(4);
+  expect(
+    coverageReport('earnings', [page], accepted.facts)
+      .filter((s) => /通期予想.*(?:revenue|operatingProfit)/.test(s.requirement))
+      .every((s) => s.status === 'satisfied')
+  ).toBe(true);
+  const wrong = structuredClone(fs.find((f) => f.value === 100)!);
+  wrong.period = '2027年3月期';
+  wrong.semantics.periodKind = 'fullYear';
+  expect(
+    reviewCandidates(candidateResponse([wrong], [page], 'earnings'), 'earnings', [page]).facts
+  ).toHaveLength(0);
+});

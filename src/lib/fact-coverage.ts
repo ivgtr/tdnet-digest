@@ -3,6 +3,7 @@ import {
   matchesReportingPeriod,
   periodKind,
   reportingPeriodShape,
+  reportingPeriodShapes,
 } from './period-semantics';
 import {
   NET_PROFIT_METRIC,
@@ -1756,9 +1757,15 @@ export function coverageReport(
                 } catch {
                   // Retain a matching original fiscal/quarter role even when its
                   // qualifier cannot be proved. Preflight reports the source defect.
+                  const axisShapes = reportingPeriodShapes(u.axis);
+                  const inheritedShapes = reportingPeriodShapes(u.context);
+                  // Ambiguous units are not candidates for this obligation. A
+                  // rejected local unit must not abort discovery of other sources.
+                  if (axisShapes.length > 1 || (!axisShapes.length && inheritedShapes.length > 1))
+                    return false;
                   return (
                     sourceFiscalPeriod(u.axis, u.context) === target.period &&
-                    (reportingPeriodShape(u.axis) ?? reportingPeriodShape(u.context)) ===
+                    (axisShapes[0] ?? inheritedShapes[0] ?? null) ===
                       (reportingPeriodShape(target.quarter ?? '') ?? null)
                   );
                 }

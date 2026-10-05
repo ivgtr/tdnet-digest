@@ -613,3 +613,100 @@ export async function echoSummaryFormatFixture() {
     ],
   };
 }
+
+/** Forecast rows share one ruled cell; Q2 and full-year axes must stay independent. */
+export async function createsdSummaryFormatFixture() {
+  const { pdf, pages } = await publicPdf(
+    'createsd',
+    'f9b5c94eaf749f87e18842c3bf9ee04f27536e8c5c419a592c5af54114d0fa75'
+  );
+  const candidates: Candidate[] = [];
+  for (const [ids, year, quarter, state, dividend] of [
+    [['p1s55', 'p1s59', 'p1s63', 'p1s67', 'p1s115'], 2027, 1, 'actual', false],
+    [['p1s73', 'p1s77', 'p1s81', 'p1s85', 'p1s120'], 2026, 1, 'actual', false],
+    [['p1s221', 'p1s225', 'p1s229', 'p1s233', 'p1s237'], 2027, 2, 'forecast', false],
+    [['p1s240', 'p1s244', 'p1s248', 'p1s252', 'p1s256'], 2027, 0, 'forecast', false],
+    [['p1s189', 'p1s192', 'p1s194'], 2027, 0, 'forecast', true],
+  ] as const) {
+    ids.forEach((valueId, i) =>
+      candidates.push({
+        candidateId: `c${candidates.length + 1}`,
+        importance: 'key',
+        kind: 'number',
+        source: {
+          kind: 'table',
+          valueId,
+          tableId: sourceTableId(pages[0], valueId),
+          contextBindingId: `ctx:${valueId}`,
+        },
+        meaning: {
+          subject: '株式会社クリエイトSDホールディングス',
+          scope: dividend ? null : '連結',
+          basis: dividend ? null : '日本基準',
+          period: `${year}年5月期${quarter ? `第${quarter}四半期` : ''}`,
+          periodKind: quarter === 1 ? 'cumulativeQ1' : quarter === 2 ? 'cumulativeQ2' : 'fullYear',
+          metricKind: dividend || i === 4 ? 'perShare' : 'amount',
+          state,
+          polarity: 'affirmative',
+        },
+      })
+    );
+  }
+  for (const blockId of ['p1b35', 'p1b44'])
+    candidates.push({
+      candidateId: `c${candidates.length + 1}`,
+      importance: 'key',
+      kind: 'event',
+      source: {
+        kind: 'prose',
+        blockId,
+        assertionId: `${blockId}:a1`,
+        quantityId: null,
+        metric: null,
+        contextBindingId: `ctx:${blockId}`,
+      },
+      meaning: {
+        subject: '株式会社クリエイトSDホールディングス',
+        scope: blockId === 'p1b44' ? '連結' : null,
+        basis: blockId === 'p1b44' ? '日本基準' : null,
+        period: null,
+        periodKind: 'none',
+        metricKind: 'none',
+        state: 'unspecified',
+        polarity: 'negative',
+      },
+    });
+  const first = JSON.stringify({
+    candidateVersion: 4,
+    documentType: 'earnings',
+    candidates,
+    unverified: [],
+  });
+  const review = reviewCandidates(first, 'earnings', pages);
+  assert.deepEqual(review.unverified, []);
+  assert.equal(review.facts.length, 25);
+  assert.deepEqual(
+    review.facts.filter((f) => f.kind === 'number').map((f) => f.value),
+    [
+      129540, 5404, 5630, 3788, 58.64, 121586, 5633, 5908, 3996, 61.87, 262800, 11600, 12200, 8250,
+      127.7, 541000, 25300, 26500, 17000, 263.15, 48, 48, 96,
+    ]
+  );
+  const legacy = parseFactSummary(
+    JSON.stringify({ version: 6, documentType: 'earnings', facts: review.facts, unverified: [] }),
+    'earnings',
+    pages
+  );
+  return {
+    pdf,
+    pages,
+    documentType: 'earnings' as const,
+    repairRequired: false,
+    first,
+    repair: first,
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [],
+    expected: ['129540', '262800', '541000', '127.70', '263.15', '変更なし'],
+  };
+}
