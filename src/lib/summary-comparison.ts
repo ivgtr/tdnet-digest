@@ -6,14 +6,49 @@ export interface SummaryComparison {
   direction: 'up' | 'down' | 'same';
 }
 
-/** Compare exact source decimals; no derived percentage, rounding or range midpoint. */
-function compare(a: string, b: string): SummaryComparison['direction'] {
+function alignedDecimals(a: string, b: string): [bigint, bigint] {
   const scale = Math.max(a.split('.')[1]?.length ?? 0, b.split('.')[1]?.length ?? 0);
   const integer = (value: string) => {
     const [whole, fraction = ''] = value.split('.');
     return BigInt(whole + fraction.padEnd(scale, '0'));
   };
-  return integer(a) > integer(b) ? 'up' : integer(a) < integer(b) ? 'down' : 'same';
+  return [integer(a), integer(b)];
+}
+
+/** Compare exact source decimals without a range midpoint. */
+function compare(a: string, b: string): SummaryComparison['direction'] {
+  const [now, before] = alignedDecimals(a, b);
+  return now > before ? 'up' : now < before ? 'down' : 'same';
+}
+
+export type ComparisonGrowth = { kind: 'change' | 'loss'; rate: string } | { kind: 'zeroBase' };
+
+/** Display-only estimate from an already matched pair; never a source fact. */
+export function comparisonGrowth(
+  current: VerifiedFact,
+  comparison: SummaryComparison
+): ComparisonGrowth | null {
+  if (comparison.axis !== 'year') return null;
+  const [now, before] = alignedDecimals(
+    current.quantity!.decimal!,
+    comparison.reference.quantity!.decimal!
+  );
+  if (before === 0n) return { kind: 'zeroBase' };
+  const profit = /利益|損失/.test(current.label);
+  // Sign changes have no meaningful ordinary growth rate.
+  if (profit && ((before < 0n && now > 0n) || (before > 0n && now < 0n))) return null;
+  const loss =
+    (profit && before < 0n && now <= 0n) ||
+    (/損失$/.test(current.label) && before > 0n && now >= 0n);
+  if (!loss && (now < 0n || before < 0n)) return null;
+  const abs = (value: bigint) => (value < 0n ? -value : value);
+  const delta = loss ? abs(now) - abs(before) : now - before;
+  const base = abs(before);
+  // One decimal place, rounded half away from zero, with no Number overflow.
+  const tenths = (abs(delta) * 1000n + base / 2n) / base;
+  const magnitude = tenths === 0n && delta !== 0n ? '0.1%未満' : `${tenths / 10n}.${tenths % 10n}%`;
+  const sign = loss || delta === 0n ? '' : delta > 0n ? '+' : '−';
+  return { kind: loss ? 'loss' : 'change', rate: `${sign}${magnitude}` };
 }
 
 export function summaryComparison(
@@ -76,7 +111,7 @@ export function comparisonLabel(current: VerifiedFact, comparison: SummaryCompar
     if (/損失$/.test(current.label) && now !== 'down' && before !== 'down')
       return direction === 'up' ? '↓損失拡大' : '↑損失縮小';
     if (before === 'down' && now === 'up') return '↑黒字転換';
-    if (before === 'up' && now === 'down') return '↓赤字転落';
+    if (before !== 'down' && now === 'down') return '↓赤字転落';
     if (before === 'down' && now === 'same') return '↑赤字解消';
     if (now === 'down' && before === 'down') return direction === 'up' ? '↑赤字縮小' : '↓赤字拡大';
     return direction === 'up' ? '↑増益' : '↓減益';

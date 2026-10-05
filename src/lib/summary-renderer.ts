@@ -9,7 +9,13 @@ import { unchangedDividend, unchangedDividendReference } from './dividend-semant
 import { paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 import { explanationRole } from './summary-content-policy';
 import { companyExcerpt } from './summary-company-excerpt';
-import { summaryComparison, comparisonLabel, comparisonIssue } from './summary-comparison';
+import {
+  summaryComparison,
+  comparisonLabel,
+  comparisonIssue,
+  comparisonGrowth,
+  type SummaryComparison,
+} from './summary-comparison';
 
 export const stateLabels = {
   actual: '実績',
@@ -132,6 +138,22 @@ function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
     ]);
   return key(amount) === key(rate);
 }
+function overviewGrowth(f: VerifiedFact, comparison: SummaryComparison, facts: FactSummary) {
+  const growth = comparisonGrowth(f, comparison);
+  const rates = facts.facts.filter((r) => canPair(f, r));
+  const rate = rates.length === 1 ? rates[0] : undefined;
+  if (growth?.kind === 'change' && rate)
+    return { text: `（原文 ${numberText(rate)}）`, calculated: false };
+  if (growth?.kind === 'zeroBase')
+    return {
+      text: `（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'}0のため比率なし）`,
+      calculated: false,
+    };
+  return {
+    text: growth ? ` 約${literalMarkdown(growth.rate)}` : '',
+    calculated: growth !== null,
+  };
+}
 function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
   const comparison = summaryComparison(f, facts.facts);
   if (comparison) {
@@ -140,8 +162,9 @@ function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
       comparison.axis === 'revision'
         ? `${numberText(before)} → ${numberText(f)}`
         : `${numberText(f)}（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${numberText(before)}）`;
+    const percent = overviewGrowth(f, comparison, facts).text;
     const rate = facts.facts.find((r) => canPair(f, r));
-    return `${literalMarkdown(f.label)}：**${comparisonLabel(f, comparison)}** ${values}${rate ? `（原文の増減率 ${numberText(rate)}）` : ''}`;
+    return `${literalMarkdown(f.label)}：**${comparisonLabel(f, comparison)}${percent}** ${values}${comparison.axis === 'revision' && rate ? `（原文の増減率 ${numberText(rate)}）` : ''}`;
   }
   const rate = facts.facts.find((r) => canPair(f, r));
   if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;
@@ -373,10 +396,27 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       lines.push(`- 会社説明（原文抜粋）：${text}`);
     }
   }
+  const overviewFacts = presentation.overview.flatMap((id) => {
+    const fact = byId.get(id);
+    return fact ? [fact] : [];
+  });
+  if (
+    overviewFacts.some((f) => {
+      const comparison = summaryComparison(f, facts.facts);
+      return comparison && overviewGrowth(f, comparison, facts).calculated;
+    })
+  )
+    lines.push('', '※「約」の率は表示金額から計算。原文の増減率と端数処理で異なる場合があります。');
   if (presentation.overview.length)
     lines.push(
       '',
-      `根拠：${references(presentation.overview.map((id) => byId.get(id)?.page ?? sources.get(id)!.page))}`
+      `根拠：${references([
+        ...presentation.overview.map((id) => byId.get(id)?.page ?? sources.get(id)!.page),
+        ...overviewFacts.flatMap((f) => {
+          const comparison = summaryComparison(f, facts.facts);
+          return comparison ? [comparison.reference.page] : [];
+        }),
+      ])}`
     );
   for (const section of presentation.sections) {
     const members = section.factIds.map((id) => byId.get(id)!);

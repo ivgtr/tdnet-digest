@@ -712,6 +712,25 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
     assert.ok(stored.value.presentation?.version === 2);
+    if (
+      !reviewFixture &&
+      !withComparison &&
+      !reviewSettingsChange &&
+      item.id === 'bluememe-20260930'
+    ) {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of [
+        '売上高:↑増収約+39.5%3,298百万円(前期2,365百万円)',
+        '営業利益:↑増益約+20.5%47百万円(前期39百万円)',
+        '経常利益:↑増益約+75.9%51百万円(前期29百万円)',
+        '純利益:↑黒字転換24百万円(前期-10百万円)',
+      ])
+        assert.ok(reading.includes(term), `成長率・黒字転換が欠落: ${term}`);
+      evidence.reading = reading;
+    }
     if (reviewCase?.startsWith('summary-format-nachi')) {
       const reading = (await displayedFacts(summary))
         .join('\n')
@@ -731,10 +750,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
       assert.equal(previous.length, 5);
       for (const term of [
-        '売上高:↑増収192,326百万円(前年同期174,194百万円)',
-        '営業利益:↑増益11,457百万円(前年同期6,628百万円)',
-        '経常利益:↑増益10,873百万円(前年同期5,141百万円)',
-        '純利益:↑増益6,629百万円(前年同期3,640百万円)',
+        '売上高:↑増収約+10.4%192,326百万円(前年同期174,194百万円)',
+        '営業利益:↑増益約+72.9%11,457百万円(前年同期6,628百万円)',
+        '経常利益:↑増益約+111.5%10,873百万円(前年同期5,141百万円)',
+        '純利益:↑増益約+82.1%6,629百万円(前年同期3,640百万円)',
       ])
         assert.ok(reading.includes(term), `前年の確定値による比較が欠落: ${term}`);
       if (reviewCase === 'summary-format-nachi') {
@@ -755,10 +774,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         .normalize('NFKC')
         .replace(/\s/g, '');
       for (const term of [
-        '売上高:↑増収3,989百万円(前年同期3,935百万円)',
-        '営業利益:↓減益211百万円(前年同期264百万円)',
-        '経常利益:↓減益215百万円(前年同期262百万円)',
-        '純利益:↓減益83百万円(前年同期245百万円)',
+        '売上高:↑増収約+1.4%3,989百万円(前年同期3,935百万円)',
+        '営業利益:↓減益約−20.1%211百万円(前年同期264百万円)',
+        '経常利益:↓減益約−17.9%215百万円(前年同期262百万円)',
+        '純利益:↓減益約−66.1%83百万円(前年同期245百万円)',
         '修正あり',
         '修正前の数値・方向は本資料では未確認',
         '人件費及び原材料費',

@@ -17,7 +17,12 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { VerifiedFact } from './fact-contract';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { reviewCandidates } from './fact-candidates';
-import { summaryComparison, comparisonLabel, comparisonIssue } from './summary-comparison';
+import {
+  summaryComparison,
+  comparisonLabel,
+  comparisonIssue,
+  comparisonGrowth,
+} from './summary-comparison';
 import { isSourceMetadata } from './summary-content-policy';
 
 const page = textPage(expectation.text);
@@ -96,6 +101,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       ])
     ).toBe('比較条件・根拠の対応が未確認');
     expect(comparisonLabel(current, comparison)).toBe('↓減益');
+    expect(comparisonGrowth(current, comparison)).toEqual({ kind: 'change', rate: '−16.7%' });
     const loss = {
       ...current,
       quantity: { ...current.quantity!, decimal: '-100' },
@@ -105,11 +111,18 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       quantity: { ...previous.quantity!, decimal: '-120' },
     } as VerifiedFact;
     expect(comparisonLabel(loss, summaryComparison(loss, [loss, oldLoss])!)).toBe('↑赤字縮小');
+    expect(comparisonGrowth(loss, summaryComparison(loss, [loss, oldLoss])!)).toEqual({
+      kind: 'loss',
+      rate: '16.7%',
+    });
     const lossAmount = { ...current, label: '営業損失' };
     const previousLossAmount = { ...previous, label: '営業損失' };
     expect(
       comparisonLabel(lossAmount, summaryComparison(lossAmount, [lossAmount, previousLossAmount])!)
     ).toBe('↑損失縮小');
+    expect(
+      comparisonGrowth(lossAmount, summaryComparison(lossAmount, [lossAmount, previousLossAmount])!)
+    ).toEqual({ kind: 'loss', rate: '16.7%' });
     expect(
       summaryComparison(current, [
         current,
@@ -125,6 +138,62 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
         },
         [previous]
       )
+    ).toBeNull();
+  });
+  it('成長率は十進値で概算し、符号転換・ゼロ基準・赤字額の率を区別する', () => {
+    const original = facts.facts.find((f) => f.label === '営業利益')!;
+    const pair = (now: string, before: string) => {
+      const current = { ...original, quantity: { ...original.quantity!, decimal: now } };
+      const reference = {
+        ...original,
+        id: 'previous',
+        period: '2025年3月期',
+        quantity: { ...original.quantity!, decimal: before },
+      };
+      return { current, reference, comparison: summaryComparison(current, [current, reference])! };
+    };
+    for (const [now, before, label, growth] of [
+      ['11457', '6628', '↑増益', { kind: 'change', rate: '+72.9%' }],
+      ['-150', '-100', '↓赤字拡大', { kind: 'loss', rate: '50.0%' }],
+      ['20', '-10', '↑黒字転換', null],
+      ['-10', '20', '↓赤字転落', null],
+      ['0', '-100', '↑赤字解消', { kind: 'loss', rate: '100.0%' }],
+      ['-10', '0', '↓赤字転落', { kind: 'zeroBase' }],
+      ['10', '0', '↑増益', { kind: 'zeroBase' }],
+      ['0', '0', '→横ばい', { kind: 'zeroBase' }],
+      ['0', '100', '↓減益', { kind: 'change', rate: '−100.0%' }],
+      ['100', '100', '→横ばい', { kind: 'change', rate: '0.0%' }],
+      ['1.0001', '1', '↑増益', { kind: 'change', rate: '+0.1%未満' }],
+      ['0.9999', '1', '↓減益', { kind: 'change', rate: '−0.1%未満' }],
+      ['1.0005', '1', '↑増益', { kind: 'change', rate: '+0.1%' }],
+      ['0.9995', '1', '↓減益', { kind: 'change', rate: '−0.1%' }],
+      [
+        '20000000000000000000.1',
+        '10000000000000000000.05',
+        '↑増益',
+        { kind: 'change', rate: '+100.0%' },
+      ],
+    ] as const) {
+      const { current, comparison } = pair(now, before);
+      expect(comparisonLabel(current, comparison)).toBe(label);
+      expect(comparisonGrowth(current, comparison)).toEqual(growth);
+    }
+    const { current, reference } = pair('-100', '-120');
+    const summary = { ...facts, facts: [current, reference] };
+    const display = buildPresentation(summary, [page]);
+    const overview = renderFacts(summary, display).split('## 業績と増減要因')[0]!;
+    const html = buildSummaryHtml(overview, null, {
+      companyName: 'テスト',
+      title: '決算',
+      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
+    });
+    expect(html).toContain('↑赤字縮小 約16.7%');
+    expect(html).toContain('-100百万円');
+    expect(html).toContain('前期 -120百万円');
+    expect(overview).toContain('表示金額から計算');
+    expect(summary.facts).toEqual([current, reference]);
+    expect(
+      comparisonGrowth(current, { ...pair('-100', '-120').comparison, axis: 'revision' })
     ).toBeNull();
   });
   it('修正前後の数値と上方・下方・据え置きを冒頭に表示する', () => {
