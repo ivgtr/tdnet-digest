@@ -132,11 +132,12 @@ describe('OpenRouterの任意推論', () => {
   it('推論無効を明示し、強度との競合は送信前に拒否する', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] }),
-          { status: 200 }
-        )
+      .mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] }),
+            { status: 200 }
+          )
       );
     vi.stubGlobal('fetch', fetchMock);
     const router = {
@@ -150,9 +151,31 @@ describe('OpenRouterの任意推論', () => {
     expect(body.reasoning).toEqual({ enabled: false });
     expect(body.response_format).toEqual({ type: 'json_object' });
     expect(body.provider).toEqual({ require_parameters: true });
+    const schema = {
+      type: 'json_schema' as const,
+      json_schema: {
+        name: 'current',
+        strict: true as const,
+        schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      },
+    };
+    await generateText(
+      {
+        provider: router.provider,
+        model: router.model,
+        apiKey: router.apiKey,
+        reasoningEffort: 'low',
+        responseFormat: schema,
+      },
+      messages
+    );
+    const structuredBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(structuredBody.response_format).toEqual(schema);
+    expect(structuredBody.reasoning).toEqual({ effort: 'low', exclude: true });
+    expect(structuredBody.provider).toEqual({ require_parameters: true });
     await expect(generateText({ ...router, reasoningEffort: 'low' }, messages)).rejects.toThrow(
       '同時に指定'
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

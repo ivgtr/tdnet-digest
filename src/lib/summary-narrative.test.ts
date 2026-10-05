@@ -719,6 +719,13 @@ describe('説明要約の生成・点検・数値参照', () => {
       }
     );
     expect(vi.mocked(generateText).mock.calls[1][0].reasoningEnabled).toBe(false);
+    for (const index of [1, 2, 3]) {
+      const format = vi.mocked(generateText).mock.calls[index][0].responseFormat;
+      expect(format && typeof format === 'object' && format.type).toBe('json_schema');
+    }
+    expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain(
+      '/sections/0/summary/0/text'
+    );
     expect(
       vi
         .mocked(generateText)

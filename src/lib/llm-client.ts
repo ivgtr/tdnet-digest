@@ -19,7 +19,12 @@ export interface LLMConfig {
     finishReason?: string | null;
     reasoningTokens?: number | null;
   }) => void;
-  responseFormat?: 'json_object';
+  responseFormat?:
+    | 'json_object'
+    | {
+        type: 'json_schema';
+        json_schema: { name: string; strict: true; schema: Record<string, unknown> };
+      };
   signal?: AbortSignal;
   onResponse?: (response: string) => void;
 }
@@ -99,10 +104,13 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
       ...(config.provider === 'openrouter' &&
         (config.reasoningEnabled !== undefined
           ? { reasoning: { enabled: config.reasoningEnabled } }
-          : config.reasoningEffort && { reasoning: { effort: config.reasoningEffort } })),
+          : config.reasoningEffort && {
+              reasoning: { effort: config.reasoningEffort, exclude: true },
+            })),
       ...(config.temperature !== undefined && { temperature: config.temperature }),
-      ...(config.responseFormat === 'json_object' && {
-        response_format: { type: 'json_object' },
+      ...(config.responseFormat && {
+        response_format:
+          config.responseFormat === 'json_object' ? { type: 'json_object' } : config.responseFormat,
         ...(config.provider === 'openrouter' && { provider: { require_parameters: true } }),
       }),
     }),

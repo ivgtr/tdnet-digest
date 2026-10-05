@@ -17,6 +17,7 @@ export interface LLMModel {
   /** Explicitly confirmed provider capability; unknown models are not assumed optional. */
   optionalReasoning?: boolean;
   jsonObject?: boolean;
+  strictJsonSchema?: boolean;
 }
 
 /**
@@ -77,6 +78,7 @@ export const LLM_PROVIDERS: LLMProvider[] = [
         name: 'DeepSeek V4.1 Flash',
         optionalReasoning: true,
         jsonObject: true,
+        strictJsonSchema: true,
       },
       { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
       { id: 'x-ai/grok-code-fast-1', name: 'Grok Code Fast' },
