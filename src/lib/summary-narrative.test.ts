@@ -221,7 +221,7 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
       .mockResolvedValueOnce(JSON.stringify(response))
-      .mockResolvedValueOnce(JSON.stringify(review));
+      .mockResolvedValueOnce(JSON.stringify({ version: 2, issues: review.issues }));
     const attempts: SummaryAttempt[] = [];
     const generated = await generateVerifiedFactSummary(config, 'other', page.text, [page], (a) => {
       attempts.push(a);
@@ -264,6 +264,11 @@ describe('説明要約の生成・点検・数値参照', () => {
     const good = content();
     validateNarrativeContent(good, facts, draft.values, draft.excerpts);
     expect(() => assembleNarrative(good, facts, draft.values, draft.excerpts)).toThrow('SCHEMA');
+    const doubledUnit = structuredClone(good);
+    doubledUnit.sections[0].tables[0].rows[0].cells[1] += '百万円';
+    expect(() =>
+      validateNarrativeContent(doubledUnit, facts, draft.values, draft.excerpts)
+    ).toThrow('単位を重複');
     const emptyCell = structuredClone(good);
     emptyCell.sections[1].tables[0].rows[0].cells[5] = '';
     validateNarrativeContent(emptyCell, facts, draft.values, draft.excerpts);
@@ -393,7 +398,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     const response = synthesisResponse(content());
     const summary = assembleNarrative(response, facts, draft.values, draft.excerpts);
     const badReview = {
-      ...fixedNarrativeReview(summary, facts, draft),
+      version: 2,
       issues: [{ claimId: 'summary-2-0', sourceIds: sources, reason: '納期長期化の条件が欠落' }],
     };
     // A structural repair must not consume the separate semantic repair.
@@ -405,8 +410,9 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockResolvedValueOnce(JSON.stringify(malformedResponse))
       .mockResolvedValueOnce(JSON.stringify(response))
       .mockResolvedValueOnce(JSON.stringify(badReview))
+      .mockResolvedValueOnce(JSON.stringify(malformedResponse))
       .mockResolvedValueOnce(JSON.stringify(response))
-      .mockResolvedValueOnce(JSON.stringify(fixedNarrativeReview(summary, facts, draft)));
+      .mockResolvedValueOnce(JSON.stringify({ version: 2, issues: [] }));
     const repairedAttempts: SummaryAttempt[] = [];
     const repaired = await generateVerifiedFactSummary(config, 'other', page.text, [page], (a) => {
       repairedAttempts.push(a);
@@ -417,6 +423,7 @@ describe('説明要約の生成・点検・数値参照', () => {
       'summary',
       'summaryRepair',
       'summaryReview',
+      'summaryRepair',
       'summaryRepair',
       'summaryReviewRepair',
     ]);

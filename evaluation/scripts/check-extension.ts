@@ -225,10 +225,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     (!fixed ||
       !fixtureSource ||
       reviewCase ||
-      !narrativeReplay.success ||
+      !narrativeReplay.result ||
+      !narrativeReplay.presentation?.narrative ||
       narrativeReplay.item.id !== item.id)
   )
-    throw new Error('説明要約の再生は同じ資料の成功記録・固定API・固定PDF専用です');
+    throw new Error('説明要約の再生は同じ資料の生成・点検済み記録・固定API・固定PDF専用です');
   const reviewUpgrade = args.includes('--review-upgrade');
   if (
     reviewUpgrade &&
@@ -788,7 +789,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
     assert.ok(stored.value.presentation?.version === 3);
     if (narrativeReplay) {
-      assert.deepEqual(expectedErrors(item, stored.value.facts), []);
+      // UI replay must preserve the model evaluation outcome, including warnings.
+      // It is not a way to turn a failed model assessment into a success.
+      const replayErrors = expectedErrors(item, stored.value.facts);
+      assert.deepEqual(replayErrors, narrativeReplay.errors);
       assert.deepEqual(stored.value.presentation, narrativeReplay.presentation);
       assert.deepEqual(stored.value.facts, narrativeReplay.result);
       assert.equal(stored.value.metadata.generationCalls, apiCalls);
@@ -830,6 +834,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.equal((await summary.innerText()).normalize('NFKC').replace(/\s|,/g, ''), reading);
       assert.equal(apiCalls, narrativeReplay.attempts.length);
       evidence.presentation = stored.value.presentation;
+      evidence.modelEvaluationSuccess = narrativeReplay.success;
+      evidence.modelEvaluationErrors = narrativeReplay.errors;
       evidence.metadata = stored.value.metadata;
       evidence.reading = reading;
       evidence.pdfHash = pdfHash;
