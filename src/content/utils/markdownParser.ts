@@ -179,3 +179,35 @@ export function parseMarkdown(markdown: string, pdfUrl?: string): string {
   }
   return result;
 }
+
+/** Fold only the generated source supplement; verified facts and other Markdown stay visible. */
+export function parseSummaryMarkdown(markdown: string, pdfUrl?: string): string {
+  const parser = new Marked({
+    renderer: createStyledRenderer(pdfUrl),
+    gfm: true,
+    breaks: true,
+  });
+  const tokens = parser.lexer(markdown);
+  let html = '';
+  let start = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.type !== 'heading' || token.depth !== 3 || token.text !== '説明・補足（原文）')
+      continue;
+    html += parser.parser(tokens.slice(start, i));
+    let end = i + 1;
+    while (end < tokens.length) {
+      const next = tokens[end];
+      if (next.type === 'heading' && next.depth <= 3) break;
+      end++;
+    }
+    html +=
+      '<details class="tdnet-digest-source" style="margin:8px 0;">' +
+      '<summary style="cursor:pointer;font-size:12px;color:#6b7280;padding:4px 0;">原文の説明・補足</summary>' +
+      parser.parser(tokens.slice(i + 1, end)) +
+      '</details>';
+    start = end;
+    i = end - 1;
+  }
+  return html + parser.parser(tokens.slice(start));
+}

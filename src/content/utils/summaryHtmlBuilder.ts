@@ -6,7 +6,7 @@ import { stateLabels } from '@/lib/fact-summary';
 
 import { SUMMARY_STYLES } from '../constants/styles';
 import type { SummaryMetadata } from '../types/summaryMetadata';
-import { parseMarkdown } from './markdownParser';
+import { parseMarkdown, parseSummaryMarkdown } from './markdownParser';
 import type { ExperimentalScore, ScoreValue } from '@/lib/scoring';
 import type { AdditionalAnalysis, AnalysisView } from '@/lib/additional-analysis';
 import type { Stage } from '../hooks/useSummarize';
@@ -109,7 +109,7 @@ export function buildSummaryHtml(
         </div>
       </div>
       ${buildMetadataHtml(metadata, 'warning')}
-      <div style="${SUMMARY_STYLES.summaryText}">${parseMarkdown(summaryText, rowData.pdfUrl)}</div>
+      <div style="${SUMMARY_STYLES.summaryText}">${parseSummaryMarkdown(summaryText, rowData.pdfUrl)}</div>
       <div id="score-result">${buildScoreStageHtml(score)}</div>
       <div id="analysis-result">${buildAnalysisStageHtml(analysis, facts, rowData.pdfUrl)}</div>
       ${metadataHtml ? `<details style="margin-top:8px;"><summary>生成情報</summary>${metadataHtml}</details>` : ''}

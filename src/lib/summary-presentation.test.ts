@@ -62,6 +62,18 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     });
     expect(html).not.toContain('<blockquote');
     expect(html).toContain('test.pdf#page=2');
+    const sourceToggles = html.match(
+      /<details class="tdnet-digest-source"[^>]*>[\s\S]*?<\/details>/g
+    )!;
+    expect(sourceToggles.length).toBeGreaterThan(0);
+    expect(sourceToggles.every((toggle) => !/^<details[^>]*\bopen\b/.test(toggle))).toBe(true);
+    expect(
+      sourceToggles.every((toggle) => !toggle.includes('<h2') && !toggle.includes('<table'))
+    ).toBe(true);
+    const lastToggle = sourceToggles[sourceToggles.length - 1];
+    expect(lastToggle).toContain('共同開発は承認を条件に 実施する予定です。');
+    expect(lastToggle).toContain('翌年度への影響は 現時点では未定です。');
+    expect(html.slice(0, html.indexOf('class="tdnet-digest-source"'))).toContain('全体要約');
     expect(display.excerpts.map((e) => e.text)).toEqual([
       ...expectation.retained,
       '共同開発は承認を条件に',

@@ -638,12 +638,13 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
     assert.ok(stored.value.presentation?.version === 1);
-    const visibleText = (await summary.innerText()).normalize('NFKC').replace(/\s/g, '');
-    for (const excerpt of stored.value.presentation.excerpts)
-      assert.ok(
-        visibleText.includes(excerpt.text.normalize('NFKC').replace(/\s/g, '')),
-        `原文の表示が欠落: ${excerpt.id}`
-      );
+    const sourceToggles = summary.locator('details.tdnet-digest-source');
+    assert.equal(
+      await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
+        nodes.some((node) => node.open)
+      ),
+      false
+    );
     assert.equal(await summary.locator('details').filter({ hasText: '生成情報' }).count(), 1);
     evidence.presentation = stored.value.presentation;
     await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-top.png` });
@@ -651,10 +652,36 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-narrow.png` });
     await page.setViewportSize({ width: 1280, height: 900 });
     assert.equal(await summary.locator('blockquote').count(), 0);
-    const supplement = summary.getByRole('heading', { name: '説明・補足（原文）', exact: true });
-    if (await supplement.count()) {
-      await supplement.first().scrollIntoViewIfNeeded();
+    if (await sourceToggles.count()) {
+      await sourceToggles.first().locator('summary').click();
+      assert.equal(
+        await sourceToggles.first().evaluate((node: HTMLDetailsElement) => node.open),
+        true
+      );
+      await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) => {
+        for (const node of nodes) node.open = true;
+      });
+    }
+    const visibleText = (await summary.innerText()).normalize('NFKC').replace(/\s/g, '');
+    for (const excerpt of stored.value.presentation.excerpts)
+      assert.ok(
+        visibleText.includes(excerpt.text.normalize('NFKC').replace(/\s/g, '')),
+        `原文の表示が欠落: ${excerpt.id}`
+      );
+    if (await sourceToggles.count()) {
+      await sourceToggles.first().scrollIntoViewIfNeeded();
       await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-supplement.png` });
+      await sourceToggles.first().locator('summary').click();
+      assert.equal(
+        await sourceToggles.first().evaluate((node: HTMLDetailsElement) => node.open),
+        false
+      );
+      await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) => {
+        for (const node of nodes) node.open = false;
+      });
+      evidence.stages.push(
+        'source toggles closed initially; open reveals all source; close preserves facts'
+      );
     }
     const renderedLines = await displayedFacts(summary);
     assert.deepEqual(renderedFactErrors(stored.value.facts.facts, renderedLines), []);
