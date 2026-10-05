@@ -330,12 +330,12 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
   if (
     !record(response) ||
     !exact(response, ['version', 'edits']) ||
-    response.version !== 1 ||
+    response.version !== 2 ||
     !Array.isArray(response.edits) ||
     !response.edits.length ||
     response.edits.length > 100
   )
-    throw new Error('NARRATIVE_SCHEMA:修復はversion=1と空でないedits配列が必要です');
+    throw new Error('NARRATIVE_SCHEMA:修復はversion=2と空でないedits配列が必要です');
   const draft = structuredClone(base);
   const used: string[] = [];
   const names = new Set([
@@ -354,7 +354,7 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
   for (const edit of response.edits) {
     if (
       !record(edit) ||
-      !['replace', 'add', 'remove'].includes(String(edit.op)) ||
+      !['replace', 'add', 'remove', 'cite'].includes(String(edit.op)) ||
       !exact(edit, edit.op === 'remove' ? ['op', 'path'] : ['op', 'path', 'value']) ||
       typeof edit.path !== 'string' ||
       !edit.path.startsWith('/')
@@ -378,7 +378,21 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
       else throw new Error('NARRATIVE_SCHEMA:修復pathの親が存在しません');
     }
     const key = parts[parts.length - 1];
-    if (Array.isArray(target)) {
+    if (edit.op === 'cite') {
+      if (
+        !record(target) ||
+        key !== 'sourceIds' ||
+        !Array.isArray(target.sourceIds) ||
+        !target.sourceIds.every((id) => typeof id === 'string') ||
+        !Array.isArray(edit.value) ||
+        !edit.value.length ||
+        !edit.value.every((id) => typeof id === 'string')
+      )
+        throw new Error('NARRATIVE_SCHEMA:citeは既存sourceIdsへ原文IDを追加する操作です');
+      // The model explicitly selects the added citations. Existing numeric and
+      // semantic evidence is retained; the compiler never chooses missing proof.
+      target.sourceIds = [...new Set([...target.sourceIds, ...edit.value])];
+    } else if (Array.isArray(target)) {
       const index =
         key === '-' && edit.op === 'add'
           ? target.length
@@ -984,7 +998,7 @@ export const NARRATIVE_SYSTEM = `TDnet開示の説明要約を再構成します
 本文の比較表には重要な確定数量をすべて残し、確認済み指標の原文の指標名を保ちます。事業別は開示された全事業（共通部門を含む）の売上・利益・増減率・短い主因を横断表にします。内部取引込みと外部顧客向けを混ぜず、利益の定義、期間、単位、消去調整、区分変更、比較条件を表の近くへ残します。地域・製品の別分類を同じ事業に足しません。受注高は期間中、受注残は期末の残高。前年同期/前年同期末/前期末を区別し、金額と増減、会社が述べた背景・納期等を表で示します。残高増を売上成長確定としません。受注を開示しない業種は販売数量等の開示済み需要指標を扱います。
 CFは営業・投資・財務CF、期首→期末現金同等物の短い表と、主要な営業運転資金/税、設備投資/M&A/売却、借入/返済/還元の背景を要約。小さな科目を逐語列挙しません。負数のCFを分母に成長率を出さず、flowの比較は増減額。投資流出や借入流入を一律に良し悪しとしません。月次表は今回対象月までの当期値と同じ月の比較を中心にし、未到来月の前年値だけを当期推移へ混ぜません。過去年の全明細の再掲は不要ですが、傾向の変化や比較条件は要約します。CF未作成なら残高から推計しません。FCF等の未開示指標を追加しません。
 生成version=3。説明・表の数値は原文と同じ値と単位を丸ごと書き、その数量を含む原文IDをsourceIdsで参照します。数値のIDは生成せず、{{value:...}}も使いません。コードが引用原文の完全な数量に照合してIDを付けます。表に共通単位があっても各数値は「2,677,044千円」「△15百万円」のように単位付きで書きます。複合金額（例1億27百万円）は省略・分割・換算せず原文どおり書きます。原文にない件数を集計しません。原文と一致する日付・時刻・条項・規格・制度名は文字列で書きます。
-比較は{{change:当期の単位付き数量|比較の単位付き数量|種別}}（種別=profit/loss/revenue/stock/flow）、増減額は{{delta:当期の単位付き数量|比較の単位付き数量}}。例{{change:120百万円|100百万円|revenue}}。値の代わりにIDを入れません。両数量の原文を参照し、同じ単位・主体・範囲・定義で期間/基準日をcaption/見出し/行に明記。原文に同条件の当期増減率があれば原文の率と増収/増益/減益等の短い区分を優先表示し、原文率がない場合だけchangeで概算。原文にない計算率やポイント差は直接書きません。利益は符号付き値でprofitとし、コードが黒字転換/赤字転落/赤字縮小拡大を表示します。正の損失額同士だけはlossを使い、損失額を正の利益としません。単位や複合金額をスカラーにできない場合は計算比較を作らず、開示された率を示します。過去年と当期の率を混同しません。
+比較は{{change:当期の単位付き数量|比較の単位付き数量|種別}}（種別=profit/loss/revenue/stock/flow）、増減額は{{delta:当期の単位付き数量|比較の単位付き数量}}。例{{change:120百万円|100百万円|revenue}}。値の代わりにIDを入れません。両数量の原文を参照し、同じ単位・主体・範囲・定義で期間/基準日をcaption/見出し/行に明記。原文に同条件の当期増減率があれば原文の率と増収/増益/減益等の短い区分を優先表示し、原文率がない場合だけchangeで概算。原文にない計算率やポイント差は直接書きません。原文が「4.9％減」なら「4.9%減」とし、原文にない符号を率へ足しません。件数や区分数も列挙から独自に数えません。利益は符号付き値でprofitとし、コードが黒字転換/赤字転落/赤字縮小拡大を表示します。正の損失額同士だけはlossを使い、損失額を正の利益としません。単位や複合金額をスカラーにできない場合は計算比較を作らず、開示された率を示します。過去年と当期の率を混同しません。
 sourceIdsは具体的な意味の根拠となる原文IDです。表のcaptionでは単位・期間・比較条件を述べた原文も参照します。本文は必要な数値と原文の率を比較表に残し、説明では同じ金額を繰り返さず原因・影響・条件を短く整理します。主要財務指標、会計・区分・分割等の比較条件、一時要因も該当する本文へ整理します。会社紹介・一般的な免責・参照案内・情報発信先の一覧で本文を埋めません。製品/サービス開始、取引条件、重要日程等は具体的な内容と意味を要約して残します。原文ID以外のIDやhashは生成しません。JSON形式だけ返します。`;
 
 /** Locate rejected text and its citation field without changing either. */
@@ -1189,10 +1203,10 @@ export async function generateSummaryNarrative(
           semanticAttempt || structureAttempt ? 'summaryRepair' : 'summary',
           NARRATIVE_SYSTEM +
             (patch
-              ? '\n今回は草稿の修復要求です。初稿のversion=3全体は返さず、修復契約version=1のeditsだけ返します。'
+              ? '\n今回は草稿の修復要求です。初稿のversion=3全体は返さず、修復契約version=2のeditsだけ返します。'
               : ''),
           patch
-            ? `修復形式: {"version":1,"edits":[{"op":"replace","path":"/sections/0/summary/0/text","value":"修正した説明"}]}。opはreplace/add/remove。pathは提示した草稿のJSON位置です。変更が必要なtext/sourceIds/cells等だけ修正し、問題のない項目は書き直しません。意味や重要事項を落として拒否を避けず、不足する根拠は明示して追加します。必要な追加説明・表・節はaddで配列へ挿入します。未知の項目・ID・独自の数値は追加しません。修正後の全体を数量照合と独立点検へ渡します。\n修正理由: ${feedback}\n修復箇所と引用欄: ${JSON.stringify(narrativeRepairProblems(repairBase, facts, values, excerpts))}\n修復対象の草稿: ${JSON.stringify(repairBase)}\n根拠入力: ${input}`
+            ? `修復形式: {"version":2,"edits":[{"op":"cite","path":"/sections/0/summary/0/sourceIds","value":["source:p2b1"]}]}。opはreplace/add/remove/cite。引用が足りない場合はciteで必要な原文IDだけを追加します。行のsourceIdsは全セルの数値・率・理由を裏づけます。引用不足だけを直すときに配列全体をreplaceすると、問題のなかった別セルの根拠が失われます。citeで既存引用を保持してください。引用が誤っている場合の削除・置換は、残りの全セルを裏づける参照を保持した上で明示します。pathは提示した草稿のJSON位置です。変更が必要なtext/sourceIds/cells等だけ修正し、問題のない項目は書き直しません。意味や重要事項を落として拒否を避けず、不足する根拠は明示して追加します。必要な追加説明・表・節はaddで配列へ挿入します。未知の項目・ID・独自の数値は追加しません。修正後の全体を数量照合と独立点検へ渡します。\n修正理由: ${feedback}\n修復箇所と引用欄: ${JSON.stringify(narrativeRepairProblems(repairBase, facts, values, excerpts))}\n修復対象の草稿: ${JSON.stringify(repairBase)}\n根拠入力: ${input}`
             : `説明要約の形式: ${FORMAT}\n${feedback}\n根拠入力: ${input}`,
           (raw) => {
             rejectedResponse = raw;

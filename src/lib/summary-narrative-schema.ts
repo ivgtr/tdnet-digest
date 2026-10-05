@@ -31,7 +31,7 @@ export function narrativeResponseSchema(sourceIds: string[], mode: 'draft' | 'ed
         })
       : mode === 'edits'
         ? object({
-            version: version(1),
+            version: version(2),
             edits: array({
               anyOf: [
                 object({
@@ -49,6 +49,11 @@ export function narrativeResponseSchema(sourceIds: string[], mode: 'draft' | 'ed
                   },
                 }),
                 object({ op: { type: 'string', enum: ['remove'] }, path: string }),
+                object({
+                  op: { type: 'string', enum: ['cite'] },
+                  path: string,
+                  value: ref('sources'),
+                }),
               ],
             }),
           })

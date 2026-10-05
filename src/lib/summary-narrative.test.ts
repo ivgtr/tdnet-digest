@@ -351,26 +351,53 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(() => assembleNarrative(good, facts, draft.values, draft.excerpts)).toThrow('SCHEMA');
     const editBase = synthesisResponse(good);
     const edits = {
-      version: 1,
+      version: 2,
       edits: [{ op: 'replace', path: '/sections/0/summary/0/text', value: '変更した説明。' }],
     };
     const edited = applyNarrativeEdits(editBase, edits) as typeof editBase;
     expect(edited.sections[0].summary[0].text).toBe('変更した説明。');
     expect(edited.sections.slice(1)).toEqual(editBase.sections.slice(1));
     expect(editBase.sections[0].summary[0].text).not.toBe('変更した説明。');
+    editBase.sections[0].tables[0].rows[0].sourceIds = [draft.excerpts[0].id];
+    const originalSources = editBase.sections[0].tables[0].rows[0].sourceIds;
+    const additionalSource = draft.excerpts[1].id;
+    const cited = applyNarrativeEdits(editBase, {
+      version: 2,
+      edits: [
+        {
+          op: 'cite',
+          path: '/sections/0/tables/0/rows/0/sourceIds',
+          value: [additionalSource, originalSources[0]],
+        },
+      ],
+    }) as typeof editBase;
+    expect(cited.sections[0].tables[0].rows[0].sourceIds).toEqual([
+      ...originalSources,
+      additionalSource,
+    ]);
+    expect(cited.sections[0].tables[0].rows[0].cells).toEqual(
+      editBase.sections[0].tables[0].rows[0].cells
+    );
+    expect(() => applyNarrativeEdits(editBase, { ...edits, version: 1 })).toThrow('version=2');
+    expect(() =>
+      applyNarrativeEdits(editBase, {
+        version: 2,
+        edits: [{ op: 'cite', path: '/sections/0/title', value: [additionalSource] }],
+      })
+    ).toThrow('cite');
     for (const path of ['/sections/99/title', '/__proto__/text', '/sections/0/unknown'])
       expect(() =>
         applyNarrativeEdits(editBase, {
-          version: 1,
+          version: 2,
           edits: [{ op: 'replace', path, value: '不正' }],
         })
       ).toThrow('SCHEMA');
     expect(() =>
-      applyNarrativeEdits(editBase, { version: 1, edits: [edits.edits[0], edits.edits[0]] })
+      applyNarrativeEdits(editBase, { version: 2, edits: [edits.edits[0], edits.edits[0]] })
     ).toThrow('SCHEMA');
     expect(() => applyNarrativeEdits(editBase, editBase)).toThrow('SCHEMA');
     const dropped = applyNarrativeEdits(editBase, {
-      version: 1,
+      version: 2,
       edits: [{ op: 'remove', path: '/sections/0' }],
     });
     expect(() => assembleNarrative(dropped, facts, draft.values, draft.excerpts)).toThrow(
@@ -686,7 +713,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     const malformedResponse = structuredClone(response);
     malformedResponse.sections[0].summary[0].text = '売上高999百万円。';
     const correction = {
-      version: 1,
+      version: 2,
       edits: [
         {
           op: 'replace',
@@ -696,7 +723,7 @@ describe('説明要約の生成・点検・数値参照', () => {
       ],
     };
     const wrongCorrection = {
-      version: 1,
+      version: 2,
       edits: [{ op: 'replace', path: '/sections/0/summary/0/text', value: '売上高999百万円。' }],
     };
     vi.mocked(generateText)
