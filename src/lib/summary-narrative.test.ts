@@ -315,6 +315,23 @@ describe('説明要約の生成・点検・数値参照', () => {
         draft.excerpts
       )
     ).toThrow('version=2');
+    const periodResponse = synthesisResponse(good);
+    const evidence = facts.facts[0].evidence;
+    periodResponse.sections[0].summary[0].sourceIds = draft.excerpts
+      .filter((e) =>
+        evidence.kind === 'table'
+          ? e.spanIds.includes(evidence.valueId)
+          : e.blockId === evidence.blockId
+      )
+      .map((e) => e.id);
+    periodResponse.sections[0].summary[0].text = '2026年3月期の業績を確認する。';
+    expect(() =>
+      assembleNarrative(periodResponse, facts, draft.values, draft.excerpts)
+    ).not.toThrow();
+    periodResponse.sections[0].summary[0].text = '2027年3月期の業績を確認する。';
+    expect(() => assembleNarrative(periodResponse, facts, draft.values, draft.excerpts)).toThrow(
+      'REFERENCE'
+    );
     expect(() => assembleNarrative(good, facts, draft.values, draft.excerpts)).toThrow('SCHEMA');
     const doubledUnit = structuredClone(good);
     doubledUnit.sections[0].tables[0].rows[0].cells[1] += '百万円';
@@ -353,6 +370,32 @@ describe('説明要約の生成・点検・数値参照', () => {
     ).values;
     expect(unitValues.find((v) => v.decimal === '120')?.unit).toBe('百万円');
     expect(unitValues.find((v) => v.decimal === '90')?.unit).toBeNull();
+    const adjacentPage = layoutPage(
+      [
+        ['売上', 0, 20, 20],
+        ['120', 100, 20, 30],
+        ['千円', 135, 20, 20],
+        ['110', 200, 20, 30],
+        ['千円', 235, 20, 20],
+        ['数量', 0, 40, 20],
+        ['90', 300, 40, 20],
+        ['千円', 350, 40, 20],
+      ].map(([text, x, y, width], i) => ({
+        id: `p1s${i + 1}`,
+        text: text as string,
+        x: x as number,
+        y: y as number,
+        width: width as number,
+        height: 10,
+      }))
+    );
+    const adjacent = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [adjacentPage]
+    ).values;
+    expect(adjacent.find((v) => v.decimal === '110')?.unit).toBe('千円');
+    expect(adjacent.find((v) => v.decimal === '90')?.unit).toBeNull();
+
     const columnPage = layoutPage(
       [
         ['百万円', 100, 0, 30],
@@ -495,9 +538,22 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockResolvedValueOnce(JSON.stringify(response))
       .mockResolvedValueOnce(JSON.stringify({ version: 2, issues: [] }));
     const repairedAttempts: SummaryAttempt[] = [];
-    const repaired = await generateVerifiedFactSummary(config, 'other', page.text, [page], (a) => {
-      repairedAttempts.push(a);
-    });
+    const repaired = await generateVerifiedFactSummary(
+      { ...config, provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
+      'other',
+      page.text,
+      [page],
+      (a) => {
+        repairedAttempts.push(a);
+      }
+    );
+    expect(vi.mocked(generateText).mock.calls[1][0].reasoningEnabled).toBe(false);
+    expect(
+      vi
+        .mocked(generateText)
+        .mock.calls.slice(2)
+        .every(([c]) => c.reasoningEffort === 'low' && c.reasoningEnabled === undefined)
+    ).toBe(true);
     expect(repaired.repairAttempted).toBe(true);
     expect(repairedAttempts.map((a) => a.phase)).toEqual([
       'first',

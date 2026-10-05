@@ -85,6 +85,18 @@ export function narrativeValues(
       if (!sources.some((e) => e.kind === 'row')) continue;
       const parsed = scalar(q.text);
       if (!parsed) continue;
+      const adjacent = page.spans
+        .filter(
+          (s) =>
+            Math.abs(s.y - q.y) <= Math.min(s.height, q.height) * 0.25 &&
+            s.x >= q.x + q.width &&
+            s.x - q.x - q.width <= q.height * 0.6
+        )
+        .sort((a, b) => a.x - b.x)[0];
+      const adjacentUnit =
+        adjacent && isUncaptionedUnit(adjacent.text.normalize('NFKC').replace(/\s/g, ''))
+          ? declaredQuantityUnit(adjacent.text)
+          : null;
       // A unit row can be legible even when metric/period ownership is unresolved.
       // Match the complete numeric row to all unit columns, not a nearest token.
       const owner = page.blocks.find((b) => b.kind === 'row' && b.spanIds.includes(q.id));
@@ -169,18 +181,21 @@ export function narrativeValues(
       const commonUnit =
         common.length === 1 && columnUnits.every((u) => u === common[0]) ? common[0] : null;
       const unitSources =
-        parsed.unit === null && (columnUnit !== null || commonUnit !== null)
+        parsed.unit === null &&
+        (adjacentUnit !== null || columnUnit !== null || commonUnit !== null)
           ? excerpts.filter((e) =>
-              columnUnit !== null
-                ? columnContext!.some((s) => e.spanIds.includes(s.id))
-                : captions.some((c) => e.spanIds.includes(c.id))
+              adjacentUnit !== null
+                ? e.spanIds.includes(adjacent!.id)
+                : columnUnit !== null
+                  ? columnContext!.some((s) => e.spanIds.includes(s.id))
+                  : captions.some((c) => e.spanIds.includes(c.id))
             )
           : [];
       values.set(q.id, {
         id: q.id,
         raw: q.text,
         decimal: parsed.decimal,
-        unit: parsed.unit ?? columnUnit ?? commonUnit,
+        unit: parsed.unit ?? adjacentUnit ?? columnUnit ?? commonUnit,
         sourceIds: [...new Set([...sources, ...unitSources].map((e) => e.id))],
       });
     }
@@ -428,7 +443,8 @@ function checkText(
   text: unknown,
   sourceIds: string[],
   values: NarrativeValue[],
-  excerpts: SourceExcerpt[]
+  excerpts: SourceExcerpt[],
+  facts: FactSummary
 ): asserts text is string {
   if (typeof text !== 'string' || !text.trim() || text.length > 1200 || /[\r\n]/.test(text))
     throw new Error('NARRATIVE_SCHEMA:説明・セルの形式が不正です');
@@ -494,6 +510,21 @@ function checkText(
       .map((e) => e.text)
       .join(' ')
   );
+  // Expanded dates are already source-verified meanings, not invented literal
+  // dates. Use them only when the claim cites the corresponding quantity/block.
+  const periods = facts.facts
+    .filter(
+      (f) =>
+        f.period &&
+        excerpts.some(
+          (e) =>
+            sourceIds.includes(e.id) &&
+            (f.evidence.kind === 'table'
+              ? e.spanIds.includes(f.evidence.valueId)
+              : e.blockId === f.evidence.blockId)
+        )
+    )
+    .map((f) => compact(f.period!));
   const identifiers = new Set(
     [
       ...excerpts
@@ -521,6 +552,7 @@ function checkText(
     if (
       /\d/.test(label) &&
       !(namedIdentifier ? identifiers.has(label) : source.includes(compact(label))) &&
+      !periods.some((period) => period.includes(compact(label))) &&
       !standardSource
     )
       throw new Error(
@@ -565,7 +597,7 @@ export function validateNarrativeContent(
   const textErrors: string[] = [];
   const checkedText = (text: unknown, refs: string[]) => {
     try {
-      checkText(text, refs, values, excerpts);
+      checkText(text, refs, values, excerpts, facts);
     } catch (error) {
       if (!(error instanceof Error) || !error.message.startsWith('NARRATIVE_')) throw error;
       textErrors.push(error.message);
@@ -732,7 +764,7 @@ export const NARRATIVE_SYSTEM = `TDnet開示の説明要約を再構成します
 文書内容に応じて、全社業績と増減要因、事業別業績、受注・需要の動き、通期見通し・前提、配当・株主還元、キャッシュフロー、財政状態、事業・施策、取引・制度変更、その他の重要事項に整理。空項目は作りません。決算の枠を他の文書へ強制しません。冒頭のoverviewは数値の再掲ではなく核心の理由・事業間の差・重要条件を短く選びます。
 本文の比較表には重要な確定数量をすべて参照。事業別は開示された全事業（共通部門を含む）の売上・利益・増減率・短い主因を横断表にします。内部取引込みと外部顧客向けを混ぜず、利益の定義、期間、単位、消去調整、区分変更、比較条件を表の近くへ残します。地域・製品の別分類を同じ事業に足しません。受注高は期間中、受注残は期末の残高。前年同期/前年同期末/前期末を区別し、金額と増減、会社が述べた背景・納期等を表で示します。残高増を売上成長確定としません。受注を開示しない業種は販売数量等の開示済み需要指標を扱います。
 CFは営業・投資・財務CF、期首→期末現金同等物の短い表と、主要な営業運転資金/税、設備投資/M&A/売却、借入/返済/還元の背景を要約。小さな科目を逐語列挙しません。負数のCFを分母に成長率を出さず、flowの比較は増減額。投資流出や借入流入を一律に良し悪しとしません。月次表は今回対象月までの当期値と同じ月の比較を中心にし、未到来月の前年値だけを当期推移へ混ぜません。過去年の全明細の再掲は不要ですが、傾向の変化や比較条件は要約します。CF未作成なら残高から推計しません。FCF等の未開示指標を追加しません。
-生成version=2。説明中の数値は単位付きで原文と同じ値を書き、該当する数量を含む原文IDをsourceIdsで参照します。コードがその原文の完全な数量へ一意に対応できる場合だけ数量IDへ構成します。対応が曖昧な場合や表の数値には、valuesに存在する数量を丸ごと{{value:ID}}で明示します。数量IDを原文IDから作らず、存在しないIDを捏造しません。社数・株式分割比率等も同じ検査をします。不要な数量は再掲せず会社名を列挙する等で意味を保って要約。原文と一致する日付・時刻・条項番号・規格名・取引制度名（例ToSTNeT-3）は文字列で記載します。日付の一部を数量参照へ分割しません。比較は{{change:当期ID|比較ID|種別}}（種別=profit/loss/revenue/stock/flow）、増減額は{{delta:当期ID|比較ID}}。比較の区切りは縦線で、本文数量ID内のコロンはそのまま保持。比較は同じ単位・主体・範囲・定義で、期間/基準日をcaption/見出し/行に明記。原文に当期の同条件の増減率が開示されていれば、その率を{{value:率ID}}で優先表示し、増収/増益/減益等の短い区分を添える。表示金額からのchange計算は原文率がない場合の概算。負の利益値の見出しは損益または利益として、損失に負数を付ける二重否定を避ける。利益は符号付き値でprofitを選び、黒字転換/赤字転落/赤字縮小拡大をコードが表示。損失が正の金額で開示された同士の比較だけはloss。損失額を正の利益として扱わない。単位が未解決なら計算比較を作らず、開示された率を参照。原文にない数値や計算した率を直接書きません。過去年と当期の成長率を混同しません。sourceIdsには意味の根拠となる原文IDを付けます。数量参照は単位も表示するため、直後に同じ単位を重ねません。数量の原文IDは数量参照からコードが追加します。説明IDはコードが付けるので生成しません。表のセルも短い言い換えを使います。表と同じ金額を説明で繰り返さず主因を優先します。JSON形式だけ返します。`;
+生成version=2。説明中の数値は単位付きで原文と同じ値を書き、該当する数量を含む原文IDをsourceIdsで参照します。コードがその原文の完全な数量へ一意に対応できる場合だけ数量IDへ構成します。対応が曖昧な場合や表の数値には、valuesに存在する数量を丸ごと{{value:ID}}で明示します。数量IDを原文IDから作らず、存在しないIDを捏造しません。社数・株式分割比率等も同じ検査をします。不要な数量は再掲せず会社名を列挙する等で意味を保って要約。原文と一致する日付・時刻・条項番号・規格名・取引制度名（例ToSTNeT-3）は文字列で記載します。日付の一部を数量参照へ分割しません。比較は{{change:当期ID|比較ID|種別}}（種別=profit/loss/revenue/stock/flow）、増減額は{{delta:当期ID|比較ID}}。比較の区切りは縦線で、本文数量ID内のコロンはそのまま保持。比較は同じ単位・主体・範囲・定義で、期間/基準日をcaption/見出し/行に明記。原文に当期の同条件の増減率が開示されていれば、その率を{{value:率ID}}で優先表示し、増収/増益/減益等の短い区分を添える。表示金額からのchange計算は原文率がない場合の概算。負の利益値の見出しは損益または利益として、損失に負数を付ける二重否定を避ける。利益は符号付き値でprofitを選び、黒字転換/赤字転落/赤字縮小拡大をコードが表示。損失が正の金額で開示された同士の比較だけはloss。損失額を正の利益として扱わない。単位が未解決なら計算比較を作らず、開示された率を参照。原文にない数値や計算した率を直接書きません。過去年と当期の成長率を混同しません。sourceIdsには意味の根拠となる原文IDを付けます。数量参照は単位も表示するため、直後に同じ単位を重ねません。数量の原文IDは数量参照からコードが追加します。説明IDはコードが付けるので生成しません。表のセルも短い言い換えを使います。説明では原則として数値を再掲せず、原因・影響・条件を短く整理します。原文にない件数の集計、期間の月数、丸めた率の帯、独自のポイント差を説明へ追加しません。必要な数値と原文の率は表に残し、表と同じ金額を説明で繰り返さず主因を優先します。JSON形式だけ返します。`;
 
 export async function generateSummaryNarrative(
   config: LLMConfig,
@@ -785,7 +817,7 @@ export async function generateSummaryNarrative(
           ...options,
           ...(config.provider === 'openrouter' &&
           getModel(config.provider, config.model)?.optionalReasoning &&
-          (phase === 'summary' || phase === 'summaryRepair')
+          phase === 'summary'
             ? { reasoningEnabled: false, reasoningEffort: undefined }
             : {}),
           onResponse: (response) => {
