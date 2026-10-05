@@ -284,22 +284,28 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(bound.sections[0].summary[0].text).toContain(value(q('120', '製品事業')));
     literal.sections[0].summary[0].text = '製品売上は121百万円。';
     expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
-      '一意に対応'
+      '引用原文にありません'
     );
+    literal.sections[0].summary[0].text = '製品売上は121百万円、利益は999百万円。';
+    try {
+      assembleNarrative(literal, facts, draft.values, draft.excerpts);
+      throw new Error('拒否されませんでした');
+    } catch (e) {
+      expect((e as Error).message).toContain('121百万円');
+      expect((e as Error).message).toContain('999百万円');
+    }
     literal.sections[0].summary[0].text = '製品売上は120千円。';
     expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
-      '一意に対応'
+      '引用原文にありません'
     );
     literal.sections[0].summary[0].text = '製品売上は100百万円。';
-    expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
-      '一意に対応'
-    );
+    expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).not.toThrow();
     literal.sections[0].summary[0].text = '製品売上は120百万円。';
     literal.sections[0].summary[0].sourceIds = draft.excerpts
       .filter((e) => e.text.includes('大型案件'))
       .map((e) => e.id);
     expect(() => assembleNarrative(literal, facts, draft.values, draft.excerpts)).toThrow(
-      '一意に対応'
+      '引用原文にありません'
     );
     expect(() =>
       assembleNarrative(
@@ -374,6 +380,30 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(columns.find((v) => v.decimal === '120')?.unit).toBe('百万円');
     expect(columns.find((v) => v.decimal === '5.0')?.unit).toBe('%');
     expect(columns.find((v) => v.decimal === '90')?.unit).toBeNull();
+    const columnFacts = {
+      version: 6 as const,
+      documentType: 'other' as const,
+      facts: [],
+      unverified: [],
+    };
+    const columnDisplay = buildPresentation(columnFacts, [columnPage]);
+    const fractional = assembleNarrative(
+      {
+        version: 2,
+        overview: [],
+        sections: [
+          {
+            title: '指標',
+            tables: [],
+            summary: [{ text: 'ROE5.00%。', sourceIds: columnDisplay.excerpts.map((e) => e.id) }],
+          },
+        ],
+      },
+      columnFacts,
+      columnDisplay.values,
+      columnDisplay.excerpts
+    );
+    expect(fractional.sections[0].summary[0].text).toContain('{{value:');
     const labels = structuredClone(draft.excerpts);
     labels[0].text +=
       ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。B2C事業。第20期定時株主総会。第3回会議。';

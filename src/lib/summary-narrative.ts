@@ -62,6 +62,12 @@ const scalar = (raw: string) => {
   const q = parseExactNumeric(raw);
   return q ? { decimal: q.kind === 'number' ? q.decimal : null, unit: q.unit } : null;
 };
+const decimalIdentity = (s: string) =>
+  s
+    .replace(/^(-?)0+(?=\d)/, '$1')
+    .replace(/(\.\d*?)0+$/, '$1')
+    .replace(/\.$/, '')
+    .replace(/^-0$/, '0');
 
 export function narrativeValues(
   facts: FactSummary,
@@ -218,7 +224,7 @@ export function narrativeValues(
 export const NARRATIVE_TOKEN = /\{\{(value|change|delta):([^{}]+)\}\}/g;
 const NARRATIVE_LABEL =
   /1株当たり|20\d{2}年(?:\d{1,2}月(?:\d{1,2}日|期(?:第[1-4]四半期|中間期)?)?)?|過去\d+(?:ヶ|ヵ|か|カ)?月|\d{1,2}月(?:\d{1,2}日)?|(?:午前|午後)?\d{1,2}時(?:\d{1,2}分)?|\d{1,2}:\d{2}|第\d+条(?:第\d+項)?|第[1-4]四半期|第\d+(?:期|回)|IFRS(?:第)?\d+号|\b(?:[A-Za-z][A-Za-z0-9/-]*|\d+[A-Za-z][A-Za-z0-9/-]*)\b/g;
-/** Current v2 generation compiles only unambiguous, cited, complete source quantities.
+/** Current v2 generation compiles exact, cited, complete source quantities.
  * No missing value, unit, date, or meaning is supplied by the compiler. */
 function bindLiteralQuantities(
   input: string,
@@ -230,11 +236,16 @@ function bindLiteralQuantities(
   const protectedRanges = [...text.matchAll(NARRATIVE_TOKEN), ...text.matchAll(NARRATIVE_LABEL)]
     .filter((m) => {
       const unit = m[0].match(/^\d+([A-Za-z][A-Za-z0-9/-]*)$/)?.[1];
-      return !unit || !isUncaptionedUnit(unit);
+      // A metric immediately followed by a fractional quantity is not a new
+      // product name (e.g. ROE12.5%). Leave that complete number for binding.
+      const fractionalSuffix =
+        /[A-Za-z]\d+$/.test(m[0]) && /^\.\d/.test(text.slice(m.index! + m[0].length));
+      return (!unit || !isUncaptionedUnit(unit)) && !fractionalSuffix;
     })
     .map((m) => [m.index!, m.index! + m[0].length]);
   const quantities = proseQuantities({ id: 'draft', text });
   let result = text;
+  const errors: string[] = [];
   for (const quantity of [...quantities].reverse()) {
     const start = quantity.start;
     const end = start + quantity.raw.length;
@@ -245,19 +256,39 @@ function bindLiteralQuantities(
       (v) =>
         v.unit === parsed.unit &&
         (parsed.decimal !== null
-          ? v.decimal === parsed.decimal
+          ? v.decimal !== null && decimalIdentity(v.decimal) === decimalIdentity(parsed.decimal)
           : compact(v.raw) === compact(quantity.raw)) &&
         excerpts.some(
           (e) =>
             ids.includes(e.id) && (e.spanIds.includes(v.id) || v.id.startsWith(`${e.blockId}:q`))
         )
     );
-    if (matching.length !== 1)
-      throw new Error(
-        `NARRATIVE_QUANTITY:「${quantity.raw}」を引用原文の数量へ一意に対応できません。対象文=${text}。対応候補=${matching.map((v) => v.id).join(',')}。未知の値や単位を補わず、必要なら候補の数量IDを明示してください`
+    if (!matching.length) {
+      const candidates = values
+        .filter(
+          (v) =>
+            v.unit === parsed.unit &&
+            v.decimal !== null &&
+            parsed.decimal !== null &&
+            decimalIdentity(v.decimal) === decimalIdentity(parsed.decimal)
+        )
+        .flatMap((v) =>
+          excerpts
+            .filter((e) => e.spanIds.includes(v.id) || v.id.startsWith(`${e.blockId}:q`))
+            .map((e) => e.id)
+        );
+      errors.push(
+        `NARRATIVE_QUANTITY:「${quantity.raw}」に値・単位が一致する数量が引用原文にありません。対象文=${text}。原文候補=${[...new Set(candidates)].slice(0, 12).join(',')}。意味と対象が一致する原文だけを参照し、未知の値や単位は補わないでください`
       );
-    result = result.slice(0, start) + `{{value:${matching[0].id}}}` + result.slice(end);
+      continue;
+    }
+    // Identical quantities may be printed in both a table and prose. Choose a
+    // stable display identity for the exact same value/unit; retain every cited
+    // source. Which period/subject it describes remains a semantic review task.
+    const representative = matching.sort((a, b) => a.id.localeCompare(b.id))[0];
+    result = result.slice(0, start) + `{{value:${representative.id}}}` + result.slice(end);
   }
+  if (errors.length) throw new Error(errors.join('\n'));
   return result;
 }
 /** Current generation contract: the model chooses meaning; code owns IDs and numeric anchors. */
@@ -269,6 +300,18 @@ export function assembleNarrative(
 ): NarrativeContent {
   const sources = new Set(excerpts.map((e) => e.id));
   const quantities = new Map(values.map((v) => [v.id, v]));
+  const bindingErrors: string[] = [];
+  const bind = (text: string, ids: string[]) => {
+    try {
+      return bindLiteralQuantities(text, ids, values, excerpts);
+    } catch (e) {
+      if (!(e instanceof Error) || !e.message.startsWith('NARRATIVE_QUANTITY:')) throw e;
+      // Preserve invalid text only to collect the remaining diagnostics. Never
+      // return or store a content result with any unresolved binding error.
+      bindingErrors.push(e.message);
+      return text;
+    }
+  };
   const object = (v: unknown, keys: string[]) => {
     if (!record(v) || !exact(v, keys))
       throw new Error(
@@ -294,7 +337,7 @@ export function assembleNarrative(
   const line = (v: unknown, id: string): NarrativeLine => {
     const o = object(v, ['text', 'sourceIds']);
     const originalIds = anchors(o.text, o.sourceIds);
-    const text = bindLiteralQuantities(o.text as string, originalIds, values, excerpts);
+    const text = bind(o.text as string, originalIds);
     return { id, text, sourceIds: anchors(text, originalIds) };
   };
   const root = object(value, ['version', 'overview', 'sections']);
@@ -314,9 +357,7 @@ export function assembleNarrative(
           if (!cells.every((c) => typeof c === 'string'))
             throw new Error('NARRATIVE_SCHEMA:表セルは文字列が必要です');
           const originalIds = [...caption.sourceIds, ...anchors(cells.join(' / '), r.sourceIds)];
-          const boundCells = (cells as string[]).map((c) =>
-            bindLiteralQuantities(c, originalIds, values, excerpts)
-          );
+          const boundCells = (cells as string[]).map((c) => bind(c, originalIds));
           return {
             id: `row-${i}-${j}-${k}`,
             cells: boundCells,
@@ -347,7 +388,13 @@ export function assembleNarrative(
       };
     }),
   };
-  validateNarrativeContent(content, facts, values, excerpts);
+  try {
+    validateNarrativeContent(content, facts, values, excerpts);
+  } catch (e) {
+    if (!bindingErrors.length || !(e instanceof Error)) throw e;
+    throw new Error([...bindingErrors, e.message].join('\n'));
+  }
+  if (bindingErrors.length) throw new Error(bindingErrors.join('\n'));
   return content;
 }
 export function narrativeClaims(content: NarrativeContent): NarrativeLine[] {
