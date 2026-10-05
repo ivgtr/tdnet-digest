@@ -7,6 +7,7 @@ import {
 import { validatePresentation, type SummaryPresentation } from './summary-presentation';
 import type { SourceExcerpt } from './summary-source-inventory';
 import { renderNarrativeText } from './summary-narrative-renderer';
+import { NARRATIVE_TOKEN } from './summary-narrative';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import {
   summaryComparison,
@@ -132,7 +133,67 @@ function overviewGrowth(f: VerifiedFact, comparison: SummaryComparison, facts: F
     calculated: growth !== null,
   };
 }
-function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
+/** A reviewed row can carry a reported rate without creating a scoring fact. */
+function narrativeGrowth(f: VerifiedFact, presentation: SummaryPresentation) {
+  const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.quantityId;
+  const candidates = presentation.narrative!.content.sections.flatMap((s) =>
+    s.tables.flatMap((t) => {
+      const columns = t.headers.flatMap((h, i) => (/前年.*比|前期比|増減率/.test(h) ? [i] : []));
+      if (columns.length !== 1) return [];
+      return t.rows.flatMap((row) => {
+        const native = row.sourceIds.some((id) =>
+          presentation.excerpts.some(
+            (e) =>
+              e.id === id &&
+              (f.evidence.kind === 'table'
+                ? e.spanIds.includes(f.evidence.valueId)
+                : e.blockId === f.evidence.blockId)
+          )
+        );
+        const label = (row.cells.join(' ') + ' ' + t.caption.text + ' ' + t.headers.join(' '))
+          .normalize('NFKC')
+          .replace(/\s/g, '');
+        const mentionsCurrent = row.cells.some((cell) =>
+          [...cell.matchAll(NARRATIVE_TOKEN)].some(
+            (m) =>
+              m[1] === 'value' &&
+              (m[2] === f.id ||
+                m[2] === anchor ||
+                (native &&
+                  label.includes(f.label.normalize('NFKC').replace(/\s/g, '')) &&
+                  presentation.values.some(
+                    (v) =>
+                      v.id === m[2] &&
+                      v.unit === f.unit &&
+                      v.decimal !== null &&
+                      f.quantity!.decimal !== null &&
+                      v.decimal.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') ===
+                        f.quantity!.decimal.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+                  )))
+          )
+        );
+        if (!mentionsCurrent) return [];
+        const cell = row.cells[columns[0]];
+        const tokens = [...cell.matchAll(NARRATIVE_TOKEN)];
+        if (tokens.length !== 1 || tokens[0][1] !== 'value') return [];
+        const rate = presentation.values.find((v) => v.id === tokens[0][2]);
+        if (!rate || !['%', '％'].includes(rate.unit ?? '') || rate.decimal === null) return [];
+        return [
+          {
+            text: `${literalMarkdown(t.headers[columns[0]])} ${literalMarkdown(renderNarrativeText(cell, presentation.values))}`,
+            sourceIds: row.sourceIds,
+          },
+        ];
+      });
+    })
+  );
+  return new Set(candidates.map((c) => c.text)).size === 1 ? candidates[0] : undefined;
+}
+function overviewNumber(
+  f: VerifiedFact,
+  facts: FactSummary,
+  presentation: SummaryPresentation
+): string {
   const comparison = summaryComparison(f, facts.facts);
   if (comparison) {
     const before = comparison.reference;
@@ -146,6 +207,8 @@ function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
   }
   const rate = facts.facts.find((r) => canPair(f, r));
   if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;
+  const reported = narrativeGrowth(f, presentation);
+  if (reported) return `${literalMarkdown(f.label)}：${numberText(f)}（${reported.text}）`;
   return `${literalMarkdown(f.label)}：${numberText(f)}${f.semantics.state === 'actual' || f.semantics.state === 'forecastAfter' ? `（${comparisonIssue(f, facts.facts)}）` : ''}`;
 }
 function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
@@ -231,7 +294,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       lines.push('', current, '');
       previousContext = current;
     }
-    lines.push('- ' + overviewNumber(f, facts));
+    lines.push('- ' + overviewNumber(f, facts, presentation));
   }
   for (const id of presentation.overview) {
     const f = byId.get(id);
@@ -254,6 +317,10 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
             : []),
         ]),
         ...overviewSources.map((id) => sources.get(id)!.page),
+        ...overviewFacts.flatMap(
+          (f) =>
+            narrativeGrowth(f, presentation)?.sourceIds.map((id) => sources.get(id)!.page) ?? []
+        ),
       ])}`
     );
   const quoted = new Set<string>();

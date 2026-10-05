@@ -1,4 +1,4 @@
-import { NARRATIVE_TOKEN, type NarrativeValue } from './summary-narrative';
+import { NARRATIVE_TOKEN, parseNarrativeQuantity, type NarrativeValue } from './summary-narrative';
 import { parseExactRange } from './quantity';
 
 const format = (value: string) =>
@@ -9,6 +9,8 @@ const format = (value: string) =>
 
 export function literalValue(value: NarrativeValue): string {
   if (value.decimal !== null) return format(value.decimal) + (value.unit ?? '');
+  if (parseNarrativeQuantity(value.raw)?.kind === 'compound')
+    return value.raw.normalize('NFKC').replace(/\s/g, '');
   const range = parseExactRange(value.raw)!;
   return `${format(range.lower)}～${format(range.upper)}${value.unit ?? ''}`;
 }

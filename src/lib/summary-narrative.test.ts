@@ -16,18 +16,19 @@ import {
 import { generateVerifiedFactSummary, renderFacts } from './fact-summary';
 import {
   narrativeClaims,
+  NARRATIVE_TOKEN,
   assembleNarrative,
   validateNarrativeContent,
   type NarrativeContent,
 } from './summary-narrative';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import type { SummaryAttempt } from './summary-trace';
-import { quantityChange } from './summary-narrative-renderer';
+import { literalValue, quantityChange } from './summary-narrative-renderer';
 
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
 const page = textPage(
-  '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。\n1. 事業別業績\n製品事業の当期売上は120百万円、前年売上は100百万円。当期利益は20百万円、前年利益は10百万円。価格転嫁で増益。\nサービス事業の当期損益は△15百万円、前年損益は△10百万円。先行投資で赤字が拡大。\n2. 受注の状況\n当期受注高は90百万円、前年同期受注高は100百万円。大型案件の反動。\n当期末受注残高は150百万円、前期末受注残高は100百万円。新規案件が積み上がったが納期が長期化。\n3. キャッシュ・フロー\n当期営業CFは△20百万円、前年同期営業CFは△30百万円。在庫増で営業CFは支出。\n当期投資CFは△60百万円。設備投資が主因。\n当期財務CFは50百万円。借入で資金を確保。\n期首現金同等物は100百万円、期末現金同等物は70百万円。'
+  '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。\n前年同期比20.0%。\n1. 事業別業績\n製品事業の当期売上は120百万円、前年売上は100百万円。当期利益は20百万円、前年利益は10百万円。価格転嫁で増益。\nサービス事業の当期損益は△15百万円、前年損益は△10百万円。先行投資で赤字が拡大。\n2. 受注の状況\n当期受注高は90百万円、前年同期受注高は100百万円。大型案件の反動。\n当期末受注残高は150百万円、前期末受注残高は100百万円。新規案件が積み上がったが納期が長期化。\n3. キャッシュ・フロー\n当期営業CFは△20百万円、前年同期営業CFは△30百万円。在庫増で営業CFは支出。\n当期投資CFは△60百万円。設備投資が主因。\n当期財務CFは50百万円。借入で資金を確保。\n期首現金同等物は100百万円、期末現金同等物は70百万円。'
 );
 const facts = {
   version: 6,
@@ -48,6 +49,8 @@ const value = (id: string) => `{{value:${id}}}`;
 const change = (a: string, b: string, metric: string) => `{{change:${a}|${b}|${metric}}}`;
 function content(): NarrativeContent {
   const result = fixedNarrativeContent(facts, draft);
+  result.sections[0].tables[0].headers.push('前年同期比');
+  result.sections[0].tables[0].rows[0].cells.push(value(q('20.0', '前年同期比')));
   result.sections.push({
     id: 'segments',
     title: '事業別業績',
@@ -194,12 +197,22 @@ function content(): NarrativeContent {
 }
 
 function synthesisResponse(content: NarrativeContent) {
+  const literal = (text: string) =>
+    text.replace(NARRATIVE_TOKEN, (_token, kind: string, args: string) => {
+      const parts = args.split('|');
+      const values = parts
+        .slice(0, kind === 'value' ? 1 : 2)
+        .map((id) => literalValue(draft.values.find((v) => v.id === id)!));
+      return kind === 'value'
+        ? values[0]
+        : `{{${kind}:${[...values, ...parts.slice(2)].join('|')}}}`;
+    });
   const line = (c: { text: string; sourceIds: string[] }) => ({
-    text: c.text,
+    text: literal(c.text),
     sourceIds: c.sourceIds,
   });
   return {
-    version: 2,
+    version: 3,
     overview: content.overview.map(line),
     sections: content.sections.map((s) => ({
       title: s.title,
@@ -207,7 +220,7 @@ function synthesisResponse(content: NarrativeContent) {
       tables: s.tables.map((t) => ({
         caption: line(t.caption),
         headers: t.headers,
-        rows: t.rows.map((r) => ({ cells: r.cells, sourceIds: r.sourceIds })),
+        rows: t.rows.map((r) => ({ cells: r.cells.map(literal), sourceIds: r.sourceIds })),
       })),
     })),
   };
@@ -268,6 +281,8 @@ describe('説明要約の生成・点検・数値参照', () => {
       '納期長期化に注意',
     ])
       expect(reading).toContain(text);
+    expect(reading.split('業績と増減要因')[0]).toContain('前年同期比 20.0%');
+    expect(reading.split('事業別業績')[0]).not.toContain('比較未確認');
     expect(reading).not.toContain('原文抜粋');
     expect(reading).not.toContain('サービス事業の当期損益は');
     expect(html).toContain('サービス事業の当期損益は');
@@ -314,7 +329,7 @@ describe('説明要約の生成・点検・数値参照', () => {
         draft.values,
         draft.excerpts
       )
-    ).toThrow('version=2');
+    ).toThrow('version=3');
     const periodResponse = synthesisResponse(good);
     const evidence = facts.facts[0].evidence;
     periodResponse.sections[0].summary[0].sourceIds = draft.excerpts
@@ -432,7 +447,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     const columnDisplay = buildPresentation(columnFacts, [columnPage]);
     const fractional = assembleNarrative(
       {
-        version: 2,
+        version: 3,
         overview: [],
         sections: [
           {
@@ -447,6 +462,54 @@ describe('説明要約の生成・点検・数値参照', () => {
       columnDisplay.excerpts
     );
     expect(fractional.sections[0].summary[0].text).toContain('{{value:');
+    const literalPage = textPage('施策は4つで構成し、3領域へ注力します。寄付額は1億27百万円です。');
+    const literalDisplay = buildPresentation(columnFacts, [literalPage]);
+    const literalResponse = {
+      version: 3,
+      overview: [],
+      sections: [
+        {
+          title: '施策',
+          tables: [],
+          summary: [
+            {
+              text: '4つの施策のうち3領域を重視。寄付額は1億27百万円。',
+              sourceIds: literalDisplay.excerpts.map((e) => e.id),
+            },
+          ],
+        },
+      ],
+    };
+    const whole = assembleNarrative(
+      literalResponse,
+      columnFacts,
+      literalDisplay.values,
+      literalDisplay.excerpts
+    );
+    expect(literalValue(literalDisplay.values.find((v) => v.raw === '1億27百万円')!)).toBe(
+      '1億27百万円'
+    );
+    expect(() =>
+      validatePresentation(completePresentation(literalDisplay, columnFacts, whole), columnFacts)
+    ).not.toThrow();
+    literalResponse.sections[0].summary[0].text = '寄付額は1億28百万円。';
+    expect(() =>
+      assembleNarrative(
+        literalResponse,
+        columnFacts,
+        literalDisplay.values,
+        literalDisplay.excerpts
+      )
+    ).toThrow('引用原文にありません');
+    literalResponse.sections[0].summary[0].text = '{{value:p1b1:q1}}';
+    expect(() =>
+      assembleNarrative(
+        literalResponse,
+        columnFacts,
+        literalDisplay.values,
+        literalDisplay.excerpts
+      )
+    ).toThrow('生成時の数量IDは不要');
     const labels = structuredClone(draft.excerpts);
     labels[0].text +=
       ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。B2C事業。第20期定時株主総会。第3回会議。';

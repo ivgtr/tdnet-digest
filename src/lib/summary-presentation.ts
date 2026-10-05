@@ -21,11 +21,11 @@ import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 import {
   narrativeValues,
+  parseNarrativeQuantity,
   validateSummaryNarrative,
   type NarrativeValue,
   type SummaryNarrative,
 } from './summary-narrative';
-import { parseExactNumeric } from './quantity';
 
 export interface SummarySection {
   title: string;
@@ -318,7 +318,7 @@ export function validatePresentation(
       throw new Error('保存された表示数量が不正です');
     quantities.add(q.id);
     const rawQuantity = q.raw;
-    const literal = parseExactNumeric(rawQuantity);
+    const literal = parseNarrativeQuantity(rawQuantity);
     const fact = facts.facts.find((f) => f.id === q.id);
     if (
       !literal ||

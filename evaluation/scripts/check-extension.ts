@@ -842,7 +842,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const trace = await worker.evaluate(
         async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
       );
-      assert.equal(trace.outcome, 'success');
+      assert.equal(trace.outcome, narrativeReplay.repairAttempted ? 'repairSuccess' : 'success');
       assert.deepEqual(
         trace.attempts.map((a: any) => a.phase),
         narrativeReplay.attempts.map((a: any) => a.phase)
