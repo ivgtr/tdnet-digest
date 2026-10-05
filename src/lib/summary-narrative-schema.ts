@@ -63,20 +63,22 @@ export function narrativeResponseSchema(
             version: version(2),
             edits: array({
               anyOf: [
-                object({
-                  op: { type: 'string', enum: ['replace', 'add'] },
-                  path: pathSchema([...new Set([...paths.existing, ...paths.additions])]),
-                  value: {
-                    anyOf: [
-                      string,
-                      array(string),
-                      ...['line', 'row', 'table', 'section'].flatMap((name) => [
-                        ref(name),
-                        array(ref(name)),
-                      ]),
-                    ],
-                  },
-                }),
+                ...(['replace', 'add'] as const).map((op) =>
+                  object({
+                    op: { type: 'string', enum: [op] },
+                    path: pathSchema(op === 'replace' ? paths.existing : paths.additions),
+                    value: {
+                      anyOf: [
+                        string,
+                        array(string),
+                        ...['line', 'row', 'table', 'section'].flatMap((name) => [
+                          ref(name),
+                          array(ref(name)),
+                        ]),
+                      ],
+                    },
+                  })
+                ),
                 object({
                   op: { type: 'string', enum: ['remove'] },
                   path: pathSchema(paths.existing),

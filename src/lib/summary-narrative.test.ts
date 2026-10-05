@@ -415,6 +415,12 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(citationWire.properties.path.enum).not.toContain(
       '/sections/0/tables/0/headers/0/sourceIds'
     );
+    const addWire = editWire.items.anyOf.find((v) => v.properties.op.enum[0] === 'add')!;
+    const replaceWire = editWire.items.anyOf.find((v) => v.properties.op.enum[0] === 'replace')!;
+    expect(addWire.properties.path.enum).not.toContain('/sections/0/summary/0/text');
+    expect(addWire.properties.path.enum).toContain('/sections/0/summary/-');
+    expect(replaceWire.properties.path.enum).toContain('/sections/0/summary/0/text');
+    expect(replaceWire.properties.path.enum).not.toContain('/sections/0/summary/-');
     expect(() => applyNarrativeEdits(editBase, { ...edits, version: 1 })).toThrow('version=2');
     expect(() =>
       applyNarrativeEdits(editBase, {
