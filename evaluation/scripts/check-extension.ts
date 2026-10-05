@@ -312,16 +312,6 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const fixedFacts = (reviewFixture
         ? []
         : structuredClone(source!.facts)) as unknown as CandidateFact[];
-      if (withComparison) {
-        const previous = structuredClone(fixedFacts[0]);
-        previous.id = 'f20';
-        previous.value = 2365;
-        previous.period = '2025年3月期';
-        if (!('valueId' in previous.evidence)) throw new Error('table expected');
-        previous.evidence.valueId = 'p1s80';
-        previous.evidence.periodIds = ['p1s78', 'p1s79'];
-        fixedFacts.push(previous);
-      }
       const fixture = corpus.find((c) => c.id === item.id)!;
       const sourcePages = reviewFixture
         ? reviewFixture.pages
@@ -739,22 +729,23 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const previous = stored.value.facts.facts.filter((f: any) =>
         f.period?.startsWith('2025年11月期')
       );
-      if (reviewCase === 'summary-format-nachi-comparison') {
-        assert.equal(previous.length, 4);
-        for (const term of [
-          '売上高:↑増収192,326百万円(前年同期174,194百万円)',
-          '営業利益:↑増益11,457百万円(前年同期6,628百万円)',
-          '経常利益:↑増益10,873百万円(前年同期5,141百万円)',
-          '純利益:↑増益6,629百万円(前年同期3,640百万円)',
-        ])
-          assert.ok(reading.includes(term), `前年の確定値による比較が欠落: ${term}`);
-      } else {
-        assert.equal(previous.length, 0);
-        assert.equal((reading.match(/前年の値が要約に未抽出/g) ?? []).length, 4);
-        assert.ok(
-          !reading.includes('↑増益') && !reading.includes('↑増収'),
-          '未抽出の前年値から増減を推測'
-        );
+      assert.equal(previous.length, 5);
+      for (const term of [
+        '売上高:↑増収192,326百万円(前年同期174,194百万円)',
+        '営業利益:↑増益11,457百万円(前年同期6,628百万円)',
+        '経常利益:↑増益10,873百万円(前年同期5,141百万円)',
+        '純利益:↑増益6,629百万円(前年同期3,640百万円)',
+      ])
+        assert.ok(reading.includes(term), `前年の確定値による比較が欠落: ${term}`);
+      if (reviewCase === 'summary-format-nachi') {
+        assert.equal(completedTrace.outcome, 'repairSuccess');
+        const [first, repair] = completedTrace.attempts;
+        assert.equal(first.confirmedIds.length, 14);
+        const missing = first.slots.filter((s: any) => s.requirement.includes('前年決算実績'));
+        assert.equal(missing.length, 5);
+        assert.ok(missing.every((s: any) => s.status === 'absent'));
+        assert.equal(repair.confirmedIds.length, 19);
+        assert.ok(first.confirmedIds.every((id: string) => repair.confirmedIds.includes(id)));
       }
       evidence.reading = reading;
     }

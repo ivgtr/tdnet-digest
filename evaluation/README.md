@@ -10,10 +10,10 @@
 | `fixtures/real-pdf-cases.json`       | 公開 PDF 18件の公式 URL、期待分類、抽出確認語                 |
 | `scripts/check-real-pdfs.mjs`        | ローカル PDF のページ抽出、空ページ、確認語のチェック         |
 | `scripts/run-real-llm.ts`            | 指定した1件を2パスで要約し、JSON 検証結果と出力をローカル保存 |
-| `fixtures/fact-summary-cases.json`   | 7資料の数量・期間・主体/範囲・状態・限定・背景の期待値        |
+| `fixtures/fact-summary-cases.json`   | 8資料の数量・期間・主体/範囲・状態・限定・背景の期待値        |
 | `scripts/run-fact-summary.ts`        | 現行の1回構造化要約と原文照合を実PDFで評価                    |
 
-通常の `npm test` はタイトル分類や原文照合などの回帰テストです。投資判断の有用性は測りません。従来の実 PDF スクリプトは空ページと指定語の有無を確認します。事実要約の7件については、主要数値・単位・期間・物理ページの期待値を別のfixtureに記録しています。
+通常の `npm test` はタイトル分類や原文照合などの回帰テストです。投資判断の有用性は測りません。従来の実 PDF スクリプトは空ページと指定語の有無を確認します。事実要約の8件については、主要数値・単位・期間・物理ページの期待値を別のfixtureに記録しています。
 
 ## 検証の選択と停止条件
 
@@ -54,9 +54,9 @@ npm run test:real-llm
 
 結果を比較する際は、同じ抽出テキスト、モデル、設定を使い、数値・単位・比較期間・根拠ページを原文と照合してください。PDF にない市場コンセンサスや現在株価を正解として補わないでください。
 
-## 現行の事実要約を7件で評価
+## 現行の事実要約を8件で評価
 
-`fixtures/fact-summary-cases.json` の7件のPDFを記載URLから取得し、`evaluation/fixtures/real-pdfs/<ID>.pdf` に保存します。`.env` に `TDNET_DIGEST_PROVIDER`、`TDNET_DIGEST_MODEL`、`TDNET_DIGEST_API_KEY` を設定して実行します。
+`fixtures/fact-summary-cases.json` の8件のPDFを記載URLから取得し、`evaluation/fixtures/real-pdfs/<ID>.pdf` に保存します。`.env` に `TDNET_DIGEST_PROVIDER`、`TDNET_DIGEST_MODEL`、`TDNET_DIGEST_API_KEY` を設定して実行します。不二越の `nachi-20261005` は、利用者が提示した公開PDFの当年・前年4指標とEPSを独立した期待値として固定しています。
 
 現行の評価設定例はOpenRouterの `deepseek/deepseek-v4.1-flash` です。ローカルの `.env` が旧モデルを指している場合は、モデル名を更新してから実行してください。
 

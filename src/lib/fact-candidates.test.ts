@@ -666,10 +666,10 @@ describe('生成専用候補と原文文脈の契約', () => {
       input.obligations.find((s: { sourceIds: string[] }) => s.sourceIds.includes('p5b20')).expected
     ).toMatchObject({ kind: 'event', state: 'forecast', periodKind: 'none' });
   });
-  it('参照群や全文をモデルに再記述させずBlueMemeの11事実を確定する', () => {
+  it('当年だけの応答を受理せず、原文の前年値だけを修復して保存する', async () => {
     const r = review(candidates);
     expect(r.unverified).toEqual([]);
-    expect(r.facts).toHaveLength(14);
+    expect(r.facts).toHaveLength(fixture.length);
     const background = r.facts.find(
       (f) => f.evidence.kind === 'prose' && f.evidence.blockId === 'p5b20'
     )!;
@@ -688,6 +688,58 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(parseFactSummary(JSON.stringify(final), 'earnings', pages)).toEqual(final);
     expect(renderFacts(final)).toContain('-400百万円');
     expect(renderFacts(final)).toContain('394百万円');
+    const current = r.facts.filter((f) => f.period !== '2025年3月期');
+    const slots = coverageReport('earnings', pages, current).filter(
+      (s) => s.status !== 'satisfied'
+    );
+    expect(slots).toHaveLength(5);
+    expect(
+      slots.every((s) => s.requirement.includes('前年決算実績') && s.status === 'absent')
+    ).toBe(true);
+    expect(slots.map((s) => s.expected.metricKind)).toEqual([
+      'amount',
+      'amount',
+      'amount',
+      'amount',
+      'perShare',
+    ]);
+    expect(
+      slots.every(
+        (s) =>
+          s.expected.period === '2025年3月期' &&
+          s.expected.state === 'actual' &&
+          s.sourceIds.length > 0
+      )
+    ).toBe(true);
+    expect(() =>
+      parseFactSummary(JSON.stringify({ ...final, facts: current }), 'earnings', pages)
+    ).toThrow('前年決算実績');
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(raw(candidates.slice(0, 14)))
+      .mockResolvedValueOnce(raw(candidates.slice(14)));
+    const repaired = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
+    expect(repaired.repairAttempted).toBe(true);
+    expect(repaired.facts.facts).toEqual(r.facts);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(generateText).mock.calls[1][1][1].content).toContain('修復方式=delta');
+  });
+  it('通期の前年値を四半期の前年比較へ転用しない', () => {
+    const items = structuredClone(corpus[0].pages[0].items);
+    const title = {
+      ...items[0],
+      str: '2026年3月期 第3四半期決算短信〔日本基準〕（連結）',
+      width: 350,
+    };
+    const source = [
+      extractPageLayout(
+        [title, ...items.filter((item) => item.transform[5] !== title.transform[5])] as TextItem[],
+        1
+      ),
+    ];
+    expect(
+      coverageReport('earnings', source, []).filter((s) => s.requirement.includes('前年決算実績'))
+    ).toEqual([]);
   });
   it.each([
     { meaning: { state: 'actual' } },
@@ -1078,24 +1130,26 @@ describe('生成専用候補と原文文脈の契約', () => {
       .mockResolvedValueOnce(raw(candidates));
     const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
     expect(result.repairAttempted).toBe(true);
-    expect(result.facts.facts).toHaveLength(14);
+    expect(result.facts.facts).toHaveLength(fixture.length);
     expect(vi.mocked(generateText).mock.calls[1][1][1].content).toContain('修復方式=complete');
   });
   it('修復で確定事実を消さず、ID付け替えによる重複も作らない', async () => {
     const initial = candidates.filter((_, i) => i !== 10);
     const before = review(initial).facts;
     const changed = structuredClone(candidates[9]);
-    changed.candidateId = 'c15';
+    changed.candidateId = 'c100';
     changed.meaning.basis = null;
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(raw(initial))
       .mockResolvedValueOnce(
-        raw([changed, { ...candidates[0], candidateId: 'c16' }, candidates[10]])
+        raw([changed, { ...candidates[0], candidateId: 'c101' }, candidates[10]])
       );
     const result = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
-    expect(result.facts.facts).toHaveLength(14);
-    expect(result.facts.facts.filter((f) => before.some((b) => b.id === f.id))).toHaveLength(13);
+    expect(result.facts.facts).toHaveLength(fixture.length);
+    expect(result.facts.facts.filter((f) => before.some((b) => b.id === f.id))).toHaveLength(
+      fixture.length - 1
+    );
     const attempts = vi.mocked(generateText).mock.calls;
     expect(attempts).toHaveLength(2);
     expect(attempts[1][1][1].content).toContain('修復方式=delta');

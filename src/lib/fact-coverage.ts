@@ -669,15 +669,81 @@ function matchesTargetSource(
     target.attributes
   );
 }
+function previousReportingTarget(target: ReportingTarget | null): ReportingTarget | null {
+  if (!target) return null;
+  const year = target.period.match(/^(20\d{2})年/);
+  return year
+    ? { ...target, period: target.period.replace(year[1], String(Number(year[1]) - 1)) }
+    : null;
+}
+/** Require original comparative reporting roles, not invented values or another unit's history. */
+function comparativeReportingSources(pages: ExtractedPage[], context: DocumentContext) {
+  const target = previousReportingTarget(
+    earningsTargets(
+      pages.filter((p) => p.selection === 'selected'),
+      context
+    ).actual
+  );
+  if (!target) return [];
+  const spans = pages.flatMap((p) => p.spans);
+  const text = (ids: string[]) =>
+    normalized(ids.map((id) => spans.find((s) => s.id === id)!.text).join(''));
+  return context.tableMappings.flatMap((h) => {
+    const page = pages.find(
+      (p) => p.selection === 'selected' && p.quantities.some((q) => q.id === h.valueId)
+    );
+    if (!page) return [];
+    // A dash or another non-numeric marker is not an omitted comparative amount.
+    if (!parseExactNumeric(page.quantities.find((q) => q.id === h.valueId)!.text)) return [];
+    const metric = revisionMetricLabel(text(h.metricIds));
+    if (
+      !metric ||
+      !isIssuerSource(h.valueId, context) ||
+      !isReportingMetricSource(h.valueId, 'actual', pages, context) ||
+      !matchesTargetSource(h.valueId, target, context) ||
+      (metric === 'netProfit' &&
+        !ownsRequiredNetProfit(text(h.metricIds), pages, context, 'actual'))
+    )
+      return [];
+    const axis = text(h.periodIds),
+      inherited = text(h.contextIds);
+    if (
+      sourceFiscalPeriod(axis, inherited) !== target.period ||
+      numericValueKind(axis, inherited) !== 'actual'
+    )
+      return [];
+    try {
+      if (
+        !matchesReportingPeriod(
+          {
+            period: target.period + (reportingPeriodShape(axis) ?? ''),
+            semantics: {
+              periodKind: periodKind(target.period + (target.quarter ?? ''), axis, inherited, true),
+            },
+          },
+          target.period,
+          target.quarter
+        )
+      )
+        return [];
+    } catch {
+      // Keep the explicit matching role: preflight must expose an unprovable source.
+      if (reportingPeriodShape(axis) !== (target.quarter ?? null)) return [];
+    }
+    return [{ valueId: h.valueId, metric, target }];
+  });
+}
 function targetForRequirement(
   requirement: string,
   targets: ReturnType<typeof earningsTargets>
 ): ReportingTarget | null {
-  return /当年決算実績|当年営業利益率/.test(requirement)
-    ? targets.actual
-    : /通期予想の重要指標|通期予想の1株当たり利益|COVERAGE:予想修正の前後/.test(requirement)
-      ? targets.forecast
-      : null;
+  return /前年決算実績/.test(requirement)
+    ? previousReportingTarget(targets.actual)
+    : /当年決算実績|当年営業利益率/.test(requirement)
+      ? targets.actual
+      : /通期予想の重要指標|通期予想の1株当たり利益|COVERAGE:予想修正の前後/.test(requirement)
+        ? targets.forecast
+        : null;
 }
 function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, period: string) {
   const target = earningsTargets(pages, context).actual;
@@ -882,6 +948,24 @@ export function verifyCoverage(
       );
     for (const metric of declaredReportingMetrics(pages, context, period, 'actual'))
       if (!has(metric, 'actual', period)) missing.push(`COVERAGE:当年決算実績の重要指標 ${metric}`);
+    const comparisons = comparativeReportingSources(allPages, context);
+    for (const metric of new Set(comparisons.map((s) => s.metric)))
+      if (
+        !facts.some(
+          (f) =>
+            (f.kind === 'number' || f.kind === 'range') &&
+            revisionMetricLabel(f.label) === metric &&
+            matchesReport(f, 'actual', comparisons[0].target.period) &&
+            (metric !== 'netProfit' || ownsRequiredNetProfit(f.label, pages, context, 'actual')) &&
+            comparisons.some(
+              (s) =>
+                s.metric === metric &&
+                f.evidence.kind === 'table' &&
+                f.evidence.valueId === s.valueId
+            )
+        )
+      )
+        missing.push(`COVERAGE:前年決算実績の重要指標 ${metric}`);
     const forecastUnit = targets.declaration;
     const forecast = forecastUnit?.period;
     if (
@@ -1350,7 +1434,15 @@ export function coverageReport(
         });
     }
   let publicationSources: ReturnType<typeof forecastPublicationSources> | undefined;
+  let comparativeSources: ReturnType<typeof comparativeReportingSources> | undefined;
   const sourceIds = (requirement: string): string[] => {
+    if (/前年決算実績/.test(requirement))
+      return (comparativeSources ??= comparativeReportingSources(
+        pages.map((p) => ({ ...p, selection: 'selected' as const })),
+        context
+      ))
+        .filter((s) => requirement === `COVERAGE:前年決算実績の重要指標 ${s.metric}`)
+        .map((s) => s.valueId);
     if (/業績予想公表の重要指標/.test(requirement))
       return (publicationSources ??= forecastPublicationSources(
         pages.map((p) => ({ ...p, selection: 'selected' as const })),

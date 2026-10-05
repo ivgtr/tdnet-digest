@@ -184,7 +184,7 @@ export async function summaryFormatFixture(company: 'kyokuto' | 'karura' = 'kyok
   };
 }
 
-/** Same public cover with/without optional previous-year facts, to identify the comparison gap. */
+/** Original current-only response must repair its omitted comparative reporting facts. */
 export async function nachiSummaryFormatFixture(withPrevious = false) {
   const { pdf, pages } = await publicPdf(
     'nachi',
@@ -226,10 +226,6 @@ export async function nachiSummaryFormatFixture(withPrevious = false) {
   ['p1s46', 'p1s48', 'p1s50', 'p1s52'].forEach((id, i) =>
     add(id, [192326, 11457, 10873, 6629][i], 2026, 'amount')
   );
-  if (withPrevious)
-    ['p1s55', 'p1s57', 'p1s59', 'p1s61'].forEach((id, i) =>
-      add(id, [174194, 6628, 5141, 3640][i], 2025, 'amount')
-    );
   add('p1s80', 304.28, 2026, 'perShare');
   ['p1s152', 'p1s154', 'p1s156', 'p1s158'].forEach((id, i) =>
     add(id, [255000, 15300, 13300, 7500][i], 2026, 'amount', true)
@@ -261,6 +257,11 @@ export async function nachiSummaryFormatFixture(withPrevious = false) {
         polarity: 'negative',
       },
     });
+  const initial = [...candidates];
+  ['p1s55', 'p1s57', 'p1s59', 'p1s61'].forEach((id, i) =>
+    add(id, [174194, 6628, 5141, 3640][i], 2025, 'amount')
+  );
+  add('p1s83', 161.29, 2025, 'perShare');
   const response = JSON.stringify({
     candidateVersion: 4,
     documentType: 'earnings',
@@ -285,20 +286,24 @@ export async function nachiSummaryFormatFixture(withPrevious = false) {
     pdf,
     pages,
     documentType: 'earnings' as const,
-    repairRequired: false,
-    first: response,
-    repair: response,
+    repairRequired: !withPrevious,
+    first: withPrevious
+      ? response
+      : JSON.stringify({
+          candidateVersion: 4,
+          documentType: 'earnings',
+          candidates: initial,
+          unverified: [],
+        }),
+    repair: JSON.stringify({
+      candidateVersion: 4,
+      documentType: 'earnings',
+      candidates: candidates.slice(initial.length),
+      unverified: [],
+    }),
     legacy,
     legacyRendered: renderFacts(legacy),
     warnings: [],
-    expected: [
-      '192326',
-      '11457',
-      '10873',
-      '6629',
-      '構造改革',
-      '変更なし',
-      withPrevious ? '↑増収' : '前年の値が要約に未抽出',
-    ],
+    expected: ['192326', '11457', '10873', '6629', '構造改革', '変更なし', '↑増収'],
   };
 }
