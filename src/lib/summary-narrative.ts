@@ -276,7 +276,7 @@ export function narrativeValues(
         sourceIds: [...new Set([...sources, ...unitSources].map((e) => e.id))],
       });
     }
-    for (const e of excerpts.filter((e) => e.page === page.pageNumber && e.kind === 'paragraph')) {
+    for (const e of excerpts.filter((e) => e.page === page.pageNumber && e.kind !== 'heading')) {
       for (const q of displayQuantities({ id: e.blockId, text: e.text })) {
         const parsed = scalar(q.raw);
         const text = e.text.normalize('NFKC');
@@ -314,6 +314,91 @@ export function narrativeValues(
 }
 
 export const NARRATIVE_TOKEN = /\{\{(value|change|delta):([^{}]+)\}\}/g;
+
+/** Repair only the explicitly addressed current draft, then revalidate it in full. */
+export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
+  if (
+    !record(base) ||
+    base.version !== 3 ||
+    !Array.isArray(base.sections) ||
+    !Array.isArray(base.overview)
+  )
+    throw new Error('NARRATIVE_SCHEMA:修復対象は現行version=3の草稿が必要です');
+  if (
+    !record(response) ||
+    !exact(response, ['version', 'edits']) ||
+    response.version !== 1 ||
+    !Array.isArray(response.edits) ||
+    !response.edits.length ||
+    response.edits.length > 100
+  )
+    throw new Error('NARRATIVE_SCHEMA:修復はversion=1と空でないedits配列が必要です');
+  const draft = structuredClone(base);
+  const used: string[] = [];
+  const names = new Set([
+    'overview',
+    'sections',
+    'title',
+    'summary',
+    'tables',
+    'caption',
+    'headers',
+    'rows',
+    'cells',
+    'text',
+    'sourceIds',
+  ]);
+  for (const edit of response.edits) {
+    if (
+      !record(edit) ||
+      !['replace', 'add', 'remove'].includes(String(edit.op)) ||
+      !exact(edit, edit.op === 'remove' ? ['op', 'path'] : ['op', 'path', 'value']) ||
+      typeof edit.path !== 'string' ||
+      !edit.path.startsWith('/')
+    )
+      throw new Error('NARRATIVE_SCHEMA:修復操作の項目が不正です');
+    const path = edit.path;
+    const parts = path.slice(1).split('/');
+    if (
+      !parts.length ||
+      parts.some((p) => !names.has(p) && !/^(?:0|[1-9]\d*|-)$/.test(p)) ||
+      used.some((p) => p === path || p.startsWith(path + '/') || path.startsWith(p + '/'))
+    )
+      throw new Error('NARRATIVE_SCHEMA:未知または重複した修復pathです');
+    used.push(edit.path);
+    let target: unknown = draft;
+    for (const key of parts.slice(0, -1)) {
+      if (Array.isArray(target) && /^(?:0|[1-9]\d*)$/.test(key) && Number(key) < target.length)
+        target = target[Number(key)];
+      else if (record(target) && Object.prototype.hasOwnProperty.call(target, key))
+        target = target[key];
+      else throw new Error('NARRATIVE_SCHEMA:修復pathの親が存在しません');
+    }
+    const key = parts[parts.length - 1];
+    if (Array.isArray(target)) {
+      const index =
+        key === '-' && edit.op === 'add'
+          ? target.length
+          : /^(?:0|[1-9]\d*)$/.test(key)
+            ? Number(key)
+            : -1;
+      if (index < 0 || index > target.length || (edit.op !== 'add' && index === target.length))
+        throw new Error('NARRATIVE_SCHEMA:修復の配列位置が不正です');
+      if (edit.op === 'remove') target.splice(index, 1);
+      else if (edit.op === 'add') target.splice(index, 0, structuredClone(edit.value));
+      else target[index] = structuredClone(edit.value);
+    } else if (record(target) && names.has(key)) {
+      if (
+        (edit.op !== 'add' && !Object.prototype.hasOwnProperty.call(target, key)) ||
+        (edit.op === 'add' && Object.prototype.hasOwnProperty.call(target, key))
+      )
+        throw new Error('NARRATIVE_SCHEMA:修復の項目が存在しないか既に存在します');
+      if (edit.op === 'remove') delete target[key];
+      else target[key] = structuredClone(edit.value);
+    } else throw new Error('NARRATIVE_SCHEMA:修復pathの対象が不正です');
+  }
+  return draft;
+}
 const NARRATIVE_LABEL =
   /1株当たり|20\d{2}年(?:\d{1,2}月(?:\d{1,2}日|期(?:第[1-4]四半期|中間期)?)?)?|過去\d+(?:ヶ|ヵ|か|カ)?月|\d{1,2}月(?:\d{1,2}日)?|(?:午前|午後)?\d{1,2}時(?:\d{1,2}分)?|\d{1,2}:\d{2}|第\d+条(?:第\d+項)?|第[1-4]四半期|第\d+(?:期|回)|IFRS(?:第)?\d+号|\b(?:[A-Za-z][A-Za-z0-9/-]*|\d+[A-Za-z][A-Za-z0-9/-]*)\b/g;
 /** Current v3 generation compiles exact, cited, complete source quantities.
@@ -941,16 +1026,18 @@ export async function generateSummaryNarrative(
     phase: SummaryAttempt['phase'],
     system: string,
     user: string,
-    assess: (raw: string) => void | string
+    assess: (raw: string) => void | string,
+    patch = false
   ) => {
     let raw = '';
     try {
       raw = await generateText(
         {
           ...options,
+          ...(patch ? { maxOutputTokens: Math.min(options.maxOutputTokens ?? 32768, 8192) } : {}),
           ...(config.provider === 'openrouter' &&
           getModel(config.provider, config.model)?.optionalReasoning &&
-          (phase === 'summary' || phase === 'summaryRepair')
+          (phase === 'summary' || (phase === 'summaryRepair' && !patch))
             ? { reasoningEnabled: false, reasoningEffort: undefined }
             : {}),
           onResponse: (response) => {
@@ -976,6 +1063,7 @@ export async function generateSummaryNarrative(
     }
   };
   let feedback = '';
+  let repairBase: unknown;
   let semanticRepairs = 0;
   let repaired = false;
   for (let semanticAttempt = 0; semanticAttempt < 2; semanticAttempt++) {
@@ -985,18 +1073,27 @@ export async function generateSummaryNarrative(
     // inherit the initial draft's consumed budget. All calls share one deadline.
     for (let structureAttempt = 0; structureAttempt < 2; structureAttempt++) {
       let rejectedResponse = '';
+      let candidate: unknown;
+      const patch = repairBase !== undefined;
       try {
-        const raw = await request(
+        await request(
           semanticAttempt || structureAttempt ? 'summaryRepair' : 'summary',
-          NARRATIVE_SYSTEM,
-          `説明要約の形式: ${FORMAT}\n${feedback}\n根拠入力: ${input}`,
+          NARRATIVE_SYSTEM +
+            (patch
+              ? '\n今回は草稿の修復要求です。初稿のversion=3全体は返さず、修復契約version=1のeditsだけ返します。'
+              : ''),
+          patch
+            ? `修復形式: {"version":1,"edits":[{"op":"replace","path":"/sections/0/summary/0/text","value":"修正した説明"}]}。opはreplace/add/remove。pathは提示した草稿のJSON位置です。変更が必要なtext/sourceIds/cells等だけ修正し、問題のない項目は書き直しません。意味や重要事項を落として拒否を避けず、不足する根拠は明示して追加します。必要な追加説明・表・節はaddで配列へ挿入します。未知の項目・ID・独自の数値は追加しません。修正後の全体を数量照合と独立点検へ渡します。\n修正理由: ${feedback}\n修復対象の草稿: ${JSON.stringify(repairBase)}\n根拠入力: ${input}`
+            : `説明要約の形式: ${FORMAT}\n${feedback}\n根拠入力: ${input}`,
           (raw) => {
             rejectedResponse = raw;
-            assembleNarrative(JSON.parse(raw), facts, values, excerpts);
-          }
+            candidate = patch ? applyNarrativeEdits(repairBase, JSON.parse(raw)) : JSON.parse(raw);
+            assembleNarrative(candidate, facts, values, excerpts);
+          },
+          patch
         );
-        content = assembleNarrative(JSON.parse(raw), facts, values, excerpts);
-        acceptedResponse = raw;
+        content = assembleNarrative(candidate, facts, values, excerpts);
+        acceptedResponse = JSON.stringify(candidate);
         break;
       } catch (e) {
         // Transport failures are not content repairs.
@@ -1006,7 +1103,14 @@ export async function generateSummaryNarrative(
         )
           throw e;
         repaired = true;
-        feedback = `前回は不正な説明要約です。すべての説明・行で同じ誤りを点検し、全体を再生成してください。理由: ${e instanceof Error ? e.message : String(e)}\n前回応答（修正対象）: ${rejectedResponse}`;
+        if (
+          record(candidate) &&
+          candidate.version === 3 &&
+          Array.isArray(candidate.sections) &&
+          Array.isArray(candidate.overview)
+        )
+          repairBase = candidate;
+        feedback = `前回は不正な説明要約です。同じ誤りがあるすべての説明・行を修正してください。理由: ${e instanceof Error ? e.message : String(e)}${repairBase === undefined ? `\n前回応答（修正対象）: ${rejectedResponse}` : ''}`;
       }
     }
     if (!content) throw new Error('NARRATIVE_SCHEMA:説明要約を構成できません');
@@ -1058,7 +1162,8 @@ export async function generateSummaryNarrative(
     );
     const review = assembleReview(rawReview);
     if (!review.issues.length) return { narrative: { content, review }, repaired };
-    feedback = `前回の要約: ${acceptedResponse}\n独立点検で問題がありました。根拠に沿って不足・誤りを修正し、要約全体を再生成してください: ${JSON.stringify(review.issues)}`;
+    repairBase = JSON.parse(acceptedResponse);
+    feedback = `独立点検で問題がありました。根拠に沿って不足・誤りを修正してください: ${JSON.stringify(review.issues)}`;
     if (semanticRepairs >= 1)
       throw new Error(`NARRATIVE_REVIEW:${review.issues.map((i) => i.reason).join(' / ')}`);
     semanticRepairs++;

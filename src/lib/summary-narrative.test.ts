@@ -18,6 +18,7 @@ import {
   narrativeClaims,
   NARRATIVE_TOKEN,
   assembleNarrative,
+  applyNarrativeEdits,
   validateNarrativeContent,
   type NarrativeContent,
 } from './summary-narrative';
@@ -348,6 +349,33 @@ describe('説明要約の生成・点検・数値参照', () => {
       'REFERENCE'
     );
     expect(() => assembleNarrative(good, facts, draft.values, draft.excerpts)).toThrow('SCHEMA');
+    const editBase = synthesisResponse(good);
+    const edits = {
+      version: 1,
+      edits: [{ op: 'replace', path: '/sections/0/summary/0/text', value: '変更した説明。' }],
+    };
+    const edited = applyNarrativeEdits(editBase, edits) as typeof editBase;
+    expect(edited.sections[0].summary[0].text).toBe('変更した説明。');
+    expect(edited.sections.slice(1)).toEqual(editBase.sections.slice(1));
+    expect(editBase.sections[0].summary[0].text).not.toBe('変更した説明。');
+    for (const path of ['/sections/99/title', '/__proto__/text', '/sections/0/unknown'])
+      expect(() =>
+        applyNarrativeEdits(editBase, {
+          version: 1,
+          edits: [{ op: 'replace', path, value: '不正' }],
+        })
+      ).toThrow('SCHEMA');
+    expect(() =>
+      applyNarrativeEdits(editBase, { version: 1, edits: [edits.edits[0], edits.edits[0]] })
+    ).toThrow('SCHEMA');
+    expect(() => applyNarrativeEdits(editBase, editBase)).toThrow('SCHEMA');
+    const dropped = applyNarrativeEdits(editBase, {
+      version: 1,
+      edits: [{ op: 'remove', path: '/sections/0' }],
+    });
+    expect(() => assembleNarrative(dropped, facts, draft.values, draft.excerpts)).toThrow(
+      'COVERAGE'
+    );
     const doubledUnit = structuredClone(good);
     doubledUnit.sections[0].tables[0].rows[0].cells[1] += '百万円';
     expect(() =>
@@ -490,6 +518,20 @@ describe('説明要約の生成・点検・数値参照', () => {
       [fragmentsPage]
     ).values;
     expect(fragments.some((v) => v.decimal === '27' && v.unit === '百万円')).toBe(false);
+    const inlineRow = layoutPage([
+      { id: 'p1s1', text: '当期', x: 0, y: 0, width: 20, height: 10 },
+      { id: 'p1s2', text: '7,017', x: 80, y: 0, width: 30, height: 10 },
+      { id: 'p1s3', text: '百万円（6.3％）', x: 110, y: 0, width: 80, height: 10 },
+      { id: 'p1s4', text: '前年', x: 220, y: 0, width: 20, height: 10 },
+      { id: 'p1s5', text: '6,599', x: 280, y: 0, width: 30, height: 10 },
+      { id: 'p1s6', text: '百万円（－％）', x: 310, y: 0, width: 80, height: 10 },
+    ]);
+    const inline = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [inlineRow]
+    ).values;
+    expect(inline.find((v) => v.decimal === '7017')?.unit).toBe('百万円');
+    expect(inline.find((v) => v.decimal === '6.3')?.unit).toBe('%');
     const columnFacts = {
       version: 6 as const,
       documentType: 'other' as const,
@@ -643,14 +685,28 @@ describe('説明要約の生成・点検・数値参照', () => {
     // A structural repair must not consume the separate semantic repair.
     const malformedResponse = structuredClone(response);
     malformedResponse.sections[0].summary[0].text = '売上高999百万円。';
+    const correction = {
+      version: 1,
+      edits: [
+        {
+          op: 'replace',
+          path: '/sections/0/summary/0/text',
+          value: response.sections[0].summary[0].text,
+        },
+      ],
+    };
+    const wrongCorrection = {
+      version: 1,
+      edits: [{ op: 'replace', path: '/sections/0/summary/0/text', value: '売上高999百万円。' }],
+    };
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
       .mockResolvedValueOnce(JSON.stringify(malformedResponse))
-      .mockResolvedValueOnce(JSON.stringify(response))
+      .mockResolvedValueOnce(JSON.stringify(correction))
       .mockResolvedValueOnce(JSON.stringify(badReview))
-      .mockResolvedValueOnce(JSON.stringify(malformedResponse))
-      .mockResolvedValueOnce(JSON.stringify(response))
+      .mockResolvedValueOnce(JSON.stringify(wrongCorrection))
+      .mockResolvedValueOnce(JSON.stringify(correction))
       .mockResolvedValueOnce(JSON.stringify({ version: 2, issues: [] }));
     const repairedAttempts: SummaryAttempt[] = [];
     const repaired = await generateVerifiedFactSummary(
@@ -667,12 +723,10 @@ describe('説明要約の生成・点検・数値参照', () => {
       vi
         .mocked(generateText)
         .mock.calls.slice(2)
-        .every(([c], i) =>
-          [1, 4].includes(i)
-            ? c.reasoningEffort === 'low' && c.reasoningEnabled === undefined
-            : c.reasoningEffort === undefined && c.reasoningEnabled === false
-        )
+        .every(([c]) => c.reasoningEffort === 'low' && c.reasoningEnabled === undefined)
     ).toBe(true);
+    for (const index of [2, 4, 5])
+      expect(vi.mocked(generateText).mock.calls[index][0].maxOutputTokens).toBe(8192);
     expect(repaired.repairAttempted).toBe(true);
     expect(repairedAttempts.map((a) => a.phase)).toEqual([
       'first',
@@ -688,7 +742,7 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
       .mockResolvedValueOnce(JSON.stringify(response))
       .mockResolvedValueOnce(JSON.stringify(badReview))
-      .mockResolvedValueOnce(JSON.stringify(response))
+      .mockResolvedValueOnce(JSON.stringify(correction))
       .mockResolvedValueOnce(JSON.stringify(badReview));
     const attempts: SummaryAttempt[] = [];
     await expect(
