@@ -17,7 +17,8 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { VerifiedFact } from './fact-contract';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { reviewCandidates } from './fact-candidates';
-import { summaryComparison, comparisonLabel } from './summary-comparison';
+import { summaryComparison, comparisonLabel, comparisonIssue } from './summary-comparison';
+import { isSourceMetadata } from './summary-content-policy';
 
 const page = textPage(expectation.text);
 const facts = parseFactSummary(
@@ -36,13 +37,15 @@ const presentation = buildPresentation(facts, [page]);
 describe('冒頭と本文の保持・復元・原文参照', () => {
   it('目次・定型注意書き・記載省略・該当なしを冒頭の理由や条件にせず全文は保持する', () => {
     const notice =
-      '本資料に記載されている業績見通し等の将来に関する記述は、当社が現在入手している情報及び合理的であると判断する一定の前提に基づいており、その達成を当社として約束する趣旨のものではありません。また、実際の業績等は様々な要因により大きく異なる可能性があります。';
+      '※ 添付される四半期連結財務諸表に対する公認会計士又は監査法人によるレビュー：無\n※ 業績予想の適切な利用に関する説明、その他特記事項\n本資料に記載されている業績予想につきましては発表日現在のデータに基づき作成したものであり、予想につきましては様々な不確定要素が内在しておりますので、実際の業績はこれらの予想数値と異なる可能性があります。なお、上記予想に関する事項は、（添付資料）２ページ「（３）連結業績予想などの将来予測情報に関する説明」をご参照ください。';
     const toc =
       '１．経営成績等の概況……………………２\n（１）当中間期の経営成績の概況……………………２\n２．財務諸表……………………４';
     const routine =
       '（セグメント情報等の注記）【セグメント情報】前中間連結会計期間(自2025年３月１日至2025年８月31日)\n当社グループの報告セグメントはレストラン事業のみであり、他の事業セグメントの重要性が乏しいため、記載を省略しております。';
     const absence = '（株主資本の金額に著しい変動があった場合の注記）該当事項はありません。';
     const risk = '新規事業は承認を条件に実施する予定です。';
+    expect(isSourceMetadata(notice)).toBe(true);
+    expect(isSourceMetadata(notice + risk)).toBe(false);
     const source = textPage(
       expectation.text +
         '\n' +
@@ -85,6 +88,13 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       quantity: { ...current.quantity!, decimal: '120' },
     } as VerifiedFact;
     const comparison = summaryComparison(current, [current, previous])!;
+    expect(comparisonIssue(current, [current])).toBe('前年の値が要約に未抽出');
+    expect(
+      comparisonIssue(current, [
+        current,
+        { ...previous, semantics: { ...previous.semantics, scope: '非連結' } },
+      ])
+    ).toBe('比較条件・根拠の対応が未確認');
     expect(comparisonLabel(current, comparison)).toBe('↓減益');
     const loss = {
       ...current,

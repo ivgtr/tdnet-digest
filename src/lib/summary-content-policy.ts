@@ -189,7 +189,16 @@ export function explanationRole(text: string): 'reason' | 'condition' | 'change'
 export function isSourceMetadata(text: string): boolean {
   const source = text.normalize('NFKC').replace(/\s/g, '');
   if (!/。/.test(source) && /(?:\.{3,}|…{2,}|⋯{2,}|‥{2,})\d/.test(source)) return true;
-  const sentences = source.match(/[^。]+。?/g) ?? [];
+  // Known administrative prefixes can be joined to the disclaimer by PDF line grouping.
+  // Remove only their complete forms before checking every remaining sentence.
+  const body = source
+    .replace(
+      /^※?添付される(?:四半期|中間)?連結財務諸表に対する公認会計士又は監査法人によるレビュー[:：](?:無|有)/,
+      ''
+    )
+    .replace(/^※?業績予想の適切な利用に関する説明、その他特記事項/, '');
+  if (!body && body !== source) return true;
+  const sentences = body.match(/[^。]+。?/g) ?? [];
   return (
     sentences.length > 0 &&
     sentences.every(
@@ -197,7 +206,15 @@ export function isSourceMetadata(text: string): boolean {
         /^(?:本資料|本決算短信)に記載.*(?:業績見通し|業績予想).*将来.*(?:約束|保証).*ありません。?$/.test(
           sentence
         ) ||
-        /^(?:また、)?実際の業績.*(?:様々|さまざま)な要因.*異なる可能性があります。?$/.test(sentence)
+        /^(?:また、)?実際の業績.*(?:様々|さまざま)な要因.*異なる可能性があります。?$/.test(
+          sentence
+        ) ||
+        /^本資料に記載されている業績予想につきましては発表日現在のデータに基づき作成.*(?:様々|さまざま)な不確定要素.*実際の業績はこれらの予想数値と異なる可能性があります。?$/.test(
+          sentence
+        ) ||
+        /^なお、上記予想に関する事項は、[（(]添付資料[）)]\d+ページ「[（(]\d+[）)]連結業績予想などの将来予測情報に関する説明」をご参照ください。?$/.test(
+          sentence
+        )
     )
   );
 }

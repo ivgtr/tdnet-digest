@@ -74,6 +74,10 @@ export async function additionalReviewFixture(mode: string) {
     return (await import('./summary-format-fixture')).summaryFormatFixture();
   if (mode === 'summary-format-karura')
     return (await import('./summary-format-fixture')).summaryFormatFixture('karura');
+  if (mode === 'summary-format-nachi' || mode === 'summary-format-nachi-comparison')
+    return (await import('./summary-format-fixture')).nachiSummaryFormatFixture(
+      mode === 'summary-format-nachi-comparison'
+    );
   if (mode === 'semantic-ownership') return periodOutlookUnitsFixture(true);
   if (mode === 'period-outlook-units') return periodOutlookUnitsFixture();
   if (mode === 'inherited-outlook-yen') return inheritedOutlookYenFixture();

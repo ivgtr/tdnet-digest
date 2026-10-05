@@ -9,7 +9,7 @@ import { unchangedDividend, unchangedDividendReference } from './dividend-semant
 import { paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 import { explanationRole } from './summary-content-policy';
 import { companyExcerpt } from './summary-company-excerpt';
-import { summaryComparison, comparisonLabel } from './summary-comparison';
+import { summaryComparison, comparisonLabel, comparisonIssue } from './summary-comparison';
 
 export const stateLabels = {
   actual: '実績',
@@ -145,7 +145,7 @@ function overviewNumber(f: VerifiedFact, facts: FactSummary): string {
   }
   const rate = facts.facts.find((r) => canPair(f, r));
   if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;
-  return `${literalMarkdown(f.label)}：${numberText(f)}${f.semantics.state === 'actual' || f.semantics.state === 'forecastAfter' ? '（比較未確認）' : ''}`;
+  return `${literalMarkdown(f.label)}：${numberText(f)}${f.semantics.state === 'actual' || f.semantics.state === 'forecastAfter' ? `（${comparisonIssue(f, facts.facts)}）` : ''}`;
 }
 function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
   if (['reason', 'condition'].includes(explanationRole(f.statement!) ?? '')) {

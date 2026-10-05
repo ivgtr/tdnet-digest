@@ -133,15 +133,26 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       ...item,
       ...(reviewCase === 'summary-format-kyokuto' ? { id: 'kyokuto-20261005', code: '2300' } : {}),
       ...(reviewCase === 'summary-format-karura' ? { id: 'karura-20261005', code: '2789' } : {}),
+      ...(reviewCase?.startsWith('summary-format-nachi')
+        ? {
+            id:
+              reviewCase === 'summary-format-nachi-comparison'
+                ? 'nachi-comparison-20261005'
+                : 'nachi-20261005',
+            code: '6474',
+          }
+        : {}),
       documentType: reviewFixture.documentType,
       title:
         reviewCase === 'summary-format-kyokuto'
           ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
           : reviewCase === 'summary-format-karura'
             ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
-            : reviewFixture.documentType === 'earnings'
-              ? '2027年3月期 決算短信〔日本基準〕（連結）'
-              : '追加セルフレビュー用開示',
+            : reviewCase?.startsWith('summary-format-nachi')
+              ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
+              : reviewFixture.documentType === 'earnings'
+                ? '2027年3月期 決算短信〔日本基準〕（連結）'
+                : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure =
@@ -211,7 +222,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     source: reviewRejectedUrl
       ? 'rejected-link'
       : reviewFixture
-        ? reviewCase === 'summary-format-kyokuto' || reviewCase === 'summary-format-karura'
+        ? reviewCase === 'summary-format-kyokuto' ||
+          reviewCase === 'summary-format-karura' ||
+          reviewCase?.startsWith('summary-format-nachi')
           ? 'public-PDF-through-offscreen'
           : 'synthetic-PDF-through-offscreen'
         : fixtureSource
@@ -709,6 +722,42 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
     assert.ok(stored.value.presentation?.version === 2);
+    if (reviewCase?.startsWith('summary-format-nachi')) {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const blockId of ['p2b11', 'p2b12', 'p2b13']) {
+        const original = stored.value.presentation.excerpts.find((e: any) => e.blockId === blockId);
+        assert.ok(original, `定型文の全文保持が欠落: ${blockId}`);
+        assert.equal(original.role, 'document');
+        assert.ok(
+          !reading.includes(original.text.normalize('NFKC').replace(/\s/g, '')),
+          `定型文が通常表示へ混入: ${blockId}`
+        );
+      }
+      const previous = stored.value.facts.facts.filter((f: any) =>
+        f.period?.startsWith('2025年11月期')
+      );
+      if (reviewCase === 'summary-format-nachi-comparison') {
+        assert.equal(previous.length, 4);
+        for (const term of [
+          '売上高:↑増収192,326百万円(前年同期174,194百万円)',
+          '営業利益:↑増益11,457百万円(前年同期6,628百万円)',
+          '経常利益:↑増益10,873百万円(前年同期5,141百万円)',
+          '純利益:↑増益6,629百万円(前年同期3,640百万円)',
+        ])
+          assert.ok(reading.includes(term), `前年の確定値による比較が欠落: ${term}`);
+      } else {
+        assert.equal(previous.length, 0);
+        assert.equal((reading.match(/前年の値が要約に未抽出/g) ?? []).length, 4);
+        assert.ok(
+          !reading.includes('↑増益') && !reading.includes('↑増収'),
+          '未抽出の前年値から増減を推測'
+        );
+      }
+      evidence.reading = reading;
+    }
     if (reviewCase === 'summary-format-karura') {
       const reading = (await displayedFacts(summary))
         .join('\n')

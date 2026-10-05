@@ -8,18 +8,13 @@ import { reviewCandidates, type Candidate } from '../../src/lib/fact-candidates'
 import { parseFactSummary, renderFacts } from '../../src/lib/fact-summary';
 
 /** Public PDF supplied by the user. Values/periods below are independently read from its cover. */
-export async function summaryFormatFixture(company: 'kyokuto' | 'karura' = 'kyokuto') {
-  const karura = company === 'karura';
-  const subject = karura ? '株式会社カルラ' : '株式会社きょくとう';
-  const scope = karura ? '連結' : '非連結';
+async function publicPdf(company: string, sha256: string) {
   const pdf = new Uint8Array(
     await readFile(`evaluation/fixtures/real-pdfs/${company}-20261005.pdf`)
   );
   assert.equal(
     createHash('sha256').update(pdf).digest('hex'),
-    karura
-      ? 'a4f45c78c09fe947fe1a35ef03261031ed49d1f51af3d426b1691577caf5e701'
-      : '1a830c4c97addb7a4eb6f418eb45c444a326ea13f4e8bb7fb67a0f70391a5775',
+    sha256,
     '固定した公開PDFと一致しません'
   );
   const document = await getDocument({ data: pdf.slice() }).promise;
@@ -27,6 +22,19 @@ export async function summaryFormatFixture(company: 'kyokuto' | 'karura' = 'kyok
   for (let n = 1; n <= document.numPages; n++)
     pages.push(await extractPdfPageLayout(await document.getPage(n), n, OPS));
   await document.destroy();
+  return { pdf, pages };
+}
+
+export async function summaryFormatFixture(company: 'kyokuto' | 'karura' = 'kyokuto') {
+  const karura = company === 'karura';
+  const subject = karura ? '株式会社カルラ' : '株式会社きょくとう';
+  const scope = karura ? '連結' : '非連結';
+  const { pdf, pages } = await publicPdf(
+    company,
+    karura
+      ? 'a4f45c78c09fe947fe1a35ef03261031ed49d1f51af3d426b1691577caf5e701'
+      : '1a830c4c97addb7a4eb6f418eb45c444a326ea13f4e8bb7fb67a0f70391a5775'
+  );
   const candidates: Candidate[] = [];
   const values: number[] = [];
   const add = (
@@ -173,5 +181,124 @@ export async function summaryFormatFixture(company: 'kyokuto' | 'karura' = 'kyok
           '配当支払開始予定日',
           '2026年11月10日',
         ],
+  };
+}
+
+/** Same public cover with/without optional previous-year facts, to identify the comparison gap. */
+export async function nachiSummaryFormatFixture(withPrevious = false) {
+  const { pdf, pages } = await publicPdf(
+    'nachi',
+    'b8ac6a6a4ee91a4388f4d4f0ff88a0c133273930fe48e5b10901e4abd2727e46'
+  );
+  const candidates: Candidate[] = [];
+  const values: number[] = [];
+  const add = (
+    valueId: string,
+    value: number,
+    year: number,
+    metricKind: 'amount' | 'perShare',
+    forecast = false,
+    dividend = false
+  ) => {
+    values.push(value);
+    candidates.push({
+      candidateId: `c${candidates.length + 1}`,
+      importance: 'key',
+      kind: 'number',
+      source: {
+        kind: 'table',
+        valueId,
+        tableId: sourceTableId(pages[0], valueId),
+        contextBindingId: `ctx:${valueId}`,
+      },
+      meaning: {
+        subject: '株式会社不二越',
+        scope: dividend ? null : '連結',
+        basis: dividend ? null : '日本基準',
+        period: `${year}年11月期${!forecast && !dividend ? '第3四半期' : ''}`,
+        periodKind: !forecast && !dividend ? 'cumulativeQ3' : 'fullYear',
+        metricKind,
+        state: forecast ? 'forecast' : 'actual',
+        polarity: 'affirmative',
+      },
+    });
+  };
+  ['p1s46', 'p1s48', 'p1s50', 'p1s52'].forEach((id, i) =>
+    add(id, [192326, 11457, 10873, 6629][i], 2026, 'amount')
+  );
+  if (withPrevious)
+    ['p1s55', 'p1s57', 'p1s59', 'p1s61'].forEach((id, i) =>
+      add(id, [174194, 6628, 5141, 3640][i], 2025, 'amount')
+    );
+  add('p1s80', 304.28, 2026, 'perShare');
+  ['p1s152', 'p1s154', 'p1s156', 'p1s158'].forEach((id, i) =>
+    add(id, [255000, 15300, 13300, 7500][i], 2026, 'amount', true)
+  );
+  add('p1s160', 344.2, 2026, 'perShare', true);
+  add('p1s130', 110, 2026, 'perShare', true, true);
+  add('p1s131', 110, 2026, 'perShare', true, true);
+  for (const blockId of ['p1b35', 'p1b43'])
+    candidates.push({
+      candidateId: `c${candidates.length + 1}`,
+      importance: 'key',
+      kind: 'event',
+      source: {
+        kind: 'prose',
+        blockId,
+        assertionId: `${blockId}:a1`,
+        quantityId: null,
+        metric: null,
+        contextBindingId: `ctx:${blockId}`,
+      },
+      meaning: {
+        subject: '株式会社不二越',
+        scope: blockId === 'p1b35' ? null : '連結',
+        basis: blockId === 'p1b35' ? null : '日本基準',
+        period: null,
+        periodKind: 'none',
+        metricKind: 'none',
+        state: 'unspecified',
+        polarity: 'negative',
+      },
+    });
+  const response = JSON.stringify({
+    candidateVersion: 4,
+    documentType: 'earnings',
+    candidates,
+    unverified: [],
+  });
+  const review = reviewCandidates(response, 'earnings', pages);
+  assert.deepEqual(
+    review.diagnostics.filter((d) => d.status !== 'valid'),
+    []
+  );
+  assert.deepEqual(
+    review.facts.filter((f) => f.kind === 'number').map((f) => f.value),
+    values
+  );
+  const legacy = parseFactSummary(
+    JSON.stringify({ version: 6, documentType: 'earnings', facts: review.facts, unverified: [] }),
+    'earnings',
+    pages
+  );
+  return {
+    pdf,
+    pages,
+    documentType: 'earnings' as const,
+    repairRequired: false,
+    first: response,
+    repair: response,
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [],
+    expected: [
+      '192326',
+      '11457',
+      '10873',
+      '6629',
+      '構造改革',
+      '変更なし',
+      withPrevious ? '↑増収' : '前年の値が要約に未抽出',
+    ],
   };
 }

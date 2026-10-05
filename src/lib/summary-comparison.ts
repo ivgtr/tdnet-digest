@@ -84,3 +84,23 @@ export function comparisonLabel(current: VerifiedFact, comparison: SummaryCompar
   if (/売上高|売上収益|営業収益/.test(current.label)) return direction === 'up' ? '↑増収' : '↓減収';
   return direction === 'up' ? '↑増加' : '↓減少';
 }
+
+/** A missing accepted comparison is different from an absent figure in the original PDF. */
+export function comparisonIssue(current: VerifiedFact, facts: VerifiedFact[]): string {
+  if (current.kind !== 'number' || current.quantity?.decimal == null) return '比較未確認';
+  const revision = current.semantics.state === 'forecastAfter';
+  const year = current.period?.match(/^(20\d{2})年(\d{1,2})月期/);
+  if (!revision && (current.semantics.state !== 'actual' || !year)) return '比較未確認';
+  const target = revision
+    ? current.period
+    : current.period!.replace(year![1]!, String(Number(year![1]) - 1));
+  const related = facts.filter(
+    (f) =>
+      f.id !== current.id &&
+      f.label === current.label &&
+      f.period === target &&
+      f.semantics.state === (revision ? 'forecastBefore' : 'actual')
+  );
+  if (!related.length) return revision ? '修正前の値が要約に未抽出' : '前年の値が要約に未抽出';
+  return '比較条件・根拠の対応が未確認';
+}
