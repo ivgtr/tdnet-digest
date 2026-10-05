@@ -324,7 +324,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(columns.find((v) => v.decimal === '5.0')?.unit).toBe('%');
     expect(columns.find((v) => v.decimal === '90')?.unit).toBeNull();
     const labels = structuredClone(draft.excerpts);
-    labels[0].text += ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。';
+    labels[0].text += ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。B2C事業。';
     const named = structuredClone(good);
     named.sections[0].summary[0].text =
       '会社法第165条第３項に基づき、午前８時45分のToSTNeT-3で取引する。';
@@ -332,6 +332,8 @@ describe('説明要約の生成・点検・数値参照', () => {
     named.sections[0].summary[0].text = '1UP投資部屋で紹介。基本的１株当たり利益。';
     validateNarrativeContent(named, facts, draft.values, labels);
     named.sections[0].summary[0].text = '2UP投資部屋で紹介。';
+    expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
+    named.sections[0].summary[0].text = 'B2事業。';
     expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
     named.sections[0].summary[0].text = '100JPYを取得する。';
     expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('QUANTITY');
@@ -394,6 +396,30 @@ describe('説明要約の生成・点検・数値参照', () => {
       ...fixedNarrativeReview(summary, facts, draft),
       issues: [{ claimId: 'summary-2-0', sourceIds: sources, reason: '納期長期化の条件が欠落' }],
     };
+    // A structural repair must not consume the separate semantic repair.
+    const malformedResponse = structuredClone(response);
+    malformedResponse.sections[0].summary[0].text = '売上高999百万円。';
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
+      .mockResolvedValueOnce(JSON.stringify(malformedResponse))
+      .mockResolvedValueOnce(JSON.stringify(response))
+      .mockResolvedValueOnce(JSON.stringify(badReview))
+      .mockResolvedValueOnce(JSON.stringify(response))
+      .mockResolvedValueOnce(JSON.stringify(fixedNarrativeReview(summary, facts, draft)));
+    const repairedAttempts: SummaryAttempt[] = [];
+    const repaired = await generateVerifiedFactSummary(config, 'other', page.text, [page], (a) => {
+      repairedAttempts.push(a);
+    });
+    expect(repaired.repairAttempted).toBe(true);
+    expect(repairedAttempts.map((a) => a.phase)).toEqual([
+      'first',
+      'summary',
+      'summaryRepair',
+      'summaryReview',
+      'summaryRepair',
+      'summaryReviewRepair',
+    ]);
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
