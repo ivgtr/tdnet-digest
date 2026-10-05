@@ -1,7 +1,11 @@
 import { candidateResponse, candidateFixture } from './fixtures/candidate-test-source';
 import { describe, it, expect, vi } from 'vitest';
 import { generateText } from './llm-client';
-import { parseFactSummary, generateVerifiedFactSummary, renderFacts } from './fact-summary';
+import {
+  parseFactSummary,
+  generateVerifiedFacts as generateVerifiedFactSummary,
+  renderFacts,
+} from './fact-summary';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import type { VerifiedFact } from './fact-contract';
 import { serializeLayout } from './pdf-layout';

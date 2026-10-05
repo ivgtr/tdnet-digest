@@ -4225,5 +4225,120 @@
         }
       }
     ]
+  },
+  {
+    "id": "kyokuto-20261005",
+    "title": "2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261005545843.pdf",
+    "code": "2300",
+    "publishedDate": "2026-10-05",
+    "sourceHash": "1a830c4c97addb7a4eb6f418eb45c444a326ea13f4e8bb7fb67a0f70391a5775",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 2976,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 247,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 288,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "中間純利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 207,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      }
+    ]
   }
 ]

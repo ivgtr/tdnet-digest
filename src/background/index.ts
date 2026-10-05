@@ -273,7 +273,8 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
       analysisSchemaVersion: FACT_SCHEMA_VERSION,
       provider: settings.provider,
       model: settings.model,
-      summaryMode: 'one-pass',
+      summaryMode: 'sourced-summary',
+      generationCalls: trace.attempts.length,
       analysisFingerprint: fingerprint,
     };
     return {

@@ -3,7 +3,7 @@ import type { VerifiedFact } from './fact-contract';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { generateText, type LLMConfig } from './llm-client';
-import { generateVerifiedFactSummary, renderFacts } from './fact-summary';
+import { generateVerifiedFacts as generateVerifiedFactSummary, renderFacts } from './fact-summary';
 import { extractPageLayout } from './pdf-layout';
 import corpus from './fixtures/ir-semantic-corpus.json';
 import expectations from './fixtures/ir-semantic-expectations.json';

@@ -5,7 +5,11 @@ import { evidence, saved, report, event, cells, period } from './fixtures/fact-r
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from './document-context';
 import { proseQuantities, reviewCandidates, serializeCandidateSource } from './fact-candidates';
-import { generateVerifiedFactSummary, renderFacts, parseFactSummary } from './fact-summary';
+import {
+  generateVerifiedFacts as generateVerifiedFactSummary,
+  renderFacts,
+  parseFactSummary,
+} from './fact-summary';
 import { verifyCoverage, coverageReport } from './fact-coverage';
 import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
@@ -24,7 +28,7 @@ import { tableContinuations } from './document-links';
 import { preflightCandidateSource } from './source-preflight';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
-import { buildPresentation } from './summary-presentation';
+import { buildPresentation } from './fixtures/summary-narrative-source';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
 it('中間期の予想修正を実際の表範囲と分割された前回・今回の行で照合し、通期の代用を拒否する', () => {

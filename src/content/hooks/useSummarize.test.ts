@@ -6,7 +6,7 @@ import {
 } from '@/lib/analysis-version';
 import { textPage, numberCandidate } from '@/lib/fixtures/v4-test-source';
 import { parseFactSummary, renderFacts } from '@/lib/fact-summary';
-import { buildPresentation } from '@/lib/summary-presentation';
+import { buildPresentation } from '@/lib/fixtures/summary-narrative-source';
 import { summaryResultId } from '@/lib/summary-result-id';
 import { useSummarize } from './useSummarize';
 import { toValue } from '@/lib/score-extraction';

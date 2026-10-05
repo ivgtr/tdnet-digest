@@ -44,7 +44,8 @@ export interface SummaryMetadata {
   analysisSchemaVersion?: number;
   provider?: string;
   model?: string;
-  summaryMode?: 'one-pass';
+  summaryMode?: 'sourced-summary';
+  generationCalls?: number;
   analysisFingerprint?: string;
 }
 

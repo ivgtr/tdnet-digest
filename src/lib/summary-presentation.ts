@@ -19,6 +19,13 @@ import { reportingMetricKey } from './metric-semantics';
 import { companyExcerpt } from './summary-company-excerpt';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
+import {
+  narrativeValues,
+  validateSummaryNarrative,
+  type NarrativeValue,
+  type SummaryNarrative,
+} from './summary-narrative';
+import { parseExactNumeric } from './quantity';
 
 export interface SummarySection {
   title: string;
@@ -27,11 +34,13 @@ export interface SummarySection {
   highlights: string[];
 }
 export interface SummaryPresentation {
-  version: 2;
+  version: 3;
   sourceHash: string;
   overview: string[];
   sections: SummarySection[];
   excerpts: SourceExcerpt[];
+  values: NarrativeValue[];
+  narrative: SummaryNarrative | null;
 }
 const numeric = (f: VerifiedFact) => f.kind === 'number' || f.kind === 'range';
 const anchor = (f: VerifiedFact) =>
@@ -47,10 +56,14 @@ export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): S
     throw new SummarySourceSelectionError(
       '本文の根拠がスマート抽出の対象外です。全文で再要約してください。'
     );
-  return composePresentation(facts, excerpts);
+  return composePresentation(facts, excerpts, narrativeValues(facts, pages, excerpts));
 }
 
-function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): SummaryPresentation {
+function composePresentation(
+  facts: FactSummary,
+  excerpts: SourceExcerpt[],
+  values: NarrativeValue[]
+): SummaryPresentation {
   const policies = sectionPolicies(facts.documentType);
   const sections: SummarySection[] = policies.map(([, title]) => ({
     title,
@@ -219,11 +232,13 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
     );
   if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
   return {
-    version: 2,
-    sourceHash: hashText(canonicalJSON(excerpts)),
+    version: 3,
+    sourceHash: hashText(canonicalJSON({ excerpts, values })),
     overview,
     sections: sections.filter((s) => s.factIds.length || s.excerptIds.length),
     excerpts,
+    values,
+    narrative: null,
   };
 }
 
@@ -234,11 +249,20 @@ export function validatePresentation(
 ): asserts value is SummaryPresentation {
   if (
     !record(value) ||
-    !exact(value, ['version', 'sourceHash', 'overview', 'sections', 'excerpts']) ||
-    value.version !== 2 ||
+    !exact(value, [
+      'version',
+      'sourceHash',
+      'overview',
+      'sections',
+      'excerpts',
+      'values',
+      'narrative',
+    ]) ||
+    value.version !== 3 ||
     !Array.isArray(value.overview) ||
     !Array.isArray(value.sections) ||
-    !Array.isArray(value.excerpts)
+    !Array.isArray(value.excerpts) ||
+    !Array.isArray(value.values)
   )
     throw new Error('要約の表示構成が不正です');
   const ids = new Set(facts.facts.map((f) => f.id));
@@ -275,7 +299,48 @@ export function validatePresentation(
     Array.isArray(v) &&
     new Set(v).size === v.length &&
     v.every((id) => typeof id === 'string' && allowed.has(id));
-  const expected = composePresentation(facts, value.excerpts as SourceExcerpt[]);
+  const quantities = new Set<string>();
+  for (const q of value.values) {
+    if (
+      !record(q) ||
+      !exact(q, ['id', 'raw', 'decimal', 'unit', 'sourceIds']) ||
+      typeof q.id !== 'string' ||
+      !(ids.has(q.id) || /^p\d+(?:s\d+|b\d+:q\d+)$/.test(q.id)) ||
+      quantities.has(q.id) ||
+      typeof q.raw !== 'string' ||
+      !q.raw.trim() ||
+      !(q.decimal === null || typeof q.decimal === 'string') ||
+      !(q.unit === null || typeof q.unit === 'string') ||
+      !Array.isArray(q.sourceIds) ||
+      !refs(q.sourceIds, sourceIds) ||
+      !q.sourceIds.length
+    )
+      throw new Error('保存された表示数量が不正です');
+    quantities.add(q.id);
+    const rawQuantity = q.raw;
+    const literal = parseExactNumeric(rawQuantity);
+    const fact = facts.facts.find((f) => f.id === q.id);
+    if (
+      !literal ||
+      (literal.kind === 'number' ? literal.decimal : null) !== q.decimal ||
+      (literal.unit !== null && literal.unit !== q.unit) ||
+      (fact
+        ? q.raw !== fact.quantity!.raw + fact.unit || q.unit !== fact.unit
+        : !(q.sourceIds as string[]).some((id) =>
+            (value.excerpts as SourceExcerpt[])
+              .find((e) => e.id === id)!
+              .text.normalize('NFKC')
+              .replace(/\s/g, '')
+              .includes(rawQuantity.normalize('NFKC').replace(/\s/g, ''))
+          ))
+    )
+      throw new Error('保存された表示数量と原文が不一致です');
+  }
+  const expected = composePresentation(
+    facts,
+    value.excerpts as SourceExcerpt[],
+    value.values as NarrativeValue[]
+  );
   if (
     !refs(
       value.overview,
@@ -308,6 +373,12 @@ export function validatePresentation(
   // Headline selection may be adjusted independently; body membership stays deterministic.
   if (canonicalJSON(value.sections) !== canonicalJSON(expected.sections))
     throw new Error('本文の所属が一致しません');
+  validateSummaryNarrative(
+    value.narrative,
+    facts,
+    value.values as NarrativeValue[],
+    value.excerpts as SourceExcerpt[]
+  );
 }
 
 export function revalidatePresentation(
@@ -317,7 +388,10 @@ export function revalidatePresentation(
 ): SummaryPresentation {
   validatePresentation(value, facts);
   const expected = buildPresentation(facts, pages);
-  if (canonicalJSON(value.excerpts) !== canonicalJSON(expected.excerpts))
+  if (
+    canonicalJSON(value.excerpts) !== canonicalJSON(expected.excerpts) ||
+    canonicalJSON(value.values) !== canonicalJSON(expected.values)
+  )
     throw new Error('原文引用とPDFが一致しません');
   return value;
 }

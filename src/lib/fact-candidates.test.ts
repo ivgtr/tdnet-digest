@@ -6,7 +6,11 @@ import { extractPageLayout } from './pdf-layout';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { candidateFixture, candidateResponse } from './fixtures/candidate-test-source';
 import { reviewCandidates, serializeCandidateSource, type Candidate } from './fact-candidates';
-import { generateVerifiedFactSummary, parseFactSummary, renderFacts } from './fact-summary';
+import {
+  generateVerifiedFacts as generateVerifiedFactSummary,
+  parseFactSummary,
+  renderFacts,
+} from './fact-summary';
 import { generateText } from './llm-client';
 import { verifyCoverage, coverageReport } from './fact-coverage';
 import { buildDocumentContext, bindingFor, applicableDeclarations } from './document-context';

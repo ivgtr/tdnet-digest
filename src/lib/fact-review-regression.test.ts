@@ -13,7 +13,11 @@ import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from './document-context';
 import { proseQuantities, reviewCandidates, serializeCandidateSource } from './fact-candidates';
-import { generateVerifiedFactSummary, renderFacts, parseFactSummary } from './fact-summary';
+import {
+  generateVerifiedFacts as generateVerifiedFactSummary,
+  renderFacts,
+  parseFactSummary,
+} from './fact-summary';
 import { verifyCoverage, coverageReport, standardMetric } from './fact-coverage';
 import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';

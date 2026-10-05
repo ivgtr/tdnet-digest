@@ -41,11 +41,12 @@ export function buildMetadataHtml(
     provider,
     model,
     summaryMode,
+    generationCalls,
     analysisSchemaVersion,
   } = metadata;
   const analysisInfo =
     provider && model && summaryMode
-      ? ` | <span style="font-weight: bold;">要約:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・1回・v${analysisSchemaVersion ?? '?'}`
+      ? ` | <span style="font-weight: bold;">要約:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・根拠照合＋説明要約${generationCalls === undefined ? '' : `・API${generationCalls}回`}・事実v${analysisSchemaVersion ?? '?'}`
       : '';
 
   let html =

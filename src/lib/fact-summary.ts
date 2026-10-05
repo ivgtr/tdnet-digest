@@ -29,6 +29,8 @@ import { preflightCandidateSource } from './source-preflight';
 import { selectableFactCapacity } from './summary-source-inventory';
 import { renderSummary, stateLabels } from './summary-renderer';
 import { buildPresentation, type SummaryPresentation } from './summary-presentation';
+import { generateSummaryNarrative } from './summary-narrative';
+import type { SummaryAttempt } from './summary-trace';
 export { stateLabels };
 export { FACT_SCHEMA_VERSION } from './fact-contract';
 export type { FactSummary, VerifiedFact } from './fact-contract';
@@ -126,20 +128,12 @@ export function parseFactSummary(
   }
   return { version: FACT_SCHEMA_VERSION, documentType, facts, unverified };
 }
-export async function generateVerifiedFactSummary(
+export async function generateVerifiedFacts(
   config: LLMConfig,
   documentType: DocumentType,
   text: string,
   pages: ExtractedPage[],
-  onAttempt?: (attempt: {
-    phase: 'first' | 'repair';
-    response: string;
-    error: string | null;
-    diagnostics?: Diagnostic[];
-    slots?: CoverageSlot[];
-    confirmedIds?: string[];
-    repairMode?: 'delta' | 'complete';
-  }) => void | Promise<void>
+  onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
 ): Promise<{ facts: FactSummary; presentation: SummaryPresentation; repairAttempted: boolean }> {
   validatePages(pages);
   if (!text.trim()) throw new Error('PDF本文がありません');
@@ -362,6 +356,28 @@ export async function generateVerifiedFactSummary(
     ]);
   const facts = summary(final);
   return { facts, presentation: buildPresentation(facts, pages), repairAttempted: true };
+}
+
+/** The user path always completes synthesis and independent semantic review. */
+export async function generateVerifiedFactSummary(
+  config: LLMConfig,
+  documentType: DocumentType,
+  text: string,
+  pages: ExtractedPage[],
+  onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
+): Promise<{ facts: FactSummary; presentation: SummaryPresentation; repairAttempted: boolean }> {
+  config = { ...config, signal: config.signal ?? AbortSignal.timeout(300_000) };
+  const extracted = await generateVerifiedFacts(config, documentType, text, pages, onAttempt);
+  const { facts, presentation } = extracted;
+  const generated = await generateSummaryNarrative(
+    { ...config, ...factSummaryRequestLimits(config) },
+    facts,
+    presentation.values,
+    presentation.excerpts,
+    onAttempt
+  );
+  presentation.narrative = generated.narrative;
+  return { facts, presentation, repairAttempted: extracted.repairAttempted || generated.repaired };
 }
 
 const escapeText = (text: string) =>

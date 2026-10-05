@@ -8,6 +8,11 @@ import { parseFactSummary } from '../lib/fact-summary';
 import type { FactSummary } from '../lib/fact-summary';
 import type { ExtractedPage, ExtractionMode } from '../types/summaryMetadata';
 import { serializePagesForAnalysis } from '../lib/page-text';
+import {
+  fixedNarrativeContent,
+  fixedNarrativeReview,
+} from '../lib/fixtures/summary-narrative-source';
+import type { SummaryAttempt } from '../lib/summary-trace';
 
 const mocked = vi.hoisted(() => ({
   generateText: vi.fn(),
@@ -28,6 +33,24 @@ interface TestResponse {
   score: { value: number };
 }
 vi.mock('@/lib/llm-client', () => ({ generateText: mocked.generateText }));
+// Candidate transport/diagnostic races belong here; synthesis semantics are owned
+// by summary-narrative.test. Keep its current storage contract at this boundary.
+vi.mock('@/lib/summary-narrative', async (original) => ({
+  ...(await original<typeof import('../lib/summary-narrative')>()),
+  generateSummaryNarrative: async (
+    _config: LLMConfig,
+    facts: FactSummary,
+    values: import('../lib/summary-narrative').NarrativeValue[],
+    excerpts: import('../lib/summary-source-inventory').SourceExcerpt[],
+    onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
+  ) => {
+    const content = fixedNarrativeContent(facts, { excerpts, sections: [] });
+    const review = fixedNarrativeReview(content, facts, { values, excerpts });
+    await onAttempt?.({ phase: 'summary', response: JSON.stringify(content), error: null });
+    await onAttempt?.({ phase: 'summaryReview', response: JSON.stringify(review), error: null });
+    return { narrative: { content, review }, repaired: false };
+  },
+}));
 vi.mock('@/lib/score-extraction', () => ({ extractScoreInput: mocked.extractScoreInput }));
 vi.mock('@/lib/scoring', () => ({
   assessClaim: () => '確認済み',
@@ -198,7 +221,7 @@ describe('要約・採点・追加分析の分離', () => {
     ).toEqual(writes[writes.length - 1]);
     expect(JSON.stringify(writes)).not.toMatch(/apiKey|headers|authorization/);
   });
-  it('要約は1回のLLM呼び出しで採点を待たずに返す', async () => {
+  it('根拠照合・説明生成・点検を完了し、採点を待たずに返す', async () => {
     mocked.generateText.mockResolvedValue(
       candidateResponse(facts.facts, [nativePage], facts.documentType)
     );
@@ -206,6 +229,7 @@ describe('要約・採点・追加分析の分離', () => {
     const result = await request({ action: 'summarize' });
     expect(result.summary).toContain('1150百万円');
     expect(result.metadata.score).toBeUndefined();
+    expect(result.metadata).toMatchObject({ summaryMode: 'sourced-summary', generationCalls: 3 });
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });

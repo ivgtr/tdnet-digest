@@ -18,6 +18,7 @@ import contentExpectations from '../../src/lib/fixtures/summary-content-expectat
 import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
 import { getProvider } from '../../src/lib/llm-providers';
+import type { SummaryAttempt } from '../../src/lib/summary-trace';
 
 import { expectedErrors, independentAssessment, type Case } from './fact-summary-expectations';
 import { parseFactSummaryArgs } from './fact-summary-args';
@@ -79,6 +80,8 @@ const implementationFiles = [
   'src/lib/summary-content-policy.ts',
   'src/lib/summary-source-inventory.ts',
   'src/lib/summary-presentation.ts',
+  'src/lib/summary-narrative.ts',
+  'src/lib/summary-narrative-renderer.ts',
   'src/lib/summary-renderer.ts',
   'src/lib/summary-result-id.ts',
   'src/lib/llm-client.ts',
@@ -116,7 +119,7 @@ for (const item of selected) {
   const started = performance.now();
   let attempt: Awaited<ReturnType<typeof generateVerifiedFactSummary>> | null = null;
   let errors: string[] = [];
-  const attempts: Array<{ phase: 'first' | 'repair'; response: string; error: string | null }> = [];
+  const attempts: SummaryAttempt[] = [];
   let failedResponses: { first: string; repaired: string } | null = null;
   try {
     attempt = await generateVerifiedFactSummary(

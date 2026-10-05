@@ -2,11 +2,8 @@ import { describe, expect, it } from 'vitest';
 import expectation from './fixtures/summary-content-expectations.json';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary, renderFacts } from './fact-summary';
-import {
-  buildPresentation,
-  revalidatePresentation,
-  validatePresentation,
-} from './summary-presentation';
+import { revalidatePresentation, validatePresentation } from './summary-presentation';
+import { buildPresentation, completePresentation } from './fixtures/summary-narrative-source';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import { summaryResultId } from './summary-result-id';
 import corpus from './fixtures/ir-semantic-corpus.json';
@@ -116,7 +113,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     for (const text of [notice, routine, absence].flatMap((text) => text.split('\n')))
       expect(reading).not.toContain(text);
     expect(reading).not.toContain('……………………');
-    expect(reading).toContain(risk);
+    expect(html).toContain(risk);
     for (const text of [notice, routine, absence].flatMap((text) => text.split('\n')))
       expect(html).toContain(text);
     expect(
@@ -185,12 +182,12 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
   it('成長率は十進値で概算し、符号転換・ゼロ基準・赤字額の率を区別する', () => {
     const original = facts.facts.find((f) => f.label === '営業利益')!;
     const pair = (now: string, before: string) => {
-      const current = { ...original, quantity: { ...original.quantity!, decimal: now } };
+      const current = { ...original, quantity: { ...original.quantity!, decimal: now, raw: now } };
       const reference = {
         ...original,
         id: 'previous',
         period: '2025年3月期',
-        quantity: { ...original.quantity!, decimal: before },
+        quantity: { ...original.quantity!, decimal: before, raw: before },
       };
       return { current, reference, comparison: summaryComparison(current, [current, reference])! };
     };
@@ -232,7 +229,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     expect(html).toContain('↑赤字縮小 約16.7%');
     expect(html).toContain('-100百万円');
     expect(html).toContain('前期 -120百万円');
-    expect(overview).toContain('表示金額から計算');
+    expect(renderFacts(summary, display)).toContain('表示金額から計算');
     expect(summary.facts).toEqual([current, reference]);
     expect(
       comparisonGrowth(current, { ...pair('-100', '-120').comparison, axis: 'revision' })
@@ -276,67 +273,31 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       )
     ).toBe('↓下方修正');
   });
-  it('一般的な前置きと結果の重複を外し、原因・季節性を抜粋して条件と全文を保持する', () => {
-    const introduction = 'わが国経済は物価上昇が続いています。一方、個人消費も低迷しています。';
-    const reason =
-      '以上の結果、当期の業績は、需要の減少と節約志向の強まりから利用の出し控えが見られたことなどにより、売上高は1,000百万円と前年同期に比べ100百万円（10.0%）の減収となりました。';
-    const season =
-      'なお、当社の属する業界は、通常の場合、春に需要期を迎えます。したがって、当社の売上高は３月から５月に偏る傾向があり、業績に季節的変動があります。';
-    const qualified =
-      '取引先との契約により売上高は増加しました。ただし、承認を条件としており、実施時期は未定です。';
-    const operation =
-      '設備投資は、昨年の事業譲受による拠点取得を踏まえ、業務効率化を目的として、４月より新工場の稼働を開始しました。加えて、新規出店３店舗と既存店のリニューアル14店舗を実施しました。';
-    const source = textPage(
-      expectation.text +
-        '\n１．増減要因\n' +
-        [introduction, reason, season, qualified, operation].join('\n')
-    );
-    const display = buildPresentation(facts, [source]);
+  it('生成要約の言い換えと重要条件を通常表示し、全文原文を閉じたトグルに保持する', () => {
+    const draft = buildPresentation(facts, [page]);
+    const sourceIds = draft.excerpts.map((e) => e.id);
+    const content = structuredClone(draft.narrative!.content);
+    content.sections[0].summary = [
+      { id: 'reason', text: '増収要因：新商品の販売と価格改定が寄与。', sourceIds },
+      {
+        id: 'condition',
+        text: '共同開発は承認後に実施する予定。開始時期と翌年度への影響は未定。',
+        sourceIds,
+      },
+    ];
+    const display = completePresentation(draft, facts, content);
     const html = buildSummaryHtml(renderFacts(facts, display), null, {
       companyName: 'テスト',
       title: '決算',
-      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
     });
     const reading = html.replace(/<details\b[\s\S]*?<\/details>/g, '');
-    expect(reading).toContain('需要の減少と節約志向の強まりから利用の出し控えが見られた');
-    expect(reading).toContain('売上高…前年同期に比べ…（10.0%）の減収');
-    expect(reading).toContain(
-      '当社の売上高は３月から５月に偏る傾向があり、業績に季節的変動があります。'
-    );
-    expect(reading).toContain(qualified);
-    expect(reading).toContain('設備投資は、…４月より新工場の稼働を開始しました。');
-    expect(reading).toContain('新規出店３店舗と既存店のリニューアル14店舗');
-    expect(reading).not.toContain(introduction);
-    expect(reading).not.toContain('売上高は1,000百万円と前年同期に比べ100百万円');
-    expect(reading).not.toContain('通常の場合、春に需要期を迎えます。');
-    for (const original of [introduction, reason, season, qualified, operation])
-      expect(html).toContain(original);
-    expect(display.excerpts.map((e) => e.text)).toEqual(
-      sourceInventory([source], undefined, 'earnings').map((e) => e.text)
-    );
-  });
-  it('出来事に別段落から適用される条件を通常表示の同じ項目に残す', () => {
-    const id = 'revision-20260910';
-    const pages = corpus
-      .find((entry) => entry.id === id)!
-      .pages.map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber));
-    const response = candidateResponse(
-      candidates.find((entry) => entry.id === id)!.facts as unknown as VerifiedFact[],
-      pages,
-      'earningsRevision'
-    );
-    const event = reviewCandidates(response, 'earningsRevision', pages).facts.find(
-      (f) => f.kind === 'event' && f.statement?.includes('１株につき127円')
-    )!;
-    const summary = { ...facts, documentType: 'earningsRevision' as const, facts: [event] };
-    const html = buildSummaryHtml(renderFacts(summary, buildPresentation(summary, pages)), null, {
-      companyName: 'GMOフィナンシャルゲート',
-      title: '配当予想の修正',
-      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
-    });
-    const body = html.slice(html.indexOf('>配当</h2>'));
-    const item = body.match(/<li[^>]*>2026年９月期の配当予想[^<]*<\/li>/)![0];
-    expect(item.replace(/\s/g, '')).toContain('様々な要因により大きく異なる可能性があります。');
+    expect(reading).toContain('新商品の販売と価格改定が寄与');
+    expect(reading).toContain('共同開発は承認後に実施する予定');
+    expect(reading).toContain('開始時期と翌年度への影響は未定');
+    expect(reading).not.toContain('原文抜粋');
+    expect(reading).not.toContain('価格改定も行いました。');
+    expect(html).toContain('価格改定も行いました。');
+    expect(revalidatePresentation(display, facts, [page])).toEqual(display);
   });
   it('説明の内訳・混在した状態・未分類の施策を原文のまま保持する', () => {
     expect(sourceInventory([page]).map((e) => e.text)).toEqual(expectation.retained);
@@ -361,7 +322,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     const second = textPage('３．その他の施策\n翌年度への影響は\n現時点では未定です。', 2);
     const display = buildPresentation(facts, [first, second]);
     const summary = renderFacts(facts, display);
-    const supplement = summary.slice(summary.indexOf('## 事業・施策'));
+    const supplement = summary;
     expect(supplement).toContain('共同開発は承認を条件に 実施する予定です。');
     expect(supplement).toContain('実施する予定です。\n\n開始時期は未定です。');
     expect(supplement).toContain('翌年度への影響は 現時点では未定です。');

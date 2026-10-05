@@ -6,7 +6,7 @@ import { normalizeTdnetPdfUrl } from './tdnet-url';
 export const SUMMARY_TRACE_KEY = 'summaryLastRunV1';
 export type Usage = Parameters<NonNullable<LLMConfig['onUsage']>>[0];
 export interface SummaryAttempt {
-  phase: 'first' | 'repair';
+  phase: 'first' | 'repair' | 'summary' | 'summaryRepair' | 'summaryReview' | 'summaryReviewRepair';
   response: string;
   error: string | null;
   diagnostics?: Diagnostic[];
