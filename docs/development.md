@@ -1219,3 +1219,6 @@ PDF.jsのRGB色設定演算を保持して透明色からの復帰を反映し�
 利用者のpatchリリース指示に基づき、PR #26を `release:patch` で公開する。製品実装の最終コミットは `38558b2`、記録を含むレビュー対象は `2b578f7`。[Codex再レビュー](https://github.com/ivgtr/tdnet-digest/pull/26#issuecomment-5987036686)は重大な問題なし。利用者はレビュー後のビルドを既存のChrome読み込み先 `F:\Download\tdnet-digest-v0.5.0` へ配置して確認し、「出力エラーは一旦見える範囲で解決した」と報告した。この報告を実機確認として記録するが、全資料・全モデルや事前固定した条件での反復評価の完了へ拡張しない。過去の未確認記録・初回失敗・凍結期待値は維持する。
 
 最終1,104テスト/32ファイル、型/lint/build、15実PDFの全ページpreflight、原PDF数値の受理/保存、固定API画面の証拠を再利用する。今回の準備で製品コードは変更せず、版更新は直前タグv0.7.3からRelease workflowへ委ねる。PR本文を利用者向けの変更内容・確認範囲へ整理し、マージ後のActions、v0.7.4のタグ、公開ZIPのManifest・LICENSE・配布hashを確認する。公開ZIPは利用者が読み込んでいる既存フォルダへ配置し、ChromeとTDnetの再読み込み後の確認は利用者側の操作として残る。Chrome Web Storeへは公開しない。
+
+
+PR #26はUTC2026-10-05 02:47:25に `9804d45` へsquashマージされた。[Release Actions #37256772812](https://github.com/ivgtr/tdnet-digest/actions/runs/37256772812)は型チェック・lint・1,104件のテスト・ビルドを含めて成功し、UTC02:49:37に[v0.7.4](https://github.com/ivgtr/tdnet-digest/releases/tag/v0.7.4)を公開した。タグは版更新コミット `1e1cd53b09b36fcf7708f843cf05042aee342cef` を参照し、その変更はpackage.json/lockの版だけ。公開ZIPのManifest=0.7.4、LICENSE、ZIP整合性、公開assetのSHA-256 `c1f8a15acd9bf8d8ad00d21127e184fa5a732ae795391ee4228025406fad662a` の一致を確認した。公開ZIPを既存のChrome読み込み先へバックアップ後に配置し、全24ファイルの内容hash一致と拡張キーの保持を確認した。Chromeの拡張機能とTDnetページの再読み込み、および公開版での利用者確認は操作待ちとして残す。公開後のこの記録更新は文書だけで、タグは移動しない。
