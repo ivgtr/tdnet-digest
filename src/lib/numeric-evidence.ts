@@ -27,7 +27,13 @@ import {
   parseExactNumeric,
   isQuantityPrefix,
 } from './quantity';
-import { quantityCells, lineRuns, fiscalHeadingRuns } from './document-structure';
+import {
+  quantityCells,
+  lineRuns,
+  fiscalHeadingRuns,
+  isPerformanceReportingTitle,
+  forecastReportingTitle,
+} from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
 import { unchangedDividendReference, quantityPeriodAxis } from './dividend-semantics';
 import {
@@ -549,11 +555,27 @@ export function verifyTableEvidence(
     ...metrics.map((s) => s.y),
     ...periods.filter((s) => !commonPeriodIds.has(s.id)).map((s) => s.y)
   );
+  // Region construction binds a reporting title without crossing a section boundary.
+  // Use that ownership for distant titles; other context still needs local geometry.
+  const ownedTitleIds = new Set(
+    table
+      ? physicalRows(tableSpans)
+          .filter((row) => {
+            const text = row.map((s) => s.text).join('');
+            return (
+              isPerformanceReportingTitle(text) ||
+              forecastReportingTitle(text) ||
+              /配当(?:の状況|予想)/.test(compact(text))
+            );
+          })
+          .flatMap((row) => row.map((s) => s.id))
+      : []
+  );
   if (
     !contexts.every(
       (s) =>
         (s.y <= firstHeaderY || rowPeriods.some((axis) => axis.id === s.id)) &&
-        value.y - s.y < value.height * 32
+        (ownedTitleIds.has(s.id) || value.y - s.y < value.height * 32)
     )
   )
     fail('文脈の適用範囲');

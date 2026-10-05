@@ -406,3 +406,97 @@ export async function daisekiSummaryFormatFixture() {
     expected: ['74200', '11200', '変更なし', '37492', '36117'],
   };
 }
+
+export async function worldSummaryFormatFixture() {
+  const { pdf, pages } = await publicPdf(
+    'world',
+    'a2957635486a22dedbea2c45f9698a29138eb8a4071da946740bb1506bfd031b'
+  );
+  const candidates: Candidate[] = [];
+  const add = (
+    page: number,
+    valueId: string,
+    year: number,
+    eps = false,
+    forecast = false,
+    dividend = false
+  ) => {
+    candidates.push({
+      candidateId: `c${candidates.length + 1}`,
+      importance: 'key',
+      kind: 'number',
+      source: {
+        kind: 'table',
+        valueId,
+        tableId: sourceTableId(pages[page - 1], valueId),
+        contextBindingId: `ctx:${valueId}`,
+      },
+      meaning: {
+        subject: '株式会社ワールド',
+        scope: dividend ? null : '連結',
+        basis: dividend ? null : 'IFRS',
+        period: `${year}年2月期${forecast || dividend ? '' : '中間期'}`,
+        periodKind: forecast || dividend ? 'fullYear' : 'cumulativeQ2',
+        metricKind: eps || dividend ? 'perShare' : 'amount',
+        state: forecast ? 'forecast' : 'actual',
+        polarity: 'affirmative',
+      },
+    });
+  };
+  ['p1s50', 'p1s54', 'p1s58'].forEach((id) => add(1, id, 2027));
+  add(1, 'p1s95', 2027, true);
+  ['p1s61', 'p1s65', 'p1s69'].forEach((id) => add(1, id, 2026));
+  add(1, 'p1s98', 2026, true);
+  ['p2s23', 'p2s27', 'p2s31'].forEach((id) => add(2, id, 2027, false, true));
+  add(2, 'p2s33', 2027, true, true);
+  ['p1s147', 'p1s148'].forEach((id) => add(1, id, 2027, true, true, true));
+  candidates.push({
+    candidateId: `c${candidates.length + 1}`,
+    importance: 'key',
+    kind: 'event',
+    source: {
+      kind: 'prose',
+      blockId: 'p1b37',
+      assertionId: 'p1b37:a1',
+      quantityId: null,
+      metric: null,
+      contextBindingId: 'ctx:p1b37',
+    },
+    meaning: {
+      subject: '株式会社ワールド',
+      scope: null,
+      basis: null,
+      period: null,
+      periodKind: 'none',
+      metricKind: 'none',
+      state: 'unspecified',
+      polarity: 'negative',
+    },
+  });
+  const first = JSON.stringify({
+    candidateVersion: 4,
+    documentType: 'earnings',
+    candidates,
+    unverified: [],
+  });
+  const review = reviewCandidates(first, 'earnings', pages);
+  assert.deepEqual(review.unverified, []);
+  assert.equal(review.facts.length, 15);
+  const legacy = parseFactSummary(
+    JSON.stringify({ version: 6, documentType: 'earnings', facts: review.facts, unverified: [] }),
+    'earnings',
+    pages
+  );
+  return {
+    pdf,
+    pages,
+    documentType: 'earnings' as const,
+    repairRequired: false,
+    first,
+    repair: first,
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [],
+    expected: ['77.11', '82.74', '142489', '300000'],
+  };
+}

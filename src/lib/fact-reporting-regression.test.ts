@@ -27,6 +27,55 @@ import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { buildPresentation } from './summary-presentation';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+it('長い注記を挟む同じ業績節の基本EPSを照合・保存し、別節への見出しの流用を拒否する', () => {
+  const rows: [string, number, number, number][] = [
+    ['上場会社名 株式会社テスト', 0, 0, 240],
+    ['（１）連結経営成績（累計）', 0, 30, 220],
+    ['（注）事業利益の定義について説明します。', 0, 70, 400],
+    ['経営指標の算出方法に関する説明が続きます。', 0, 300, 400],
+    ['基本的１株当たり', 200, 410, 80],
+    ['希薄化後１株当たり', 400, 410, 90],
+    ['中間利益', 220, 425, 40],
+    ['中間利益', 425, 425, 40],
+    ['円 銭', 260, 445, 30],
+    ['円 銭', 460, 445, 30],
+    ['2027年3月期中間期', 0, 465, 140],
+    ['77.11', 260, 465, 30],
+    ['77.11', 460, 465, 30],
+    ['2026年3月期中間期', 0, 485, 140],
+    ['82.74', 260, 485, 30],
+    ['82.74', 460, 485, 30],
+  ];
+  const page = cells(rows, 1);
+  const ctx = buildDocumentContext([page]);
+  const ids = page.quantities.filter((q) => ['77.11', '82.74'].includes(q.text));
+  const basic = ids.filter((q) => q.x < 400);
+  const candidates = basic.map((q, i) => {
+    const hint = ctx.tableMappings.find((h) => h.valueId === q.id)!;
+    expect(hint).toBeDefined();
+    const f = numberCandidate(page, '基本的１株当たり', Number(q.text), `${2027 - i}年3月期中間期`);
+    f.label = '基本的１株当たり中間利益';
+    f.unit = '円';
+    f.semantics.metricKind = 'perShare';
+    f.semantics.periodKind = 'cumulativeQ2';
+    f.semantics.basis = null;
+    f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const result = reviewCandidates(candidateResponse(candidates, [page]), 'other', [page]);
+  expect(result.unverified).toEqual([]);
+  expect(result.facts.map((f) => f.value)).toEqual([77.11, 82.74]);
+  expect(saved(result.facts, [page]).facts).toEqual(result.facts);
+  const input = serializeCandidateSource([page], ctx, 'other');
+  expect(input).toContain(basic[0].id);
+  preflightCandidateSource('other', [page], ctx, input);
+
+  const blocked = cells([...rows, ['（２）事業の状況', 0, 350, 180]], 1);
+  expect(buildDocumentContext([blocked]).tableMappings).toEqual([]);
+  expect(reviewCandidates(candidateResponse(candidates, [page]), 'other', [blocked]).facts).toEqual(
+    []
+  );
+});
 it('親見出しを共有する金額・％列を分け、金額義務・事前照合・保存で率の代用を拒否する', () => {
   const rows: [string, number, number, number][] = [
     ['会社名 株式会社テスト', 0, 0, 240],

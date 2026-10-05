@@ -134,6 +134,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       ...(reviewCase === 'summary-format-kyokuto' ? { id: 'kyokuto-20261005', code: '2300' } : {}),
       ...(reviewCase === 'summary-format-karura' ? { id: 'karura-20261005', code: '2789' } : {}),
       ...(reviewCase === 'summary-format-daiseki' ? { id: 'daiseki-20261005', code: '9793' } : {}),
+      ...(reviewCase === 'summary-format-world' ? { id: 'world-20261005', code: '3612' } : {}),
       ...(reviewCase?.startsWith('summary-format-nachi')
         ? {
             id:
@@ -145,15 +146,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         : {}),
       documentType: reviewFixture.documentType,
       title:
-        reviewCase === 'summary-format-kyokuto'
-          ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
-          : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
-            ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
-            : reviewCase?.startsWith('summary-format-nachi')
-              ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
-              : reviewFixture.documentType === 'earnings'
-                ? '2027年3月期 決算短信〔日本基準〕（連結）'
-                : '追加セルフレビュー用開示',
+        reviewCase === 'summary-format-world'
+          ? '2027年２月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）'
+          : reviewCase === 'summary-format-kyokuto'
+            ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
+            : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
+              ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
+              : reviewCase?.startsWith('summary-format-nachi')
+                ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
+                : reviewFixture.documentType === 'earnings'
+                  ? '2027年3月期 決算短信〔日本基準〕（連結）'
+                  : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure =
@@ -226,7 +229,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         ? reviewCase === 'summary-format-kyokuto' ||
           reviewCase === 'summary-format-karura' ||
           reviewCase?.startsWith('summary-format-nachi') ||
-          reviewCase === 'summary-format-daiseki'
+          reviewCase === 'summary-format-daiseki' ||
+          reviewCase === 'summary-format-world'
           ? 'public-PDF-through-offscreen'
           : 'synthetic-PDF-through-offscreen'
         : fixtureSource
@@ -732,6 +736,25 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       ])
         assert.ok(reading.includes(term), `成長率・黒字転換が欠落: ${term}`);
       evidence.reading = reading;
+    }
+    if (reviewCase === 'summary-format-world') {
+      const facts = stored.value.facts.facts;
+      for (const [value, year] of [
+        [77.11, 2027],
+        [82.74, 2026],
+      ]) {
+        const eps = facts.find(
+          (f: any) =>
+            f.value === value && f.label.startsWith('基本的') && f.period.startsWith(String(year))
+        );
+        assert.ok(eps, `基本EPSの当年・前年が欠落: ${year}`);
+        assert.equal(eps.unit, '円');
+        assert.ok(
+          eps.provenance.adjustments.some((a: any) => a.basis === 'splitAdjusted'),
+          'EPSの分割注記が欠落'
+        );
+      }
+      assert.equal(completedTrace.outcome, 'firstSuccess');
     }
     if (reviewCase === 'summary-format-daiseki') {
       const reading = (await displayedFacts(summary))

@@ -3228,5 +3228,320 @@
         ]
       }
     ]
+  },
+  {
+    "id": "world-20261005",
+    "title": "2027年２月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261001544846.pdf",
+    "sourceHash": "a2957635486a22dedbea2c45f9698a29138eb8a4071da946740bb1506bfd031b",
+    "code": "3612",
+    "publishedDate": "2026-10-05",
+    "expected": [
+      {
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 142489,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 8409,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社の所有者に帰属する中間利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5877,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "基本的1株当たり中間利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 77.11,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 136916,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 8307,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社の所有者に帰属する中間利益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5640,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "基本的1株当たり中間利益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 82.74,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 300000,
+            "unit": "百万円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 17500,
+            "unit": "百万円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社の所有者に帰属する当期利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 12600,
+            "unit": "百万円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "基本的1株当たり当期利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 173.1,
+            "unit": "円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      }
+    ]
   }
 ]

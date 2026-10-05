@@ -618,12 +618,13 @@ function rawTableReferenceHints(
       .filter(
         (run) =>
           run[0].y < Math.min(...metrics.map((s) => s.y)) &&
-          value.y - run[0].y < value.height * 32 &&
           (isPerformanceReportingTitle(run.map((s) => s.text).join('')) ||
             forecastReportingTitle(run.map((s) => s.text).join('')) ||
             /配当(?:の状況|予想)/.test(normalized(run.map((s) => s.text).join(''))))
       )
       .sort((a, b) => b[0].y - a[0].y)[0];
+    // The region already owns this title and stops at intervening section headings.
+    // Notes between related tables do not change that ownership.
     if (!axes.length || !context) continue;
     hints.push({
       valueId: value.id,
