@@ -9,10 +9,12 @@ import {
   BASIC_PER_SHARE_PROFIT_METRIC,
   proseReportingMetrics,
   reportingMetricKey,
+  classifyMetric,
 } from './metric-semantics';
 import { assertionStates, isLossRecordingPlan, lossRecordingPeriods } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
+import { unchangedForecastTopic } from './forecast-revision-semantics';
 import type { DocumentType } from './document-type';
 import type { VerifiedFact } from './fact-contract';
 import { tableContinuations, noteLinks, continuationPage } from './document-links';
@@ -56,6 +58,16 @@ import { normalized, tableHeaderColumns } from './document-structure';
 import type { Diagnostic } from './fact-candidates';
 import { isPerShareDividend } from './metric-semantics';
 import { tableRowAxis, tableRowDeclarations } from './table-layout';
+
+function mappedMetricKind(pages: ExtractedPage[], hint: TableMapping) {
+  const spans = pages.flatMap((p) => p.spans);
+  const text = (ids: string[]) => ids.map((id) => spans.find((s) => s.id === id)!.text).join('');
+  const quantity = pages.flatMap((p) => p.quantities).find((q) => q.id === hint.valueId);
+  const unit = hint.unitIds.includes(hint.valueId)
+    ? (parseExactNumeric(quantity?.text ?? '')?.unit ?? null)
+    : declaredQuantityUnit(text(hint.unitIds));
+  return classifyMetric(text(hint.metricIds), unit);
+}
 
 /** Structural proposals use the same complete numeric proof as accepted facts. */
 function provedMappedQuantity(
@@ -170,6 +182,8 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
       period = sourceFiscalPeriod(axis, inherited);
     const state = numericValueKind(axis, inherited);
     if (!metric || !period || (state !== 'actual' && state !== 'forecast')) return [];
+    if (mappedMetricKind(pages, h) !== (metric === '1株当たり利益' ? 'perShare' : 'amount'))
+      return [];
     return [
       {
         valueId: h.valueId,
@@ -439,6 +453,50 @@ function unchangedForecastSources(pages: ExtractedPage[], context: DocumentConte
       )
   );
 }
+/** A requirement names a disclosure meaning; equivalent prose can prove it elsewhere. */
+function unchangedForecastAlternatives(
+  required: ReturnType<typeof unchangedForecastSources>[number],
+  pages: ExtractedPage[],
+  context: DocumentContext
+) {
+  const topic = unchangedForecastTopic(required.text);
+  const binding = bindingFor(context, required.id);
+  const attributes = reportingAttributesAt(binding);
+  const sourcePeriod = (block: typeof required) => {
+    const inherited = bindingFor(context, block.id)
+      .contextIds.map(
+        (id) => pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
+      )
+      .join('');
+    return sourceFiscalPeriod(normalized(block.text), normalized(inherited));
+  };
+  const period = sourcePeriod(required);
+  const declaredPeriods = new Set(
+    pages
+      .flatMap((p) => p.blocks)
+      .flatMap((b) => {
+        if (!isIssuerSource(b.id, context)) return [];
+        const title = forecastReportingTitle(b.text);
+        return title?.period ? [title.period] : [];
+      })
+  );
+  return issuerBlocks(pages, context).filter((block) => {
+    if (block.id === required.id) return true;
+    if (!topic || block.kind !== 'paragraph' || unchangedForecastTopic(block.text) !== topic)
+      return false;
+    const own = bindingFor(context, block.id);
+    if (!sameReportingAttributes(reportingAttributesAt(own), attributes)) return false;
+    const ownPeriod = sourcePeriod(block);
+    if (period === null || (ownPeriod !== null && ownPeriod !== period)) return false;
+    return (
+      ownPeriod === period ||
+      (topic === '業績予想' &&
+        declaredPeriods.size === 1 &&
+        declaredPeriods.has(period) &&
+        /業績予想|将来予測情報/.test(reportingUnitTitle(own, pages)))
+    );
+  });
+}
 /** A same-named business metric is not a financial-reporting obligation. */
 function isReportingMetricSource(
   anchor: string,
@@ -698,6 +756,7 @@ function comparativeReportingSources(pages: ExtractedPage[], context: DocumentCo
     const metric = revisionMetricLabel(text(h.metricIds));
     if (
       !metric ||
+      mappedMetricKind(pages, h) !== (metric === '1株当たり利益' ? 'perShare' : 'amount') ||
       !isIssuerSource(h.valueId, context) ||
       !isReportingMetricSource(h.valueId, 'actual', pages, context) ||
       !matchesTargetSource(h.valueId, target, context) ||
@@ -942,6 +1001,7 @@ export function verifyCoverage(
       facts.some(
         (f) =>
           (f.kind === 'number' || f.kind === 'range') &&
+          f.semantics.metricKind === (metric === '1株当たり利益' ? 'perShare' : 'amount') &&
           revisionMetricLabel(f.label) === metric &&
           (metric !== 'netProfit' || ownsRequiredNetProfit(f.label, pages, context, kind)) &&
           matchesReport(f, kind, target)
@@ -954,6 +1014,7 @@ export function verifyCoverage(
         !facts.some(
           (f) =>
             (f.kind === 'number' || f.kind === 'range') &&
+            f.semantics.metricKind === (metric === '1株当たり利益' ? 'perShare' : 'amount') &&
             revisionMetricLabel(f.label) === metric &&
             matchesReport(f, 'actual', comparisons[0].target.period) &&
             (metric !== 'netProfit' || ownsRequiredNetProfit(f.label, pages, context, 'actual')) &&
@@ -1094,7 +1155,12 @@ export function verifyCoverage(
     for (const block of unchangedForecastSources(pages, context))
       if (
         !facts.some(
-          (f) => f.kind === 'event' && isIssuerFact(f, context) && factAnchor(f) === block.id
+          (f) =>
+            f.kind === 'event' &&
+            isIssuerFact(f, context) &&
+            unchangedForecastAlternatives(block, pages, context).some(
+              (source) => factAnchor(f) === source.id
+            )
         )
       )
         missing.push(`COVERAGE:予想修正なしの明示 ${block.id}`);
@@ -1108,6 +1174,7 @@ export function verifyCoverage(
           (f) =>
             (f.kind === 'number' || f.kind === 'range') &&
             revisionMetricLabel(f.label) === s.metric &&
+            f.semantics.metricKind === (s.metric === '1株当たり利益' ? 'perShare' : 'amount') &&
             f.semantics.state === s.state &&
             matchesReportingPeriod(f, s.period) &&
             sameReportingAttributes(f.semantics, s.attributes) &&
@@ -1142,6 +1209,7 @@ export function verifyCoverage(
             (f) =>
               (f.kind === 'number' || f.kind === 'range') &&
               revisionMetricLabel(f.label) === metric &&
+              f.semantics.metricKind === (metric === '1株当たり利益' ? 'perShare' : 'amount') &&
               (metric !== 'netProfit' ||
                 ownsRequiredNetProfit(f.label, pages, context, 'forecast')) &&
               f.valueKind === kind &&
@@ -1355,6 +1423,7 @@ export interface CoverageSlot {
     subject?: string;
     scope?: string;
     basis?: string;
+    polarity?: VerifiedFact['semantics']['polarity'];
   };
   status: 'satisfied' | 'absent' | 'invalid' | 'unknown' | 'outsideSelection';
 }
@@ -1395,6 +1464,7 @@ export function coverageReport(
     label: normalized(h.metricIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
     axis: normalized(h.periodIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
     context: normalized(h.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
+    metricKind: mappedMetricKind(pages, h) as VerifiedFact['semantics']['metricKind'] | null,
   }));
   for (const page of pages)
     for (const block of page.blocks.filter((b) => b.kind === 'paragraph')) {
@@ -1431,6 +1501,7 @@ export function coverageReport(
               )
               .join('')
           ),
+          metricKind: null,
         });
     }
   let publicationSources: ReturnType<typeof forecastPublicationSources> | undefined;
@@ -1512,7 +1583,9 @@ export function coverageReport(
     if (/予想修正なしの明示/.test(requirement))
       return unchangedForecastSources(pages, context)
         .filter((b) => requirement.endsWith(b.id))
-        .map((b) => b.id);
+        .flatMap((b) =>
+          unchangedForecastAlternatives(b, pages, context).map((source) => source.id)
+        );
     if (/業績予想修正の理由/.test(requirement))
       return revisionReasonSources(pages, context).filter((id) => requirement.endsWith(id));
     if (/据置配当/.test(requirement))
@@ -1600,6 +1673,15 @@ export function coverageReport(
       return units
         .filter(
           (u) =>
+            (![
+              'revenue',
+              'operatingProfit',
+              'ordinaryProfit',
+              'netProfit',
+              '1株当たり利益',
+            ].includes(metric ?? '') ||
+              u.metricKind === null ||
+              u.metricKind === (metric === '1株当たり利益' ? 'perShare' : 'amount')) &&
             ([
               'revenue',
               'operatingProfit',
@@ -1845,6 +1927,7 @@ export function coverageReport(
       subject: target?.attributes?.subject ?? null,
       scope: target?.attributes?.scope ?? null,
       basis: target?.attributes?.basis ?? null,
+      polarity: /予想修正なしの明示/.test(requirement) ? 'negative' : null,
     };
     return {
       id: `slot:${type}:${requirement}`,

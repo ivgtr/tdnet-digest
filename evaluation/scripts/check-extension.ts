@@ -133,6 +133,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       ...item,
       ...(reviewCase === 'summary-format-kyokuto' ? { id: 'kyokuto-20261005', code: '2300' } : {}),
       ...(reviewCase === 'summary-format-karura' ? { id: 'karura-20261005', code: '2789' } : {}),
+      ...(reviewCase === 'summary-format-daiseki' ? { id: 'daiseki-20261005', code: '9793' } : {}),
       ...(reviewCase?.startsWith('summary-format-nachi')
         ? {
             id:
@@ -146,7 +147,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       title:
         reviewCase === 'summary-format-kyokuto'
           ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
-          : reviewCase === 'summary-format-karura'
+          : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
             ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
             : reviewCase?.startsWith('summary-format-nachi')
               ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
@@ -224,7 +225,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       : reviewFixture
         ? reviewCase === 'summary-format-kyokuto' ||
           reviewCase === 'summary-format-karura' ||
-          reviewCase?.startsWith('summary-format-nachi')
+          reviewCase?.startsWith('summary-format-nachi') ||
+          reviewCase === 'summary-format-daiseki'
           ? 'public-PDF-through-offscreen'
           : 'synthetic-PDF-through-offscreen'
         : fixtureSource
@@ -729,6 +731,23 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         '純利益:↑黒字転換24百万円(前期-10百万円)',
       ])
         assert.ok(reading.includes(term), `成長率・黒字転換が欠落: ${term}`);
+      evidence.reading = reading;
+    }
+    if (reviewCase === 'summary-format-daiseki') {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of ['74,200', '11,200', '業績予想:変更なし', '配当予想:変更なし'])
+        assert.ok(reading.includes(term), `金額・修正有無が欠落: ${term}`);
+      assert.equal(completedTrace.outcome, 'repairSuccess');
+      const [first, repair] = completedTrace.attempts;
+      assert.equal(first.confirmedIds.length, 17);
+      assert.equal(first.slots.filter((s: any) => s.status !== 'satisfied').length, 4);
+      assert.equal(repair.confirmedIds.length, 21);
+      assert.ok(first.confirmedIds.every((id: string) => repair.confirmedIds.includes(id)));
+      assert.ok(stored.value.facts.facts.some((f: any) => f.evidence.blockId === 'p4b14'));
+      assert.ok(!stored.value.facts.facts.some((f: any) => f.evidence.blockId === 'p1b42'));
       evidence.reading = reading;
     }
     if (reviewCase?.startsWith('summary-format-nachi')) {

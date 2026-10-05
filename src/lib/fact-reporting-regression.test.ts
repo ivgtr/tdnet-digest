@@ -23,8 +23,198 @@ import { extractPageLayout } from './pdf-layout';
 import { tableContinuations } from './document-links';
 import { preflightCandidateSource } from './source-preflight';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { unchangedForecastTopic } from './forecast-revision-semantics';
+import { buildPresentation } from './summary-presentation';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+it('親見出しを共有する金額・％列を分け、金額義務・事前照合・保存で率の代用を拒否する', () => {
+  const rows: [string, number, number, number][] = [
+    ['会社名 株式会社テスト', 0, 0, 240],
+    ['2027年3月期 連結業績予想', 0, 30, 300],
+    ['売上高', 100, 65, 40],
+    ['営業利益', 200, 65, 40],
+    ['当期純利益', 290, 65, 60],
+    ['百万円', 80, 90, 20],
+    ['％', 145, 90, 10],
+    ['百万円', 180, 90, 20],
+    ['％', 245, 90, 10],
+    ['百万円', 280, 90, 20],
+    ['％', 345, 90, 10],
+    ['通期', 10, 110, 30],
+    ['100', 80, 110, 20],
+    ['3.2', 140, 110, 15],
+    ['10', 180, 110, 20],
+    ['12.0', 240, 110, 20],
+    ['8', 280, 110, 20],
+    ['23.1', 340, 110, 20],
+  ];
+  const paths = [
+    ...[70, 170, 270, 370].map((x) => [0, x, -55, 1, x, -120]),
+    ...[120, 220, 320].map((x) => [0, x, -80, 1, x, -120]),
+    [0, 0, -80, 1, 0, -120],
+    [0, 70, -55, 1, 370, -55],
+    ...[80, 120].map((y) => [0, 0, -y, 1, 370, -y]),
+  ];
+  const page = extractPageLayout(
+    rows.map(([str, x, y, width]) => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, -y],
+      width,
+      height: 10,
+      hasEOL: false,
+      fontName: 'test',
+    })) as TextItem[],
+    1,
+    paths.map((commands, index) => ({
+      index,
+      fn: 'constructPath',
+      args: ['stroke', [commands], null],
+    }))
+  );
+  const pages = [page],
+    context = buildDocumentContext(pages);
+  expect(page.tableRegions[0].method).toBe('ruled');
+  const response = (rates: boolean) =>
+    JSON.stringify({
+      candidateVersion: 4,
+      documentType: 'earningsRevision',
+      unverified: [],
+      candidates: (rates ? ['3.2', '12.0', '23.1'] : ['100', '10', '8']).map((value, i) => {
+        const q = page.quantities.find((q) => q.text === value)!;
+        return {
+          candidateId: `c${i + 1}`,
+          importance: 'key',
+          kind: 'number',
+          source: {
+            kind: 'table',
+            valueId: q.id,
+            tableId: page.tableRegions[0].id,
+            contextBindingId: `ctx:${q.id}`,
+          },
+          meaning: {
+            subject: '株式会社テスト',
+            scope: '連結',
+            basis: null,
+            period: '2027年3月期',
+            periodKind: 'fullYear',
+            metricKind: rates ? 'rate' : 'amount',
+            state: 'forecast',
+            polarity: 'affirmative',
+          },
+        };
+      }),
+    });
+  const accepted = reviewCandidates(response(false), 'earningsRevision', pages);
+  expect(accepted.unverified).toEqual([]);
+  expect(accepted.facts.map((f) => f.label)).toEqual(['売上高', '営業利益', '当期純利益']);
+  const input = serializeCandidateSource(pages, context, 'earningsRevision');
+  expect(() => preflightCandidateSource('earningsRevision', pages, context, input)).not.toThrow();
+  const rateIds = page.quantities
+    .filter((q) => ['3.2', '12.0', '23.1'].includes(q.text))
+    .map((q) => q.id);
+  const slots = coverageReport('earningsRevision', pages, accepted.facts);
+  expect(
+    slots.every((s) => s.status === 'satisfied' && !s.sourceIds.some((id) => rateIds.includes(id)))
+  ).toBe(true);
+  const rates = reviewCandidates(response(true), 'earningsRevision', pages);
+  expect(rates.unverified).toEqual([]);
+  expect(() =>
+    parseFactSummary(
+      JSON.stringify({
+        version: 6,
+        documentType: 'earningsRevision',
+        facts: rates.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      pages
+    )
+  ).toThrow('COVERAGE:');
+  expect(
+    parseFactSummary(
+      JSON.stringify({
+        version: 6,
+        documentType: 'earningsRevision',
+        facts: accepted.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      pages
+    ).facts
+  ).toEqual(accepted.facts);
+  const amountIds = accepted.facts.map((f) => {
+    if (f.evidence.kind !== 'table') throw new Error('expected table');
+    return f.evidence.valueId;
+  });
+  const neighbor = structuredClone(context.tableMappings.find((h) => h.valueId === amountIds[0])!);
+  neighbor.metricIds = context.tableMappings.find((h) => h.valueId === amountIds[1])!.metricIds;
+  expect(() =>
+    verifyTableEvidence(page, neighbor, {
+      label: '営業利益',
+      value: 100,
+      unit: '百万円',
+      period: '2027年3月期',
+      valueKind: 'forecast',
+    })
+  ).toThrow('指標の列');
+});
+it('予想変更なしは同じ報告単位の本文でも充足し、条件・別期・別主体を代用しない', () => {
+  const note = '(注)直近に公表されている業績予想からの修正の有無：無';
+  const body = '2026年4月7日に公表しました連結業績予想から修正は行っておりません。';
+  expect(unchangedForecastTopic(body)).toBe('業績予想');
+  for (const text of [
+    body + 'ただし、承認を条件とします。',
+    body.replace('行っておりません', '行いました'),
+    body.replace('業績予想', '子会社の予想'),
+  ])
+    expect(unchangedForecastTopic(text)).toBeNull();
+  for (const [title, company, fulfilled] of [
+    ['3. 連結業績予想などの将来予測情報に関する説明', '', true],
+    ['3. 2026年3月期の連結業績予想', '', false],
+    ['3. 連結業績予想などの将来予測情報に関する説明', '会社名 株式会社別会社\n', false],
+  ] as const) {
+    const { pages, amounts } = report(
+      `2. 2027年3月期の連結業績予想\n${note}\n${title}\n${company}${body}`
+    );
+    const seed = numberCandidate(pages[0]);
+    const f = event(seed),
+      block = pages[0].blocks.find((b) => b.text === body)!;
+    f.statement = f.quote = block.text;
+    f.evidence = {
+      ...f.evidence,
+      kind: 'prose',
+      blockId: block.id,
+      assertionId: `${block.id}:a1`,
+      quantityId: null,
+    };
+    f.semantics.state = 'unspecified';
+    f.semantics.polarity = 'negative';
+    const accepted = reviewCandidates(candidateResponse([f], pages, 'earnings'), 'earnings', pages);
+    if (fulfilled) expect(accepted.unverified).toEqual([]);
+    const slot = coverageReport('earnings', pages, accepted.facts).find((s) =>
+      s.requirement.includes('予想修正なし')
+    )!;
+    expect(slot.expected.polarity).toBe('negative');
+    expect(slot.sourceIds.includes(block.id)).toBe(fulfilled);
+    expect(slot.status === 'satisfied').toBe(fulfilled);
+    if (fulfilled) {
+      expect(accepted.facts).toHaveLength(1);
+      const full = saved(
+        [
+          ...reviewCandidates(candidateResponse(amounts, pages, 'earnings'), 'earnings', pages)
+            .facts,
+          ...accepted.facts,
+        ],
+        pages,
+        'earnings'
+      );
+      const display = renderFacts(full, buildPresentation(full, pages));
+      expect(display).toContain('業績予想：変更なし');
+      expect(display).toContain(body);
+    }
+  }
+});
 it.each(['別セル', '年度結合セル', '先頭欠損'])(
   '罫線表の隣接した年度・状態セルを同じ行宣言として入力・義務・保存へ渡す: %s',
   (layout) => {

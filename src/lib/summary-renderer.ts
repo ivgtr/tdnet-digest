@@ -9,6 +9,7 @@ import { unchangedDividend, unchangedDividendReference } from './dividend-semant
 import { paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 import { explanationRole } from './summary-content-policy';
 import { companyExcerpt } from './summary-company-excerpt';
+import { unchangedForecastTopic } from './forecast-revision-semantics';
 import {
   summaryComparison,
   comparisonLabel,
@@ -85,6 +86,8 @@ function valueNotes(f: VerifiedFact): string[] {
   ].map(literalMarkdown);
 }
 function statementText(f: VerifiedFact): string {
+  const topic = unchangedForecastTopic(f.statement!);
+  if (topic) return `${topic}：変更なし`;
   const source = f.statement!.normalize('NFKC').replace(/\s/g, '');
   const unchanged = source.match(
     /^\(?注\)?直近に公表されている(配当予想|業績予想)からの修正の有無[:：]?(無|有)$/

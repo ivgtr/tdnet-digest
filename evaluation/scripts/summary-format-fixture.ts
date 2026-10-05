@@ -307,3 +307,102 @@ export async function nachiSummaryFormatFixture(withPrevious = false) {
     expected: ['192326', '11457', '10873', '6629', '構造改革', '変更なし', '↑増収'],
   };
 }
+
+/** Fixed native PDF: valid rate facts must not replace amounts; repair appends four facts. */
+export async function daisekiSummaryFormatFixture() {
+  const { pdf, pages } = await publicPdf(
+    'daiseki',
+    '8e445ce9586fc2d5507bb7414d7bd4685eaee6543a806474533cc1b8fd4ca757'
+  );
+  const candidates: Candidate[] = [];
+  const add = (
+    valueId: string,
+    year: number,
+    metricKind: 'amount' | 'rate' | 'perShare',
+    forecast = false,
+    dividend = false
+  ) => {
+    candidates.push({
+      candidateId: `c${candidates.length + 1}`,
+      importance: 'key',
+      kind: 'number',
+      source: {
+        kind: 'table',
+        valueId,
+        tableId: sourceTableId(pages[0], valueId),
+        contextBindingId: `ctx:${valueId}`,
+      },
+      meaning: {
+        subject: '株式会社ダイセキ',
+        scope: dividend ? null : '連結',
+        basis: dividend ? null : '日本基準',
+        period: `${year}年2月期${!forecast && !dividend ? '第2四半期' : ''}`,
+        periodKind: !forecast && !dividend ? 'cumulativeQ2' : 'fullYear',
+        metricKind,
+        state: forecast ? 'forecast' : 'actual',
+        polarity: 'affirmative',
+      },
+    });
+  };
+  ['p1s63', 'p1s67', 'p1s71', 'p1s75'].forEach((id) => add(id, 2027, 'amount'));
+  add('p1s127', 2027, 'perShare');
+  ['p1s81', 'p1s85', 'p1s89', 'p1s93'].forEach((id) => add(id, 2026, 'amount'));
+  add('p1s132', 2026, 'perShare');
+  ['p1s237', 'p1s241'].forEach((id) => add(id, 2027, 'amount', true));
+  add('p1s249', 2027, 'perShare', true);
+  ['p1s205', 'p1s207'].forEach((id) => add(id, 2027, 'perShare', true, true));
+  ['p1s235', 'p1s247'].forEach((id) => add(id, 2027, 'rate', true));
+  const first = candidates.slice();
+  ['p1s233', 'p1s245'].forEach((id) => add(id, 2027, 'amount', true));
+  for (const blockId of ['p1b35', 'p4b14'])
+    candidates.push({
+      candidateId: `c${candidates.length + 1}`,
+      importance: 'key',
+      kind: 'event',
+      source: {
+        kind: 'prose',
+        blockId,
+        assertionId: `${blockId}:a1`,
+        quantityId: null,
+        metric: null,
+        contextBindingId: `ctx:${blockId}`,
+      },
+      meaning: {
+        subject: '株式会社ダイセキ',
+        scope: blockId === 'p1b35' ? null : '連結',
+        basis: blockId === 'p1b35' ? null : '日本基準',
+        period: null,
+        periodKind: 'none',
+        metricKind: 'none',
+        state: 'unspecified',
+        polarity: 'negative',
+      },
+    });
+  const response = (items: Candidate[]) =>
+    JSON.stringify({
+      candidateVersion: 4,
+      documentType: 'earnings',
+      candidates: items,
+      unverified: [],
+    });
+  const review = reviewCandidates(response(candidates), 'earnings', pages);
+  assert.deepEqual(review.unverified, []);
+  assert.equal(review.facts.length, 21);
+  const legacy = parseFactSummary(
+    JSON.stringify({ version: 6, documentType: 'earnings', facts: review.facts, unverified: [] }),
+    'earnings',
+    pages
+  );
+  return {
+    pdf,
+    pages,
+    documentType: 'earnings' as const,
+    repairRequired: true,
+    first: response(first),
+    repair: response(candidates.slice(first.length)),
+    legacy,
+    legacyRendered: renderFacts(legacy),
+    warnings: [],
+    expected: ['74200', '11200', '変更なし', '37492', '36117'],
+  };
+}

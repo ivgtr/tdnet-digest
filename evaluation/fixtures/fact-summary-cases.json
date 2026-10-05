@@ -2744,5 +2744,489 @@
         }
       }
     ]
+  },
+  {
+    "id": "daiseki-20261005",
+    "title": "2027年２月期 第２四半期（中間期）決算短信〔日本基準〕(連結)",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261003544976.pdf",
+    "sourceHash": "8e445ce9586fc2d5507bb7414d7bd4685eaee6543a806474533cc1b8fd4ca757",
+    "code": "9793",
+    "publishedDate": "2026-10-05",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 37492,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 8345,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 8657,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する中間純利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 5805,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり中間純利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 122.77,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 36117,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 7450,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 7629,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する中間純利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 4712,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり中間純利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 99.07,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 74200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 16800,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 17000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 11200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 236.83,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "年間配当金合計"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 86,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        }
+      }
+    ],
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b35",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "state": "unspecified",
+          "polarity": "negative",
+          "conditions": []
+        }
+      },
+      {
+        "page": 1,
+        "blockId": "p1b42",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "none",
+          "metricKind": "none",
+          "state": "unspecified",
+          "polarity": "negative",
+          "conditions": []
+        },
+        "alternatives": [
+          {
+            "page": 4,
+            "blockId": "p4b14"
+          }
+        ]
+      }
+    ]
   }
 ]

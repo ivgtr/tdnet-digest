@@ -61,6 +61,7 @@ const implementationFiles = [
   'src/lib/fact-candidates.ts',
   'src/lib/assertion-semantics.ts',
   'src/lib/dividend-semantics.ts',
+  'src/lib/forecast-revision-semantics.ts',
   'src/lib/metric-semantics.ts',
   'src/lib/quantity.ts',
   'src/lib/period-semantics.ts',

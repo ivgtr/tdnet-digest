@@ -28,6 +28,7 @@ export interface Case {
   expectedEvidence?: {
     page: number;
     blockId: string;
+    alternatives?: { page: number; blockId: string }[];
     kind: string;
     semantics: Partial<VerifiedFact['semantics']>;
   }[];
@@ -79,10 +80,14 @@ export function expectedErrors(
     if (
       !result.facts.some(
         (fact) =>
-          fact.page === expected.page &&
           fact.kind === expected.kind &&
           fact.evidence.kind === 'prose' &&
-          fact.evidence.blockId === expected.blockId &&
+          [expected, ...(expected.alternatives ?? [])].some(
+            (source) =>
+              fact.page === source.page &&
+              fact.evidence.kind === 'prose' &&
+              fact.evidence.blockId === source.blockId
+          ) &&
           attributesMatch(fact, expected.semantics)
       )
     )
@@ -182,7 +187,14 @@ export function renderedFactErrors(facts: VerifiedFact[], lines: string[]): stri
               const note = original.match(
                 /^\(?注\)?直近に公表されている(配当予想|業績予想)からの修正の有無[:：]?無$/
               );
-              return note ? `${note[1]}：変更なし` : f.statement!;
+              const body =
+                f.kind === 'event' &&
+                f.semantics.polarity === 'negative' &&
+                f.semantics.conditions.length === 0 &&
+                /^[^。]*業績予想[^。]*(?:修正は行っておりません|修正を行っておりません|変更はありません)。?$/.test(
+                  original
+                );
+              return note ? `${note[1]}：変更なし` : body ? '業績予想：変更なし' : f.statement!;
             })();
     const required = [
       value,

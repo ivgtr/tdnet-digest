@@ -443,15 +443,20 @@ export function reviewCandidates(
     const parsed: unknown = JSON.parse(raw.trim());
     if (
       !record(parsed) ||
-      !exact(parsed, ['candidateVersion', 'documentType', 'candidates', 'unverified']) ||
-      parsed.candidateVersion !== CANDIDATE_VERSION ||
-      parsed.documentType !== type ||
-      !Array.isArray(parsed.candidates) ||
-      parsed.candidates.length > selectableFactCapacity(pages) ||
+      !exact(parsed, ['candidateVersion', 'documentType', 'candidates', 'unverified'])
+    )
+      throw new Error('SCHEMA:候補応答のルートに必須項目の欠落・未知項目があります');
+    if (parsed.candidateVersion !== CANDIDATE_VERSION)
+      throw new Error('SCHEMA:candidateVersion=4が必要です');
+    if (parsed.documentType !== type) throw new Error(`SCHEMA:documentType=${type}が必要です`);
+    if (!Array.isArray(parsed.candidates)) throw new Error('SCHEMA:candidatesは配列が必要です');
+    if (parsed.candidates.length > selectableFactCapacity(pages))
+      throw new Error('SCHEMA:candidatesが原文の事実単位数を超えています');
+    if (
       !Array.isArray(parsed.unverified) ||
       !parsed.unverified.every((x) => typeof x === 'string' && x.length <= 1000)
     )
-      throw new Error('SCHEMA:候補応答の形式が不正です（candidateVersion=4が必要）');
+      throw new Error('SCHEMA:unverifiedは1000字以内の文字列だけを含む配列が必要です');
     const ids = new Set<string>();
     for (const item of parsed.candidates) {
       if (!record(item) || typeof item.candidateId !== 'string' || ids.has(item.candidateId))

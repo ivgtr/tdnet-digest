@@ -787,14 +787,24 @@ describe('生成専用候補と原文文脈の契約', () => {
     ).toHaveLength(0);
   });
   it('旧生成応答・未知項目・不正unverifiedは根全体を拒否する', () => {
-    for (const text of [
-      JSON.stringify({ version: 6, documentType: 'earnings', facts: fixture, unverified: [] }),
-      raw(candidates, { extra: true }),
-      raw(candidates, { unverified: [{}] }),
+    for (const [text, issue] of [
+      [
+        JSON.stringify({ version: 6, documentType: 'earnings', facts: fixture, unverified: [] }),
+        '必須項目の欠落・未知項目',
+      ],
+      [raw(candidates, { extra: true }), '必須項目の欠落・未知項目'],
+      [raw(candidates, { candidateVersion: 1 }), 'candidateVersion=4'],
+      [
+        raw(candidates, {
+          unverified: [{ sourceId: 'p1s235', reason: 'rate cannot replace amount' }],
+        }),
+        'unverifiedは1000字以内の文字列',
+      ],
     ]) {
       const r = reviewCandidates(text, 'earnings', pages);
       expect(r.envelopeValid).toBe(false);
       expect(r.facts).toEqual([]);
+      expect(r.diagnostics[0].message).toContain(issue);
     }
   });
   it('兄弟節の連結や他社を借用せず、本文の単なる個別言及で範囲を変えない', () => {

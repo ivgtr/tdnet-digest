@@ -35,6 +35,7 @@ import {
   tableUnitRuns,
   tableForValue,
   tableColumnBand,
+  tableMetricColumnBand,
   tableRowAxis,
   type TableRegion,
 } from './table-layout';
@@ -358,11 +359,16 @@ export function verifyTableEvidence(
   }
   const inBand = (s: PdfSpan) => center(s) > metricBand[0] && center(s) < metricBand[1];
   const drawnBand = table
-    ? tableColumnBand(
+    ? (tableMetricColumnBand(
         table,
         units.map((s) => s.id),
         value.height
-      )
+      ) ??
+      tableColumnBand(
+        table,
+        units.map((s) => s.id),
+        value.height
+      ))
     : null;
   if (!metricOnRow && drawnBand) metricBand = drawnBand;
   const headerHeight = Math.max(...metrics.map((s) => s.height), value.height);

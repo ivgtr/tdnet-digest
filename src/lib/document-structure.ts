@@ -9,6 +9,7 @@ import {
 import {
   tableRowAxis,
   tableColumnBand,
+  tableMetricColumnBand,
   tableUnitRuns,
   physicalRows,
   type TableCell,
@@ -460,22 +461,26 @@ export function tableHeaderColumns(region: TableRegion, spans: PdfSpan[]) {
     if (peers.length < 2) return [];
     const i = peers.indexOf(unit);
     const drawnBand = tableColumnBand(region, unit.ids, unit.height);
+    const parentBand = tableMetricColumnBand(region, unit.ids, unit.height);
     const left =
+      parentBand?.[0] ??
       drawnBand?.[0] ??
       (i
         ? (midpoint(peers[i - 1]) + midpoint(unit)) / 2
         : midpoint(unit) - (midpoint(peers[1]) - midpoint(unit)) / 2);
     const right =
+      parentBand?.[1] ??
       drawnBand?.[1] ??
       (i + 1 < peers.length
         ? (midpoint(unit) + midpoint(peers[i + 1])) / 2
         : midpoint(unit) + (midpoint(unit) - midpoint(peers[i - 1])) / 2);
     const metricRight =
-      peers[i + 1]?.text === '%' && unit.text !== '%'
+      parentBand?.[1] ??
+      (normalized(peers[i + 1]?.text ?? '') === '%' && normalized(unit.text) !== '%'
         ? i + 2 < peers.length
           ? (midpoint(peers[i + 1]) + midpoint(peers[i + 2])) / 2
           : right + (midpoint(peers[i + 1]) - midpoint(unit)) / 2
-        : right;
+        : right);
     const top = Math.max(region.top, unit.y - unit.height * 10);
     const metricIds = runs
       .filter((run) => {

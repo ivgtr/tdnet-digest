@@ -16,6 +16,7 @@ import {
   isRoutineExplanation,
 } from './summary-content-policy';
 import { companyExcerpt } from './summary-company-excerpt';
+import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
 
 export interface SummarySection {
@@ -197,7 +198,8 @@ function composePresentation(facts: FactSummary, excerpts: SourceExcerpt[]): Sum
             facts.documentType,
             excerpts.find((e) => e.blockId === anchor(f))?.role ?? 'unclassified'
           ) === role &&
-          /修正の有無|変更はありません|上方修正|下方修正/.test(f.statement!)
+          (unchangedForecastTopic(f.statement!) !== null ||
+            /修正の有無|変更はありません|上方修正|下方修正/.test(f.statement!))
       )
     );
   if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
