@@ -269,7 +269,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     ).toEqual([
       { effort: 'low', enabled: undefined },
       { effort: undefined, enabled: false },
-      { effort: undefined, enabled: false },
+      { effort: 'low', enabled: undefined },
     ]);
     expect(attempts.map((a) => a.phase)).toEqual(['first', 'summary', 'summaryReview']);
     const generationInput = vi.mocked(generateText).mock.calls[1][1][1].content;
@@ -707,7 +707,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     ).toThrow('生成時の数量IDは不要');
     const labels = structuredClone(draft.excerpts);
     labels[0].text +=
-      ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。B2C事業。第20期定時株主総会。第3回会議。';
+      ' ToSTNeT-3、午前8時45分、会社法第165条第3項。1UP投資部屋。B2C事業。B2B事業。第20期定時株主総会。第3回会議。';
     const named = structuredClone(good);
     named.sections[0].summary[0].text =
       '会社法第165条第３項に基づき、午前８時45分のToSTNeT-3で取引する。';
@@ -720,6 +720,11 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
     named.sections[0].summary[0].text = '2UP投資部屋で紹介。';
     expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
+    named.sections[0].summary[0].text = 'B2C/B2Bの2区分を説明する。4月から6月まで3か月の推移。';
+    validateNarrativeContent(named, facts, draft.values, labels);
+    named.sections[0].tables[0].caption.text = '2029年3月期。';
+    expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
+    named.sections[0].tables[0].caption.text = good.sections[0].tables[0].caption.text;
     named.sections[0].summary[0].text = 'B2事業。';
     expect(() => validateNarrativeContent(named, facts, draft.values, labels)).toThrow('REFERENCE');
     named.sections[0].summary[0].text = '100JPYを取得する。';
@@ -839,8 +844,14 @@ describe('説明要約の生成・点検・数値参照', () => {
       vi
         .mocked(generateText)
         .mock.calls.slice(2)
-        .every(([c]) => c.reasoningEffort === undefined && c.reasoningEnabled === false)
-    ).toBe(true);
+        .map(([c]) => [c.reasoningEffort, c.reasoningEnabled])
+    ).toEqual([
+      [undefined, false],
+      ['low', undefined],
+      [undefined, false],
+      [undefined, false],
+      ['low', undefined],
+    ]);
     for (const index of [2, 4, 5])
       expect(vi.mocked(generateText).mock.calls[index][0].maxOutputTokens).toBe(8192);
     expect(repaired.repairAttempted).toBe(true);
