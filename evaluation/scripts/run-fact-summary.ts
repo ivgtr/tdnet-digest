@@ -85,6 +85,8 @@ const implementationFiles = [
   'src/lib/summary-renderer.ts',
   'src/lib/summary-result-id.ts',
   'src/lib/llm-client.ts',
+  'src/lib/llm-providers.ts',
+  'src/lib/structured-output.ts',
 ];
 const implementationHash = createHash('sha256');
 for (const file of implementationFiles)

@@ -145,8 +145,11 @@ describe('OpenRouterの任意推論', () => {
       apiKey: 'test',
       reasoningEnabled: false,
     };
-    await generateText(router, messages);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).reasoning).toEqual({ enabled: false });
+    await generateText({ ...router, responseFormat: 'json_object' }, messages);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.reasoning).toEqual({ enabled: false });
+    expect(body.response_format).toEqual({ type: 'json_object' });
+    expect(body.provider).toEqual({ require_parameters: true });
     await expect(generateText({ ...router, reasoningEffort: 'low' }, messages)).rejects.toThrow(
       '同時に指定'
     );

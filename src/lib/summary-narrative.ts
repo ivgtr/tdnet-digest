@@ -86,7 +86,11 @@ function displayQuantities(block: { id: string; text: string }) {
   const original = proseQuantities(block);
   const added = [
     ...source.matchAll(/[△▲−-]?(?:\d[\d,]*(?:兆|億|千万|百万|十万|万|千|百|十)){2,}\d*円/g),
-    ...source.matchAll(/\d[\d,]*(?:万)?(?:つ|区分|領域|項目|部門|分野|点|拠点|機関|世帯|カ国)/g),
+    ...source.matchAll(/\d[\d,]*(?:万)?(?:つ|区分|領域|項目|部門|分野|点|拠点|機関|世帯|カ国|割)/g),
+    // A line break may split the unit glyphs, but never concatenate digits.
+    ...[
+      ...source.matchAll(/[△▲−-]?\d[\d,]*(?:\.\d+)?\s*(?:(?:十|百|千|万|百万|千万|億|兆)\s*)?円/g),
+    ].filter((m) => /\s/.test(m[0])),
   ].filter((m) => parseNarrativeQuantity(m[0]));
   return [
     ...original.filter(
@@ -111,6 +115,19 @@ const decimalIdentity = (s: string) =>
     .replace(/\.$/, '')
     .replace(/^-0$/, '0');
 
+// Display evidence includes chart captions and column headings as well as
+// formal table captions. Only explicit, known units can type a literal cell.
+function displayUnitCaption(raw: string): string | null {
+  const text = compact(raw);
+  const wrapped = text.match(/^(?:金額|数量)?\(([^()]+)\)$/);
+  const unit = wrapped
+    ? declaredQuantityUnit(wrapped[1])
+    : /^\(?単位/.test(text)
+      ? declaredQuantityUnit(text)
+      : null;
+  return unit && isUncaptionedUnit(unit) ? unit : null;
+}
+
 export function narrativeValues(
   facts: FactSummary,
   pages: ExtractedPage[],
@@ -122,11 +139,28 @@ export function narrativeValues(
       const sources = excerpts.filter(
         (e) => e.page === page.pageNumber && e.spanIds.includes(q.id)
       );
-      // A prose currency expression may contain several scalars (e.g. 億＋百万円).
-      // Only whole physical table cells are available as untyped literal references.
-      if (!sources.some((e) => e.kind === 'row')) continue;
       const parsed = scalar(q.text);
       if (!parsed) continue;
+      // Block classification is a reading aid, not evidence of numeric ownership.
+      // A multi-line table or a chart label may be classified as a paragraph.
+      // Exclude numeric fragments embedded in a prose expression using actual
+      // neighboring glyphs; never expose the scalar pieces of 億＋百万円.
+      const neighbors = page.spans.filter(
+        (s) =>
+          !q.spanIds.includes(s.id) && Math.abs(s.y - q.y) <= Math.min(s.height, q.height) * 0.25
+      );
+      if (
+        neighbors.some((s) => {
+          const left = q.x - s.x - s.width;
+          const right = s.x - q.x - q.width;
+          return (
+            ((left >= -0.5 && left <= q.height * 0.6) ||
+              (right >= -0.5 && right <= q.height * 0.6)) &&
+            !isUncaptionedUnit(compact(s.text))
+          );
+        })
+      )
+        continue;
       const adjacent = page.spans
         .filter(
           (s) =>
@@ -141,12 +175,10 @@ export function narrativeValues(
           : null;
       // A unit row can be legible even when metric/period ownership is unresolved.
       // Match the complete numeric row to all unit columns, not a nearest token.
-      const owner = page.blocks.find((b) => b.kind === 'row' && b.spanIds.includes(q.id));
-      const cells = owner
-        ? page.quantities
-            .filter((v) => owner.spanIds.includes(v.id) && scalar(v.text))
-            .sort((a, b) => a.x - b.x)
-        : [];
+      const owner = page.blocks.find((b) => b.spanIds.includes(q.id));
+      const cells = page.quantities
+        .filter((v) => Math.abs(v.y - q.y) <= Math.min(v.height, q.height) * 0.25 && scalar(v.text))
+        .sort((a, b) => a.x - b.x);
       const unitRows = physicalRows(page.spans.filter((s) => s.y < q.y))
         .map((row) => tableUnitRuns(row))
         .filter((runs) => runs.length >= 2)
@@ -184,9 +216,12 @@ export function narrativeValues(
         : null;
       const tables = page.tableRegions.filter((t) => t.valueIds.includes(q.id));
       const preceding = page.blocks.filter((b) => b.y <= q.y).sort((a, b) => a.y - b.y);
-      const captionBlock = [...preceding]
-        .reverse()
-        .find((b) => /^\s*[（(]?単位/.test(b.text) && declaredQuantityUnit(b.text));
+      const captionSpan = [...page.spans]
+        .filter((s) => s.y <= q.y && displayUnitCaption(s.text))
+        .sort((a, b) => b.y - a.y)[0];
+      const captionBlock = captionSpan
+        ? preceding.find((b) => b.spanIds.includes(captionSpan.id))
+        : undefined;
       const captionRun = captionBlock ? preceding.filter((b) => b.y >= captionBlock.y) : [];
       const openCaption =
         captionBlock &&
@@ -200,11 +235,11 @@ export function narrativeValues(
           ? page.spans
               .filter((s) => s.y <= q.y && tables[0].spanIds.includes(s.id))
               .flatMap((s) => {
-                const unit = /^\s*[（(]?単位/.test(s.text) ? declaredQuantityUnit(s.text) : null;
+                const unit = displayUnitCaption(s.text);
                 return unit ? [{ unit, id: s.id }] : [];
               })
           : openCaption
-            ? [{ unit: declaredQuantityUnit(captionBlock.text)!, id: captionBlock.spanIds[0] }]
+            ? [{ unit: displayUnitCaption(captionSpan!.text)!, id: captionSpan!.id }]
             : [];
       const common = [...new Set(captions.map((c) => c.unit))];
       // A common caption cannot override column-specific units in a mixed table.
@@ -626,7 +661,9 @@ function checkText(
     return '';
   });
   if (/\d|[０-９]/.test(rest))
-    throw new Error(`NARRATIVE_QUANTITY:数値は原文数量IDで参照してください。対象文=${text}`);
+    throw new Error(
+      `NARRATIVE_QUANTITY:数量は原文と同じ単位付きで記載してください。原文にない数値や期間の個数は生成できません。対象文=${text}`
+    );
   if (
     compact(rest).length > 80 &&
     excerpts.some((e) => sourceIds.includes(e.id) && compact(e.text).includes(compact(rest)))
@@ -895,7 +932,8 @@ export async function generateSummaryNarrative(
   const options = {
     ...config,
     temperature: 0,
-    ...(getProviderCapabilities(config.provider).jsonObject
+    ...(getProviderCapabilities(config.provider).jsonObject ||
+    getModel(config.provider, config.model)?.jsonObject
       ? { responseFormat: 'json_object' as const }
       : {}),
   };

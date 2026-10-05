@@ -438,6 +438,58 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(columns.find((v) => v.decimal === '120')?.unit).toBe('百万円');
     expect(columns.find((v) => v.decimal === '5.0')?.unit).toBe('%');
     expect(columns.find((v) => v.decimal === '90')?.unit).toBeNull();
+    const groupedPage = layoutPage([
+      { id: 'p1s1', text: '金額（千円）', x: 100, y: 0, width: 60, height: 10 },
+      { id: 'p1s2', text: 'サービス', x: 0, y: 20, width: 40, height: 10 },
+      { id: 'p1s3', text: '120', x: 100, y: 20, width: 30, height: 10 },
+      { id: 'p1s4', text: 'その他', x: 0, y: 40, width: 40, height: 10 },
+      { id: 'p1s5', text: '90', x: 110, y: 40, width: 20, height: 10 },
+    ]);
+    // Reading classification must not decide whether these physical cells exist.
+    groupedPage.blocks.forEach((b) => {
+      b.kind = 'paragraph';
+    });
+    const grouped = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [groupedPage]
+    ).values;
+    expect(grouped.find((v) => v.decimal === '120')?.unit).toBe('千円');
+    expect(grouped.find((v) => v.decimal === '90')?.unit).toBe('千円');
+    const chartPage = layoutPage([
+      { id: 'p1s1', text: '(百万円)', x: 0, y: 0, width: 60, height: 10 },
+      { id: 'p1s2', text: '338', x: 200, y: 20, width: 30, height: 10 },
+      { id: 'p1s3', text: '別の説明。', x: 0, y: 40, width: 60, height: 10 },
+      { id: 'p1s4', text: '289', x: 200, y: 60, width: 30, height: 10 },
+    ]);
+    const chart = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [chartPage]
+    ).values;
+    expect(chart.find((v) => v.decimal === '338')?.unit).toBe('百万円');
+    expect(chart.find((v) => v.decimal === '289')?.unit).toBeNull();
+    const splitUnit = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [
+        layoutPage([
+          { id: 'p1s1', text: '税金支払は7,602千', x: 0, y: 0, width: 120, height: 10 },
+          { id: 'p1s2', text: '円。調査では8割が利用。', x: 0, y: 12, width: 140, height: 10 },
+        ]),
+      ]
+    );
+    expect(splitUnit.values.find((v) => v.decimal === '7602')?.unit).toBe('千円');
+    expect(splitUnit.values.find((v) => v.decimal === '8')?.unit).toBe('割');
+    const fragmentsPage = layoutPage([
+      { id: 'p1s1', text: '(百万円)', x: 0, y: 0, width: 60, height: 10 },
+      { id: 'p1s2', text: '1', x: 100, y: 20, width: 10, height: 10 },
+      { id: 'p1s3', text: '億', x: 110, y: 20, width: 10, height: 10 },
+      { id: 'p1s4', text: '27', x: 120, y: 20, width: 20, height: 10 },
+      { id: 'p1s5', text: '百万円', x: 140, y: 20, width: 30, height: 10 },
+    ]);
+    const fragments = buildPresentation(
+      { version: 6, documentType: 'other', facts: [], unverified: [] },
+      [fragmentsPage]
+    ).values;
+    expect(fragments.some((v) => v.decimal === '27' && v.unit === '百万円')).toBe(false);
     const columnFacts = {
       version: 6 as const,
       documentType: 'other' as const,

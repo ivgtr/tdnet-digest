@@ -103,6 +103,7 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
       ...(config.temperature !== undefined && { temperature: config.temperature }),
       ...(config.responseFormat === 'json_object' && {
         response_format: { type: 'json_object' },
+        ...(config.provider === 'openrouter' && { provider: { require_parameters: true } }),
       }),
     }),
   });
