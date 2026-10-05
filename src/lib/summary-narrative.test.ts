@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FactSummary } from './fact-contract';
+import { narrativeResponseSchema } from './summary-narrative-schema';
 import { generateText } from './llm-client';
 import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { reviewCandidates } from './fact-candidates';
@@ -404,6 +405,15 @@ describe('説明要約の生成・点検・数値参照', () => {
     ]);
     expect(cited.sections[0].tables[0].rows[0].cells).toEqual(
       editBase.sections[0].tables[0].rows[0].cells
+    );
+    const repairWire = narrativeResponseSchema(sources, 'edits', [], editBase);
+    const editWire = repairWire.properties.edits as {
+      items: { anyOf: Array<{ properties: { op: { enum: string[] }; path: { enum: string[] } } }> };
+    };
+    const citationWire = editWire.items.anyOf.find((v) => v.properties.op.enum[0] === 'cite')!;
+    expect(citationWire.properties.path.enum).toContain('/sections/0/tables/0/caption/sourceIds');
+    expect(citationWire.properties.path.enum).not.toContain(
+      '/sections/0/tables/0/headers/0/sourceIds'
     );
     expect(() => applyNarrativeEdits(editBase, { ...edits, version: 1 })).toThrow('version=2');
     expect(() =>
@@ -818,6 +828,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain(
       '/sections/0/summary/0/text'
     );
+    expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain('literalAlternatives');
     expect(
       vi
         .mocked(generateText)
