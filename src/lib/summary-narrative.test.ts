@@ -407,8 +407,10 @@ describe('説明要約の生成・点検・数値参照', () => {
         : facts.facts[0].evidence.valueId;
     const compoundContent: NarrativeContent = JSON.parse(
       JSON.stringify(good)
-        .replaceAll(value(facts.facts[0].id), equivalent)
-        .replaceAll(value(nativeAnchor), equivalent)
+        .split(value(facts.facts[0].id))
+        .join(equivalent)
+        .split(value(nativeAnchor))
+        .join(equivalent)
     );
     compoundContent.sections[0].tables[0].rows[0].sourceIds = sources;
     // The verified native label can be displayed as caption + column heading.
