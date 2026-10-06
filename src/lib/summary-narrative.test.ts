@@ -20,7 +20,7 @@ import {
   narrativeClaims,
   NARRATIVE_TOKEN,
   assembleNarrative,
-  applyNarrativeEdits,
+  applyNarrativeCorrections,
   validateNarrativeContent,
   type NarrativeContent,
 } from './summary-narrative';
@@ -445,98 +445,98 @@ describe('説明要約の生成・点検・数値参照', () => {
     );
     expect(() => assembleNarrative(good, facts, draft.values, draft.excerpts)).toThrow('SCHEMA');
     const editBase = synthesisResponse(good);
-    const edits = {
-      version: 2,
-      edits: [{ op: 'replace', path: '/sections/0/summary/0/text', value: '変更した説明。' }],
+    const target = {
+      path: '/sections/0/summary/0/text',
+      citationPath: '/sections/0/summary/0/sourceIds',
+      value: editBase.sections[0].summary[0].text,
     };
-    const edited = applyNarrativeEdits(editBase, edits) as typeof editBase;
+    const corrections = {
+      version: 3,
+      corrections: { [target.path]: { value: '変更した説明。', sourceIds: [] } },
+    };
+    const edited = applyNarrativeCorrections(editBase, corrections, [target]) as typeof editBase;
     expect(edited.sections[0].summary[0].text).toBe('変更した説明。');
     expect(edited.sections.slice(1)).toEqual(editBase.sections.slice(1));
     expect(editBase.sections[0].summary[0].text).not.toBe('変更した説明。');
-    editBase.sections[0].tables[0].rows[0].sourceIds = [draft.excerpts[0].id];
-    const originalSources = editBase.sections[0].tables[0].rows[0].sourceIds;
-    const additionalSource = draft.excerpts[1].id;
-    const cited = applyNarrativeEdits(editBase, {
-      version: 2,
-      edits: [
-        {
-          op: 'cite',
-          path: '/sections/0/tables/0/rows/0/sourceIds',
-          value: [additionalSource, originalSources[0]],
-        },
-        {
-          op: 'cite',
-          path: '/sections/0/tables/0/rows/0/sourceIds',
-          value: [draft.excerpts[2].id, additionalSource],
-        },
-      ],
-    }) as typeof editBase;
-    expect(cited.sections[0].tables[0].rows[0].sourceIds).toEqual([
-      ...originalSources,
-      additionalSource,
-      draft.excerpts[2].id,
-    ]);
-    expect(cited.sections[0].tables[0].rows[0].cells).toEqual(
-      editBase.sections[0].tables[0].rows[0].cells
+    editBase.sections[0].tables[0].caption.sourceIds = [draft.excerpts[0].id];
+    const citationPath = '/sections/0/tables/0/caption/sourceIds';
+    const targets = [
+      {
+        path: '/sections/0/tables/0/caption/text',
+        citationPath,
+        value: editBase.sections[0].tables[0].caption.text,
+      },
+      {
+        path: '/sections/0/tables/0/headers/0',
+        citationPath,
+        value: editBase.sections[0].tables[0].headers[0],
+      },
+    ];
+    const cited = applyNarrativeCorrections(
+      editBase,
+      {
+        version: 3,
+        corrections: Object.fromEntries(
+          targets.map((t, i) => [t.path, { value: t.value, sourceIds: [draft.excerpts[i + 1].id] }])
+        ),
+      },
+      targets
+    ) as typeof editBase;
+    expect(cited.sections[0].tables[0].caption.sourceIds).toEqual(
+      draft.excerpts.slice(0, 3).map((e) => e.id)
     );
-    const repairWire = narrativeResponseSchema(sources, 'edits', [], editBase);
-    const editWire = repairWire.properties.edits as {
-      items: { anyOf: Array<{ properties: { op: { enum: string[] }; path: { enum: string[] } } }> };
+    expect(cited.sections[0].tables[0].rows).toEqual(editBase.sections[0].tables[0].rows);
+    const repairWire = narrativeResponseSchema(sources, 'corrections', [], targets);
+    const correctionWire = repairWire.properties.corrections as {
+      required: string[];
+      additionalProperties: boolean;
     };
-    const citationWire = editWire.items.anyOf.find((v) => v.properties.op.enum[0] === 'cite')!;
-    expect(citationWire.properties.path.enum).toContain('/sections/0/tables/0/caption/sourceIds');
-    expect(citationWire.properties.path.enum).not.toContain(
-      '/sections/0/tables/0/headers/0/sourceIds'
-    );
-    const addWire = editWire.items.anyOf.find((v) => v.properties.op.enum[0] === 'add')!;
-    const replaceWire = editWire.items.anyOf.find((v) => v.properties.op.enum[0] === 'replace')!;
-    expect(addWire.properties.path.enum).not.toContain('/sections/0/summary/0/text');
-    expect(addWire.properties.path.enum).toContain('/sections/0/summary/-');
-    expect(replaceWire.properties.path.enum).toContain('/sections/0/summary/0/text');
-    expect(replaceWire.properties.path.enum).not.toContain('/sections/0/summary/-');
-    expect(() => applyNarrativeEdits(editBase, { ...edits, version: 1 })).toThrow('version=2');
-    expect(() =>
-      applyNarrativeEdits(editBase, {
-        version: 2,
-        edits: [{ op: 'cite', path: '/sections/0/title', value: [additionalSource] }],
-      })
-    ).toThrow('cite');
-    for (const path of ['/sections/99/title', '/__proto__/text', '/sections/0/unknown'])
+    expect(correctionWire.required).toEqual(targets.map((t) => t.path));
+    expect(correctionWire.additionalProperties).toBe(false);
+    for (const invalid of [
+      { ...corrections, version: 2 },
+      { version: 3, corrections: {} },
+      { ...corrections, unknown: true },
+      {
+        version: 3,
+        corrections: { ...corrections.corrections, '/unknown': { value: '', sourceIds: [] } },
+      },
+      {
+        version: 3,
+        corrections: { [target.path]: { value: '説明', sourceIds: [], unknown: true } },
+      },
+      { version: 3, corrections: { [target.path]: { value: '説明' } } },
+      { version: 3, corrections: { [target.path]: { value: [], sourceIds: [] } } },
+      { version: 2, edits: [{ op: 'remove', path: '/sections/0/summary/0/text' }] },
+    ])
+      expect(() => applyNarrativeCorrections(editBase, invalid, [target])).toThrow('SCHEMA');
+    for (const path of ['/sections/99/summary/0/text', '/__proto__/text', '/sections/0/unknown'])
       expect(() =>
-        applyNarrativeEdits(editBase, {
-          version: 2,
-          edits: [{ op: 'replace', path, value: '不正' }],
-        })
+        applyNarrativeCorrections(
+          editBase,
+          { version: 3, corrections: { [path]: { value: '不正', sourceIds: [] } } },
+          [{ ...target, path }]
+        )
       ).toThrow('SCHEMA');
+    expect(() => applyNarrativeCorrections(editBase, corrections, [target, target])).toThrow(
+      'SCHEMA'
+    );
+    const rowTarget = {
+      path: '/sections/0/tables/0/rows/0/cells',
+      citationPath: '/sections/0/tables/0/rows/0/sourceIds',
+      value: editBase.sections[0].tables[0].rows[0].cells,
+      columns: editBase.sections[0].tables[0].headers.length,
+    };
     expect(() =>
-      applyNarrativeEdits(editBase, { version: 2, edits: [edits.edits[0], edits.edits[0]] })
+      applyNarrativeCorrections(
+        editBase,
+        {
+          version: 3,
+          corrections: { [rowTarget.path]: { value: rowTarget.value.slice(1), sourceIds: [] } },
+        },
+        [rowTarget]
+      )
     ).toThrow('SCHEMA');
-    for (const path of ['/sections/0/tables/0/rows/0/sourceIds', '/sections/0/tables/0/rows/0'])
-      expect(() =>
-        applyNarrativeEdits(editBase, {
-          version: 2,
-          edits: [
-            {
-              op: 'cite',
-              path: '/sections/0/tables/0/rows/0/sourceIds',
-              value: [additionalSource],
-            },
-            { op: 'replace', path, value: [] },
-          ],
-        })
-      ).toThrow('競合');
-    expect(() => applyNarrativeEdits(editBase, editBase)).toThrow('SCHEMA');
-    expect(() =>
-      applyNarrativeEdits(editBase, {
-        version: 2,
-        edits: [{ op: 'remove', path: '/sections/0/summary/0/text' }],
-      })
-    ).toThrow('配列の要素');
-    const removed = applyNarrativeEdits(editBase, {
-      version: 2,
-      edits: [{ op: 'remove', path: '/sections/0/summary/0' }],
-    }) as typeof editBase;
-    expect(removed.sections[0].summary).toHaveLength(editBase.sections[0].summary.length - 1);
 
     const addressPages = [textPage('取引先の所在地は東京都中央区1丁目2番です。', 1)];
     const addressFacts: FactSummary = {
@@ -569,10 +569,8 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(() =>
       assembleNarrative(addressResponse, addressFacts, addressDraft.values, addressDraft.excerpts)
     ).toThrow('REFERENCE');
-    const dropped = applyNarrativeEdits(editBase, {
-      version: 2,
-      edits: [{ op: 'remove', path: '/sections/0' }],
-    });
+    const dropped = structuredClone(editBase);
+    dropped.sections.splice(0, 1);
     expect(() => assembleNarrative(dropped, facts, draft.values, draft.excerpts)).toThrow(
       'COVERAGE'
     );
@@ -916,25 +914,19 @@ describe('説明要約の生成・点検・数値参照', () => {
       .filter((e) => e.text.includes('サービス事業の当期損益'))
       .map((e) => e.id);
     malformedResponse.sections[1].tables[0].rows[0].cells.pop();
+    malformedResponse.sections[1].tables[0].rows[0].cells[0] = '売上999百万円';
     const correction = {
-      version: 2,
-      edits: [
-        {
-          op: 'replace',
-          path: '/sections/0/summary/0/text',
+      version: 3,
+      corrections: {
+        '/sections/0/summary/0/text': {
           value: response.sections[0].summary[0].text,
+          sourceIds: response.sections[0].summary[0].sourceIds,
         },
-        {
-          op: 'cite',
-          path: '/sections/0/summary/0/sourceIds',
-          value: response.sections[0].summary[0].sourceIds,
-        },
-        {
-          op: 'replace',
-          path: '/sections/1/tables/0/rows/0/cells',
+        '/sections/1/tables/0/rows/0/cells': {
           value: response.sections[1].tables[0].rows[0].cells,
+          sourceIds: response.sections[1].tables[0].rows[0].sourceIds,
         },
-      ],
+      },
     };
     vi.mocked(generateText)
       .mockReset()
@@ -966,9 +958,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain('literalAlternatives');
     expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain('signedCounterpart');
     const repairPrompt = vi.mocked(generateText).mock.calls[2][1][1].content;
-    const repairProblems = JSON.parse(
-      repairPrompt.split('修復箇所と引用欄: ')[1].split('\n修復対象の草稿:')[0]
-    ) as Array<{
+    const repairProblems = JSON.parse(repairPrompt.split('修復箇所と引用欄: ')[1]) as Array<{
       missingQuantityEvidence: Array<{ text: string; candidates: Array<{ sourceIds: string[] }> }>;
     }>;
     expect(repairProblems[0].missingQuantityEvidence.find((q) => q.text === '90百万円')).toEqual({

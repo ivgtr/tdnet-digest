@@ -14,7 +14,11 @@ import type { SummaryAttempt } from './summary-trace';
 import { literalValue, renderNarrativeText } from './summary-narrative-renderer';
 import { headingLevel } from './document-structure';
 import { physicalRows, tableUnitRuns } from './table-layout';
-import { narrativeResponseSchema, NARRATIVE_READING_CHECKS } from './summary-narrative-schema';
+import {
+  narrativeResponseSchema,
+  NARRATIVE_READING_CHECKS,
+  type NarrativeCorrectionTarget,
+} from './summary-narrative-schema';
 
 /** Literal quantities for presentation. They are not semantic facts used for scoring. */
 export interface NarrativeValue {
@@ -326,7 +330,11 @@ export function narrativeValues(
 export const NARRATIVE_TOKEN = /\{\{(value|change|delta):([^{}]+)\}\}/g;
 
 /** Repair only the explicitly addressed current draft, then revalidate it in full. */
-export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
+export function applyNarrativeCorrections(
+  base: unknown,
+  response: unknown,
+  targets: NarrativeCorrectionTarget[]
+): unknown {
   if (
     !record(base) ||
     base.version !== 3 ||
@@ -335,20 +343,22 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
   )
     throw new Error('NARRATIVE_SCHEMA:修復対象は現行version=3の草稿が必要です');
   if (
+    !targets.length ||
+    new Set(targets.map((t) => t.path)).size !== targets.length ||
     !record(response) ||
-    !exact(response, ['version', 'edits']) ||
-    response.version !== 2 ||
-    !Array.isArray(response.edits) ||
-    !response.edits.length ||
-    response.edits.length > 100
+    !exact(response, ['version', 'corrections']) ||
+    response.version !== 3 ||
+    !record(response.corrections) ||
+    !exact(
+      response.corrections,
+      targets.map((t) => t.path)
+    )
   )
-    throw new Error('NARRATIVE_SCHEMA:修復はversion=2と空でないedits配列が必要です');
+    throw new Error('NARRATIVE_SCHEMA:修復version=3と全不正箇所へのcorrectionsが必要です');
   const draft = structuredClone(base);
-  const used: Array<{ path: string; op: unknown }> = [];
   const names = new Set([
     'overview',
     'sections',
-    'title',
     'summary',
     'tables',
     'caption',
@@ -358,76 +368,55 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
     'text',
     'sourceIds',
   ]);
-  for (const edit of response.edits) {
-    if (
-      !record(edit) ||
-      !['replace', 'add', 'remove', 'cite'].includes(String(edit.op)) ||
-      !exact(edit, edit.op === 'remove' ? ['op', 'path'] : ['op', 'path', 'value']) ||
-      typeof edit.path !== 'string' ||
-      !edit.path.startsWith('/')
-    )
-      throw new Error('NARRATIVE_SCHEMA:修復操作の項目が不正です');
-    const path = edit.path;
-    const parts = path.slice(1).split('/');
-    if (
-      !parts.length ||
-      parts.some((p) => !names.has(p) && !/^(?:0|[1-9]\d*|-)$/.test(p)) ||
-      used.some(
-        (p) =>
-          (p.path === path && !(p.op === 'cite' && edit.op === 'cite')) ||
-          p.path.startsWith(path + '/') ||
-          path.startsWith(p.path + '/')
-      )
-    )
-      throw new Error(`NARRATIVE_SCHEMA:未知または競合する修復pathです ${path}`);
-    used.push({ path, op: edit.op });
-    let target: unknown = draft;
+  const locate = (path: string): { parent: Record<string, unknown> | unknown[]; key: string } => {
+    const parts = path.startsWith('/') ? path.slice(1).split('/') : [];
+    if (!parts.length || parts.some((p) => !names.has(p) && !/^(?:0|[1-9]\d*)$/.test(p)))
+      throw new Error(`NARRATIVE_SCHEMA:未知の修復pathです ${path}`);
+    let node: unknown = draft;
     for (const key of parts.slice(0, -1)) {
-      if (Array.isArray(target) && /^(?:0|[1-9]\d*)$/.test(key) && Number(key) < target.length)
-        target = target[Number(key)];
-      else if (record(target) && Object.prototype.hasOwnProperty.call(target, key))
-        target = target[key];
-      else throw new Error('NARRATIVE_SCHEMA:修復pathの親が存在しません');
+      if (Array.isArray(node) && /^(?:0|[1-9]\d*)$/.test(key) && Number(key) < node.length)
+        node = node[Number(key)];
+      else if (record(node) && Object.prototype.hasOwnProperty.call(node, key)) node = node[key];
+      else throw new Error(`NARRATIVE_SCHEMA:修復pathの親が存在しません ${path}`);
     }
     const key = parts[parts.length - 1];
-    if (edit.op === 'cite') {
-      if (
-        !record(target) ||
-        key !== 'sourceIds' ||
-        !Array.isArray(target.sourceIds) ||
-        !target.sourceIds.every((id) => typeof id === 'string') ||
-        !Array.isArray(edit.value) ||
-        !edit.value.length ||
-        !edit.value.every((id) => typeof id === 'string')
-      )
-        throw new Error('NARRATIVE_SCHEMA:citeは既存sourceIdsへ原文IDを追加する操作です');
-      // The model explicitly selects the added citations. Existing numeric and
-      // semantic evidence is retained; the compiler never chooses missing proof.
-      // Multiple cite operations have explicit additive set-union semantics.
-      // Replacing/removing the same path or its parent remains a conflict.
-      target.sourceIds = [...new Set([...target.sourceIds, ...edit.value])];
-    } else if (Array.isArray(target)) {
-      const index =
-        key === '-' && edit.op === 'add'
-          ? target.length
-          : /^(?:0|[1-9]\d*)$/.test(key)
-            ? Number(key)
-            : -1;
-      if (index < 0 || index > target.length || (edit.op !== 'add' && index === target.length))
-        throw new Error('NARRATIVE_SCHEMA:修復の配列位置が不正です');
-      if (edit.op === 'remove') target.splice(index, 1);
-      else if (edit.op === 'add') target.splice(index, 0, structuredClone(edit.value));
-      else target[index] = structuredClone(edit.value);
-    } else if (record(target) && names.has(key)) {
-      if (edit.op === 'remove')
-        throw new Error('NARRATIVE_SCHEMA:removeは配列の要素だけを削除できます');
-      if (
-        (edit.op !== 'add' && !Object.prototype.hasOwnProperty.call(target, key)) ||
-        (edit.op === 'add' && Object.prototype.hasOwnProperty.call(target, key))
-      )
-        throw new Error('NARRATIVE_SCHEMA:修復の項目が存在しないか既に存在します');
-      target[key] = structuredClone(edit.value);
-    } else throw new Error('NARRATIVE_SCHEMA:修復pathの対象が不正です');
+    if (Array.isArray(node) && /^(?:0|[1-9]\d*)$/.test(key) && Number(key) < node.length)
+      return { parent: node, key };
+    if (record(node) && Object.prototype.hasOwnProperty.call(node, key))
+      return { parent: node, key };
+    throw new Error(`NARRATIVE_SCHEMA:修復pathの対象が存在しません ${path}`);
+  };
+  for (const target of targets) {
+    if (targets.some((t) => t.path !== target.path && target.path.startsWith(t.path + '/')))
+      throw new Error('NARRATIVE_SCHEMA:親子の修復pathが競合しています');
+    const correction = response.corrections[target.path];
+    if (
+      !record(correction) ||
+      !exact(correction, ['value', 'sourceIds']) ||
+      !Array.isArray(correction.sourceIds) ||
+      !correction.sourceIds.every((id) => typeof id === 'string') ||
+      (Array.isArray(target.value)
+        ? !Array.isArray(correction.value) ||
+          !correction.value.every((v) => typeof v === 'string') ||
+          (target.columns !== undefined && correction.value.length !== target.columns)
+        : typeof correction.value !== 'string')
+    )
+      throw new Error(`NARRATIVE_SCHEMA:修復値/原文IDの形式が不正です ${target.path}`);
+    const { parent, key } = locate(target.path);
+    if (Array.isArray(parent)) parent[Number(key)] = structuredClone(correction.value);
+    else parent[key] = structuredClone(correction.value);
+    const citation = locate(target.citationPath);
+    if (
+      Array.isArray(citation.parent) ||
+      citation.key !== 'sourceIds' ||
+      !Array.isArray(citation.parent.sourceIds)
+    )
+      throw new Error('NARRATIVE_SCHEMA:修復の引用欄が存在しません');
+    // The model explicitly selects every added source. Shared citation fields
+    // retain the union of all corrections, without inventing missing evidence.
+    citation.parent.sourceIds = [
+      ...new Set([...citation.parent.sourceIds, ...correction.sourceIds]),
+    ];
   }
   return draft;
 }
@@ -1108,17 +1097,17 @@ function narrativeRepairProblems(
   values: NarrativeValue[],
   excerpts: SourceExcerpt[]
 ) {
-  const problems: Array<{
-    path: string;
-    citationPath: string;
-    sourceIds: string[];
-    reason: string;
-    literalAlternatives: Array<{ text: string; sourceIds: string[]; signedCounterpart?: true }>;
-    missingQuantityEvidence: Array<{
-      text: string;
-      candidates: Array<{ text: string; sourceIds: string[] }>;
-    }>;
-  }> = [];
+  const problems: Array<
+    NarrativeCorrectionTarget & {
+      sourceIds: string[];
+      reason: string;
+      literalAlternatives: Array<{ text: string; sourceIds: string[]; signedCounterpart?: true }>;
+      missingQuantityEvidence: Array<{
+        text: string;
+        candidates: Array<{ text: string; sourceIds: string[] }>;
+      }>;
+    }
+  > = [];
   const check = (text: unknown, ids: unknown, path: string, citationPath: string) => {
     if (
       typeof text !== 'string' ||
@@ -1143,6 +1132,7 @@ function narrativeRepairProblems(
       problems.push({
         path,
         citationPath,
+        value: text,
         sourceIds: ids,
         reason: e instanceof Error ? e.message : String(e),
         // Alternatives are explicit native literals in the cited context, never
@@ -1230,8 +1220,10 @@ function narrativeRepairProblems(
                 problems.push({
                   path: `${path}/rows/${k}/cells`,
                   citationPath: `${path}/rows/${k}/sourceIds`,
+                  value: r.cells as string[],
+                  columns: t.headers.length,
                   sourceIds: [...captionIds, ...r.sourceIds] as string[],
-                  reason: `cellsは見出し${JSON.stringify(t.headers)}と同じ${t.headers.length}列が必要です。現在${r.cells.length}列です。根拠に沿って不足列を追加するか、表全体の列定義を一貫して修正してください。原文にない値・理由は補わず空セルを明示できます。`,
+                  reason: `cellsは見出し${JSON.stringify(t.headers)}と同じ${t.headers.length}列が必要です。現在${r.cells.length}列です。根拠に沿って全セルを返してください。原文にない値・理由は補わず空セルを明示できます。`,
                   literalAlternatives: [],
                   missingQuantityEvidence: [],
                 });
@@ -1246,11 +1238,16 @@ function narrativeRepairProblems(
             });
         });
     });
-  return problems;
+  // A malformed row is corrected as a whole. Its individual broken cells
+  // must not introduce conflicting parent/child replacements.
+  return problems.filter(
+    (p) =>
+      !problems.some((parent) => p.path !== parent.path && p.path.startsWith(parent.path + '/'))
+  );
 }
 
 /** JSON.parse otherwise silently keeps the last duplicate verdict for a claim. */
-function parseReviewResponse(raw: string): unknown {
+function parseNarrativeResponse(raw: string, kind = 'NARRATIVE_REVIEW'): unknown {
   const parsed: unknown = JSON.parse(raw);
   const tokens = raw.match(/"(?:\\.|[^"\\])*"|[{}[\]:,]|[^\s{}[\]:,]+/g)!;
   let at = 0;
@@ -1260,7 +1257,7 @@ function parseReviewResponse(raw: string): unknown {
       const keys = new Set<string>();
       while (tokens[at] !== '}') {
         const key: string = JSON.parse(tokens[at++]);
-        if (keys.has(key)) throw new Error('NARRATIVE_REVIEW:重複した判定キーがあります');
+        if (keys.has(key)) throw new Error(`${kind}:重複した判定キーがあります`);
         keys.add(key);
         at++; // colon; JSON syntax has already been checked
         visit();
@@ -1379,12 +1376,12 @@ export async function generateSummaryNarrative(
                     schema: narrativeResponseSchema(
                       excerpts.map((e) => e.id),
                       patch
-                        ? 'edits'
+                        ? 'corrections'
                         : phase === 'summaryReview' || phase === 'summaryReviewRepair'
                           ? 'review'
                           : 'draft',
                       reviewClaimIds,
-                      patch ? repairBase : undefined,
+                      patch ? repairTargets : [],
                       [...new Set(excerpts.map((e) => e.role))]
                     ),
                   },
@@ -1419,6 +1416,7 @@ export async function generateSummaryNarrative(
   };
   let feedback = '';
   let repairBase: unknown;
+  let repairTargets: ReturnType<typeof narrativeRepairProblems> = [];
   let semanticRepairs = 0;
   let repaired = false;
   for (let semanticAttempt = 0; semanticAttempt < 2; semanticAttempt++) {
@@ -1432,20 +1430,34 @@ export async function generateSummaryNarrative(
       // A semantic correction can reorganize an entire topic. Generate one
       // complete corrected draft; sparse edits are reserved for local format /
       // quantity failures, where repetitive broad patches are unnecessary.
-      const patch = repairBase !== undefined && (semanticAttempt === 0 || structureAttempt > 0);
+      repairTargets =
+        repairBase === undefined
+          ? []
+          : narrativeRepairProblems(repairBase, facts, values, excerpts);
+      const patch = repairTargets.length > 0 && (semanticAttempt === 0 || structureAttempt > 0);
       try {
         await request(
           semanticAttempt || structureAttempt ? 'summaryRepair' : 'summary',
           NARRATIVE_SYSTEM +
             (patch
-              ? '\n今回は草稿の修復要求です。初稿のversion=3全体は返さず、修復契約version=2のeditsだけ返します。'
+              ? '\n今回は草稿の修復要求です。初稿のversion=3全体は返さず、修復契約version=3のcorrectionsだけ返します。全不正箇所のキーが必須です。'
               : ''),
           patch
-            ? `修復形式: {"version":2,"edits":[{"op":"cite","path":"/sections/0/summary/0/sourceIds","value":["source:p2b1"]}]}。opはreplace/add/remove/cite。引用が足りない場合はciteで必要な原文IDだけを追加します。同じsourceIdsへの複数citeは全IDを和集合で追記します。同じpathや親子pathのreplace/remove/addとの併用は競合として拒否します。行のsourceIdsは全セルの数値・率・理由を裏づけます。引用不足だけを直すときに配列全体をreplaceすると、問題のなかった別セルの根拠が失われます。citeで既存引用を保持してください。引用が誤っている場合の削除・置換は、残りの全セルを裏づける参照を保持した上で明示します。pathは提示した草稿のJSON位置です。変更が必要なtext/sourceIds/cells等だけ修正し、問題のない項目は書き直しません。誤った表題・比較期間は該当箇所を原文に合わせます。ほかの本文で同じ比較・傾向を網羅した重複表は削除でき、過去の全明細を増殖させる修復は行いません。意味や重要事項を落として拒否を避けず、不足する根拠は明示して追加します。必要な追加説明・表・節はaddで配列へ挿入します。missingQuantityEvidenceは引用が不足している数量と、値・符号・単位が完全一致する原文候補です。原因を説明する段落と金額を示す表が別々なら、その両方を引用してください。対象指標と期間が一致する候補を確認し、提示されたcitationPathにciteで追記します。引用不足の数量を同じ文章に書き直すだけでは修復になりません。literalAlternativesは現在引用した原文にある同値の完全な数量表記です。signedCounterpart=trueは原文の符号が生成文と逆の同じ大きさです。正の損失額へ自動変換せず、原文の符号付き金額を保った損益として書き直してください（例：原文が△10百万円なら「前年同期は△10百万円（赤字）」）。内容の意味を保持したまま原文と同じ単位・符号へ直す際の候補で、別指標への数量の差し替えではありません。原文が「4つのテーマ」なら「4テーマ」と単位を変えず「4つのテーマ」とします。未知の項目・ID・独自の数値は追加しません。APIが許す実在pathだけを操作します。見出しheadersは文字列でsourceIdsを持たないため、提示されたcitationPath（caption.sourceIds）を参照します。修正後の全体を数量照合と独立点検へ渡します。\n修正理由: ${feedback}\n修復箇所と引用欄: ${JSON.stringify(narrativeRepairProblems(repairBase, facts, values, excerpts))}\n修復対象の草稿: ${JSON.stringify(repairBase)}\n根拠入力: ${input}`
+            ? `原文入力: ${input}
+修復対象の草稿: ${JSON.stringify(repairBase)}
+修正理由: ${feedback}
+修復形式は{"version":3,"corrections":{"不正箇所のpath":{"value":"修正後の文章/セル（cellsなら文字列配列）","sourceIds":["追加する原文ID"]}}}です。下記の全pathに一度ずつ必ず回答し、指摘の一部だけ修復して終わりにしません。変更箇所は下記のpathだけです。valueとsourceIdsは両方必須。引用不足だけならvalueを保持し、その数量・期間を裏づけるsourceIdsを明示します。sourceIdsは既存引用への追加で、同じ引用欄への複数修復も全IDを保持します。原因説明の段落と金額の表が別なら両方を引用します。missingQuantityEvidenceは完全一致する値/符号/単位の原文候補で、指標と期間の意味が一致する候補を選びます。原文にない数値への一致候補はありません。「X%台」等の独自の概数や範囲を生成せず、表に正確な率を保持し説明では傾向を言い換えます。literalAlternativesは現在の引用内にある数量です。signedCounterpart=trueは生成文と逆の符号で、原文の符号付き損益を保ちます（△10百万円なら△10百万円（赤字））。数値/単位/年度をコードに補完させません。暦月を原文から組み立てた表題に根拠がない場合は原文の年度と月の表記を明示します。行のcellsは全見出しと同じ列数を返し、主因が未開示なら空セルを明示できます。問題のない別セルや重要条件を削りません。修正後の全体を数量照合・独立点検へ渡します。
+修復箇所と引用欄: ${JSON.stringify(repairTargets)}`
             : `説明要約の形式: ${FORMAT}\n${feedback}${semanticAttempt && structureAttempt === 0 ? `\n修正前の草稿: ${JSON.stringify(repairBase)}` : ''}\n根拠入力: ${input}`,
           (raw) => {
             rejectedResponse = raw;
-            candidate = patch ? applyNarrativeEdits(repairBase, JSON.parse(raw)) : JSON.parse(raw);
+            candidate = patch
+              ? applyNarrativeCorrections(
+                  repairBase,
+                  parseNarrativeResponse(raw, 'NARRATIVE_SCHEMA'),
+                  repairTargets
+                )
+              : parseNarrativeResponse(raw, 'NARRATIVE_SCHEMA');
             assembleNarrative(candidate, facts, values, excerpts);
           },
           patch
@@ -1492,7 +1504,7 @@ export async function generateSummaryNarrative(
       })),
     };
     const assembleReview = (raw: string): NarrativeReview => {
-      const response = parseReviewResponse(raw);
+      const response = parseNarrativeResponse(raw);
       const topics = [...new Set(excerpts.map((e) => e.role))];
       if (
         !record(response) ||
