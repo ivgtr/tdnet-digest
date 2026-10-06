@@ -171,20 +171,18 @@ function wire() {
 }
 function review(input = wire()) {
   return {
-    version: 1,
-    claims: Object.fromEntries([
-      ...input.observations.map((_, i) => [`observation-${i}`, null]),
-      ...input.claims.map((_, i) => [
-        `explanation-${i}`,
-        i === 1 ? '来期増収確定の根拠がない' : null,
-      ]),
-    ]),
-    sources: Object.fromEntries(
-      explanationSources(draft.excerpts).map((e) => [
-        e.id,
-        e.text.includes('受注残高') ? '納期長期化の条件が未要約' : null,
-      ])
-    ),
+    version: 2,
+    claims: [
+      ...input.observations.map((_, i) => ({ id: `observation-${i}`, reason: null })),
+      ...input.claims.map((_, i) => ({
+        id: `explanation-${i}`,
+        reason: i === 1 ? '来期増収確定の根拠がない' : null,
+      })),
+    ],
+    sources: explanationSources(draft.excerpts).map((e) => ({
+      id: e.id,
+      reason: e.text.includes('受注残高') ? '納期長期化の条件が未要約' : null,
+    })),
   };
 }
 const first = candidateResponse([numberCandidate(page)], [page], 'other');
@@ -271,6 +269,10 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(visible(directResult)).toContain('対象期');
     expect(visible(directResult)).toContain('2026年度 上半期');
     expect(wire().contexts.length).toBeLessThan(wire().observations.length * 2);
+    const reordered = review();
+    reordered.claims.reverse();
+    reordered.sources.reverse();
+    expect(visible(await generate(wire(), reordered))).toContain('↑増収 約+20.0%');
   });
   it('未知形式・不正数量・欠落した点検を採用せず、保存復元で正しい表と未整理の状態を維持する', async () => {
     const result = await generate();
@@ -288,6 +290,23 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     const missing = structuredClone(result.presentation);
     delete missing.organization.review!.claims['observation-0'];
     expect(() => validatePresentation(missing, result.facts)).toThrow('点検範囲');
+    const duplicateReview = review();
+    duplicateReview.claims[1] = { ...duplicateReview.claims[0] };
+    const incompleteReview = review();
+    incompleteReview.sources.pop();
+    const verboseReview = review();
+    verboseReview.sources[0].reason = '長'.repeat(81);
+    for (const verdict of [
+      duplicateReview,
+      incompleteReview,
+      verboseReview,
+      { ...review(), version: 1 },
+    ]) {
+      const rejected = await generate(wire(), verdict);
+      expect(rejected.presentation.organization.status).toBe('unavailable');
+      expect(rejected.presentation.organization.observations).toEqual([]);
+      expect(visible(rejected)).toContain('営業利益');
+    }
     const unsupported = structuredClone(result.presentation);
     unsupported.organization.review!.claims['observation-0'] = '期間対応が未確認';
     expect(visible({ ...result, presentation: unsupported })).not.toContain('↑増収 約+20.0%');
