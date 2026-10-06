@@ -212,8 +212,12 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     direct.tables[0].headers = ['区分', '売上高（当期）', '売上高（前期）', '注記'];
     direct.tables[0].rows = [direct.tables[0].rows[0]];
     direct.tables[0].rows[0].cells[3] = '';
+    direct.tables.push(structuredClone(direct.tables[0]));
     const directResult = await generate(direct);
     expect(visible(directResult)).toContain('120百万円（↑増収 約+20.0%）');
+    expect(
+      renderFacts(directResult.facts, directResult.presentation).match(/### 事業別業績/g)
+    ).toHaveLength(1);
   });
   it('未知形式・不正数量・欠落した点検を採用せず、保存復元で正しい表と未整理の状態を維持する', async () => {
     const result = await generate();

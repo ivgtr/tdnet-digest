@@ -467,14 +467,17 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       );
     }
     sectionTables.sort((a, b) => Number(tableTopic(b) !== null) - Number(tableTopic(a) !== null));
+    const shownTopics = new Set<string>();
     for (const table of sectionTables) {
       shownTables.add(table.caption.id);
       const topic = tableTopic(table);
-      if (topic)
+      if (topic && !shownTopics.has(topic)) {
+        shownTopics.add(topic);
         lines.push(
           '',
           `### ${{ business: '事業別業績', orders: '受注・需要の動き', cash: 'キャッシュフロー' }[topic]}`
         );
+      }
       lines.push(
         '',
         text(table.caption.text),

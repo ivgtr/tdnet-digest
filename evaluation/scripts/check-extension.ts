@@ -809,10 +809,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const tokens = item.id.startsWith('world')
         ? ['B2C', 'B2B', '共通部門', '4559', '3089', '637', 'IFRS']
         : item.id.startsWith('kyokuto')
-          ? ['営業', '投資', '財務', '374683', '64186', '265834', '311963', '267301']
+          ? ['営業', '投資', '財務', '374683', '64186', '265834', '311963']
           : [];
       for (const token of tokens)
         assert.ok(reading.includes(token), `通常表示の要点欠落: ${token}`);
+      if (item.id.startsWith('kyokuto'))
+        // Cash movement can be stated as the independently verified starting
+        // balance (267,301) or the increase (44,662), alongside the closing balance.
+        assert.ok(
+          reading.includes('267301') || reading.includes('44662'),
+          '現金残高の変化がありません'
+        );
       if (item.id.startsWith('world')) {
         const rows = await summary.locator('table tbody tr').allTextContents();
         // Independent expectations from the source PDF: the rate must be in
