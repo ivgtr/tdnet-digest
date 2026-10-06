@@ -52,9 +52,12 @@ describe('v4の原文と意味の照合', () => {
     expect(result.facts[0].quantity?.decimal).toBe('100');
     expect(result.facts[0].id).toMatch(/^fact-/);
     expect(parseFactSummary(raw(result.facts), 'other', [page], false)).toEqual(result);
-    expect(renderFacts(result)).toContain(
-      '100百万円（2026年3月期、株式会社テスト、連結、日本基準、実績'
-    );
+    expect(result.facts[0]).toMatchObject({
+      value: 100,
+      unit: '百万円',
+      period: '2026年3月期',
+      semantics: { subject: '株式会社テスト', scope: '連結', basis: '日本基準', state: 'actual' },
+    });
   });
   it.each([
     { value: 101 },

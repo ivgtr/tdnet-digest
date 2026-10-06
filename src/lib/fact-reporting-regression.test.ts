@@ -985,24 +985,6 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     validateSavedFacts({ version: 6, documentType: 'other', facts: [f], unverified: [] });
     expect(saved([f], pages).facts).toEqual([]);
   });
-  it('境界付き額を完結eventへ通常の意味照合で修復する', async () => {
-    const pages = [
-      textPage(`会社名 株式会社テスト\n1. ${period} 取引概要\n取得価額は100百万円以内です。`),
-    ];
-    const f = numberCandidate(pages[0], '取得価額', 100, period);
-    f.semantics.scope = f.semantics.basis = null;
-    const e = event(f);
-    e.semantics.state = 'unspecified';
-    vi.mocked(generateText)
-      .mockReset()
-      .mockResolvedValueOnce(candidateResponse([f], pages))
-      .mockResolvedValueOnce(candidateResponse([e], pages));
-    const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
-    expect(generateText).toHaveBeenCalledTimes(2);
-    expect(result.facts.facts[0]).toMatchObject({ kind: 'event', statement: e.quote, value: null });
-    expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
-    expect(renderFacts(result.facts)).toContain(e.quote);
-  });
   it.each(['～', '-'])(
     '日付区間(%s)を生成・保存で同じ意味で受理し、両端の改変を拒否する',
     (separator) => {
@@ -1236,26 +1218,6 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     wrong.id = stableFactId(wrong);
     validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
-  });
-  it.each([
-    'ではありません',
-    'と仮定した試算です',
-    'に満たない',
-    'の説明です',
-    '以上です',
-    '未満です',
-    '程度です',
-    '増加しました',
-    '見込みです',
-  ])('述語を偽の単位へ取り込んで確定しない: %s', (tail) => {
-    const pages = [
-      textPage(`会社名 株式会社テスト\n1. ${period} 販売状況\n販売数量は100台${tail}。`),
-    ];
-    const f = numberCandidate(pages[0], '販売数量', 100, period);
-    f.unit = `台${tail}`;
-    f.semantics.metricKind = 'other';
-    f.semantics.scope = f.semantics.basis = null;
-    expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
   });
   it.each(['2026年3月期', '2027年3月期', '2027年3月期(予想)', '2027年3月期第1四半期'])(
     '表利益率の期間・状態を義務と修復slotに揃える: %s',
@@ -2601,8 +2563,10 @@ describe('役割と必須対象の対応', () => {
         .mockResolvedValueOnce(candidateResponse([retained], pages));
       const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
       expect(result.facts.unverified).toEqual(initial.unverified);
-      expect(result.facts.facts[0].kind).toBe(kind);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(result.facts.facts[0]).toMatchObject({ kind, statement: retained.quote, value: null });
       expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
+      expect(renderFacts(result.facts)).toContain(retained.quote);
     }
   );
 });

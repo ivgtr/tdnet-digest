@@ -152,6 +152,25 @@ async function displayedFacts(summary: any): Promise<string[]> {
 }
 /** Called by the existing evaluator after its ordinary configuration load. No secrets are logged. */
 export async function checkExtension(item: BrowserCase, config: LLMConfig, args: string[]) {
+  // The normal fixed smoke has a credential-free, current-contract entry point.
+  // Keep explicitly requested historical review/live replay tooling separate.
+  const manualReviewFlags = [
+    '--additional-review-case',
+    '--narrative-replay',
+    '--review-upgrade',
+    '--review-rejected-url',
+    '--review-diagnostics',
+    '--review-copy-blocked',
+    '--review-settings-change',
+    '--smart-full',
+    '--with-comparison',
+    '--live-followups',
+  ];
+  if (args.includes('--fixed-api') && !manualReviewFlags.some((flag) => args.includes(flag)))
+    throw new Error(
+      '固定APIスモークは node --import tsx evaluation/scripts/check-extension-smoke.ts を使用してください。' +
+      ' --preflight-only はブラウザー不要、--smoke-outcome success|partial|failure で対象を選べます。'
+    );
   const arg = (flag: string) => args[args.indexOf(flag) + 1];
   if (!args.includes('--browser-module') || !args.includes('--browser-executable'))
     throw new Error('既存PlaywrightモジュールとChromiumを指定してください');

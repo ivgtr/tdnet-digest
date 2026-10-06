@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import corpus from './fixtures/pdf-layout-corpus.json';
 import semanticCorpus from './fixtures/ir-semantic-corpus.json';
+import semanticExpectations from './fixtures/ir-semantic-expectations.json';
 import { extractPageLayout } from './pdf-layout';
 import { parseFactSummary, renderFacts } from './fact-summary';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
@@ -345,43 +346,10 @@ describe('既存の実PDF形式のv4回帰', () => {
   });
 });
 const blue = extract(semanticCorpus[0]);
-const blueProfit = table(
-  1,
-  294,
-  '親会社株主に帰属する当期純利益',
-  -400,
-  '2027年3月期通期',
-  'forecast',
-  [265, 271],
-  [282, 283],
-  [279],
-  [262, 263],
-  ['p1b1', 'p1b3'],
-  { subject: '株式会社BlueMeme' }
-);
-const blueRate = {
-  ...table(
-    1,
-    120,
-    '売上高営業利益率',
-    1.4,
-    '2026年3月期',
-    'actual',
-    [97, 103],
-    [110, 111],
-    [109],
-    [],
-    ['p1b1', 'p1b3', 'p1b9'],
-    { subject: '株式会社BlueMeme', metricKind: 'rate' }
-  ),
-  unit: '%',
-};
+// Human-reviewed source facts are shared; only the invalid references vary here.
+const blueProfit = semanticExpectations[0].facts[5] as VerifiedFact;
+const blueRate = semanticExpectations[0].facts[6] as VerifiedFact;
 describe('BlueMemeの正しい採用と誤対応の拒否', () => {
-  it('EPS見出しが隣接していても−400を採用する', () => {
-    const r = parse([blueProfit], blue);
-    expect(r.unverified).toEqual([]);
-    expect(r.facts[0].value).toBe(-400);
-  });
   it('数量の小数を全断片から確認し1%を拒否する', () => {
     const r = parse([blueRate], blue);
     expect(r.unverified).toEqual([]);

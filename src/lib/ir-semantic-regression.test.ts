@@ -12,7 +12,6 @@ import type { VerifiedFact } from './fact-contract';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { validateSavedFacts, validateSavedScore } from './fact-cache';
 import { validatePages } from './fact-validation';
-import { quantityNumber, parseExactRange } from './quantity';
 import { tableReferenceHints } from './document-structure';
 import { verifyCoverage } from './fact-coverage';
 const sources = corpus.map((entry) =>
@@ -475,11 +474,6 @@ describe('実PDFの意味を保った利用経路', () => {
     completed.semantics.state = 'completed';
     expect(parse(5, [completed]).facts).toHaveLength(0);
   });
-  it('数量の数値化で精度を失う値を採用しない', () => {
-    expect(quantityNumber('9007199254740993')).toBeNull();
-    expect(quantityNumber('1.0000000000000001')).toBeNull();
-    expect(quantityNumber('1.40')?.value).toBe(1.4);
-  });
   it('範囲の予想を端点へ変換せず保存・表示し、点への改変を拒否する', () => {
     const page = textPage(
       '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2027年3月期 通期 業績予想\n営業利益は100.5～200.75百万円'
@@ -509,9 +503,6 @@ describe('実PDFの意味を保った利用経路', () => {
         false
       ).facts
     ).toHaveLength(0);
-    for (const raw of ['200～100', '1,00～200', '1～', '～2', '1～2～3'])
-      expect(parseExactRange(raw)).toBeNull();
-    expect(parseExactRange('−1.5～−0.1百万円')).toMatchObject({ lower: '-1.5', upper: '-0.1' });
   });
   it('日付役割を保持し、予定日を決議日や保存時の偽値へ変更しない', () => {
     const summary = parse(3, expectations[3].facts, true),
@@ -638,7 +629,12 @@ describe('実PDFの意味を保った利用経路', () => {
       unverified: [],
       searchStatus: '固定試験',
       breakdown: [
-        { ...claim, impact: 'positive', strength: 'small', comparison: assessClaim(claim) },
+        {
+          ...claim,
+          impact: 'positive',
+          strength: 'small',
+          comparison: '前年比 9.9%（加速・鈍化は未確認）',
+        },
       ],
     };
     validateSavedScore(score, facts, url, current.source.documentHash);

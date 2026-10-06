@@ -236,8 +236,8 @@ it('据置配当の原文証明を採点入力・保存照合へ渡し、証明�
   );
   expect(selected.unverified).toEqual([]);
   expect(selected.claims).toHaveLength(1);
-  const comparison = assessClaim(selected.claims[0]);
-  expect(comparison).not.toBeNull();
+  const comparison = '35→40円（14.3%）';
+  expect(assessClaim(selected.claims[0])).toBe(comparison);
   const score = {
     value: 70,
     verdict: '好材料',
