@@ -14,6 +14,9 @@ import {
   unresolvedTableSources,
 } from './summary-organization';
 import { quantityChange } from './summary-narrative-renderer';
+import { reportingMetricKey } from './metric-semantics';
+import type { NarrativeTable } from './summary-narrative';
+import { sectionPolicies } from './summary-content-policy';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import {
   summaryComparison,
@@ -242,6 +245,9 @@ function tableComparisonCells(
     )
       continue;
     const metric = header + ' ' + cells[0];
+    const revenue = [header.replace(/[（(].*?[）)]/g, ''), cells[0]].some(
+      (label) => reportingMetricKey(label) === 'revenue'
+    );
     const kind = /キャッシュ.?フロー|CF/.test(metric)
       ? 'flow'
       : /損失/.test(metric) &&
@@ -250,7 +256,7 @@ function tableComparisonCells(
         ? 'loss'
         : /利益|損益/.test(metric)
           ? 'profit'
-          : /売上|収益/.test(metric)
+          : revenue
             ? 'revenue'
             : /受注|残高|数量|販売数/.test(metric)
               ? 'stock'
@@ -259,6 +265,17 @@ function tableComparisonCells(
     result[index] += `（{{change:${currentId}|${referenceId}|${kind}}}）`;
   }
   return result;
+}
+
+function tableTopic(table: NarrativeTable): 'business' | 'orders' | 'cash' | null {
+  const title = table.caption.text.normalize('NFKC');
+  return /セグメント|事業別|部門別|製品別/.test(title)
+    ? 'business'
+    : /受注|需要|稼働率/.test(title)
+      ? 'orders'
+      : /キャッシュ.?フロー|CF/.test(title)
+        ? 'cash'
+        : null;
 }
 
 export function renderSummary(facts: FactSummary, presentation: SummaryPresentation): string {
@@ -327,6 +344,20 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     lines.push('- 数値・条件を確定できていません。各項目の原文を確認してください。');
   const shownClaims = new Set<string>();
   const shownTables = new Set<string>();
+  const titles = sectionPolicies(facts.documentType);
+  const destination = (table: NarrativeTable) => {
+    const topic = tableTopic(table);
+    const role =
+      topic === 'cash'
+        ? 'finance'
+        : topic === 'business'
+          ? 'performance'
+          : topic === 'orders'
+            ? 'operations'
+            : null;
+    const title = role ? titles.find(([key]) => key === role)?.[1] : null;
+    return title && presentation.sections.some((section) => section.title === title) ? title : null;
+  };
   const primarySubject = single('subject');
   // Every accepted fact has a body location, independently of organization output.
   for (const section of presentation.sections) {
@@ -339,7 +370,9 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     const sectionTables = tables.filter(
       (table) =>
         !shownTables.has(table.caption.id) &&
-        table.caption.sourceIds.some((id) => section.excerptIds.includes(id))
+        (destination(table)
+          ? destination(table) === section.title
+          : table.caption.sourceIds.some((id) => section.excerptIds.includes(id)))
     );
     lines.push('', `## ${literalMarkdown(section.title)}`);
     const numericFacts = members.filter(numeric);
@@ -433,8 +466,15 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         )}`
       );
     }
+    sectionTables.sort((a, b) => Number(tableTopic(b) !== null) - Number(tableTopic(a) !== null));
     for (const table of sectionTables) {
       shownTables.add(table.caption.id);
+      const topic = tableTopic(table);
+      if (topic)
+        lines.push(
+          '',
+          `### ${{ business: '事業別業績', orders: '受注・需要の動き', cash: 'キャッシュフロー' }[topic]}`
+        );
       lines.push(
         '',
         text(table.caption.text),

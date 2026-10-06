@@ -319,19 +319,35 @@ export function validatePresentation(
     const rawQuantity = q.raw;
     const literal = parseNarrativeQuantity(rawQuantity);
     const fact = facts.facts.find((f) => f.id === q.id);
+    const quantityExcerpts = (value.excerpts as SourceExcerpt[]).filter((e) =>
+      (q.sourceIds as string[]).includes(e.id)
+    );
+    const sourceText = quantityExcerpts
+      .map((e) => e.text)
+      .join(' ')
+      .normalize('NFKC');
+    const raw = rawQuantity.normalize('NFKC').replace(/\s/g, '');
+    const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // A native multiline range can have its bounds in distinct physical rows.
+    // Keep both source rows and the complete range; never expose either bound as a scalar.
+    const rangeFragments = literal?.kind === 'range' ? raw.split(/[~～〜]/) : [];
+    const nativeRange =
+      rangeFragments.length === 2 &&
+      quantityExcerpts.some((e) => e.spanIds.includes(q.id as string)) &&
+      rangeFragments.every((part, index) =>
+        new RegExp(
+          `(?<![0-9.,])${[...part].map(escape).join('\\s*')}${index === 0 ? '\\s*[~～〜]' : '(?![0-9.,])'}`
+        ).test(sourceText)
+      );
     if (
       !literal ||
       (literal.kind === 'number' ? literal.decimal : null) !== q.decimal ||
       (literal.unit !== null && literal.unit !== q.unit) ||
       (fact
         ? q.raw !== fact.quantity!.raw + fact.unit || q.unit !== fact.unit
-        : !(q.sourceIds as string[]).some((id) =>
-            (value.excerpts as SourceExcerpt[])
-              .find((e) => e.id === id)!
-              .text.normalize('NFKC')
-              .replace(/\s/g, '')
-              .includes(rawQuantity.normalize('NFKC').replace(/\s/g, ''))
-          ))
+        : !quantityExcerpts.some((e) =>
+            e.text.normalize('NFKC').replace(/\s/g, '').includes(raw)
+          ) && !nativeRange)
     )
       throw new Error('保存された表示数量と原文が不一致です');
   }

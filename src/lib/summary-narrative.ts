@@ -110,7 +110,7 @@ export function narrativeValues(
   for (const page of pages.filter((p) => p.selection === 'selected')) {
     for (const q of page.quantities) {
       const sources = excerpts.filter(
-        (e) => e.page === page.pageNumber && e.spanIds.includes(q.id)
+        (e) => e.page === page.pageNumber && q.spanIds.some((id) => e.spanIds.includes(id))
       );
       const parsed = scalar(q.text);
       if (!parsed) continue;

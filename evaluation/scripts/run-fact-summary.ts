@@ -137,8 +137,12 @@ for (const item of selected) {
       item.documentType,
       serializePagesForAnalysis(pages),
       pages,
-      (attempt) => {
+      async (attempt) => {
         attempts.push(attempt);
+        await writeFile(
+          `evaluation/results/local/${item.id}-pending-attempts.json`,
+          JSON.stringify({ item, attempts, usage, sourceHash, implementationDigest })
+        );
         console.log(`${item.id}: ${attempt.phase} ${attempt.error ? '拒否' : '完了'}`);
       }
     );
@@ -162,6 +166,14 @@ for (const item of selected) {
     const restored = parseFactSummary(JSON.stringify(result), item.documentType, pages, false);
     if (JSON.stringify(restored) !== JSON.stringify(result))
       errors.push('保存再照合で確定結果が変わりました');
+  }
+  let renderedSummary: string | null = null;
+  if (result && attempt) {
+    try {
+      renderedSummary = renderFacts(result, attempt.presentation);
+    } catch (error) {
+      errors.push(`表示照合: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   const output = {
     item,
@@ -192,12 +204,12 @@ for (const item of selected) {
     success: errors.length === 0,
     completedStructure: !!result && errors.length === 0 && !result.unverified.length,
     explanationStatus: attempt?.presentation.organization.status ?? null,
-    rendered: !!attempt,
+    rendered: renderedSummary !== null,
 
     errors,
     result,
     presentation: attempt?.presentation ?? null,
-    summary: result && attempt ? renderFacts(result, attempt.presentation) : null,
+    summary: renderedSummary,
     attempts,
     failedResponses,
   };
@@ -206,6 +218,6 @@ for (const item of selected) {
   await writeFile(`evaluation/results/local/${item.id}-${runId}-fact-summary.json`, serialized);
   await writeFile(`evaluation/results/local/${item.id}-fact-summary.json`, serialized);
   console.log(`${item.id}: ${errors.length ? errors.join(' / ') : '成功'} (${elapsedSeconds}秒)`);
-  if (result && attempt) console.log(renderFacts(result, attempt.presentation));
+  if (renderedSummary) console.log(renderedSummary);
   if (errors.length) process.exitCode = 1;
 }

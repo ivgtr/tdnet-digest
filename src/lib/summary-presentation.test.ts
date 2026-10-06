@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import expectation from './fixtures/summary-content-expectations.json';
-import { textPage, numberCandidate } from './fixtures/v4-test-source';
+import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary, renderFacts } from './fact-summary';
-import { revalidatePresentation, validatePresentation } from './summary-presentation';
+import {
+  buildPresentation as nativePresentation,
+  revalidatePresentation,
+  validatePresentation,
+} from './summary-presentation';
 import {
   buildPresentation,
   completePresentation,
@@ -387,6 +391,51 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
         textPage(expectation.text.replace('価格改定', '価格据置')),
       ])
     ).toThrow('PDF');
+    const wrapped = layoutPage(
+      [
+        ['今回予想', 0, 10],
+        ['100～', 100, 10],
+        ['200～', 200, 10],
+        ['通期', 0, 22],
+        ['150', 100, 22],
+        ['250', 200, 22],
+      ].map(([text, x, y], i) => ({
+        id: `s${i}`,
+        text: String(text),
+        x: Number(x),
+        y: Number(y),
+        width: String(text).length * 5,
+        height: 10,
+      }))
+    );
+    const bounds = wrapped.spans.filter((s) => /^100|^150/.test(s.text));
+    wrapped.quantities = [
+      {
+        id: bounds[0].id,
+        spanIds: bounds.map((s) => s.id),
+        text: '100～\n150',
+        x: 100,
+        y: 10,
+        width: 20,
+        height: 10,
+      },
+    ];
+    const pending = { ...facts, facts: [], unverified: ['未確認'] };
+    const native = nativePresentation(pending, [wrapped]);
+    const range = native.values.find((v) => v.id === bounds[0].id)!;
+    expect(range.sourceIds).toHaveLength(2);
+    expect(range.decimal).toBeNull();
+    expect(revalidatePresentation(native, pending, [wrapped])).toEqual(native);
+    const forged = structuredClone(native);
+    forged.values.find((v) => v.id === range.id)!.raw = '100～151';
+    expect(() => validatePresentation(forged, pending)).toThrow('原文');
+    const missingBound = structuredClone(native);
+    missingBound.values.find((v) => v.id === range.id)!.sourceIds.pop();
+    expect(() => validatePresentation(missingBound, pending)).toThrow('原文');
+    // A different value printed in the same row is not this native range's upper bound.
+    const wrongColumn = structuredClone(native);
+    wrongColumn.values.find((v) => v.id === range.id)!.raw = '100～250';
+    expect(() => revalidatePresentation(wrongColumn, pending, [wrapped])).toThrow('欠落・変更');
   });
   it('予定日と本文を含む会社名の段落を管理情報として捨てない', () => {
     const source = textPage(

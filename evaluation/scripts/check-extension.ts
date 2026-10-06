@@ -817,15 +817,21 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         const rows = await summary.locator('table tbody tr').allTextContents();
         // Independent expectations from the source PDF: the rate must be in
         // the same row, so a prose mention elsewhere cannot mask its absence.
-        for (const [business, profit, rate] of [
-          ['B2C', '4559', '0.1%'],
-          ['B2B', '3089', '12.3%'],
-          ['共通部門', '637', '39.4%'],
+        // Calculated rates use independently verified rounded source amounts;
+        // B2B 3,089 / 2,752 gives 12.2%, distinct from the reported 12.3%.
+        for (const [business, profit, rate, calculated] of [
+          ['B2C', '4559', '0.1%', '0.1%'],
+          ['B2B', '3089', '12.3%', '12.2%'],
+          ['共通部門', '637', '39.4%', '39.4%'],
         ])
           assert.ok(
             rows.some((row: string) => {
               const text = row.normalize('NFKC').replace(/\s|,/g, '');
-              return text.includes(business) && text.includes(profit) && text.includes(rate);
+              return (
+                text.includes(business) &&
+                text.includes(profit) &&
+                (text.includes(rate) || (text.includes('約') && text.includes(calculated)))
+              );
             }),
             `事業別の同一行比較がありません: ${business} ${rate}`
           );
