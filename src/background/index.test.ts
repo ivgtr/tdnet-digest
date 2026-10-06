@@ -42,6 +42,7 @@ vi.mock('@/lib/summary-narrative', async (original) => ({
     facts: FactSummary,
     values: import('../lib/summary-narrative').NarrativeValue[],
     excerpts: import('../lib/summary-source-inventory').SourceExcerpt[],
+    _pages: ExtractedPage[],
     onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
   ) => {
     const content = fixedNarrativeContent(facts, { excerpts, sections: [] });

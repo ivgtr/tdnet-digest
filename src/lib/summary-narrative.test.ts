@@ -228,18 +228,30 @@ function synthesisResponse(content: NarrativeContent) {
     })),
   };
 }
+function wireReview(
+  content: NarrativeContent,
+  findings: import('./summary-narrative').NarrativeReview['findings'] = []
+) {
+  const claims: Record<string, unknown> = Object.fromEntries(
+    narrativeClaims(content).map((c) => [c.id, null])
+  );
+  const coverage: Record<string, unknown> = Object.fromEntries(
+    [...new Set(draft.excerpts.map((e) => e.role))].map((role) => [role, null])
+  );
+  for (const f of findings) {
+    if (f.status === 'supported') continue;
+    if (f.status === 'importantOmission')
+      coverage[draft.excerpts[0].role] = { sourceIds: f.sourceIds, reason: f.reason };
+    else claims[f.claimId!] = { status: f.status, sourceIds: f.sourceIds, reason: f.reason };
+  }
+  return { version: 4, claims, coverage };
+}
 describe('説明要約の生成・点検・数値参照', () => {
   it('通常の生成経路を原文照合→要約→独立点検→同じ保存表示へ接続する', async () => {
     const response = synthesisResponse(content());
     const summary = assembleNarrative(response, facts, draft.values, draft.excerpts);
     const review = fixedNarrativeReview(summary, facts, draft);
     review.findings = [
-      {
-        status: 'supported',
-        claimId: 'row-0-0-0',
-        sourceIds: sources,
-        reason: '売上と比較対象は原文と整合する。',
-      },
       {
         status: 'detail',
         claimId: 'summary-2-0',
@@ -251,7 +263,7 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
       .mockResolvedValueOnce(JSON.stringify(response))
-      .mockResolvedValueOnce(JSON.stringify({ version: 3, findings: review.findings }));
+      .mockResolvedValueOnce(JSON.stringify(wireReview(summary, review.findings)));
     const attempts: SummaryAttempt[] = [];
     const generated = await generateVerifiedFactSummary(
       { ...config, provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
@@ -274,6 +286,15 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(attempts.map((a) => a.phase)).toEqual(['first', 'summary', 'summaryReview']);
     const generationInput = vi.mocked(generateText).mock.calls[1][1][1].content;
     expect(generationInput).toContain('sourceUnitColumns');
+    const geometry = JSON.parse(
+      generationInput.slice(generationInput.indexOf('根拠入力: ') + 6)
+    ).sourceLayout;
+    expect(geometry.itemColumns).toEqual(['x', 'y', 'text']);
+    const first = geometry.rows[0];
+    const source = draft.excerpts.find((e) => e.id === first[0])!;
+    expect(first[1]).toEqual(
+      page.spans.filter((p) => source.spanIds.includes(p.id)).map((p) => [p.x, p.y, p.text])
+    );
     expect(generationInput).not.toContain('valueColumns');
     for (const e of draft.excerpts) expect(generationInput).toContain(JSON.stringify(e.text));
     expect(generated.repairAttempted).toBe(false);
@@ -800,10 +821,9 @@ describe('説明要約の生成・点検・数値参照', () => {
     const response = synthesisResponse(content());
     const summary = assembleNarrative(response, facts, draft.values, draft.excerpts);
     const badReview = {
-      version: 3,
       findings: [
         {
-          status: 'importantOmission',
+          status: 'importantOmission' as const,
           claimId: 'summary-2-0',
           sourceIds: sources,
           reason: '納期長期化の条件が欠落',
@@ -823,19 +843,15 @@ describe('説明要約の生成・点検・数値参照', () => {
         },
       ],
     };
-    const wrongCorrection = {
-      version: 2,
-      edits: [{ op: 'replace', path: '/sections/0/summary/0/text', value: '売上高999百万円。' }],
-    };
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
       .mockResolvedValueOnce(JSON.stringify(malformedResponse))
       .mockResolvedValueOnce(JSON.stringify(correction))
-      .mockResolvedValueOnce(JSON.stringify(badReview))
-      .mockResolvedValueOnce(JSON.stringify(wrongCorrection))
+      .mockResolvedValueOnce(JSON.stringify(wireReview(summary, badReview.findings)))
+      .mockResolvedValueOnce(JSON.stringify(malformedResponse))
       .mockResolvedValueOnce(JSON.stringify(correction))
-      .mockResolvedValueOnce(JSON.stringify({ version: 3, findings: [] }));
+      .mockResolvedValueOnce(JSON.stringify(wireReview(summary)));
     const repairedAttempts: SummaryAttempt[] = [];
     const repaired = await generateVerifiedFactSummary(
       { ...config, provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash' },
@@ -867,8 +883,10 @@ describe('説明要約の生成・点検・数値参照', () => {
       [undefined, false],
       [undefined, false],
     ]);
-    for (const index of [2, 3, 4, 5, 6])
+    for (const index of [2, 3, 5, 6])
       expect(vi.mocked(generateText).mock.calls[index][0].maxOutputTokens).toBe(8192);
+    expect(vi.mocked(generateText).mock.calls[4][0].maxOutputTokens).toBe(32768);
+    expect(vi.mocked(generateText).mock.calls[4][1][1].content).toContain('修正前の草稿');
     expect(repaired.repairAttempted).toBe(true);
     expect(repairedAttempts.map((a) => a.phase)).toEqual([
       'first',
@@ -883,9 +901,9 @@ describe('説明要約の生成・点検・数値参照', () => {
       .mockReset()
       .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
       .mockResolvedValueOnce(JSON.stringify(response))
-      .mockResolvedValueOnce(JSON.stringify(badReview))
-      .mockResolvedValueOnce(JSON.stringify(correction))
-      .mockResolvedValueOnce(JSON.stringify(badReview));
+      .mockResolvedValueOnce(JSON.stringify(wireReview(summary, badReview.findings)))
+      .mockResolvedValueOnce(JSON.stringify(response))
+      .mockResolvedValueOnce(JSON.stringify(wireReview(summary, badReview.findings)));
     const attempts: SummaryAttempt[] = [];
     await expect(
       generateVerifiedFactSummary(config, 'other', page.text, [page], (a) => {
@@ -900,6 +918,28 @@ describe('説明要約の生成・点検・数値参照', () => {
       'summaryReviewRepair',
     ]);
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(5);
+    const incompleteWire = wireReview(summary);
+    delete incompleteWire.claims[narrativeClaims(summary)[0].id];
+    const completeWire = JSON.stringify(wireReview(summary));
+    const duplicateWire = completeWire.replace(
+      '"claims":{',
+      `"claims":{"${narrativeClaims(summary)[0].id}":null,`
+    );
+    for (const [wire, error] of [
+      [JSON.stringify(incompleteWire), '全主張/全話題'],
+      [duplicateWire, '重複した判定キー'],
+      [JSON.stringify({ version: 3, findings: [] }), 'version=4'],
+    ]) {
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse(facts.facts, [page]))
+        .mockResolvedValueOnce(JSON.stringify(response))
+        .mockResolvedValueOnce(wire);
+      await expect(generateVerifiedFactSummary(config, 'other', page.text, [page])).rejects.toThrow(
+        error
+      );
+      expect(vi.mocked(generateText)).toHaveBeenCalledTimes(3);
+    }
     const incomplete = fixedNarrativeReview(summary, facts, draft);
     incomplete.reviewedClaimIds = narrativeClaims(summary)
       .slice(1)

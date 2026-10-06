@@ -3,7 +3,8 @@ export function narrativeResponseSchema(
   sourceIds: string[],
   mode: 'draft' | 'edits' | 'review',
   claimIds: string[] = [],
-  draft?: unknown
+  draft?: unknown,
+  reviewTopics: string[] = []
 ) {
   const string = { type: 'string' };
   const array = (items: unknown) => ({ type: 'array', items });
@@ -45,17 +46,33 @@ export function narrativeResponseSchema(
   const root =
     mode === 'review'
       ? object({
-          version: version(3),
-          findings: array(
-            object({
-              status: {
-                type: 'string',
-                enum: ['supported', 'mismatch', 'importantOmission', 'detail', 'style'],
-              },
-              claimId: { type: ['string', 'null'], enum: [...claimIds, null] },
-              sourceIds: ref('sources'),
-              reason: string,
-            })
+          version: version(4),
+          claims: object(
+            Object.fromEntries(
+              claimIds.map((id) => [
+                id,
+                {
+                  anyOf: [
+                    { type: 'null' },
+                    object({
+                      status: { type: 'string', enum: ['mismatch', 'detail', 'style'] },
+                      sourceIds: ref('sources'),
+                      reason: string,
+                    }),
+                  ],
+                },
+              ])
+            )
+          ),
+          coverage: object(
+            Object.fromEntries(
+              reviewTopics.map((topic) => [
+                topic,
+                {
+                  anyOf: [{ type: 'null' }, object({ sourceIds: ref('sources'), reason: string })],
+                },
+              ])
+            )
           ),
         })
       : mode === 'edits'

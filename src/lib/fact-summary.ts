@@ -374,6 +374,7 @@ export async function generateVerifiedFactSummary(
     facts,
     presentation.values,
     presentation.excerpts,
+    pages,
     onAttempt
   );
   presentation.narrative = generated.narrative;
