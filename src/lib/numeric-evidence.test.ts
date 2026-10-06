@@ -267,7 +267,7 @@ describe('非財務単位を持つ表', () => {
       ['百', '万円※', '百万円'],
     ]
       .flatMap(([prefix, suffix, unit]) =>
-        ['inline', 'adjacent'].map((kind) => ({ kind, prefix, suffix, unit })),
+        ['inline', 'adjacent'].map((kind) => ({ kind, prefix, suffix, unit }))
       )
       .concat(
         [
@@ -288,7 +288,7 @@ describe('非財務単位を持つ表', () => {
           prefix,
           suffix,
           unit,
-        })),
+        }))
       )
   )('$kind単位$prefixの未参照の続き$suffixを省けない', ({ kind, prefix, suffix, unit }) => {
     const source = {
@@ -314,20 +314,18 @@ describe('非財務単位を持つ表', () => {
       expect(() => verifyTableEvidence(source, fullRefs, { ...claim, unit })).toThrow('単位');
     }
   });
-  it.each(
-    [
-      { note: '注1', kind: 'inline' },
-      { note: '注1', kind: 'adjacent' },
-      { note: '注12', kind: 'inline' },
-      { note: '注１２', kind: 'adjacent' },
-      { note: '注1）', kind: 'inline' },
-      { note: '注1.', kind: 'adjacent' },
-      { note: '注１．', kind: 'inline' },
-      { note: '注1）。', kind: 'adjacent' },
-      { note: '注1.)', kind: 'inline' },
-      { note: '注1’', kind: 'adjacent' },
-    ]
-  )('$kind単位の後の独立した注記参照$noteを単位に含めない', ({ note, kind }) => {
+  it.each([
+    { note: '注1', kind: 'inline' },
+    { note: '注1', kind: 'adjacent' },
+    { note: '注12', kind: 'inline' },
+    { note: '注１２', kind: 'adjacent' },
+    { note: '注1）', kind: 'inline' },
+    { note: '注1.', kind: 'adjacent' },
+    { note: '注１．', kind: 'inline' },
+    { note: '注1）。', kind: 'adjacent' },
+    { note: '注1.)', kind: 'inline' },
+    { note: '注1’', kind: 'adjacent' },
+  ])('$kind単位の後の独立した注記参照$noteを単位に含めない', ({ note, kind }) => {
     for (const unit of ['百万円', 'kWh', 'm2']) {
       const source = {
         ...page,
@@ -461,6 +459,53 @@ describe('指標名と列順序に依存しない根拠検証', () => {
     expect(verifyTableEvidence(source, evidence, claim).quote).toBe(
       verifyTableEvidence(page, evidence, claim).quote
     );
+    const calendar = {
+      pageNumber: 1,
+      text: '',
+      spans: [
+        span('caption', '2026年6月度の独自KPI', 0, 0, 600),
+        span('current', '当期(2027年3月期)', 180, 20, 150),
+        span('previous', '前期(2026年3月期)', 480, 20, 150),
+        span('metric', '独自KPI', 200, 40, 80),
+        span('month', '6月', 0, 60),
+        span('currentValue', '100', 210, 60, 30),
+        span('currentUnit', '千円', 242, 60, 30),
+        span('previousValue', '80', 510, 60, 20),
+        span('previousUnit', '千円', 532, 60, 30),
+      ],
+    };
+    const calendarEvidence = {
+      valueId: 'previousValue',
+      metricIds: ['metric'],
+      periodIds: ['month'],
+      unitIds: ['previousUnit'],
+      contextIds: ['caption', 'previous'],
+    };
+    const calendarClaim = {
+      label: '独自KPI',
+      value: 80,
+      unit: '千円',
+      period: '2025年6月',
+      valueKind: 'actual',
+    };
+    expect(verifyTableEvidence(calendar, calendarEvidence, calendarClaim).quote).toContain('80');
+    expect(() =>
+      verifyTableEvidence(
+        { ...calendar, spans: calendar.spans.concat(span('otherMetric', '別KPI', 500, 40, 80)) },
+        calendarEvidence,
+        calendarClaim
+      )
+    ).toThrow('指標の列');
+    expect(() =>
+      verifyTableEvidence(
+        calendar,
+        {
+          ...calendarEvidence,
+          contextIds: ['caption', 'current'],
+        },
+        calendarClaim
+      )
+    ).toThrow('指標の列');
   });
   it('期間と分かれた予想表記を落として実績と判断できない', () => {
     const source = { ...page, spans: spans.concat(span('kind', '(予想)', 60, 60)) };

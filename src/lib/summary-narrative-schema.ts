@@ -95,7 +95,10 @@ export function narrativeResponseSchema(
               NARRATIVE_READING_CHECKS.map((check) => [
                 check,
                 object({
-                  status: { type: 'string', enum: ['supported', 'importantOmission', 'style'] },
+                  status: {
+                    type: 'string',
+                    enum: ['supported', 'notApplicable', 'importantOmission', 'style'],
+                  },
                   sourceIds: ref('sources'),
                   reason: string,
                 }),

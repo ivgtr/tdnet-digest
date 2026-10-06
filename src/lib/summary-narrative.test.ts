@@ -887,6 +887,7 @@ describe('説明要約の生成・点検・数値参照', () => {
     // A structural repair must not consume the separate semantic repair.
     const malformedResponse = structuredClone(response);
     malformedResponse.sections[0].summary[0].text = '売上高999百万円。';
+    malformedResponse.sections[1].tables[0].rows[0].cells.pop();
     const correction = {
       version: 2,
       edits: [
@@ -894,6 +895,11 @@ describe('説明要約の生成・点検・数値参照', () => {
           op: 'replace',
           path: '/sections/0/summary/0/text',
           value: response.sections[0].summary[0].text,
+        },
+        {
+          op: 'replace',
+          path: '/sections/1/tables/0/rows/0/cells',
+          value: response.sections[1].tables[0].rows[0].cells,
         },
       ],
     };
@@ -925,6 +931,10 @@ describe('説明要約の生成・点検・数値参照', () => {
       '/sections/0/summary/0/text'
     );
     expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain('literalAlternatives');
+    expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain(
+      '/sections/1/tables/0/rows/0/cells'
+    );
+    expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain('現在5列');
     expect(
       vi
         .mocked(generateText)
