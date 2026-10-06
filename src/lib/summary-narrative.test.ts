@@ -380,6 +380,29 @@ describe('説明要約の生成・点検・数値参照', () => {
         draft.excerpts
       )
     ).toThrow('version=3');
+    const compoundFacts = structuredClone(facts);
+    compoundFacts.facts[0].label = '営業利益前年同期比';
+    compoundFacts.facts[0].quote = '営業利益\n前年同期比';
+    const equivalent = value(q('100', '製品事業'));
+    const nativeAnchor =
+      facts.facts[0].evidence.kind === 'prose'
+        ? facts.facts[0].evidence.quantityId!
+        : facts.facts[0].evidence.valueId;
+    const compoundContent: NarrativeContent = JSON.parse(
+      JSON.stringify(good)
+        .replaceAll(value(facts.facts[0].id), equivalent)
+        .replaceAll(value(nativeAnchor), equivalent)
+    );
+    compoundContent.sections[0].tables[0].rows[0].sourceIds = sources;
+    // The verified native label can be displayed as caption + column heading.
+    compoundContent.sections[0].summary = [];
+    compoundContent.sections[0].tables[0].caption.text = '営業利益の状況。';
+    compoundContent.sections[0].tables[0].headers[2] = '前年同期比';
+    validateNarrativeContent(compoundContent, compoundFacts, draft.values, draft.excerpts);
+    compoundContent.sections[0].tables[0].headers[2] = '前期比';
+    expect(() =>
+      validateNarrativeContent(compoundContent, compoundFacts, draft.values, draft.excerpts)
+    ).toThrow('COVERAGE');
     const periodResponse = synthesisResponse(good);
     const evidence = facts.facts[0].evidence;
     periodResponse.sections[0].summary[0].sourceIds = draft.excerpts
@@ -460,6 +483,18 @@ describe('説明要約の生成・点検・数値参照', () => {
       applyNarrativeEdits(editBase, { version: 2, edits: [edits.edits[0], edits.edits[0]] })
     ).toThrow('SCHEMA');
     expect(() => applyNarrativeEdits(editBase, editBase)).toThrow('SCHEMA');
+    expect(() =>
+      applyNarrativeEdits(editBase, {
+        version: 2,
+        edits: [{ op: 'remove', path: '/sections/0/summary/0/text' }],
+      })
+    ).toThrow('配列の要素');
+    const removed = applyNarrativeEdits(editBase, {
+      version: 2,
+      edits: [{ op: 'remove', path: '/sections/0/summary/0' }],
+    }) as typeof editBase;
+    expect(removed.sections[0].summary).toHaveLength(editBase.sections[0].summary.length - 1);
+
     const addressPages = [textPage('取引先の所在地は東京都中央区1丁目2番です。', 1)];
     const addressFacts: FactSummary = {
       version: 6,

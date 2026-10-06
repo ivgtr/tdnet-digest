@@ -412,13 +412,14 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
       else if (edit.op === 'add') target.splice(index, 0, structuredClone(edit.value));
       else target[index] = structuredClone(edit.value);
     } else if (record(target) && names.has(key)) {
+      if (edit.op === 'remove')
+        throw new Error('NARRATIVE_SCHEMA:removeは配列の要素だけを削除できます');
       if (
         (edit.op !== 'add' && !Object.prototype.hasOwnProperty.call(target, key)) ||
         (edit.op === 'add' && Object.prototype.hasOwnProperty.call(target, key))
       )
         throw new Error('NARRATIVE_SCHEMA:修復の項目が存在しないか既に存在します');
-      if (edit.op === 'remove') delete target[key];
-      else target[key] = structuredClone(edit.value);
+      target[key] = structuredClone(edit.value);
     } else throw new Error('NARRATIVE_SCHEMA:修復pathの対象が不正です');
   }
   return draft;
@@ -948,6 +949,26 @@ export function validateNarrativeContent(
   );
   // Required verified quantities must be readable in the body, rather than only in raw toggles.
   for (const fact of facts.facts.filter((f) => f.importance === 'key' && f.quantity)) {
+    // Native multi-level table labels are joined in a verified fact, but can be
+    // displayed as caption + column heading. Accept only complete native lines
+    // whose ordered concatenation equals that verified label; never invent an
+    // alias or split a word into arbitrary matching substrings.
+    const metricLines = fact.quote.split(/\r?\n/).map(compact).filter(Boolean);
+    const label = compact(fact.label);
+    const labelParts = [label];
+    for (let start = 0; start < metricLines.length; start++) {
+      const parts: string[] = [];
+      for (const part of metricLines.slice(start)) {
+        parts.push(part);
+        const joined = parts.join('');
+        if (!label.startsWith(joined)) break;
+        if (joined === label && parts.every((p) => /[\p{L}]/u.test(p))) {
+          labelParts.splice(0, labelParts.length, ...parts);
+          break;
+        }
+      }
+      if (labelParts.length > 1) break;
+    }
     const referenced = [...body.matchAll(NARRATIVE_TOKEN)].some((m) =>
       m[2].split('|').includes(fact.id)
     );
@@ -955,8 +976,8 @@ export function validateNarrativeContent(
       fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.evidence.quantityId;
     const citedLiteral = bodyClaims.some(
       (claim) =>
-        compact(claim.text + ' ' + (tableLabels.get(claim.id) ?? '')).includes(
-          compact(fact.label)
+        labelParts.every((part) =>
+          compact(claim.text + ' ' + (tableLabels.get(claim.id) ?? '')).includes(part)
         ) &&
         claim.sourceIds.some((id) =>
           excerpts.some(

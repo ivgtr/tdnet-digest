@@ -23,13 +23,21 @@ export function narrativeResponseSchema(
     section: object({ title: string, summary: array(ref('line')), tables: array(ref('table')) }),
   };
   const version = (v: number) => ({ type: 'integer', enum: [v] });
-  const paths = { existing: [] as string[], additions: [] as string[], citations: [] as string[] };
+  const paths = {
+    existing: [] as string[],
+    additions: [] as string[],
+    citations: [] as string[],
+    removals: [] as string[],
+  };
   const walk = (value: unknown, path: string) => {
     if (path) paths.existing.push(path);
     if (Array.isArray(value)) {
       for (let i = 0; i <= value.length; i++) paths.additions.push(`${path}/${i}`);
       paths.additions.push(`${path}/-`);
-      value.forEach((v, i) => walk(v, `${path}/${i}`));
+      value.forEach((v, i) => {
+        paths.removals.push(`${path}/${i}`);
+        walk(v, `${path}/${i}`);
+      });
     } else if (value && typeof value === 'object') {
       for (const [key, v] of Object.entries(value)) {
         if (key === 'version') continue;
@@ -98,7 +106,7 @@ export function narrativeResponseSchema(
                 ),
                 object({
                   op: { type: 'string', enum: ['remove'] },
-                  path: pathSchema(paths.existing),
+                  path: pathSchema(paths.removals),
                 }),
                 ...(paths.citations.length
                   ? [
