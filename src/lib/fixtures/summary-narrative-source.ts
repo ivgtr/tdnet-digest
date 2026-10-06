@@ -5,7 +5,7 @@ import {
   buildPresentation as draftPresentation,
   type SummaryPresentation,
 } from '../summary-presentation';
-import type { NarrativeLine, NarrativeTable } from '../summary-narrative';
+import type { NarrativeLine } from '../summary-narrative';
 interface NarrativeContent {
   version: 1;
   overview: NarrativeLine[];
@@ -14,7 +14,6 @@ interface NarrativeContent {
     title: string;
     sourceIds: string[];
     summary: NarrativeLine[];
-    tables: NarrativeTable[];
   }>;
 }
 import {
@@ -25,7 +24,7 @@ import {
 } from '../summary-organization';
 
 export function fixedNarrativeContent(
-  facts: FactSummary,
+  _facts: FactSummary,
   display: Pick<SummaryPresentation, 'excerpts' | 'sections'>
 ): NarrativeContent {
   const sourceIds = display.excerpts.map((e) => e.id);
@@ -38,21 +37,6 @@ export function fixedNarrativeContent(
         title: display.sections.find((s) => s.factIds.length)?.title ?? '開示内容',
         sourceIds,
         summary: [{ id: 'explanation', text: '開示された数値と条件を確認する。', sourceIds }],
-        tables: facts.facts.some((f) => f.quantity)
-          ? [
-              {
-                caption: { id: 'caption', text: '開示に記載された数値。', sourceIds },
-                headers: ['指標', '値'],
-                rows: facts.facts
-                  .filter((f) => f.quantity)
-                  .map((f, i) => ({
-                    id: `row-${i}`,
-                    cells: [f.label, `{{value:${f.id}}}`],
-                    sourceIds,
-                  })),
-              },
-            ]
-          : [],
       },
     ],
   };
@@ -63,18 +47,12 @@ export function fixedOrganization(
   content = fixedNarrativeContent(facts, display)
 ): import('../summary-organization').SummaryOrganization {
   const organization = {
-    version: 1 as const,
+    version: 2 as const,
     status: 'ready' as 'ready' | 'partial',
     claims: content.sections
       .flatMap((s) => s.summary)
-      .map((c, i) => ({ ...c, id: `explanation-${i}` })),
-    tables: content.sections
-      .flatMap((s) => s.tables)
-      .map((t, i) => ({
-        ...t,
-        caption: { ...t.caption, id: `table-${i}-caption` },
-        rows: t.rows.map((r, j) => ({ ...r, id: `table-${i}-row-${j}` })),
-      })),
+      .map((c, i) => ({ ...c, topic: 'other' as const, entity: null, id: `explanation-${i}` })),
+    observations: [],
     review: null as import('../summary-organization').ExplanationReview | null,
     issues: [],
   };

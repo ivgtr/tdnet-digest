@@ -1,21 +1,25 @@
-import {
-  canonicalJSON,
-  FACT_SCHEMA_VERSION,
-  type FactSummary,
-  type VerifiedFact,
-} from './fact-contract';
+import { FACT_SCHEMA_VERSION, type FactSummary, type VerifiedFact } from './fact-contract';
 import { validatePresentation, type SummaryPresentation } from './summary-presentation';
 import type { SourceExcerpt } from './summary-source-inventory';
 import { renderNarrativeText } from './summary-narrative-renderer';
 import {
   supportedExplanations,
-  supportedTables,
+  supportedObservations,
   unresolvedExplanationSources,
   unresolvedTableSources,
 } from './summary-organization';
-import { quantityChange } from './summary-narrative-renderer';
-import { reportingMetricKey } from './metric-semantics';
-import type { NarrativeTable } from './summary-narrative';
+import {
+  factObservation,
+  canPair,
+  observationChange,
+  observationGroup,
+  observationRole,
+  observationTitles,
+  comparisonAxisLabels,
+  type DisclosureObservation,
+  type ObservationTopic,
+} from './disclosure-observation';
+import { literalValue } from './summary-narrative-renderer';
 import { sectionPolicies } from './summary-content-policy';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import {
@@ -99,32 +103,6 @@ function context(
     .filter(Boolean)
     .map((s) => literalMarkdown(s!))
     .join('／');
-}
-function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
-  if (
-    rate.semantics.metricKind !== 'rate' ||
-    amount.semantics.metricKind === 'rate' ||
-    amount.label !== rate.label ||
-    amount.evidence.kind !== 'table' ||
-    rate.evidence.kind !== 'table'
-  )
-    return false;
-  const key = (f: VerifiedFact) =>
-    canonicalJSON([
-      f.period,
-      f.valueKind,
-      f.semantics.subject,
-      f.semantics.scope,
-      f.semantics.basis,
-      f.evidence.kind === 'table'
-        ? [f.evidence.metricIds, f.evidence.periodIds, f.evidence.contextIds]
-        : null,
-      f.provenance?.tableId,
-      f.semantics.qualifiers,
-      f.semantics.conditions,
-      f.provenance?.adjustments,
-    ]);
-  return key(amount) === key(rate);
 }
 function overviewGrowth(f: VerifiedFact, comparison: SummaryComparison, facts: FactSummary) {
   const growth = comparisonGrowth(f, comparison);
@@ -214,68 +192,66 @@ function renderExcerpts(excerpts: SourceExcerpt[]): string[] {
   if (previous) lines.push('', ref(previous.page));
   return lines;
 }
-/** The reviewed table already supplies meaning/axes; only exact numeric arithmetic is added. */
-function tableComparisonCells(
-  headers: string[],
-  cells: string[],
-  presentation: SummaryPresentation
+/** Layout is a projection of semantic records; no caption/header parsing. */
+function renderObservationGroups(
+  records: DisclosureObservation[],
+  presentation: SummaryPresentation,
+  primarySubject: string | null,
+  headings: boolean
 ): string[] {
-  if (cells.some((cell) => /\{\{(?:change|delta):/.test(cell))) return cells;
-  const result = [...cells];
-  const normalized = headers.map((header) => header.normalize('NFKC').replace(/\s/g, ''));
-  for (const [index, header] of normalized.entries()) {
-    // A literal 当/前 axis pair must otherwise name the identical metric/period.
-    // Unnamed or differently labelled periods remain untouched.
-    if (!/当(?:期|年|中間|四半期|連結|事業|第)/.test(header)) continue;
-    const referenceHeader = header.replace('当', '前');
-    const candidates = normalized.flatMap((name, at) => (name === referenceHeader ? [at] : []));
-    if (candidates.length !== 1) continue;
-    const id = (cell: string) => cell.match(/^\{\{value:([^{}]+)\}\}$/)?.[1];
-    const currentId = id(cells[index]),
-      referenceId = id(cells[candidates[0]]);
-    const current = presentation.values.find((v) => v.id === currentId);
-    const reference = presentation.values.find((v) => v.id === referenceId);
-    if (
-      !current ||
-      !reference ||
-      current.decimal === null ||
-      reference.decimal === null ||
-      !current.unit ||
-      current.unit !== reference.unit
-    )
-      continue;
-    const metric = header + ' ' + cells[0];
-    const revenue = [header.replace(/[（(].*?[）)]/g, ''), cells[0]].some(
-      (label) => reportingMetricKey(label) === 'revenue'
-    );
-    const kind = /キャッシュ.?フロー|CF/.test(metric)
-      ? 'flow'
-      : /損失/.test(metric) &&
-          !current.decimal.startsWith('-') &&
-          !reference.decimal.startsWith('-')
-        ? 'loss'
-        : /利益|損益/.test(metric)
-          ? 'profit'
-          : revenue
-            ? 'revenue'
-            : /受注|残高|数量|販売数/.test(metric)
-              ? 'stock'
-              : null;
-    if (!kind) continue;
-    result[index] += `（{{change:${currentId}|${referenceId}|${kind}}}）`;
+  const lines: string[] = [];
+  const groups = new Map<string, DisclosureObservation[]>();
+  for (const observation of records) {
+    const key = observationGroup(observation);
+    groups.set(key, [...(groups.get(key) ?? []), observation]);
   }
-  return result;
-}
-
-function tableTopic(table: NarrativeTable): 'business' | 'orders' | 'cash' | null {
-  const title = table.caption.text.normalize('NFKC');
-  return /セグメント|事業別|部門別|製品別/.test(title)
-    ? 'business'
-    : /受注|需要|稼働率/.test(title)
-      ? 'orders'
-      : /キャッシュ.?フロー|CF/.test(title)
-        ? 'cash'
+  const topics = new Set<ObservationTopic>();
+  const text = (value: string) => literalMarkdown(renderNarrativeText(value, presentation.values));
+  for (const group of groups.values()) {
+    const first = group[0];
+    if (headings && !topics.has(first.topic)) {
+      topics.add(first.topic);
+      lines.push('', `### ${observationTitles[first.topic]}`);
+    }
+    const subject = group.some((value) => value.entity !== null && value.entity !== primarySubject);
+    const headers = [...(subject ? ['対象'] : []), '指標', '値', '比較値', '増減'];
+    lines.push(
+      '',
+      [first.period, stateLabels[first.state], first.scope, first.basis]
+        .filter(Boolean)
+        .map((v) => literalMarkdown(v!))
+        .join('／'),
+      '',
+      `| ${headers.join(' | ')} |`,
+      `| ${headers.map(() => '---').join(' | ')} |`
+    );
+    for (const value of group) {
+      const quantity = presentation.values.find((q) => q.id === value.valueId)!;
+      const comparison = value.comparison;
+      const previous = comparison
+        ? presentation.values.find((q) => q.id === comparison.valueId)!
         : null;
+      const cells = [
+        ...(subject ? [literalMarkdown(value.entity ?? '全社')] : []),
+        literalMarkdown(value.metric),
+        literalMarkdown(literalValue(quantity)),
+        comparison
+          ? `${comparisonAxisLabels[comparison.axis]} ${literalMarkdown(comparison.period)} ${literalMarkdown(literalValue(previous!))}`
+          : '',
+        literalMarkdown(
+          observationChange(value, presentation.values).text ||
+            (value.state === 'actual' || value.state === 'forecastAfter' ? '比較未確認' : '')
+        ),
+      ];
+      lines.push(`| ${cells.join(' | ')} |`);
+    }
+    for (const condition of first.conditions) lines.push(`- 比較条件：${text(condition)}`);
+    lines.push(
+      '',
+      `根拠：${references(group.flatMap((value) => value.sourceIds.map((id) => presentation.excerpts.find((e) => e.id === id)!.page)))}`
+    );
+  }
+  return lines;
 }
 
 export function renderSummary(facts: FactSummary, presentation: SummaryPresentation): string {
@@ -318,7 +294,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   }
   const organization = presentation.organization;
   const accepted = supportedExplanations(organization);
-  const tables = supportedTables(organization);
+  const observations = supportedObservations(organization);
   const unresolved = new Set(
     unresolvedExplanationSources(organization, presentation.excerpts).map((e) => e.id)
   );
@@ -342,37 +318,43 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     );
   if (!facts.facts.length)
     lines.push('- 数値・条件を確定できていません。各項目の原文を確認してください。');
-  const shownClaims = new Set<string>();
-  const shownTables = new Set<string>();
   const titles = sectionPolicies(facts.documentType);
-  const destination = (table: NarrativeTable) => {
-    const topic = tableTopic(table);
-    const role =
-      topic === 'cash'
-        ? 'finance'
-        : topic === 'business'
-          ? 'performance'
-          : topic === 'orders'
-            ? 'operations'
-            : null;
-    const title = role ? titles.find(([key]) => key === role)?.[1] : null;
-    return title && presentation.sections.some((section) => section.title === title) ? title : null;
+  const destination = (topic: ObservationTopic, sourceIds: string[]) => {
+    const role = observationRole(topic);
+    return (
+      (role ? titles.find(([key]) => key === role)?.[1] : null) ??
+      presentation.sections.find((section) =>
+        sourceIds.some((id) => section.excerptIds.includes(id))
+      )?.title ??
+      titles[0][1]
+    );
   };
+  const sectionTitles = new Set([
+    ...presentation.sections.map((section) => section.title),
+    ...observations.map((value) => destination(value.topic, value.sourceIds)),
+    ...accepted.map((value) => destination(value.topic, value.sourceIds)),
+  ]);
+  const sections = titles
+    .filter(([, title]) => sectionTitles.has(title))
+    .map(
+      ([, title]) =>
+        presentation.sections.find((section) => section.title === title) ?? {
+          title,
+          factIds: [],
+          excerptIds: [],
+          highlights: [],
+        }
+    );
   const primarySubject = single('subject');
   // Every accepted fact has a body location, independently of organization output.
-  for (const section of presentation.sections) {
+  for (const section of sections) {
     const excerpts = section.excerptIds.map((id) => sources.get(id)!);
     const members = section.factIds.map((id) => byId.get(id)!);
     const sectionClaims = accepted.filter(
-      (claim) =>
-        !shownClaims.has(claim.id) && claim.sourceIds.some((id) => section.excerptIds.includes(id))
+      (value) => destination(value.topic, value.sourceIds) === section.title
     );
-    const sectionTables = tables.filter(
-      (table) =>
-        !shownTables.has(table.caption.id) &&
-        (destination(table)
-          ? destination(table) === section.title
-          : table.caption.sourceIds.some((id) => section.excerptIds.includes(id)))
+    const sectionObservations = observations.filter(
+      (value) => destination(value.topic, value.sourceIds) === section.title
     );
     lines.push('', `## ${literalMarkdown(section.title)}`);
     const numericFacts = members.filter(numeric);
@@ -382,118 +364,25 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         return pair ? [pair.reference.id] : [];
       })
     );
-    const grouped = new Map<string, VerifiedFact[]>();
-    for (const fact of numericFacts.filter((f) => !referencesInPairs.has(f.id))) {
-      const key = canonicalJSON([periodText(fact), fact.semantics.state, fact.semantics.basis]);
-      const group = grouped.get(key) ?? [];
-      group.push(fact);
-      grouped.set(key, group);
-    }
-    for (const group of grouped.values()) {
-      const f = group[0];
-      const subjectColumn = group.some(
-        (value) =>
-          value.semantics.subject !== primarySubject || value.semantics.scope !== shared.scope
-      );
-      const headers = [...(subjectColumn ? ['対象'] : []), '指標', '値', '比較値', '増減'];
-      lines.push(
-        '',
-        context(f, shared, true, false),
-        '',
-        `| ${headers.join(' | ')} |`,
-        `| ${headers.map(() => '---').join(' | ')} |`
-      );
-      const groupConditions = new Set<string>();
-      for (const value of group) {
-        const comparison = summaryComparison(value, facts.facts);
-        const reference = comparison?.reference;
-        const cf = /キャッシュ.?フロー|CF|現金及び現金同等物/.test(value.label);
-        const growth = comparison && !cf ? overviewGrowth(value, comparison, facts).text : '';
-        const change = comparison
-          ? cf
-            ? quantityChange(
-                presentation.values.find((q) => q.id === value.id)!,
-                presentation.values.find((q) => q.id === reference!.id)!,
-                'flow'
-              )
-            : comparisonLabel(value, comparison) + growth
-          : value.semantics.state === 'actual' || value.semantics.state === 'forecastAfter'
-            ? comparisonIssue(value, facts.facts)
-            : '';
-        const rate = facts.facts.find((r) => canPair(value, r));
-        const cells = [
-          ...(subjectColumn
-            ? [
-                [
-                  value.semantics.subject !== primarySubject ? value.semantics.subject : null,
-                  value.semantics.scope,
-                ]
-                  .filter(Boolean)
-                  .map((s) => literalMarkdown(s!))
-                  .join('／'),
-              ]
+    const primary = numericFacts
+      .filter((f) => !referencesInPairs.has(f.id))
+      .map((f) => factObservation(f, facts, presentation.excerpts, presentation.values));
+    const primaryIds = new Set(
+      numericFacts.flatMap((f) => [
+        f.id,
+        ...(f.evidence.kind === 'table'
+          ? [f.evidence.valueId]
+          : f.evidence.quantityId
+            ? [f.evidence.quantityId]
             : []),
-          literalMarkdown(value.label),
-          numberText(value),
-          reference
-            ? `${literalMarkdown(periodText(reference) ?? '')} ${numberText(reference)}`
-            : '',
-          literalMarkdown(change || (rate ? `原文 ${rate.quantity!.raw}${rate.unit}` : '')),
-        ];
-        lines.push(`| ${cells.join(' | ')} |`);
-        const conditions = [
-          ...new Set([
-            ...value.semantics.qualifiers,
-            ...value.semantics.conditions,
-            ...(reference
-              ? [...reference.semantics.qualifiers, ...reference.semantics.conditions]
-              : []),
-          ]),
-        ];
-        for (const condition of conditions) groupConditions.add(condition);
-      }
-      for (const condition of groupConditions)
-        lines.push(`- 比較条件：${literalMarkdown(condition)}`);
-      lines.push(
-        '',
-        `根拠：${references(
-          group.flatMap((value) => [
-            value.page,
-            ...(summaryComparison(value, facts.facts)
-              ? [summaryComparison(value, facts.facts)!.reference.page]
-              : []),
-          ])
-        )}`
-      );
-    }
-    sectionTables.sort((a, b) => Number(tableTopic(b) !== null) - Number(tableTopic(a) !== null));
-    const shownTopics = new Set<string>();
-    for (const table of sectionTables) {
-      shownTables.add(table.caption.id);
-      const topic = tableTopic(table);
-      if (topic && !shownTopics.has(topic)) {
-        shownTopics.add(topic);
-        lines.push(
-          '',
-          `### ${{ business: '事業別業績', orders: '受注・需要の動き', cash: 'キャッシュフロー' }[topic]}`
-        );
-      }
-      lines.push(
-        '',
-        text(table.caption.text),
-        '',
-        `| ${table.headers.map(literalMarkdown).join(' | ')} |`,
-        `| ${table.headers.map(() => '---').join(' | ')} |`
-      );
-      for (const row of table.rows)
-        lines.push(
-          `| ${tableComparisonCells(table.headers, row.cells, presentation).map(text).join(' | ')} |`
-        );
-      lines.push(
-        '',
-        `根拠：${references([...table.caption.sourceIds, ...table.rows.flatMap((r) => r.sourceIds)].map((id) => sources.get(id)!.page))}`
-      );
-    }
+      ])
+    );
+    // A reviewed company-level observation of the same native quantity does not duplicate the primary row.
+    const supplement = sectionObservations.filter(
+      (value) => !(value.entity === null && primaryIds.has(value.valueId))
+    );
+    lines.push(...renderObservationGroups(primary, presentation, primarySubject, false));
+    lines.push(...renderObservationGroups(supplement, presentation, primarySubject, true));
     for (const fact of members.filter((f) => !numeric(f))) {
       const statement = statementText(fact);
       if (/^(?:配当予想|業績予想)：/.test(statement))
@@ -501,8 +390,9 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       else if (fact.kind === 'status') lines.push('- ' + statement);
     }
     for (const claim of sectionClaims) {
-      shownClaims.add(claim.id);
-      lines.push('- ' + text(claim.text));
+      lines.push(
+        '- ' + (claim.entity ? `**${literalMarkdown(claim.entity)}**：` : '') + text(claim.text)
+      );
     }
     const residual = excerpts.filter((e) => unresolved.has(e.id));
     const headings = new Map<string, number[]>();
@@ -529,13 +419,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       const comparison = summaryComparison(f, facts.facts);
       return comparison && overviewGrowth(f, comparison, facts).calculated;
     }) ||
-    tables.some((table) =>
-      table.rows.some((row) =>
-        tableComparisonCells(table.headers, row.cells, presentation).some((cell) =>
-          cell.includes('{{change:')
-        )
-      )
-    )
+    observations.some((value) => observationChange(value, presentation.values).calculated)
   )
     lines.push('', '※「約」の率は表示金額から計算。原文の増減率と端数処理で異なる場合があります。');
   const forecasts = [

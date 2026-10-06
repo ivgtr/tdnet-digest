@@ -23,11 +23,6 @@ export interface NarrativeLine {
   text: string;
   sourceIds: string[];
 }
-export interface NarrativeTable {
-  caption: NarrativeLine;
-  headers: string[];
-  rows: Array<{ id: string; cells: string[]; sourceIds: string[] }>;
-}
 const compact = (s: string) => s.normalize('NFKC').replace(/\s/g, '');
 /** Compound amounts remain whole literal expressions, never a partial scalar. */
 export function parseNarrativeQuantity(raw: string) {

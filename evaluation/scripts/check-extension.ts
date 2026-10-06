@@ -226,7 +226,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       !fixtureSource ||
       reviewCase ||
       !narrativeReplay.result ||
-      narrativeReplay.presentation?.version !== 4 ||
+      narrativeReplay.presentation?.version !== 5 ||
       !narrativeReplay.presentation?.organization ||
       narrativeReplay.item.id !== item.id)
   )
@@ -793,7 +793,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    assert.ok(stored.value.presentation?.version === 4);
+    assert.ok(stored.value.presentation?.version === 5);
     if (narrativeReplay) {
       // UI replay must preserve the model evaluation outcome, including warnings.
       // It is not a way to turn a failed model assessment into a success.
@@ -848,7 +848,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.ok(
         await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
       );
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v92-summary-top.png` });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v93-summary-top.png` });
       for (const [title, suffix] of [
         ['事業別業績', 'business'],
         ['キャッシュフロー', 'cash-flow'],
@@ -861,12 +861,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           view.scrollTo(0, view.scrollY + node.getBoundingClientRect().top - 16);
         });
         await page.screenshot({
-          path: `evaluation/results/local/${item.id}-v92-summary-${suffix}.png`,
+          path: `evaluation/results/local/${item.id}-v93-summary-${suffix}.png`,
         });
       }
       await summary.evaluate((node: HTMLElement) => node.ownerDocument.defaultView!.scrollTo(0, 0));
       await page.setViewportSize({ width: 600, height: 800 });
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v92-summary-narrow.png` });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v93-summary-narrow.png` });
       await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
         nodes.forEach((n) => (n.open = true))
       );

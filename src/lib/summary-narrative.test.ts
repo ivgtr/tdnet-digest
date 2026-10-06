@@ -42,79 +42,67 @@ const q = (amount: string, includes: string) =>
       v.sourceIds.some((id) => draft.excerpts.find((e) => e.id === id)!.text.includes(includes))
   )!.id;
 
-const value = (id: string) => `{{value:${id}}}`;
-const change = (a: string, b: string, metric: string) => `{{change:${a}|${b}|${metric}}}`;
 function wire() {
+  const observation = (
+    topic: 'business' | 'orders' | 'cash',
+    entity: string | null,
+    metric: string,
+    measure: 'revenue' | 'profit' | 'stock' | 'flow',
+    current: string,
+    previous: string,
+    source: string,
+    axis: 'yearOnYear' | 'periodEnd' = 'yearOnYear'
+  ) => ({
+    topic,
+    entity,
+    scope: null,
+    basis: null,
+    metric,
+    measure,
+    period: '本中間期',
+    state: 'actual' as const,
+    valueId: q(current, source),
+    comparison: {
+      axis,
+      period: axis === 'periodEnd' ? '前期末' : '前年上半期',
+      valueId: q(previous, source),
+      rateId: null,
+    },
+    conditions: [],
+    sourceIds: sources,
+  });
   return {
-    version: 4,
-    tables: [
-      {
-        caption: { text: '事業別の業績と需要・資金の変化', sourceIds: sources },
-        headers: ['項目', '当期', '比較値', '増減'],
-        rows: [
-          {
-            cells: [
-              '製品事業 売上',
-              value(q('120', '製品事業')),
-              value(q('100', '製品事業')),
-              change(q('120', '製品事業'), q('100', '製品事業'), 'revenue'),
-            ],
-            sourceIds: sources,
-          },
-          {
-            cells: [
-              '製品事業 利益',
-              value(q('20', '製品事業')),
-              value(q('10', '製品事業')),
-              change(q('20', '製品事業'), q('10', '製品事業'), 'profit'),
-            ],
-            sourceIds: sources,
-          },
-          {
-            cells: [
-              'サービス事業 損益',
-              value(q('-15', 'サービス事業')),
-              value(q('-10', 'サービス事業')),
-              change(q('-15', 'サービス事業'), q('-10', 'サービス事業'), 'profit'),
-            ],
-            sourceIds: sources,
-          },
-          {
-            cells: [
-              '受注高',
-              value(q('90', '当期受注高')),
-              value(q('100', '当期受注高')),
-              change(q('90', '当期受注高'), q('100', '当期受注高'), 'stock'),
-            ],
-            sourceIds: sources,
-          },
-          {
-            cells: [
-              '期末受注残高',
-              value(q('150', '当期末受注残高')),
-              value(q('100', '当期末受注残高')),
-              change(q('150', '当期末受注残高'), q('100', '当期末受注残高'), 'stock'),
-            ],
-            sourceIds: sources,
-          },
-          {
-            cells: [
-              '営業CF',
-              value(q('-20', '当期営業CF')),
-              value(q('-30', '当期営業CF')),
-              change(q('-20', '当期営業CF'), q('-30', '当期営業CF'), 'flow'),
-            ],
-            sourceIds: sources,
-          },
-        ],
-      },
+    version: 5,
+    observations: [
+      observation('business', '製品事業', '顧客向け販売額', 'revenue', '120', '100', '製品事業'),
+      observation('business', '製品事業', '部門損益', 'profit', '20', '10', '製品事業'),
+      observation('business', 'サービス事業', '部門損益', 'profit', '-15', '-10', 'サービス事業'),
+      observation('orders', null, '新規契約の受注額', 'stock', '90', '100', '当期受注高'),
+      observation(
+        'orders',
+        null,
+        '未消化の案件残高',
+        'stock',
+        '150',
+        '100',
+        '当期末受注残高',
+        'periodEnd'
+      ),
+      observation('cash', null, '本業の資金収支', 'flow', '-20', '-30', '当期営業CF'),
     ],
     claims: [
       {
+        topic: 'business',
+        entity: null,
         text: '価格転嫁が製品事業の増益に寄与。サービス事業は先行投資で赤字拡大。',
         sourceIds: sources,
       },
-      { text: '受注残増加により来期の増収が確定した。', sourceIds: sources },
+      {
+        topic: 'orders',
+        entity: null,
+        text: '受注残増加により来期の増収が確定した。',
+        sourceIds: sources,
+      },
     ],
   };
 }
@@ -122,10 +110,7 @@ function review(input = wire()) {
   return {
     version: 1,
     claims: Object.fromEntries([
-      ...input.tables.flatMap((t, i) => [
-        [`table-${i}-caption`, null],
-        ...t.rows.map((_, j) => [`table-${i}-row-${j}`, null]),
-      ]),
+      ...input.observations.map((_, i) => [`observation-${i}`, null]),
       ...input.claims.map((_, i) => [
         `explanation-${i}`,
         i === 1 ? '来期増収確定の根拠がない' : null,
@@ -162,7 +147,7 @@ function visible(result: Awaited<ReturnType<typeof generate>>) {
 describe('構造化を主とする表示と未整理部分の保持', () => {
   it('事業別・受注・負のCFを表示し、説明を個別採否して同じ段落の未要約条件を残す', async () => {
     const result = await generate();
-    expect(result.presentation.version).toBe(4);
+    expect(result.presentation.version).toBe(5);
     expect(result.presentation.organization.status).toBe('partial');
     expect(supportedExplanations(result.presentation.organization)).toHaveLength(1);
     const reading = visible(result);
@@ -209,29 +194,30 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       ]
     ).toContain('未要約');
     const direct = wire();
-    direct.tables[0].headers = ['区分', '売上高（当期）', '売上高（前期）', '注記'];
-    direct.tables[0].rows = [direct.tables[0].rows[0]];
-    direct.tables[0].rows[0].cells[3] = '';
-    direct.tables.push(structuredClone(direct.tables[0]));
+    direct.observations.reverse();
+    direct.observations[5].metric = '販売による収入';
+    direct.observations[5].period = '2026年度 上半期';
     const directResult = await generate(direct);
-    expect(visible(directResult)).toContain('120百万円（↑増収 約+20.0%）');
+    expect(visible(directResult)).toContain('↑増収 約+20.0%');
+    expect(visible(directResult)).toContain('販売による収入');
     expect(
       renderFacts(directResult.facts, directResult.presentation).match(/### 事業別業績/g)
     ).toHaveLength(1);
+    expect(visible(directResult)).toContain('前期末');
   });
   it('未知形式・不正数量・欠落した点検を採用せず、保存復元で正しい表と未整理の状態を維持する', async () => {
     const result = await generate();
     const copy = structuredClone(result.presentation);
-    copy.organization.tables[0].rows[0].cells[1] = '999百万円';
-    expect(() => validatePresentation(copy, result.facts)).toThrow('QUANTITY');
+    copy.organization.observations[0].valueId = 'unknown-quantity';
+    expect(() => validatePresentation(copy, result.facts)).toThrow('REFERENCE');
     expect(() =>
       validatePresentation({ ...result.presentation, version: 3 }, result.facts)
     ).toThrow('不正');
     const missing = structuredClone(result.presentation);
-    delete missing.organization.review!.claims['table-0-row-0'];
+    delete missing.organization.review!.claims['observation-0'];
     expect(() => validatePresentation(missing, result.facts)).toThrow('点検範囲');
     const unsupported = structuredClone(result.presentation);
-    unsupported.organization.review!.claims['table-0-row-0'] = '期間対応が未確認';
+    unsupported.organization.review!.claims['observation-0'] = '期間対応が未確認';
     expect(visible({ ...result, presentation: unsupported })).not.toContain('↑増収 約+20.0%');
     // Whole signed values stay native. A loss label does not authorize changing the sign.
     expect(() =>
@@ -254,7 +240,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(quantityChange(quantity('10'), quantity('0'), 'profit')).toContain('比較値ゼロ');
     for (const raw of [
       JSON.stringify({ version: 3, tables: [], claims: [] }),
-      '{"version":4,"tables":[],"claims":[],"claims":[]}',
+      '{"version":5,"observations":[],"claims":[],"claims":[]}',
     ]) {
       vi.mocked(generateText).mockReset().mockResolvedValueOnce(first).mockResolvedValueOnce(raw);
       const partial = await generateVerifiedFactSummary(config, 'other', 'source', [page]);
@@ -300,7 +286,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
         facts
       )
     ).toThrow('原文');
-    expect(organizationClaims(result.presentation.organization).length).toBe(9);
+    expect(organizationClaims(result.presentation.organization).length).toBe(8);
     expect(
       organizationHash(result.presentation.organization, result.facts, draft.values, draft.excerpts)
     ).toBe(result.presentation.organization.review!.contentHash);
@@ -317,7 +303,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     });
     expect(result.presentation.organization.status).toBe('unavailable');
     expect(result.presentation.organization.claims).toEqual([]);
-    expect(result.presentation.organization.tables).toEqual([]);
+    expect(result.presentation.organization.observations).toEqual([]);
     expect(renderFacts(result.facts, result.presentation)).toContain('100百万円');
     expect(renderFacts(result.facts, result.presentation)).toContain('要約未作成');
     expect(attempts[attempts.length - 1]?.error).toBe('説明点検の期限');

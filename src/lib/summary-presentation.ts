@@ -33,7 +33,7 @@ export interface SummarySection {
   highlights: string[];
 }
 export interface SummaryPresentation {
-  version: 4;
+  version: 5;
   sourceHash: string;
   overview: string[];
   sections: SummarySection[];
@@ -231,7 +231,7 @@ function composePresentation(
     );
   if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
   return {
-    version: 4,
+    version: 5,
     sourceHash: hashText(canonicalJSON({ excerpts, values })),
     overview,
     sections: sections.filter((s) => s.factIds.length || s.excerptIds.length),
@@ -257,7 +257,7 @@ export function validatePresentation(
       'values',
       'organization',
     ]) ||
-    value.version !== 4 ||
+    value.version !== 5 ||
     !Array.isArray(value.overview) ||
     !Array.isArray(value.sections) ||
     !Array.isArray(value.excerpts) ||

@@ -82,6 +82,7 @@ const implementationFiles = [
   'src/lib/summary-presentation.ts',
   'src/lib/summary-narrative.ts',
   'src/lib/summary-organization.ts',
+  'src/lib/disclosure-observation.ts',
   'src/lib/summary-narrative-renderer.ts',
   'src/lib/summary-renderer.ts',
   'src/lib/summary-result-id.ts',
