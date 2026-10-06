@@ -211,6 +211,56 @@ function renderExcerpts(excerpts: SourceExcerpt[]): string[] {
   if (previous) lines.push('', ref(previous.page));
   return lines;
 }
+/** The reviewed table already supplies meaning/axes; only exact numeric arithmetic is added. */
+function tableComparisonCells(
+  headers: string[],
+  cells: string[],
+  presentation: SummaryPresentation
+): string[] {
+  if (cells.some((cell) => /\{\{(?:change|delta):/.test(cell))) return cells;
+  const result = [...cells];
+  const normalized = headers.map((header) => header.normalize('NFKC').replace(/\s/g, ''));
+  for (const [index, header] of normalized.entries()) {
+    // A literal 当/前 axis pair must otherwise name the identical metric/period.
+    // Unnamed or differently labelled periods remain untouched.
+    if (!/当(?:期|年|中間|四半期|連結|事業|第)/.test(header)) continue;
+    const referenceHeader = header.replace('当', '前');
+    const candidates = normalized.flatMap((name, at) => (name === referenceHeader ? [at] : []));
+    if (candidates.length !== 1) continue;
+    const id = (cell: string) => cell.match(/^\{\{value:([^{}]+)\}\}$/)?.[1];
+    const currentId = id(cells[index]),
+      referenceId = id(cells[candidates[0]]);
+    const current = presentation.values.find((v) => v.id === currentId);
+    const reference = presentation.values.find((v) => v.id === referenceId);
+    if (
+      !current ||
+      !reference ||
+      current.decimal === null ||
+      reference.decimal === null ||
+      !current.unit ||
+      current.unit !== reference.unit
+    )
+      continue;
+    const metric = header + ' ' + cells[0];
+    const kind = /キャッシュ.?フロー|CF/.test(metric)
+      ? 'flow'
+      : /損失/.test(metric) &&
+          !current.decimal.startsWith('-') &&
+          !reference.decimal.startsWith('-')
+        ? 'loss'
+        : /利益|損益/.test(metric)
+          ? 'profit'
+          : /売上|収益/.test(metric)
+            ? 'revenue'
+            : /受注|残高|数量|販売数/.test(metric)
+              ? 'stock'
+              : null;
+    if (!kind) continue;
+    result[index] += `（{{change:${currentId}|${referenceId}|${kind}}}）`;
+  }
+  return result;
+}
+
 export function renderSummary(facts: FactSummary, presentation: SummaryPresentation): string {
   if (facts.version !== FACT_SCHEMA_VERSION) throw new Error('旧事実スキーマは表示できません');
   validatePresentation(presentation, facts);
@@ -392,7 +442,10 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         `| ${table.headers.map(literalMarkdown).join(' | ')} |`,
         `| ${table.headers.map(() => '---').join(' | ')} |`
       );
-      for (const row of table.rows) lines.push(`| ${row.cells.map(text).join(' | ')} |`);
+      for (const row of table.rows)
+        lines.push(
+          `| ${tableComparisonCells(table.headers, row.cells, presentation).map(text).join(' | ')} |`
+        );
       lines.push(
         '',
         `根拠：${references([...table.caption.sourceIds, ...table.rows.flatMap((r) => r.sourceIds)].map((id) => sources.get(id)!.page))}`
@@ -434,7 +487,11 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       return comparison && overviewGrowth(f, comparison, facts).calculated;
     }) ||
     tables.some((table) =>
-      table.rows.some((row) => row.cells.some((cell) => cell.includes('{{change:')))
+      table.rows.some((row) =>
+        tableComparisonCells(table.headers, row.cells, presentation).some((cell) =>
+          cell.includes('{{change:')
+        )
+      )
     )
   )
     lines.push('', '※「約」の率は表示金額から計算。原文の増減率と端数処理で異なる場合があります。');

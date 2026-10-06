@@ -488,12 +488,6 @@ export function checkText(
   });
   // The denominator in this metric name is not a newly stated share count.
   rest = rest.replace(/1株当たり/g, '株当たり');
-  const source = compact(
-    excerpts
-      .filter((e) => sourceIds.includes(e.id))
-      .map((e) => e.text)
-      .join(' ')
-  );
   // Dates, reporting periods and named classifications are semantic labels.
   // Their source meaning is checked with each caption/row/claim by the independent
   // reviewer. Literal spelling (中間期 vs 第2四半期) cannot establish or reject it.
