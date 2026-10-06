@@ -771,12 +771,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         : item.id.startsWith('buyback')
           ? ['200000', '206200000', '上限', '予定', '2026年7月15日', '可能性']
           : item.id.startsWith('monthly')
-            ? ['2026年6月', '338214', 'NJSS', '速報', '修正する可能性']
+            ? ['2026年6月', '338214', 'NJSS', '速報']
             : [];
     for (const term of expected)
       assert.ok(
         body.replace(/(?<=\d),(?=\d)/g, '').includes(term),
         `表示に必要な意味がない: ${term}`
+      );
+    if (!reviewFixture && item.id.startsWith('monthly'))
+      assert.ok(
+        ['修正する可能性', '修正される可能性', '修正の可能性'].some((term) => body.includes(term)),
+        '月次の速報値が修正される可能性の説明がない'
       );
     const stored = await worker.evaluate(async (version: number) => {
       const data = await chrome.storage.local.get();
@@ -830,9 +835,22 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
       );
       await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-top.png` });
-      await summary.screenshot({
-        path: `evaluation/results/local/${item.id}-v91-summary-full.png`,
-      });
+      for (const [title, suffix] of [
+        ['事業別業績', 'business'],
+        ['キャッシュフロー', 'cash-flow'],
+      ]) {
+        const heading = summary.getByRole('heading', { name: title, exact: true });
+        if (!(await heading.count())) continue;
+        await heading.scrollIntoViewIfNeeded();
+        await heading.evaluate((node: HTMLElement) => {
+          const view = node.ownerDocument.defaultView!;
+          view.scrollTo(0, view.scrollY + node.getBoundingClientRect().top - 16);
+        });
+        await page.screenshot({
+          path: `evaluation/results/local/${item.id}-v91-summary-${suffix}.png`,
+        });
+      }
+      await summary.evaluate((node: HTMLElement) => node.ownerDocument.defaultView!.scrollTo(0, 0));
       await page.setViewportSize({ width: 600, height: 800 });
       await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-narrow.png` });
       await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
