@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generateText } from './llm-client';
-import { textPage, numberCandidate } from './fixtures/v4-test-source';
+import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { reviewCandidates } from './fact-candidates';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import {
@@ -16,7 +16,7 @@ import {
   supportedExplanations,
 } from './summary-organization';
 import { validateSavedFacts } from './fact-cache';
-import { bindLiteralQuantities } from './summary-narrative';
+import { bindLiteralQuantities, quantitySourceClosure, checkText } from './summary-narrative';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import type { SummaryAttempt } from './summary-trace';
 import { literalValue, quantityChange } from './summary-narrative-renderer';
@@ -253,6 +253,43 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       expect(partial.presentation.organization.issues.length).toBeGreaterThan(0);
       expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
     }
+    const captioned = layoutPage(
+      [
+        ['（単位：百万円）', 0, 100, 90],
+        ['営業利益', 0, 124, 50],
+        ['120', 100, 124, 30],
+        ['100', 200, 124, 30],
+      ].map(([text, x, y, width], i) => ({
+        id: `p1s${i + 1}`,
+        text: String(text),
+        x: Number(x),
+        y: Number(y),
+        width: Number(width),
+        height: 10,
+      }))
+    );
+
+    const display = buildPresentation({ ...facts, facts: [] }, [captioned]);
+    const value = display.values.find((v) => v.raw === '120')!;
+    const owner = display.excerpts.find((e) => e.spanIds.includes(value.id))!;
+    expect(value.unit).toBe('百万円');
+    expect(value.sourceIds.length).toBeGreaterThan(1);
+    const token = `{{value:${value.id}}}`;
+    const closure = quantitySourceClosure(token, [owner.id], display.values, display.excerpts, {
+      ...facts,
+      facts: [],
+    });
+    expect(closure).toEqual(expect.arrayContaining(value.sourceIds));
+    checkText(token, closure, display.values, display.excerpts, facts, true);
+    expect(() =>
+      quantitySourceClosure(
+        token,
+        value.sourceIds.filter((id) => id !== owner.id),
+        display.values,
+        display.excerpts,
+        facts
+      )
+    ).toThrow('原文');
     expect(organizationClaims(result.presentation.organization).length).toBe(9);
     expect(
       organizationHash(result.presentation.organization, result.facts, draft.values, draft.excerpts)

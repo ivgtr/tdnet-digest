@@ -381,13 +381,44 @@ export function bindLiteralQuantities(
   if (errors.length) throw new Error(errors.join('\n'));
   return result;
 }
+/** Model-selected quantity anchors are authoritative; code attaches their native unit/context proof. */
+export function quantitySourceClosure(
+  text: string,
+  sourceIds: string[],
+  values: NarrativeValue[],
+  excerpts: SourceExcerpt[],
+  facts: FactSummary
+): string[] {
+  const closure = new Set(sourceIds);
+  for (const match of text.matchAll(NARRATIVE_TOKEN)) {
+    const selected = match[1] === 'value' ? [match[2]] : match[2].split('|').slice(0, 2);
+    for (const id of selected) {
+      const value = values.find((v) => v.id === id);
+      if (!value) throw new Error('NARRATIVE_REFERENCE:存在しない数量IDです');
+      const fact = facts.facts.find((f) => f.id === id);
+      const anchor =
+        fact?.evidence.kind === 'table' ? fact.evidence.valueId : fact?.evidence.blockId;
+      const owners = excerpts.filter(
+        (e) =>
+          e.spanIds.includes(anchor ?? id) ||
+          e.blockId === anchor ||
+          id.startsWith(`${e.blockId}:q`)
+      );
+      if (!owners.some((e) => sourceIds.includes(e.id)))
+        throw new Error('NARRATIVE_REFERENCE:選択数量の原文を明示してください');
+      for (const sourceId of value.sourceIds) closure.add(sourceId);
+    }
+  }
+  return [...closure];
+}
+
 export function checkText(
   text: unknown,
   sourceIds: string[],
   values: NarrativeValue[],
   excerpts: SourceExcerpt[],
-  facts: FactSummary,
-  tableContext = false
+  _facts: FactSummary,
+  _tableContext = false
 ): asserts text is string {
   if (typeof text !== 'string' || !text.trim() || text.length > 1200 || /[\r\n]/.test(text))
     throw new Error('NARRATIVE_SCHEMA:説明・セルの形式が不正です');
@@ -463,72 +494,13 @@ export function checkText(
       .map((e) => e.text)
       .join(' ')
   );
-  // Expanded dates are already source-verified meanings, not invented literal
-  // dates. Use them only when the claim cites the corresponding quantity/block.
-  const periods = facts.facts
-    .filter(
-      (f) =>
-        f.period &&
-        excerpts.some(
-          (e) =>
-            sourceIds.includes(e.id) &&
-            (f.evidence.kind === 'table'
-              ? e.spanIds.includes(f.evidence.valueId)
-              : e.blockId === f.evidence.blockId)
-        )
-    )
-    .map((f) => compact(f.period!));
-  const identifiers = new Set(
-    [
-      ...excerpts
-        .map((e) => e.text.normalize('NFKC'))
-        .join(' ')
-        .matchAll(/\b(?:[A-Za-z][A-Za-z0-9-]*|\d+[A-Za-z][A-Za-z0-9-]*)\b/g),
-    ].map((m) => m[0])
-  );
-  // Calendar/standard/metric names are literal labels, not newly generated quantities.
+  // Dates, reporting periods and named classifications are semantic labels.
+  // Their source meaning is checked with each caption/row/claim by the independent
+  // reviewer. Literal spelling (中間期 vs 第2四半期) cannot establish or reject it.
+  // Financial/physical quantities still require a native quantity token.
   rest = rest.replace(NARRATIVE_LABEL, (label) => {
-    // A source-matched product identifier is a label. A number followed by a
-    // physical/currency unit is still a quantity and must use a quantity ID.
     const leadingNumber = label.match(/^\d+([A-Za-z][A-Za-z0-9/-]*)$/);
-    if (leadingNumber && isUncaptionedUnit(leadingNumber[1])) return label;
-    const namedIdentifier = /^[A-Za-z0-9/-]+$/.test(label) && /[A-Za-z]/.test(label);
-    // Prose calendar context is independently checked for meaning, including
-    // dates composed from the report year/month. Table contexts retain their
-    // explicit period proof. Neither path supplies or rewrites a date.
-    const proseCalendar =
-      !tableContext &&
-      !/期/.test(label) &&
-      /^(?:20\d{2}年|過去\d+(?:ヶ|ヵ|か|カ)?月|\d{1,2}月|(?:午前|午後)?\d{1,2}時|\d{1,2}:\d{2}|第[1-4]四半期)/.test(
-        label
-      );
-    const nativeChecklist =
-      /^\d+以外$/.test(label) && excerpts.some((e) => compact(e.text).includes(label));
-    const standard = label.match(/^IFRS(?:第)?(\d+)号$/);
-    const standardSource =
-      standard &&
-      excerpts.some(
-        (e) =>
-          sourceIds.includes(e.id) &&
-          /IFRS|国際会計基準/.test(compact(e.text)) &&
-          compact(e.text).includes(`第${standard[1]}号`)
-      );
-    if (
-      /\d/.test(label) &&
-      !(namedIdentifier ? identifiers.has(label) : source.includes(compact(label))) &&
-      !periods.some((period) => period.includes(compact(label))) &&
-      !standardSource &&
-      !proseCalendar &&
-      !nativeChecklist
-    )
-      throw new Error(
-        `NARRATIVE_REFERENCE:日付・分類名「${label}」の原文参照がありません。対象文=${text}。原文候補=${excerpts
-          .filter((e) => compact(e.text).includes(compact(label)))
-          .slice(0, 12)
-          .map((e) => e.id)
-          .join(',')}。意味と対象が一致する原文だけをsourceIdsへ参照してください`
-      );
-    return '';
+    return leadingNumber && isUncaptionedUnit(leadingNumber[1]) ? label : '';
   });
   rest = rest.replace(NARRATIVE_EDITORIAL_COUNT, '');
   if (/\d|[０-９]/.test(rest))

@@ -137,6 +137,10 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     } as VerifiedFact;
     const comparison = summaryComparison(current, [current, previous])!;
     expect(comparisonIssue(current, [current])).toBe('前年の値が要約に未抽出');
+    const printed = { ...current, period: '２０２６年３月期' };
+    expect(summaryComparison(printed, [printed, previous])?.reference.id).toBe(previous.id);
+    expect(comparisonIssue(printed, [printed])).toBe('前年の値が要約に未抽出');
+
     expect(
       comparisonIssue(current, [
         current,

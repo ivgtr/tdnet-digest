@@ -128,14 +128,14 @@ function overviewGrowth(f: VerifiedFact, comparison: SummaryComparison, facts: F
   const rates = facts.facts.filter((r) => canPair(f, r));
   const rate = rates.length === 1 ? rates[0] : undefined;
   if (growth?.kind === 'change' && rate)
-    return { text: `（原文 ${numberText(rate)}）`, calculated: false };
+    return { text: `（原文 ${rate.quantity!.raw}${rate.unit}）`, calculated: false };
   if (growth?.kind === 'zeroBase')
     return {
       text: `（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'}0のため比率なし）`,
       calculated: false,
     };
   return {
-    text: growth ? ` 約${literalMarkdown(growth.rate)}` : '',
+    text: growth ? ` 約${growth.rate}` : '',
     calculated: growth !== null,
   };
 }
@@ -153,7 +153,7 @@ function overviewNumber(
         : `${numberText(f)}（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${numberText(before)}）`;
     const percent = overviewGrowth(f, comparison, facts).text;
     const rate = facts.facts.find((r) => canPair(f, r));
-    return `${literalMarkdown(f.label)}：**${comparisonLabel(f, comparison)}${percent}** ${values}${comparison.axis === 'revision' && rate ? `（原文の増減率 ${numberText(rate)}）` : ''}`;
+    return `${literalMarkdown(f.label)}：**${comparisonLabel(f, comparison)}${literalMarkdown(percent)}** ${values}${comparison.axis === 'revision' && rate ? `（原文の増減率 ${numberText(rate)}）` : ''}`;
   }
   const rate = facts.facts.find((r) => canPair(f, r));
   if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;

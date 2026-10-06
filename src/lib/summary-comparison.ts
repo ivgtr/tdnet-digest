@@ -1,5 +1,8 @@
 import { canonicalJSON, type VerifiedFact } from './fact-contract';
 
+const periodIdentity = (period: string | null) =>
+  period?.normalize('NFKC').replace(/\s/g, '') ?? null;
+
 export interface SummaryComparison {
   reference: VerifiedFact;
   axis: 'year' | 'revision';
@@ -57,11 +60,12 @@ export function summaryComparison(
 ): SummaryComparison | null {
   if (current.kind !== 'number' || current.quantity?.decimal == null) return null;
   const revision = current.semantics.state === 'forecastAfter';
-  const year = current.period?.match(/^(20\d{2})年(\d{1,2})月期/);
+  const normalizedPeriod = periodIdentity(current.period);
+  const year = normalizedPeriod?.match(/^(20\d{2})年(\d{1,2})月期/);
   if (!revision && (current.semantics.state !== 'actual' || !year)) return null;
   const period = revision
-    ? current.period
-    : current.period!.replace(year![1]!, String(Number(year![1]) - 1));
+    ? normalizedPeriod
+    : normalizedPeriod!.replace(year![1]!, String(Number(year![1]) - 1));
   const proof = (f: VerifiedFact) =>
     f.evidence.kind === 'table' ? f.provenance?.tableId : f.provenance?.assertion?.id;
   if (!proof(current)) return null;
@@ -84,7 +88,7 @@ export function summaryComparison(
       f.id !== current.id &&
       f.kind === 'number' &&
       f.quantity?.decimal != null &&
-      f.period === period &&
+      periodIdentity(f.period) === period &&
       f.semantics.state === (revision ? 'forecastBefore' : 'actual') &&
       f.evidence.kind === current.evidence.kind &&
       proof(f) === proof(current) &&
@@ -124,16 +128,17 @@ export function comparisonLabel(current: VerifiedFact, comparison: SummaryCompar
 export function comparisonIssue(current: VerifiedFact, facts: VerifiedFact[]): string {
   if (current.kind !== 'number' || current.quantity?.decimal == null) return '比較未確認';
   const revision = current.semantics.state === 'forecastAfter';
-  const year = current.period?.match(/^(20\d{2})年(\d{1,2})月期/);
+  const normalizedPeriod = periodIdentity(current.period);
+  const year = normalizedPeriod?.match(/^(20\d{2})年(\d{1,2})月期/);
   if (!revision && (current.semantics.state !== 'actual' || !year)) return '比較未確認';
   const target = revision
-    ? current.period
-    : current.period!.replace(year![1]!, String(Number(year![1]) - 1));
+    ? normalizedPeriod
+    : normalizedPeriod!.replace(year![1]!, String(Number(year![1]) - 1));
   const related = facts.filter(
     (f) =>
       f.id !== current.id &&
       f.label === current.label &&
-      f.period === target &&
+      periodIdentity(f.period) === target &&
       f.semantics.state === (revision ? 'forecastBefore' : 'actual')
   );
   if (!related.length) return revision ? '修正前の値が要約に未抽出' : '前年の値が要約に未抽出';
