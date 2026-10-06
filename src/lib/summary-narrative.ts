@@ -428,6 +428,9 @@ const NARRATIVE_LABEL =
 // Editorial grouping/duration is a proposed semantic statement, not a verified
 // business quantity. Never turn these into scoring facts or fill a missing KPI.
 const NARRATIVE_EDITORIAL_COUNT = /\d+(?:つ|区分|領域|項目|分野|テーマ|(?:ヶ|ヵ|か|カ)月)/g;
+// URL path/query digits identify a resource, not a financial quantity. The
+// complete URI must still match a cited source; prefixes are not sufficient.
+const NARRATIVE_URL = /https?:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]+/g;
 /** Current v3 generation compiles exact, cited, complete source quantities.
  * No missing value, unit, date, or meaning is supplied by the compiler. */
 function bindLiteralQuantities(
@@ -452,7 +455,11 @@ function bindLiteralQuantities(
       });
       return `{{${kind}:${[...boundIds, ...parts.slice(2)].join('|')}}}`;
     });
-  const protectedRanges = [...text.matchAll(NARRATIVE_TOKEN), ...text.matchAll(NARRATIVE_LABEL)]
+  const protectedRanges = [
+    ...text.matchAll(NARRATIVE_TOKEN),
+    ...text.matchAll(NARRATIVE_LABEL),
+    ...text.matchAll(NARRATIVE_URL),
+  ]
     .filter((m) => {
       const unit = m[0].match(/^\d+([A-Za-z][A-Za-z0-9/-]*)$/)?.[1];
       // A metric immediately followed by a fractional quantity is not a new
@@ -715,6 +722,16 @@ function checkText(
   // Compare label spelling with the same NFKC form used for the source. This does
   // not turn a literal quantity into an accepted numeric reference.
   rest = rest.normalize('NFKC');
+  const nativeUrls = new Set(
+    excerpts
+      .filter((e) => sourceIds.includes(e.id))
+      .flatMap((e) => [...e.text.normalize('NFKC').matchAll(NARRATIVE_URL)].map((m) => m[0]))
+  );
+  rest = rest.replace(NARRATIVE_URL, (url) => {
+    if (!nativeUrls.has(url))
+      throw new Error(`NARRATIVE_REFERENCE:URL「${url}」の引用原文がありません`);
+    return '';
+  });
   // The denominator in this metric name is not a newly stated share count.
   rest = rest.replace(/1株当たり/g, '株当たり');
   const source = compact(
@@ -1229,7 +1246,9 @@ export async function generateSummaryNarrative(
       raw = await generateText(
         {
           ...options,
-          ...(patch ? { maxOutputTokens: Math.min(options.maxOutputTokens ?? 32768, 8192) } : {}),
+          ...(patch || isReview
+            ? { maxOutputTokens: Math.min(options.maxOutputTokens ?? 32768, 8192) }
+            : {}),
           ...(getModel(config.provider, config.model)?.strictJsonSchema
             ? {
                 responseFormat: {
@@ -1253,9 +1272,7 @@ export async function generateSummaryNarrative(
             : {}),
           ...(config.provider === 'openrouter' &&
           getModel(config.provider, config.model)?.optionalReasoning
-            ? isReview
-              ? { reasoningEnabled: undefined, reasoningEffort: 'low' as const }
-              : { reasoningEnabled: false, reasoningEffort: undefined }
+            ? { reasoningEnabled: false, reasoningEffort: undefined }
             : {}),
           onResponse: (response) => {
             raw = response;
