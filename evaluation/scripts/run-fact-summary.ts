@@ -81,7 +81,7 @@ const implementationFiles = [
   'src/lib/summary-source-inventory.ts',
   'src/lib/summary-presentation.ts',
   'src/lib/summary-narrative.ts',
-  'src/lib/summary-narrative-schema.ts',
+  'src/lib/summary-organization.ts',
   'src/lib/summary-narrative-renderer.ts',
   'src/lib/summary-renderer.ts',
   'src/lib/summary-result-id.ts',
@@ -159,7 +159,7 @@ for (const item of selected) {
     errors.push(...missingSourceContent.map((text) => `原文の説明・条件が不足: ${text}`));
     errors.push(...expectedErrors(item, result));
     validateSavedFacts(result);
-    const restored = parseFactSummary(JSON.stringify(result), item.documentType, pages);
+    const restored = parseFactSummary(JSON.stringify(result), item.documentType, pages, false);
     if (JSON.stringify(restored) !== JSON.stringify(result))
       errors.push('保存再照合で確定結果が変わりました');
   }
@@ -190,6 +190,10 @@ for (const item of selected) {
     pages: pages.length,
     repairAttempted: attempt?.repairAttempted ?? attempts.some((a) => a.phase === 'repair'),
     success: errors.length === 0,
+    completedStructure: !!result && errors.length === 0 && !result.unverified.length,
+    explanationStatus: attempt?.presentation.organization.status ?? null,
+    rendered: !!attempt,
+
     errors,
     result,
     presentation: attempt?.presentation ?? null,

@@ -19,13 +19,12 @@ import { reportingMetricKey } from './metric-semantics';
 import { companyExcerpt } from './summary-company-excerpt';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
+import { narrativeValues, parseNarrativeQuantity, type NarrativeValue } from './summary-narrative';
 import {
-  narrativeValues,
-  parseNarrativeQuantity,
-  validateSummaryNarrative,
-  type NarrativeValue,
-  type SummaryNarrative,
-} from './summary-narrative';
+  emptyOrganization,
+  validateOrganization,
+  type SummaryOrganization,
+} from './summary-organization';
 
 export interface SummarySection {
   title: string;
@@ -34,13 +33,13 @@ export interface SummarySection {
   highlights: string[];
 }
 export interface SummaryPresentation {
-  version: 3;
+  version: 4;
   sourceHash: string;
   overview: string[];
   sections: SummarySection[];
   excerpts: SourceExcerpt[];
   values: NarrativeValue[];
-  narrative: SummaryNarrative | null;
+  organization: SummaryOrganization;
 }
 const numeric = (f: VerifiedFact) => f.kind === 'number' || f.kind === 'range';
 const anchor = (f: VerifiedFact) =>
@@ -232,13 +231,13 @@ function composePresentation(
     );
   if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
   return {
-    version: 3,
+    version: 4,
     sourceHash: hashText(canonicalJSON({ excerpts, values })),
     overview,
     sections: sections.filter((s) => s.factIds.length || s.excerptIds.length),
     excerpts,
     values,
-    narrative: null,
+    organization: emptyOrganization(),
   };
 }
 
@@ -256,9 +255,9 @@ export function validatePresentation(
       'sections',
       'excerpts',
       'values',
-      'narrative',
+      'organization',
     ]) ||
-    value.version !== 3 ||
+    value.version !== 4 ||
     !Array.isArray(value.overview) ||
     !Array.isArray(value.sections) ||
     !Array.isArray(value.excerpts) ||
@@ -373,8 +372,8 @@ export function validatePresentation(
   // Headline selection may be adjusted independently; body membership stays deterministic.
   if (canonicalJSON(value.sections) !== canonicalJSON(expected.sections))
     throw new Error('本文の所属が一致しません');
-  validateSummaryNarrative(
-    value.narrative,
+  validateOrganization(
+    value.organization,
     facts,
     value.values as NarrativeValue[],
     value.excerpts as SourceExcerpt[]

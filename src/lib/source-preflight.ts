@@ -12,12 +12,12 @@ import { verifyTableEvidence, verifyProseQuantity, verifyProsePeriod } from './n
 import { proseReportingMetrics, classifyMetric } from './metric-semantics';
 import { continuationSpans, continuationPage } from './document-links';
 /** Required source choices must survive serialization before spending a generation attempt. */
-export function preflightCandidateSource(
+export function inspectCandidateSource(
   type: DocumentType,
   pages: ExtractedPage[],
   context: DocumentContext,
   input: string
-): void {
+): string[] {
   const source = JSON.parse(input);
   const failures: string[] = [];
   for (const slot of coverageReport(type, pages, [], [], context).filter(
@@ -156,6 +156,17 @@ export function preflightCandidateSource(
     });
     if (issues.every((i) => i !== null)) failures.push(`${slot.requirement}:${issues.join(' / ')}`);
   }
+  return failures;
+}
+
+/** Complete extraction remains available to callers that require every slot. */
+export function preflightCandidateSource(
+  type: DocumentType,
+  pages: ExtractedPage[],
+  context: DocumentContext,
+  input: string
+): void {
+  const failures = inspectCandidateSource(type, pages, context, input);
   if (failures.length)
     throw new Error(
       `SOURCE_PREFLIGHT:重要事実を生成入力から検証可能な形で選べません: ${failures.join(' / ')}`

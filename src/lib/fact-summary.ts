@@ -25,11 +25,11 @@ import {
 } from './fact-contract';
 import { validateFact, validatePages } from './fact-validation';
 import { verifyCoverage, coverageReport, type CoverageSlot } from './fact-coverage';
-import { preflightCandidateSource } from './source-preflight';
+import { inspectCandidateSource, preflightCandidateSource } from './source-preflight';
 import { selectableFactCapacity } from './summary-source-inventory';
 import { renderSummary, stateLabels } from './summary-renderer';
 import { buildPresentation, type SummaryPresentation } from './summary-presentation';
-import { generateSummaryNarrative } from './summary-narrative';
+import { generateSummaryOrganization } from './summary-organization';
 import type { SummaryAttempt } from './summary-trace';
 export { stateLabels };
 export { FACT_SCHEMA_VERSION } from './fact-contract';
@@ -133,13 +133,17 @@ export async function generateVerifiedFacts(
   documentType: DocumentType,
   text: string,
   pages: ExtractedPage[],
-  onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
+  onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>,
+  allowIncomplete = false
 ): Promise<{ facts: FactSummary; presentation: SummaryPresentation; repairAttempted: boolean }> {
   validatePages(pages);
   if (!text.trim()) throw new Error('PDF本文がありません');
   const context = buildDocumentContext(pages);
   const sourceInput = serializeCandidateSource(pages, context, documentType);
-  preflightCandidateSource(documentType, pages, context, sourceInput);
+  const sourceIssues = allowIncomplete
+    ? inspectCandidateSource(documentType, pages, context, sourceInput)
+    : [];
+  if (!allowIncomplete) preflightCandidateSource(documentType, pages, context, sourceInput);
   // Reject incomplete smart input before spending a generation attempt.
   buildPresentation(
     { version: FACT_SCHEMA_VERSION, documentType, facts: [], unverified: [] },
@@ -221,12 +225,27 @@ export async function generateVerifiedFacts(
     version: FACT_SCHEMA_VERSION,
     documentType,
     facts: review.facts,
-    unverified: review.unverified,
+    unverified: [...new Set([...review.unverified, ...sourceIssues])],
   });
+  const incomplete = (review: CandidateReview, reason: string, repairAttempted: boolean) => {
+    const facts = summary(review);
+    facts.unverified = [...new Set([...facts.unverified, reason])];
+    return { facts, presentation: buildPresentation(facts, pages), repairAttempted };
+  };
   if (error === null) {
     const facts = summary(first);
     return { facts, presentation: buildPresentation(facts, pages), repairAttempted: false };
   }
+  // Unresolved source mappings must remain visible, rather than asking the
+  // model to invent a missing correspondence.
+  if (
+    allowIncomplete &&
+    first.envelopeValid &&
+    pending.length &&
+    sourceIssues.length &&
+    pending.every((slot) => sourceIssues.some((issue) => issue.startsWith(slot.requirement + ':')))
+  )
+    return incomplete(first, error, false);
   const mode = first.envelopeValid ? 'delta' : 'complete';
   const confirmed = first.envelopeValid ? first.facts : [];
   // A complete repair of an invalid envelope must regenerate required facts. A
@@ -255,10 +274,20 @@ export async function generateVerifiedFacts(
               : ('omitted' as const),
         }));
   const repairSource = serializeCandidateSource(repairPages, context, documentType);
-  const revised = await request('repair', [
-    { role: 'system', content: prompt.system },
-    { role: 'user', content: factPrompt(documentType, repairSource).user + '\n' + repairPrompt },
-  ]);
+  let revised: string;
+  try {
+    revised = await request('repair', [
+      { role: 'system', content: prompt.system },
+      { role: 'user', content: factPrompt(documentType, repairSource).user + '\n' + repairPrompt },
+    ]);
+  } catch (error) {
+    if (!allowIncomplete || !first.envelopeValid) throw error;
+    return incomplete(
+      first,
+      `候補の追加確認未完了: ${error instanceof Error ? error.message : String(error)}`,
+      true
+    );
+  }
   const repaired = reviewCandidates(revised, documentType, repairPages, context);
   let failure: string | null = null;
   if (repaired.envelopeValid)
@@ -349,6 +378,15 @@ export async function generateVerifiedFacts(
     confirmedIds: final.facts.map((f) => f.id),
     repairMode: mode,
   });
+  if (allowIncomplete && failure) {
+    if (
+      !repaired.envelopeValid ||
+      failure.startsWith('REPAIR:') ||
+      failure.startsWith('CAPACITY:')
+    ) {
+      if (first.envelopeValid) return incomplete(first, failure, true);
+    } else return incomplete(final, failure, true);
+  }
   if (failure !== null)
     throw new FactSummaryGenerationError(failure, raw, revised, [
       ...first.diagnostics,
@@ -358,7 +396,7 @@ export async function generateVerifiedFacts(
   return { facts, presentation: buildPresentation(facts, pages), repairAttempted: true };
 }
 
-/** The user path always completes synthesis and independent semantic review. */
+/** Structured output is independent of individually reviewed explanations. */
 export async function generateVerifiedFactSummary(
   config: LLMConfig,
   documentType: DocumentType,
@@ -367,9 +405,9 @@ export async function generateVerifiedFactSummary(
   onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
 ): Promise<{ facts: FactSummary; presentation: SummaryPresentation; repairAttempted: boolean }> {
   config = { ...config, signal: config.signal ?? AbortSignal.timeout(300_000) };
-  const extracted = await generateVerifiedFacts(config, documentType, text, pages, onAttempt);
+  const extracted = await generateVerifiedFacts(config, documentType, text, pages, onAttempt, true);
   const { facts, presentation } = extracted;
-  const generated = await generateSummaryNarrative(
+  presentation.organization = await generateSummaryOrganization(
     { ...config, ...factSummaryRequestLimits(config) },
     facts,
     presentation.values,
@@ -377,8 +415,7 @@ export async function generateVerifiedFactSummary(
     pages,
     onAttempt
   );
-  presentation.narrative = generated.narrative;
-  return { facts, presentation, repairAttempted: extracted.repairAttempted || generated.repaired };
+  return { facts, presentation, repairAttempted: extracted.repairAttempted };
 }
 
 const escapeText = (text: string) =>

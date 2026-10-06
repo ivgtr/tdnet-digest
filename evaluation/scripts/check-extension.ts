@@ -226,7 +226,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       !fixtureSource ||
       reviewCase ||
       !narrativeReplay.result ||
-      !narrativeReplay.presentation?.narrative ||
+      narrativeReplay.presentation?.version !== 4 ||
+      !narrativeReplay.presentation?.organization ||
       narrativeReplay.item.id !== item.id)
   )
     throw new Error('説明要約の再生は同じ資料の生成・点検済み記録・固定API・固定PDF専用です');
@@ -792,7 +793,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    assert.ok(stored.value.presentation?.version === 3);
+    assert.ok(stored.value.presentation?.version === 4);
     if (narrativeReplay) {
       // UI replay must preserve the model evaluation outcome, including warnings.
       // It is not a way to turn a failed model assessment into a success.
@@ -834,7 +835,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.ok(
         await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
       );
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-top.png` });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v92-summary-top.png` });
       for (const [title, suffix] of [
         ['事業別業績', 'business'],
         ['キャッシュフロー', 'cash-flow'],
@@ -847,12 +848,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           view.scrollTo(0, view.scrollY + node.getBoundingClientRect().top - 16);
         });
         await page.screenshot({
-          path: `evaluation/results/local/${item.id}-v91-summary-${suffix}.png`,
+          path: `evaluation/results/local/${item.id}-v92-summary-${suffix}.png`,
         });
       }
       await summary.evaluate((node: HTMLElement) => node.ownerDocument.defaultView!.scrollTo(0, 0));
       await page.setViewportSize({ width: 600, height: 800 });
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-narrow.png` });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v92-summary-narrow.png` });
       await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
         nodes.forEach((n) => (n.open = true))
       );
@@ -880,7 +881,15 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const trace = await worker.evaluate(
         async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
       );
-      assert.equal(trace.outcome, narrativeReplay.repairAttempted ? 'repairSuccess' : 'success');
+      assert.equal(
+        trace.outcome,
+        narrativeReplay.result.unverified.length ||
+          ['partial', 'unavailable'].includes(narrativeReplay.presentation.organization.status)
+          ? 'partialSuccess'
+          : narrativeReplay.repairAttempted
+            ? 'repairSuccess'
+            : 'firstSuccess'
+      );
       assert.deepEqual(
         trace.attempts.map((a: any) => a.phase),
         narrativeReplay.attempts.map((a: any) => a.phase)

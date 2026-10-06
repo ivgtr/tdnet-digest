@@ -264,7 +264,13 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     facts = generated.facts;
     id = await resultId(request.pdfUrl, fingerprint, facts, documentHash, generated.presentation);
     trace.resultId = id;
-    trace.outcome = generated.repairAttempted ? 'repairSuccess' : 'firstSuccess';
+    trace.outcome =
+      facts.unverified.length ||
+      ['partial', 'unavailable'].includes(generated.presentation.organization.status)
+        ? 'partialSuccess'
+        : generated.repairAttempted
+          ? 'repairSuccess'
+          : 'firstSuccess';
 
     await saveTrace();
     const metadata: SummaryMetadata = {

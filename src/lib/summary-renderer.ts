@@ -7,7 +7,13 @@ import {
 import { validatePresentation, type SummaryPresentation } from './summary-presentation';
 import type { SourceExcerpt } from './summary-source-inventory';
 import { renderNarrativeText } from './summary-narrative-renderer';
-import { NARRATIVE_TOKEN } from './summary-narrative';
+import {
+  supportedExplanations,
+  supportedTables,
+  unresolvedExplanationSources,
+  unresolvedTableSources,
+} from './summary-organization';
+import { quantityChange } from './summary-narrative-renderer';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import {
   summaryComparison,
@@ -133,66 +139,10 @@ function overviewGrowth(f: VerifiedFact, comparison: SummaryComparison, facts: F
     calculated: growth !== null,
   };
 }
-/** A reviewed row can carry a reported rate without creating a scoring fact. */
-function narrativeGrowth(f: VerifiedFact, presentation: SummaryPresentation) {
-  const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.quantityId;
-  const candidates = presentation.narrative!.content.sections.flatMap((s) =>
-    s.tables.flatMap((t) => {
-      const columns = t.headers.flatMap((h, i) => (/前年.*比|前期比|増減率/.test(h) ? [i] : []));
-      if (columns.length !== 1) return [];
-      return t.rows.flatMap((row) => {
-        const native = row.sourceIds.some((id) =>
-          presentation.excerpts.some(
-            (e) =>
-              e.id === id &&
-              (f.evidence.kind === 'table'
-                ? e.spanIds.includes(f.evidence.valueId)
-                : e.blockId === f.evidence.blockId)
-          )
-        );
-        const label = (row.cells.join(' ') + ' ' + t.caption.text + ' ' + t.headers.join(' '))
-          .normalize('NFKC')
-          .replace(/\s/g, '');
-        const mentionsCurrent = row.cells.some((cell) =>
-          [...cell.matchAll(NARRATIVE_TOKEN)].some(
-            (m) =>
-              m[1] === 'value' &&
-              (m[2] === f.id ||
-                m[2] === anchor ||
-                (native &&
-                  label.includes(f.label.normalize('NFKC').replace(/\s/g, '')) &&
-                  presentation.values.some(
-                    (v) =>
-                      v.id === m[2] &&
-                      v.unit === f.unit &&
-                      v.decimal !== null &&
-                      f.quantity!.decimal !== null &&
-                      v.decimal.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') ===
-                        f.quantity!.decimal.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
-                  )))
-          )
-        );
-        if (!mentionsCurrent) return [];
-        const cell = row.cells[columns[0]];
-        const tokens = [...cell.matchAll(NARRATIVE_TOKEN)];
-        if (tokens.length !== 1 || tokens[0][1] !== 'value') return [];
-        const rate = presentation.values.find((v) => v.id === tokens[0][2]);
-        if (!rate || !['%', '％'].includes(rate.unit ?? '') || rate.decimal === null) return [];
-        return [
-          {
-            text: `${literalMarkdown(t.headers[columns[0]])} ${literalMarkdown(renderNarrativeText(cell, presentation.values))}`,
-            sourceIds: row.sourceIds,
-          },
-        ];
-      });
-    })
-  );
-  return new Set(candidates.map((c) => c.text)).size === 1 ? candidates[0] : undefined;
-}
 function overviewNumber(
   f: VerifiedFact,
   facts: FactSummary,
-  presentation: SummaryPresentation
+  _presentation: SummaryPresentation
 ): string {
   const comparison = summaryComparison(f, facts.facts);
   if (comparison) {
@@ -207,8 +157,6 @@ function overviewNumber(
   }
   const rate = facts.facts.find((r) => canPair(f, r));
   if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;
-  const reported = narrativeGrowth(f, presentation);
-  if (reported) return `${literalMarkdown(f.label)}：${numberText(f)}（${reported.text}）`;
   return `${literalMarkdown(f.label)}：${numberText(f)}${f.semantics.state === 'actual' || f.semantics.state === 'forecastAfter' ? `（${comparisonIssue(f, facts.facts)}）` : ''}`;
 }
 function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
@@ -268,7 +216,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   validatePresentation(presentation, facts);
   const byId = new Map(facts.facts.map((f) => [f.id, f]));
   const sources = new Map(presentation.excerpts.map((e) => [e.id, e]));
-  const single = (field: 'scope' | 'basis') => {
+  const single = (field: 'subject' | 'scope' | 'basis') => {
     const values = [...new Set(facts.facts.map((f) => f.semantics[field]).filter(Boolean))];
     return values.length === 1 ? values[0] : null;
   };
@@ -301,32 +249,142 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     if (f && !numeric(f) && /^(?:配当予想|業績予想)：/.test(statementText(f)))
       lines.push('- ' + overviewStatement(f, facts));
   }
-  const narrative = presentation.narrative!.content;
+  const organization = presentation.organization;
+  const accepted = supportedExplanations(organization);
+  const tables = supportedTables(organization);
+  const unresolved = new Set(
+    unresolvedExplanationSources(organization, presentation.excerpts).map((e) => e.id)
+  );
+  const unresolvedTables = new Set(
+    unresolvedTableSources(organization, facts, presentation.values, presentation.excerpts).map(
+      (e) => e.id
+    )
+  );
   const text = (value: string) => literalMarkdown(renderNarrativeText(value, presentation.values));
-  const cited = (ids: string[]) => references(ids.map((id) => sources.get(id)!.page));
-  for (const claim of narrative.overview) lines.push('- ' + text(claim.text));
-  const overviewSources = narrative.overview.flatMap((c) => c.sourceIds);
-  if (overviewFacts.length || overviewSources.length)
+  if (overviewFacts.length)
     lines.push(
       '',
-      `根拠：${references([
-        ...overviewFacts.flatMap((f) => [
+      `根拠：${references(
+        overviewFacts.flatMap((f) => [
           f.page,
           ...(summaryComparison(f, facts.facts)
             ? [summaryComparison(f, facts.facts)!.reference.page]
             : []),
-        ]),
-        ...overviewSources.map((id) => sources.get(id)!.page),
-        ...overviewFacts.flatMap(
-          (f) =>
-            narrativeGrowth(f, presentation)?.sourceIds.map((id) => sources.get(id)!.page) ?? []
-        ),
-      ])}`
+        ])
+      )}`
     );
-  const quoted = new Set<string>();
-  for (const section of narrative.sections) {
+  if (!facts.facts.length)
+    lines.push('- 数値・条件を確定できていません。各項目の原文を確認してください。');
+  const shownClaims = new Set<string>();
+  const shownTables = new Set<string>();
+  const primarySubject = single('subject');
+  // Every accepted fact has a body location, independently of organization output.
+  for (const section of presentation.sections) {
+    const excerpts = section.excerptIds.map((id) => sources.get(id)!);
+    const members = section.factIds.map((id) => byId.get(id)!);
+    const sectionClaims = accepted.filter(
+      (claim) =>
+        !shownClaims.has(claim.id) && claim.sourceIds.some((id) => section.excerptIds.includes(id))
+    );
+    const sectionTables = tables.filter(
+      (table) =>
+        !shownTables.has(table.caption.id) &&
+        table.caption.sourceIds.some((id) => section.excerptIds.includes(id))
+    );
     lines.push('', `## ${literalMarkdown(section.title)}`);
-    for (const table of section.tables) {
+    const numericFacts = members.filter(numeric);
+    const referencesInPairs = new Set(
+      numericFacts.flatMap((f) => {
+        const pair = summaryComparison(f, facts.facts);
+        return pair ? [pair.reference.id] : [];
+      })
+    );
+    const grouped = new Map<string, VerifiedFact[]>();
+    for (const fact of numericFacts.filter((f) => !referencesInPairs.has(f.id))) {
+      const key = canonicalJSON([periodText(fact), fact.semantics.state, fact.semantics.basis]);
+      const group = grouped.get(key) ?? [];
+      group.push(fact);
+      grouped.set(key, group);
+    }
+    for (const group of grouped.values()) {
+      const f = group[0];
+      const subjectColumn = group.some(
+        (value) =>
+          value.semantics.subject !== primarySubject || value.semantics.scope !== shared.scope
+      );
+      const headers = [...(subjectColumn ? ['対象'] : []), '指標', '値', '比較値', '増減'];
+      lines.push(
+        '',
+        context(f, shared, true, false),
+        '',
+        `| ${headers.join(' | ')} |`,
+        `| ${headers.map(() => '---').join(' | ')} |`
+      );
+      const groupConditions = new Set<string>();
+      for (const value of group) {
+        const comparison = summaryComparison(value, facts.facts);
+        const reference = comparison?.reference;
+        const cf = /キャッシュ.?フロー|CF|現金及び現金同等物/.test(value.label);
+        const growth = comparison && !cf ? overviewGrowth(value, comparison, facts).text : '';
+        const change = comparison
+          ? cf
+            ? quantityChange(
+                presentation.values.find((q) => q.id === value.id)!,
+                presentation.values.find((q) => q.id === reference!.id)!,
+                'flow'
+              )
+            : comparisonLabel(value, comparison) + growth
+          : value.semantics.state === 'actual' || value.semantics.state === 'forecastAfter'
+            ? comparisonIssue(value, facts.facts)
+            : '';
+        const rate = facts.facts.find((r) => canPair(value, r));
+        const cells = [
+          ...(subjectColumn
+            ? [
+                [
+                  value.semantics.subject !== primarySubject ? value.semantics.subject : null,
+                  value.semantics.scope,
+                ]
+                  .filter(Boolean)
+                  .map((s) => literalMarkdown(s!))
+                  .join('／'),
+              ]
+            : []),
+          literalMarkdown(value.label),
+          numberText(value),
+          reference
+            ? `${literalMarkdown(periodText(reference) ?? '')} ${numberText(reference)}`
+            : '',
+          literalMarkdown(change || (rate ? `原文 ${rate.quantity!.raw}${rate.unit}` : '')),
+        ];
+        lines.push(`| ${cells.join(' | ')} |`);
+        const conditions = [
+          ...new Set([
+            ...value.semantics.qualifiers,
+            ...value.semantics.conditions,
+            ...(reference
+              ? [...reference.semantics.qualifiers, ...reference.semantics.conditions]
+              : []),
+          ]),
+        ];
+        for (const condition of conditions) groupConditions.add(condition);
+      }
+      for (const condition of groupConditions)
+        lines.push(`- 比較条件：${literalMarkdown(condition)}`);
+      lines.push(
+        '',
+        `根拠：${references(
+          group.flatMap((value) => [
+            value.page,
+            ...(summaryComparison(value, facts.facts)
+              ? [summaryComparison(value, facts.facts)!.reference.page]
+              : []),
+          ])
+        )}`
+      );
+    }
+    for (const table of sectionTables) {
+      shownTables.add(table.caption.id);
       lines.push(
         '',
         text(table.caption.text),
@@ -335,27 +393,49 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         `| ${table.headers.map(() => '---').join(' | ')} |`
       );
       for (const row of table.rows) lines.push(`| ${row.cells.map(text).join(' | ')} |`);
-    }
-    for (const claim of section.summary) lines.push('- ' + text(claim.text));
-    lines.push('', `根拠：${cited(section.sourceIds)}`);
-    const excerpts = section.sourceIds
-      .filter((id) => !quoted.has(id))
-      .map((id) => sources.get(id)!)
-      .sort(
-        (a, b) =>
-          a.page - b.page || Number(a.blockId.split('b')[1]) - Number(b.blockId.split('b')[1])
+      lines.push(
+        '',
+        `根拠：${references([...table.caption.sourceIds, ...table.rows.flatMap((r) => r.sourceIds)].map((id) => sources.get(id)!.page))}`
       );
-    for (const e of excerpts) quoted.add(e.id);
+    }
+    for (const fact of members.filter((f) => !numeric(f))) {
+      const statement = statementText(fact);
+      if (/^(?:配当予想|業績予想)：/.test(statement))
+        lines.push('- ' + overviewStatement(fact, facts));
+      else if (fact.kind === 'status') lines.push('- ' + statement);
+    }
+    for (const claim of sectionClaims) {
+      shownClaims.add(claim.id);
+      lines.push('- ' + text(claim.text));
+    }
+    const residual = excerpts.filter((e) => unresolved.has(e.id));
+    const headings = new Map<string, number[]>();
+    for (const e of residual) {
+      const heading = e.heading?.text ?? section.title;
+      headings.set(heading, [...(headings.get(heading) ?? []), e.page]);
+    }
+    for (const [heading, pages] of headings)
+      lines.push(`- 要約未作成：${literalMarkdown(heading)} ${references(pages)}`);
+    const remainingRows = excerpts.filter((e) => unresolvedTables.has(e.id));
+    if (remainingRows.length)
+      lines.push(
+        `- 未整理の数値・表：${references(remainingRows.map((e) => e.page))}（原文を見る）`
+      );
+    if (sectionClaims.length)
+      lines.push(
+        '',
+        `根拠：${references(sectionClaims.flatMap((c) => c.sourceIds.map((id) => sources.get(id)!.page)))}`
+      );
     if (excerpts.length) lines.push('', '### 原文を見る', ...renderExcerpts(excerpts));
   }
-  const remaining = presentation.excerpts.filter((e) => !quoted.has(e.id));
-  if (remaining.length) lines.push('', '### 原文を見る', ...renderExcerpts(remaining));
   if (
     overviewFacts.some((f) => {
       const comparison = summaryComparison(f, facts.facts);
       return comparison && overviewGrowth(f, comparison, facts).calculated;
     }) ||
-    /\{\{change:/.test(JSON.stringify(narrative))
+    tables.some((table) =>
+      table.rows.some((row) => row.cells.some((cell) => cell.includes('{{change:')))
+    )
   )
     lines.push('', '※「約」の率は表示金額から計算。原文の増減率と端数処理で異なる場合があります。');
   const forecasts = [

@@ -3,7 +3,11 @@ import expectation from './fixtures/summary-content-expectations.json';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { parseFactSummary, renderFacts } from './fact-summary';
 import { revalidatePresentation, validatePresentation } from './summary-presentation';
-import { buildPresentation, completePresentation } from './fixtures/summary-narrative-source';
+import {
+  buildPresentation,
+  completePresentation,
+  fixedNarrativeContent,
+} from './fixtures/summary-narrative-source';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import { summaryResultId } from './summary-result-id';
 import corpus from './fixtures/ir-semantic-corpus.json';
@@ -276,7 +280,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
   it('生成要約の言い換えと重要条件を通常表示し、全文原文を閉じたトグルに保持する', () => {
     const draft = buildPresentation(facts, [page]);
     const sourceIds = draft.excerpts.map((e) => e.id);
-    const content = structuredClone(draft.narrative!.content);
+    const content = fixedNarrativeContent(facts, draft);
     content.sections[0].summary = [
       { id: 'reason', text: '増収要因：新商品の販売と価格改定が寄与。', sourceIds },
       {

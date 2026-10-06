@@ -8,10 +8,7 @@ import { parseFactSummary } from '../lib/fact-summary';
 import type { FactSummary } from '../lib/fact-summary';
 import type { ExtractedPage, ExtractionMode } from '../types/summaryMetadata';
 import { serializePagesForAnalysis } from '../lib/page-text';
-import {
-  fixedNarrativeContent,
-  fixedNarrativeReview,
-} from '../lib/fixtures/summary-narrative-source';
+import { fixedOrganization } from '../lib/fixtures/summary-narrative-source';
 import type { SummaryAttempt } from '../lib/summary-trace';
 
 const mocked = vi.hoisted(() => ({
@@ -35,9 +32,9 @@ interface TestResponse {
 vi.mock('@/lib/llm-client', () => ({ generateText: mocked.generateText }));
 // Candidate transport/diagnostic races belong here; synthesis semantics are owned
 // by summary-narrative.test. Keep its current storage contract at this boundary.
-vi.mock('@/lib/summary-narrative', async (original) => ({
-  ...(await original<typeof import('../lib/summary-narrative')>()),
-  generateSummaryNarrative: async (
+vi.mock('@/lib/summary-organization', async (original) => ({
+  ...(await original<typeof import('../lib/summary-organization')>()),
+  generateSummaryOrganization: async (
     _config: LLMConfig,
     facts: FactSummary,
     values: import('../lib/summary-narrative').NarrativeValue[],
@@ -45,11 +42,14 @@ vi.mock('@/lib/summary-narrative', async (original) => ({
     _pages: ExtractedPage[],
     onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
   ) => {
-    const content = fixedNarrativeContent(facts, { excerpts, sections: [] });
-    const review = fixedNarrativeReview(content, facts, { values, excerpts });
-    await onAttempt?.({ phase: 'summary', response: JSON.stringify(content), error: null });
-    await onAttempt?.({ phase: 'summaryReview', response: JSON.stringify(review), error: null });
-    return { narrative: { content, review }, repaired: false };
+    const result = fixedOrganization(facts, { values, excerpts, sections: [] });
+    await onAttempt?.({ phase: 'summary', response: JSON.stringify(result), error: null });
+    await onAttempt?.({
+      phase: 'summaryReview',
+      response: JSON.stringify(result.review),
+      error: null,
+    });
+    return result;
   },
 }));
 vi.mock('@/lib/score-extraction', () => ({ extractScoreInput: mocked.extractScoreInput }));

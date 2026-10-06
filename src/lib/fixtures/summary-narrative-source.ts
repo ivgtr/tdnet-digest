@@ -5,12 +5,24 @@ import {
   buildPresentation as draftPresentation,
   type SummaryPresentation,
 } from '../summary-presentation';
+import type { NarrativeLine, NarrativeTable } from '../summary-narrative';
+interface NarrativeContent {
+  version: 1;
+  overview: NarrativeLine[];
+  sections: Array<{
+    id: string;
+    title: string;
+    sourceIds: string[];
+    summary: NarrativeLine[];
+    tables: NarrativeTable[];
+  }>;
+}
 import {
-  narrativeClaims,
-  narrativeHash,
-  type NarrativeContent,
-  type NarrativeReview,
-} from '../summary-narrative';
+  organizationHash,
+  organizationClaims,
+  explanationSources,
+  unresolvedTableSources,
+} from '../summary-organization';
 
 export function fixedNarrativeContent(
   facts: FactSummary,
@@ -45,29 +57,44 @@ export function fixedNarrativeContent(
     ],
   };
 }
-export function fixedNarrativeReview(
-  content: NarrativeContent,
+export function fixedOrganization(
   facts: FactSummary,
-  display: Pick<SummaryPresentation, 'values' | 'excerpts'>
-): NarrativeReview {
-  return {
-    version: 2,
-    contentHash: narrativeHash(content, display.values, facts),
-    reviewedClaimIds: narrativeClaims(content).map((c) => c.id),
-    reviewedSourceIds: display.excerpts.map((e) => e.id),
-    findings: [],
+  display: Pick<SummaryPresentation, 'values' | 'excerpts' | 'sections'>,
+  content = fixedNarrativeContent(facts, display)
+): import('../summary-organization').SummaryOrganization {
+  const organization = {
+    version: 1 as const,
+    status: 'ready' as 'ready' | 'partial',
+    claims: content.sections
+      .flatMap((s) => s.summary)
+      .map((c, i) => ({ ...c, id: `explanation-${i}` })),
+    tables: content.sections
+      .flatMap((s) => s.tables)
+      .map((t, i) => ({
+        ...t,
+        caption: { ...t.caption, id: `table-${i}-caption` },
+        rows: t.rows.map((r, j) => ({ ...r, id: `table-${i}-row-${j}` })),
+      })),
+    review: null as import('../summary-organization').ExplanationReview | null,
+    issues: [],
   };
+  organization.review = {
+    contentHash: organizationHash(organization, facts, display.values, display.excerpts),
+    claims: Object.fromEntries(organizationClaims(organization).map((c) => [c.id, null])),
+    sources: Object.fromEntries(explanationSources(display.excerpts).map((e) => [e.id, null])),
+  };
+  if (unresolvedTableSources(organization, facts, display.values, display.excerpts).length)
+    organization.status = 'partial';
+  return organization;
 }
 export function completePresentation(
   display: SummaryPresentation,
   facts: FactSummary,
   content = fixedNarrativeContent(facts, display)
 ): SummaryPresentation {
-  return {
-    ...display,
-    narrative: { content, review: fixedNarrativeReview(content, facts, display) },
-  };
+  return { ...display, organization: fixedOrganization(facts, display, content) };
 }
+
 export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): SummaryPresentation {
   return completePresentation(draftPresentation(facts, pages), facts);
 }
