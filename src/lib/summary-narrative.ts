@@ -344,7 +344,7 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
   )
     throw new Error('NARRATIVE_SCHEMA:修復はversion=2と空でないedits配列が必要です');
   const draft = structuredClone(base);
-  const used: string[] = [];
+  const used: Array<{ path: string; op: unknown }> = [];
   const names = new Set([
     'overview',
     'sections',
@@ -372,10 +372,15 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
     if (
       !parts.length ||
       parts.some((p) => !names.has(p) && !/^(?:0|[1-9]\d*|-)$/.test(p)) ||
-      used.some((p) => p === path || p.startsWith(path + '/') || path.startsWith(p + '/'))
+      used.some(
+        (p) =>
+          (p.path === path && !(p.op === 'cite' && edit.op === 'cite')) ||
+          p.path.startsWith(path + '/') ||
+          path.startsWith(p.path + '/')
+      )
     )
-      throw new Error('NARRATIVE_SCHEMA:未知または重複した修復pathです');
-    used.push(edit.path);
+      throw new Error(`NARRATIVE_SCHEMA:未知または競合する修復pathです ${path}`);
+    used.push({ path, op: edit.op });
     let target: unknown = draft;
     for (const key of parts.slice(0, -1)) {
       if (Array.isArray(target) && /^(?:0|[1-9]\d*)$/.test(key) && Number(key) < target.length)
@@ -398,6 +403,8 @@ export function applyNarrativeEdits(base: unknown, response: unknown): unknown {
         throw new Error('NARRATIVE_SCHEMA:citeは既存sourceIdsへ原文IDを追加する操作です');
       // The model explicitly selects the added citations. Existing numeric and
       // semantic evidence is retained; the compiler never chooses missing proof.
+      // Multiple cite operations have explicit additive set-union semantics.
+      // Replacing/removing the same path or its parent remains a conflict.
       target.sourceIds = [...new Set([...target.sourceIds, ...edit.value])];
     } else if (Array.isArray(target)) {
       const index =
@@ -432,6 +439,19 @@ const NARRATIVE_EDITORIAL_COUNT = /\d+(?:つ|区分|領域|項目|分野|テー�
 // URL path/query digits identify a resource, not a financial quantity. The
 // complete URI must still match a cited source; prefixes are not sufficient.
 const NARRATIVE_URL = /https?:\/\/[A-Za-z0-9._~:/?#[\]@!$&'*+,;=%-]+/g;
+function nativeLiteralValues(raw: string, values: NarrativeValue[]) {
+  const parsed = scalar(raw);
+  if (!parsed?.unit) return [];
+  return values.filter(
+    (v) =>
+      v.unit === parsed.unit &&
+      (parsed.decimal !== null
+        ? v.decimal !== null && decimalIdentity(v.decimal) === decimalIdentity(parsed.decimal)
+        : compact(v.raw) === compact(raw))
+  );
+}
+const quantityExcerpts = (value: NarrativeValue, excerpts: SourceExcerpt[]) =>
+  excerpts.filter((e) => e.spanIds.includes(value.id) || value.id.startsWith(`${e.blockId}:q`));
 /** Current v3 generation compiles exact, cited, complete source quantities.
  * No missing value, unit, date, or meaning is supplied by the compiler. */
 function bindLiteralQuantities(
@@ -479,35 +499,16 @@ function bindLiteralQuantities(
     if (protectedRanges.some(([a, b]) => start < b && end > a)) continue;
     const parsed = scalar(quantity.raw);
     if (!parsed?.unit) continue; // Bare digits remain invalid in the stored contract.
-    const matching = values.filter(
-      (v) =>
-        v.unit === parsed.unit &&
-        (parsed.decimal !== null
-          ? v.decimal !== null && decimalIdentity(v.decimal) === decimalIdentity(parsed.decimal)
-          : compact(v.raw) === compact(quantity.raw)) &&
-        excerpts.some(
-          (e) =>
-            ids.includes(e.id) && (e.spanIds.includes(v.id) || v.id.startsWith(`${e.blockId}:q`))
-        )
+    const native = nativeLiteralValues(quantity.raw, values);
+    const matching = native.filter((v) =>
+      quantityExcerpts(v, excerpts).some((e) => ids.includes(e.id))
     );
     if (!matching.length) {
       // Only a closed set of editorial counts can remain proposed prose. Money,
       // rates, shares, customers, orders and other business KPIs still require
       // exact native quantity evidence. Semantic review must justify the count.
       if (new RegExp(`^(?:${NARRATIVE_EDITORIAL_COUNT.source})$`).test(quantity.raw)) continue;
-      const candidates = values
-        .filter(
-          (v) =>
-            v.unit === parsed.unit &&
-            v.decimal !== null &&
-            parsed.decimal !== null &&
-            decimalIdentity(v.decimal) === decimalIdentity(parsed.decimal)
-        )
-        .flatMap((v) =>
-          excerpts
-            .filter((e) => e.spanIds.includes(v.id) || v.id.startsWith(`${e.blockId}:q`))
-            .map((e) => e.id)
-        );
+      const candidates = native.flatMap((v) => quantityExcerpts(v, excerpts).map((e) => e.id));
       errors.push(
         `NARRATIVE_QUANTITY:「${quantity.raw}」に値・単位が一致する数量が引用原文にありません。対象文=${text}。原文候補=${[...new Set(candidates)].slice(0, 12).join(',')}。意味と対象が一致する原文だけを参照し、未知の値や単位は補わないでください`
       );
@@ -1113,6 +1114,10 @@ function narrativeRepairProblems(
     sourceIds: string[];
     reason: string;
     literalAlternatives: Array<{ text: string; sourceIds: string[]; signedCounterpart?: true }>;
+    missingQuantityEvidence: Array<{
+      text: string;
+      candidates: Array<{ text: string; sourceIds: string[] }>;
+    }>;
   }> = [];
   const check = (text: unknown, ids: unknown, path: string, citationPath: string) => {
     if (
@@ -1169,6 +1174,26 @@ function narrativeRepairProblems(
                     : {}),
                 }));
         }),
+        // Show exact missing numeric anchors separately from sources describing
+        // the cause. The model selects the matching metric/period explicitly;
+        // neither citation repair nor the compiler attaches sources for it.
+        missingQuantityEvidence: displayQuantities({ id: 'rejected', text }).flatMap((q) => {
+          const native = nativeLiteralValues(q.raw, values);
+          if (
+            !native.length ||
+            native.some((v) => quantityExcerpts(v, excerpts).some((e) => ids.includes(e.id)))
+          )
+            return [];
+          return [
+            {
+              text: q.raw,
+              candidates: native.map((v) => ({
+                text: literalValue(v),
+                sourceIds: quantityExcerpts(v, excerpts).map((e) => e.id),
+              })),
+            },
+          ];
+        }),
       });
     }
   };
@@ -1208,6 +1233,7 @@ function narrativeRepairProblems(
                   sourceIds: [...captionIds, ...r.sourceIds] as string[],
                   reason: `cellsは見出し${JSON.stringify(t.headers)}と同じ${t.headers.length}列が必要です。現在${r.cells.length}列です。根拠に沿って不足列を追加するか、表全体の列定義を一貫して修正してください。原文にない値・理由は補わず空セルを明示できます。`,
                   literalAlternatives: [],
+                  missingQuantityEvidence: [],
                 });
               r.cells.forEach((c, n) =>
                 check(
@@ -1415,7 +1441,7 @@ export async function generateSummaryNarrative(
               ? '\n今回は草稿の修復要求です。初稿のversion=3全体は返さず、修復契約version=2のeditsだけ返します。'
               : ''),
           patch
-            ? `修復形式: {"version":2,"edits":[{"op":"cite","path":"/sections/0/summary/0/sourceIds","value":["source:p2b1"]}]}。opはreplace/add/remove/cite。引用が足りない場合はciteで必要な原文IDだけを追加します。行のsourceIdsは全セルの数値・率・理由を裏づけます。引用不足だけを直すときに配列全体をreplaceすると、問題のなかった別セルの根拠が失われます。citeで既存引用を保持してください。引用が誤っている場合の削除・置換は、残りの全セルを裏づける参照を保持した上で明示します。pathは提示した草稿のJSON位置です。変更が必要なtext/sourceIds/cells等だけ修正し、問題のない項目は書き直しません。誤った表題・比較期間は該当箇所を原文に合わせます。ほかの本文で同じ比較・傾向を網羅した重複表は削除でき、過去の全明細を増殖させる修復は行いません。意味や重要事項を落として拒否を避けず、不足する根拠は明示して追加します。必要な追加説明・表・節はaddで配列へ挿入します。literalAlternativesは現在引用した原文にある同値の完全な数量表記です。signedCounterpart=trueは原文の符号が生成文と逆の同じ大きさです。正の損失額へ自動変換せず、原文の符号付き金額を保った損益として書き直してください（例：原文が△10百万円なら「前年同期は△10百万円（赤字）」）。内容の意味を保持したまま原文と同じ単位・符号へ直す際の候補で、別指標への数量の差し替えではありません。原文が「4つのテーマ」なら「4テーマ」と単位を変えず「4つのテーマ」とします。未知の項目・ID・独自の数値は追加しません。APIが許す実在pathだけを操作します。見出しheadersは文字列でsourceIdsを持たないため、提示されたcitationPath（caption.sourceIds）を参照します。修正後の全体を数量照合と独立点検へ渡します。\n修正理由: ${feedback}\n修復箇所と引用欄: ${JSON.stringify(narrativeRepairProblems(repairBase, facts, values, excerpts))}\n修復対象の草稿: ${JSON.stringify(repairBase)}\n根拠入力: ${input}`
+            ? `修復形式: {"version":2,"edits":[{"op":"cite","path":"/sections/0/summary/0/sourceIds","value":["source:p2b1"]}]}。opはreplace/add/remove/cite。引用が足りない場合はciteで必要な原文IDだけを追加します。同じsourceIdsへの複数citeは全IDを和集合で追記します。同じpathや親子pathのreplace/remove/addとの併用は競合として拒否します。行のsourceIdsは全セルの数値・率・理由を裏づけます。引用不足だけを直すときに配列全体をreplaceすると、問題のなかった別セルの根拠が失われます。citeで既存引用を保持してください。引用が誤っている場合の削除・置換は、残りの全セルを裏づける参照を保持した上で明示します。pathは提示した草稿のJSON位置です。変更が必要なtext/sourceIds/cells等だけ修正し、問題のない項目は書き直しません。誤った表題・比較期間は該当箇所を原文に合わせます。ほかの本文で同じ比較・傾向を網羅した重複表は削除でき、過去の全明細を増殖させる修復は行いません。意味や重要事項を落として拒否を避けず、不足する根拠は明示して追加します。必要な追加説明・表・節はaddで配列へ挿入します。missingQuantityEvidenceは引用が不足している数量と、値・符号・単位が完全一致する原文候補です。原因を説明する段落と金額を示す表が別々なら、その両方を引用してください。対象指標と期間が一致する候補を確認し、提示されたcitationPathにciteで追記します。引用不足の数量を同じ文章に書き直すだけでは修復になりません。literalAlternativesは現在引用した原文にある同値の完全な数量表記です。signedCounterpart=trueは原文の符号が生成文と逆の同じ大きさです。正の損失額へ自動変換せず、原文の符号付き金額を保った損益として書き直してください（例：原文が△10百万円なら「前年同期は△10百万円（赤字）」）。内容の意味を保持したまま原文と同じ単位・符号へ直す際の候補で、別指標への数量の差し替えではありません。原文が「4つのテーマ」なら「4テーマ」と単位を変えず「4つのテーマ」とします。未知の項目・ID・独自の数値は追加しません。APIが許す実在pathだけを操作します。見出しheadersは文字列でsourceIdsを持たないため、提示されたcitationPath（caption.sourceIds）を参照します。修正後の全体を数量照合と独立点検へ渡します。\n修正理由: ${feedback}\n修復箇所と引用欄: ${JSON.stringify(narrativeRepairProblems(repairBase, facts, values, excerpts))}\n修復対象の草稿: ${JSON.stringify(repairBase)}\n根拠入力: ${input}`
             : `説明要約の形式: ${FORMAT}\n${feedback}${semanticAttempt && structureAttempt === 0 ? `\n修正前の草稿: ${JSON.stringify(repairBase)}` : ''}\n根拠入力: ${input}`,
           (raw) => {
             rejectedResponse = raw;

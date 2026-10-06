@@ -464,11 +464,17 @@ describe('説明要約の生成・点検・数値参照', () => {
           path: '/sections/0/tables/0/rows/0/sourceIds',
           value: [additionalSource, originalSources[0]],
         },
+        {
+          op: 'cite',
+          path: '/sections/0/tables/0/rows/0/sourceIds',
+          value: [draft.excerpts[2].id, additionalSource],
+        },
       ],
     }) as typeof editBase;
     expect(cited.sections[0].tables[0].rows[0].sourceIds).toEqual([
       ...originalSources,
       additionalSource,
+      draft.excerpts[2].id,
     ]);
     expect(cited.sections[0].tables[0].rows[0].cells).toEqual(
       editBase.sections[0].tables[0].rows[0].cells
@@ -505,6 +511,20 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(() =>
       applyNarrativeEdits(editBase, { version: 2, edits: [edits.edits[0], edits.edits[0]] })
     ).toThrow('SCHEMA');
+    for (const path of ['/sections/0/tables/0/rows/0/sourceIds', '/sections/0/tables/0/rows/0'])
+      expect(() =>
+        applyNarrativeEdits(editBase, {
+          version: 2,
+          edits: [
+            {
+              op: 'cite',
+              path: '/sections/0/tables/0/rows/0/sourceIds',
+              value: [additionalSource],
+            },
+            { op: 'replace', path, value: [] },
+          ],
+        })
+      ).toThrow('競合');
     expect(() => applyNarrativeEdits(editBase, editBase)).toThrow('SCHEMA');
     expect(() =>
       applyNarrativeEdits(editBase, {
@@ -891,7 +911,10 @@ describe('説明要約の生成・点検・数値参照', () => {
     // A structural repair must not consume the separate semantic repair.
     const malformedResponse = structuredClone(response);
     malformedResponse.sections[0].summary[0].text =
-      '売上高999百万円。サービス事業の当期損益は15百万円。';
+      '売上高999百万円。受注高は90百万円。サービス事業の当期損益は15百万円。';
+    malformedResponse.sections[0].summary[0].sourceIds = draft.excerpts
+      .filter((e) => e.text.includes('サービス事業の当期損益'))
+      .map((e) => e.id);
     malformedResponse.sections[1].tables[0].rows[0].cells.pop();
     const correction = {
       version: 2,
@@ -900,6 +923,11 @@ describe('説明要約の生成・点検・数値参照', () => {
           op: 'replace',
           path: '/sections/0/summary/0/text',
           value: response.sections[0].summary[0].text,
+        },
+        {
+          op: 'cite',
+          path: '/sections/0/summary/0/sourceIds',
+          value: response.sections[0].summary[0].sourceIds,
         },
         {
           op: 'replace',
@@ -937,6 +965,26 @@ describe('説明要約の生成・点検・数値参照', () => {
     );
     expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain('literalAlternatives');
     expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain('signedCounterpart');
+    const repairPrompt = vi.mocked(generateText).mock.calls[2][1][1].content;
+    const repairProblems = JSON.parse(
+      repairPrompt.split('修復箇所と引用欄: ')[1].split('\n修復対象の草稿:')[0]
+    ) as Array<{
+      missingQuantityEvidence: Array<{ text: string; candidates: Array<{ sourceIds: string[] }> }>;
+    }>;
+    expect(repairProblems[0].missingQuantityEvidence.find((q) => q.text === '90百万円')).toEqual({
+      text: '90百万円',
+      candidates: [
+        {
+          text: '90百万円',
+          sourceIds: draft.excerpts
+            .filter((e) => e.text.includes('当期受注高は90百万円'))
+            .map((e) => e.id),
+        },
+      ],
+    });
+    expect(repairProblems[0].missingQuantityEvidence.some((q) => q.text === '999百万円')).toBe(
+      false
+    );
     expect(vi.mocked(generateText).mock.calls[2][1][1].content).toContain(
       '/sections/1/tables/0/rows/0/cells'
     );
