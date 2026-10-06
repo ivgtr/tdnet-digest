@@ -55,31 +55,54 @@ export type ObservationTopic = (typeof OBSERVATION_TOPICS)[number];
 export interface ObservationComparison {
   axis: (typeof COMPARISON_AXES)[number];
   period: string;
+  state: FactSemantics['state'];
   valueId: string;
   rateId: string | null;
 }
-export interface DisclosureObservation {
-  id: string;
+export interface DisclosureContext {
   topic: ObservationTopic;
   entity: string | null;
   scope: string | null;
   basis: string | null;
-  metric: string;
-  measure: (typeof OBSERVATION_MEASURES)[number];
   period: string | null;
   state: FactSemantics['state'];
-  valueId: string;
-  comparison: ObservationComparison | null;
   conditions: string[];
   sourceIds: string[];
 }
-export interface DisclosureExplanation extends NarrativeLine {
-  topic: ObservationTopic;
-  entity: string | null;
+export interface DisclosureObservation extends DisclosureContext {
+  id: string;
+  metric: string;
+  measure: (typeof OBSERVATION_MEASURES)[number];
+  valueId: string;
+  comparison: ObservationComparison | null;
 }
+export interface DisclosureExplanation extends NarrativeLine, DisclosureContext {}
 const named = (v: unknown): v is string => typeof v === 'string' && !!v.trim() && v.length <= 1000;
 export const nullableName = (v: unknown) => v === null || named(v);
 const member = (list: readonly string[], v: unknown) => typeof v === 'string' && list.includes(v);
+export const contextKeys = [
+  'topic',
+  'entity',
+  'scope',
+  'basis',
+  'period',
+  'state',
+  'conditions',
+  'sourceIds',
+];
+export function contextShape(value: unknown): value is DisclosureContext {
+  return (
+    record(value) &&
+    member(OBSERVATION_TOPICS, value.topic) &&
+    nullableName(value.entity) &&
+    nullableName(value.scope) &&
+    nullableName(value.basis) &&
+    nullableName(value.period) &&
+    member(OBSERVATION_STATES, value.state) &&
+    Array.isArray(value.conditions) &&
+    value.conditions.every(named)
+  );
+}
 const keys = [
   'topic',
   'entity',
@@ -99,10 +122,7 @@ export function observationShape(value: unknown, saved = false): value is Disclo
     record(value) &&
     exact(value, saved ? ['id', ...keys] : keys) &&
     (!saved || (typeof value.id === 'string' && /^observation-\d+$/.test(value.id))) &&
-    member(OBSERVATION_TOPICS, value.topic) &&
-    nullableName(value.entity) &&
-    nullableName(value.scope) &&
-    nullableName(value.basis) &&
+    contextShape(value) &&
     named(value.metric) &&
     member(OBSERVATION_MEASURES, value.measure) &&
     nullableName(value.period) &&
@@ -112,7 +132,8 @@ export function observationShape(value: unknown, saved = false): value is Disclo
     value.conditions.every(named) &&
     (value.comparison === null ||
       (record(value.comparison) &&
-        exact(value.comparison, ['axis', 'period', 'valueId', 'rateId']) &&
+        exact(value.comparison, ['axis', 'period', 'state', 'valueId', 'rateId']) &&
+        member(OBSERVATION_STATES, value.comparison.state) &&
         member(COMPARISON_AXES, value.comparison.axis) &&
         named(value.comparison.period) &&
         named(value.comparison.valueId) &&
@@ -212,14 +233,7 @@ export const comparisonAxisLabels: Record<ObservationComparison['axis'], string>
   revision: '修正前',
 };
 export function observationGroup(value: DisclosureObservation): string {
-  return canonicalJSON([
-    value.topic,
-    value.period,
-    value.state,
-    value.scope,
-    value.basis,
-    value.conditions,
-  ]);
+  return canonicalJSON([value.topic, value.scope, value.basis, value.conditions]);
 }
 export function observationChange(
   value: DisclosureObservation,
@@ -258,6 +272,12 @@ export function observationChange(
     calculated: change.includes('約'),
   };
 }
+export const factPeriodName = (f: VerifiedFact) =>
+  f.period && f.semantics.periodKind.startsWith('cumulativeQ') && !/累計|中間期/.test(f.period)
+    ? `${f.period}累計`
+    : f.period && f.semantics.periodKind.startsWith('standaloneQ') && !/単独/.test(f.period)
+      ? `${f.period}単独`
+      : f.period;
 export function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
   if (
     rate.semantics.metricKind !== 'rate' ||
@@ -328,13 +348,14 @@ export function factObservation(
     basis: fact.semantics.basis,
     metric: fact.label,
     measure,
-    period: fact.period,
+    period: factPeriodName(fact),
     state: fact.semantics.state,
     valueId: fact.id,
     comparison: pair
       ? {
           axis: pair.axis === 'revision' ? 'revision' : 'yearOnYear',
-          period: pair.reference.period ?? '比較期間',
+          period: factPeriodName(pair.reference) ?? '比較期間',
+          state: pair.reference.semantics.state,
           valueId: pair.reference.id,
           rateId: rates.length === 1 ? rates[0].id : null,
         }
@@ -349,5 +370,79 @@ export function factObservation(
       ]),
     ],
     sourceIds,
+  };
+}
+
+/** Join independently reviewed relationships with confirmed amounts by native identity. */
+export function reconcileObservations(
+  facts: FactSummary,
+  observations: DisclosureObservation[],
+  excerpts: SourceExcerpt[],
+  values: NarrativeValue[]
+): { primary: Map<string, DisclosureObservation>; supplement: DisclosureObservation[] } {
+  const native = (id: string) => {
+    const fact = facts.facts.find((f) => f.id === id);
+    return fact?.evidence.kind === 'table'
+      ? fact.evidence.valueId
+      : fact?.evidence.kind === 'prose'
+        ? (fact.evidence.quantityId ?? id)
+        : id;
+  };
+  const primary = new Map(
+    facts.facts
+      .filter((f) => f.quantity)
+      .map((f) => [f.id, factObservation(f, facts, excerpts, values)])
+  );
+  const supplement: DisclosureObservation[] = [];
+  for (const observation of observations) {
+    const matches = [...primary.values()].filter(
+      (p) =>
+        native(p.valueId) === native(observation.valueId) &&
+        (observation.entity === null || observation.entity === p.entity) &&
+        observation.metric === p.metric &&
+        observation.state === p.state &&
+        (observation.scope === null || observation.scope === p.scope) &&
+        (observation.basis === null || observation.basis === p.basis)
+    );
+    if (matches.length !== 1) {
+      supplement.push(observation);
+      continue;
+    }
+    const current = matches[0];
+    primary.set(current.id, {
+      ...current,
+      comparison:
+        current.comparison &&
+        observation.comparison &&
+        native(current.comparison.valueId) === native(observation.comparison.valueId) &&
+        current.comparison.axis === observation.comparison.axis &&
+        current.comparison.state === observation.comparison.state
+          ? {
+              ...current.comparison,
+              rateId: current.comparison.rateId ?? observation.comparison.rateId,
+            }
+          : (current.comparison ?? observation.comparison),
+      conditions: [...new Set([...current.conditions, ...observation.conditions])],
+      sourceIds: [...new Set([...current.sourceIds, ...observation.sourceIds])],
+    });
+  }
+  // A comparison value already has a visible place in its owning observation.
+  const displayed = [...primary.values(), ...supplement];
+  return {
+    primary,
+    supplement: supplement.filter(
+      (p) =>
+        p.comparison ||
+        !displayed.some(
+          (owner) =>
+            owner.comparison &&
+            native(owner.comparison.valueId) === native(p.valueId) &&
+            owner.entity === p.entity &&
+            owner.metric === p.metric &&
+            owner.scope === p.scope &&
+            owner.basis === p.basis &&
+            owner.comparison.state === p.state
+        )
+    ),
   };
 }

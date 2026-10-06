@@ -9,7 +9,9 @@ import {
   unresolvedTableSources,
 } from './summary-organization';
 import {
-  factObservation,
+  OBSERVATION_TOPICS,
+  reconcileObservations,
+  factPeriodName as periodText,
   canPair,
   observationChange,
   observationGroup,
@@ -55,12 +57,6 @@ const references = (pages: number[]) =>
     .map(ref)
     .join('・');
 const numeric = (f: VerifiedFact) => f.kind === 'number' || f.kind === 'range';
-const periodText = (f: VerifiedFact) =>
-  f.period && f.semantics.periodKind.startsWith('cumulativeQ') && !/累計|中間期/.test(f.period)
-    ? `${f.period}累計`
-    : f.period && f.semantics.periodKind.startsWith('standaloneQ') && !/単独/.test(f.period)
-      ? `${f.period}単独`
-      : f.period;
 const decimalText = (text: string) =>
   text.replace(
     /^(-?)(\d+)/,
@@ -207,17 +203,34 @@ function renderObservationGroups(
   }
   const topics = new Set<ObservationTopic>();
   const text = (value: string) => literalMarkdown(renderNarrativeText(value, presentation.values));
-  for (const group of groups.values()) {
+  for (const group of [...groups.values()].sort(
+    (a, b) => OBSERVATION_TOPICS.indexOf(a[0].topic) - OBSERVATION_TOPICS.indexOf(b[0].topic)
+  )) {
     const first = group[0];
     if (headings && !topics.has(first.topic)) {
       topics.add(first.topic);
       lines.push('', `### ${observationTitles[first.topic]}`);
     }
     const subject = group.some((value) => value.entity !== null && value.entity !== primarySubject);
-    const headers = [...(subject ? ['対象'] : []), '指標', '値', '比較値', '増減'];
+    const periods = [...new Set(group.map((v) => v.period))];
+    const states = [...new Set(group.map((v) => v.state))];
+    const headers = [
+      ...(subject ? ['対象'] : []),
+      ...(periods.length > 1 ? ['対象期'] : []),
+      ...(states.length > 1 ? ['区分'] : []),
+      '指標',
+      '値',
+      '比較値',
+      '増減',
+    ];
     lines.push(
       '',
-      [first.period, stateLabels[first.state], first.scope, first.basis]
+      [
+        periods.length === 1 ? first.period : null,
+        states.length === 1 ? stateLabels[first.state] : null,
+        first.scope,
+        first.basis,
+      ]
         .filter(Boolean)
         .map((v) => literalMarkdown(v!))
         .join('／'),
@@ -233,6 +246,8 @@ function renderObservationGroups(
         : null;
       const cells = [
         ...(subject ? [literalMarkdown(value.entity ?? '全社')] : []),
+        ...(periods.length > 1 ? [literalMarkdown(value.period ?? '対象期未特定')] : []),
+        ...(states.length > 1 ? [stateLabels[value.state]] : []),
         literalMarkdown(value.metric),
         literalMarkdown(literalValue(quantity)),
         comparison
@@ -295,6 +310,12 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   const organization = presentation.organization;
   const accepted = supportedExplanations(organization);
   const observations = supportedObservations(organization);
+  const reconciled = reconcileObservations(
+    facts,
+    observations,
+    presentation.excerpts,
+    presentation.values
+  );
   const unresolved = new Set(
     unresolvedExplanationSources(organization, presentation.excerpts).map((e) => e.id)
   );
@@ -331,7 +352,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   };
   const sectionTitles = new Set([
     ...presentation.sections.map((section) => section.title),
-    ...observations.map((value) => destination(value.topic, value.sourceIds)),
+    ...reconciled.supplement.map((value) => destination(value.topic, value.sourceIds)),
     ...accepted.map((value) => destination(value.topic, value.sourceIds)),
   ]);
   const sections = titles
@@ -353,7 +374,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     const sectionClaims = accepted.filter(
       (value) => destination(value.topic, value.sourceIds) === section.title
     );
-    const sectionObservations = observations.filter(
+    const sectionObservations = reconciled.supplement.filter(
       (value) => destination(value.topic, value.sourceIds) === section.title
     );
     lines.push('', `## ${literalMarkdown(section.title)}`);
@@ -366,21 +387,8 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     );
     const primary = numericFacts
       .filter((f) => !referencesInPairs.has(f.id))
-      .map((f) => factObservation(f, facts, presentation.excerpts, presentation.values));
-    const primaryIds = new Set(
-      numericFacts.flatMap((f) => [
-        f.id,
-        ...(f.evidence.kind === 'table'
-          ? [f.evidence.valueId]
-          : f.evidence.quantityId
-            ? [f.evidence.quantityId]
-            : []),
-      ])
-    );
-    // A reviewed company-level observation of the same native quantity does not duplicate the primary row.
-    const supplement = sectionObservations.filter(
-      (value) => !(value.entity === null && primaryIds.has(value.valueId))
-    );
+      .map((f) => reconciled.primary.get(f.id)!);
+    const supplement = sectionObservations;
     lines.push(...renderObservationGroups(primary, presentation, primarySubject, false));
     lines.push(...renderObservationGroups(supplement, presentation, primarySubject, true));
     for (const fact of members.filter((f) => !numeric(f))) {

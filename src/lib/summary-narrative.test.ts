@@ -71,8 +71,7 @@ function wire() {
     conditions: [],
     sourceIds: sources,
   });
-  return {
-    version: 5,
+  const readings = {
     observations: [
       observation('business', '製品事業', '顧客向け販売額', 'revenue', '120', '100', '製品事業'),
       observation('business', '製品事業', '部門損益', 'profit', '20', '10', '製品事業'),
@@ -105,6 +104,68 @@ function wire() {
       },
     ],
   };
+  const contexts: Array<{
+    id: string;
+    topic: string;
+    entity: string | null;
+    scope: string | null;
+    basis: string | null;
+    period: string | null;
+    state: string;
+    conditions: string[];
+    sourceIds: string[];
+  }> = [];
+  const contextId = (
+    topic: string,
+    entity: string | null,
+    period: string | null,
+    state: string
+  ) => {
+    const prior = contexts.find(
+      (c) => c.topic === topic && c.entity === entity && c.period === period && c.state === state
+    );
+    if (prior) return prior.id;
+    const id = `context-${contexts.length}`;
+    contexts.push({
+      id,
+      topic,
+      entity,
+      scope: null,
+      basis: null,
+      period,
+      state,
+      conditions: [],
+      sourceIds: sources,
+    });
+    return id;
+  };
+  const observations = readings.observations
+    .map((v) => ({
+      contextId: contextId(v.topic, v.entity, v.period, v.state),
+      metric: v.metric,
+      measure: v.measure,
+      valueId: v.valueId,
+      comparison: {
+        ...v.comparison,
+        contextId: contextId(v.topic, v.entity, v.comparison.period, 'actual'),
+      },
+      sourceIds: v.sourceIds,
+    }))
+    .map(({ comparison, ...v }) => ({
+      ...v,
+      comparison: {
+        axis: comparison.axis,
+        contextId: comparison.contextId,
+        valueId: comparison.valueId,
+        rateId: comparison.rateId,
+      },
+    }));
+  const claims = readings.claims.map((v) => ({
+    contextId: contextId(v.topic, v.entity, null, 'unspecified'),
+    text: v.text,
+    sourceIds: v.sourceIds,
+  }));
+  return { version: 6, contexts, observations, claims };
 }
 function review(input = wire()) {
   return {
@@ -147,7 +208,7 @@ function visible(result: Awaited<ReturnType<typeof generate>>) {
 describe('構造化を主とする表示と未整理部分の保持', () => {
   it('事業別・受注・負のCFを表示し、説明を個別採否して同じ段落の未要約条件を残す', async () => {
     const result = await generate();
-    expect(result.presentation.version).toBe(5);
+    expect(result.presentation.version).toBe(6);
     expect(result.presentation.organization.status).toBe('partial');
     expect(supportedExplanations(result.presentation.organization)).toHaveLength(1);
     const reading = visible(result);
@@ -196,7 +257,8 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     const direct = wire();
     direct.observations.reverse();
     direct.observations[5].metric = '販売による収入';
-    direct.observations[5].period = '2026年度 上半期';
+    direct.contexts.find((c) => c.id === direct.observations[5].contextId)!.period =
+      '2026年度 上半期';
     const directResult = await generate(direct);
     expect(visible(directResult)).toContain('↑増収 約+20.0%');
     expect(visible(directResult)).toContain('販売による収入');
@@ -240,7 +302,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(quantityChange(quantity('10'), quantity('0'), 'profit')).toContain('比較値ゼロ');
     for (const raw of [
       JSON.stringify({ version: 3, tables: [], claims: [] }),
-      '{"version":5,"observations":[],"claims":[],"claims":[]}',
+      '{"version":6,"contexts":[],"observations":[],"claims":[],"claims":[]}',
     ]) {
       vi.mocked(generateText).mockReset().mockResolvedValueOnce(first).mockResolvedValueOnce(raw);
       const partial = await generateVerifiedFactSummary(config, 'other', 'source', [page]);

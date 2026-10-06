@@ -47,11 +47,21 @@ export function fixedOrganization(
   content = fixedNarrativeContent(facts, display)
 ): import('../summary-organization').SummaryOrganization {
   const organization = {
-    version: 2 as const,
+    version: 3 as const,
     status: 'ready' as 'ready' | 'partial',
     claims: content.sections
       .flatMap((s) => s.summary)
-      .map((c, i) => ({ ...c, topic: 'other' as const, entity: null, id: `explanation-${i}` })),
+      .map((c, i) => ({
+        ...c,
+        topic: 'other' as const,
+        entity: null,
+        scope: null,
+        basis: null,
+        period: null,
+        state: 'unspecified' as const,
+        conditions: [],
+        id: `explanation-${i}`,
+      })),
     observations: [],
     review: null as import('../summary-organization').ExplanationReview | null,
     issues: [],
