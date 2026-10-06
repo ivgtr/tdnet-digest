@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { generateText } from './llm-client';
 import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { reviewCandidates } from './fact-candidates';
@@ -7,6 +7,7 @@ import {
   buildPresentation,
   revalidatePresentation,
   validatePresentation,
+  type SummaryPresentation,
 } from './summary-presentation';
 import { generateVerifiedFactSummary, generateVerifiedFacts, renderFacts } from './fact-summary';
 import {
@@ -17,13 +18,23 @@ import {
   unresolvedTableSources,
   emptyOrganization,
   ORGANIZATION_LIMITS,
+  generateSummaryOrganization,
 } from './summary-organization';
 import { validateSavedFacts } from './fact-cache';
-import { bindLiteralQuantities, quantitySourceClosure, checkText } from './summary-narrative';
+import {
+  bindLiteralQuantities,
+  quantitySourceClosure,
+  checkText,
+  parseNarrativeResponse,
+} from './summary-narrative';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import type { SummaryAttempt } from './summary-trace';
 import { literalValue, quantityChange } from './summary-narrative-renderer';
-import { checkObservation } from './disclosure-observation';
+import {
+  checkObservation,
+  type DisclosureContext,
+  type DisclosureObservation,
+} from './disclosure-observation';
 
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash', apiKey: 'fixture' };
@@ -47,129 +58,98 @@ const q = (amount: string, includes: string) =>
   )!.id;
 
 function wire() {
-  const observation = (
-    topic: 'business' | 'orders' | 'cash',
+  const context = (
+    id: string,
+    topic: DisclosureContext['topic'],
     entity: string | null,
-    metric: string,
-    measure: 'revenue' | 'profit' | 'stock' | 'flow',
-    current: string,
-    previous: string,
-    source: string,
-    axis: 'yearOnYear' | 'periodEnd' = 'yearOnYear'
+    period: string | null,
+    state: DisclosureContext['state'] = 'actual'
   ) => ({
+    id,
     topic,
     entity,
+    period,
+    state,
     scope: null,
     basis: null,
-    metric,
-    measure,
-    period: '本中間期',
-    state: 'actual' as const,
-    valueId: q(current, source),
-    comparison: {
-      axis,
-      period: axis === 'periodEnd' ? '前期末' : '前年上半期',
-      valueId: q(previous, source),
-      rateId: null,
-    },
     conditions: [],
     sourceIds: sources,
   });
-  const readings = {
+  const observation = (
+    contextId: string,
+    metric: string,
+    measure: DisclosureObservation['measure'],
+    source: string,
+    current: string,
+    previous: string,
+    comparisonContextId: string,
+    axis: 'yearOnYear' | 'periodEnd' = 'yearOnYear'
+  ) => ({
+    contextId,
+    metric,
+    measure,
+    valueId: q(current, source),
+    sourceIds: sources,
+    comparison: {
+      axis,
+      contextId: comparisonContextId,
+      valueId: q(previous, source),
+      rateId: null,
+    },
+  });
+  return {
+    version: 6,
+    contexts: [
+      context('product', 'business', '製品事業', '本中間期'),
+      context('product-prior', 'business', '製品事業', '前年上半期'),
+      context('service', 'business', 'サービス事業', '本中間期'),
+      context('service-prior', 'business', 'サービス事業', '前年上半期'),
+      context('orders', 'orders', null, '本中間期'),
+      context('orders-prior', 'orders', null, '前年上半期'),
+      context('orders-end', 'orders', null, '前期末'),
+      context('cash', 'cash', null, '本中間期'),
+      context('cash-prior', 'cash', null, '前年上半期'),
+      context('business-note', 'business', null, null, 'unspecified'),
+      context('orders-note', 'orders', null, null, 'unspecified'),
+    ],
     observations: [
-      observation('business', '製品事業', '顧客向け販売額', 'revenue', '120', '100', '製品事業'),
-      observation('business', '製品事業', '部門損益', 'profit', '20', '10', '製品事業'),
-      observation('business', 'サービス事業', '部門損益', 'profit', '-15', '-10', 'サービス事業'),
-      observation('orders', null, '新規契約の受注額', 'stock', '90', '100', '当期受注高'),
+      observation(
+        'product',
+        '顧客向け販売額',
+        'revenue',
+        '製品事業',
+        '120',
+        '100',
+        'product-prior'
+      ),
+      observation('product', '部門損益', 'profit', '製品事業', '20', '10', 'product-prior'),
+      observation('service', '部門損益', 'profit', 'サービス事業', '-15', '-10', 'service-prior'),
+      observation('orders', '新規契約の受注額', 'stock', '当期受注高', '90', '100', 'orders-prior'),
       observation(
         'orders',
-        null,
         '未消化の案件残高',
         'stock',
+        '当期末受注残高',
         '150',
         '100',
-        '当期末受注残高',
+        'orders-end',
         'periodEnd'
       ),
-      observation('cash', null, '本業の資金収支', 'flow', '-20', '-30', '当期営業CF'),
+      observation('cash', '本業の資金収支', 'flow', '当期営業CF', '-20', '-30', 'cash-prior'),
     ],
     claims: [
       {
-        topic: 'business',
-        entity: null,
+        contextId: 'business-note',
         text: '価格転嫁が製品事業の増益に寄与。サービス事業は先行投資で赤字拡大。',
         sourceIds: sources,
       },
       {
-        topic: 'orders',
-        entity: null,
+        contextId: 'orders-note',
         text: '受注残増加により来期の増収が確定した。',
         sourceIds: sources,
       },
     ],
   };
-  const contexts: Array<{
-    id: string;
-    topic: string;
-    entity: string | null;
-    scope: string | null;
-    basis: string | null;
-    period: string | null;
-    state: string;
-    conditions: string[];
-    sourceIds: string[];
-  }> = [];
-  const contextId = (
-    topic: string,
-    entity: string | null,
-    period: string | null,
-    state: string
-  ) => {
-    const prior = contexts.find(
-      (c) => c.topic === topic && c.entity === entity && c.period === period && c.state === state
-    );
-    if (prior) return prior.id;
-    const id = `context-${contexts.length}`;
-    contexts.push({
-      id,
-      topic,
-      entity,
-      scope: null,
-      basis: null,
-      period,
-      state,
-      conditions: [],
-      sourceIds: sources,
-    });
-    return id;
-  };
-  const observations = readings.observations
-    .map((v) => ({
-      contextId: contextId(v.topic, v.entity, v.period, v.state),
-      metric: v.metric,
-      measure: v.measure,
-      valueId: v.valueId,
-      comparison: {
-        ...v.comparison,
-        contextId: contextId(v.topic, v.entity, v.comparison.period, 'actual'),
-      },
-      sourceIds: v.sourceIds,
-    }))
-    .map(({ comparison, ...v }) => ({
-      ...v,
-      comparison: {
-        axis: comparison.axis,
-        contextId: comparison.contextId,
-        valueId: comparison.valueId,
-        rateId: comparison.rateId,
-      },
-    }));
-  const claims = readings.claims.map((v) => ({
-    contextId: contextId(v.topic, v.entity, null, 'unspecified'),
-    text: v.text,
-    sourceIds: v.sourceIds,
-  }));
-  return { version: 6, contexts, observations, claims };
 }
 function review(input = wire()) {
   return {
@@ -200,11 +180,26 @@ async function generate(input = wire(), verdict = review(input)) {
   });
   return { ...result, attempts };
 }
-function visible(result: Awaited<ReturnType<typeof generate>>) {
+function visible(result: Pick<Awaited<ReturnType<typeof generate>>, 'facts' | 'presentation'>) {
   return buildSummaryHtml(renderFacts(result.facts, result.presentation), null, {
     companyName: 'テスト',
     title: '開示',
   }).replace(/<details\b[\s\S]*?<\/details>/g, '');
+}
+async function organize(raw = JSON.stringify(wire()), verdict = review()) {
+  vi.mocked(generateText)
+    .mockReset()
+    .mockResolvedValueOnce(raw)
+    .mockResolvedValueOnce(JSON.stringify(verdict));
+  return generateSummaryOrganization(config, facts, draft.values, draft.excerpts, [page]);
+}
+function financialTable(current: string, previous: string) {
+  return layoutPage([
+    { id: 'p1s1', text: '（単位：百万円）', x: 0, y: 100, width: 90, height: 10 },
+    { id: 'p1s2', text: '営業利益', x: 0, y: 124, width: 50, height: 10 },
+    { id: 'p1s3', text: current, x: 100, y: 124, width: 60, height: 10 },
+    { id: 'p1s4', text: previous, x: 200, y: 124, width: 60, height: 10 },
+  ]);
 }
 
 describe('構造化を主とする表示と未整理部分の保持', () => {
@@ -252,7 +247,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     const result = await generateVerifiedFactSummary(config, 'other', statement, [source]);
     expect(result.facts.facts).toHaveLength(1);
     expect(result.presentation.organization.status).toBe('unavailable');
-    const reading = visible({ ...result, attempts: [] });
+    const reading = visible(result);
     expect(reading).toContain('確認済み事項（原文）');
     expect(reading).toContain(statement);
     expect(reading).toContain('要約未作成');
@@ -269,21 +264,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
   });
   it('同じ行の同額セルを別々に追跡し、確定事実の別名だけを同じセルとして扱う', () => {
-    const source = layoutPage(
-      [
-        ['（単位：百万円）', 0, 100, 90],
-        ['営業利益', 0, 124, 50],
-        ['100百万円', 100, 124, 60],
-        ['100百万円', 200, 124, 60],
-      ].map(([text, x, y, width], i) => ({
-        id: `p1s${i + 1}`,
-        text: String(text),
-        x: Number(x),
-        y: Number(y),
-        width: Number(width),
-        height: 10,
-      }))
-    );
+    const source = financialTable('100百万円', '100百万円');
     const display = buildPresentation({ ...facts, facts: [] }, [source]);
     const row = display.excerpts.find((e) => e.kind === 'row' && e.text.includes('営業利益'))!;
     const [current, previous] = display.values.filter((v) => row.spanIds.includes(v.id));
@@ -334,7 +315,14 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     ).toEqual([]);
   });
   it('事業別・受注・負のCFを表示し、説明を個別採否して同じ段落の未要約条件を残す', async () => {
-    const result = await generate();
+    const input = wire();
+    input.observations.reverse();
+    input.observations[5].metric = '販売による収入';
+    input.contexts.find((c) => c.id === 'product')!.period = '2026年度 上半期';
+    const verdict = review(input);
+    verdict.claims.reverse();
+    verdict.sources.reverse();
+    const result = await generate(input, verdict);
     expect(result.presentation.version).toBe(6);
     expect(result.presentation.organization.status).toBe('partial');
     expect(supportedExplanations(result.presentation.organization)).toHaveLength(1);
@@ -372,184 +360,25 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(
       calls.slice(1).every(([c]) => c.reasoningEnabled === false && c.maxOutputTokens === 8192)
     ).toBe(true);
-    const input = JSON.parse(calls[1][1][1].content);
-    expect(input.layout[0].rows.length).toBeGreaterThan(0);
-    expect(input.excerpts).toEqual(draft.excerpts);
+    const request = JSON.parse(calls[1][1][1].content);
+    expect(request.layout[0].rows.length).toBeGreaterThan(0);
+    expect(request.excerpts).toEqual(draft.excerpts);
     // A source reference and one number do not prove every assertion in its paragraph.
     expect(
       result.presentation.organization.review!.sources[
         explanationSources(draft.excerpts).find((e) => e.text.includes('受注残高'))!.id
       ]
     ).toContain('未要約');
-    const direct = wire();
-    direct.observations.reverse();
-    direct.observations[5].metric = '販売による収入';
-    direct.contexts.find((c) => c.id === direct.observations[5].contextId)!.period =
-      '2026年度 上半期';
-    const directResult = await generate(direct);
-    expect(visible(directResult)).toContain('↑増収 約+20.0%');
-    expect(visible(directResult)).toContain('販売による収入');
-    expect(
-      renderFacts(directResult.facts, directResult.presentation).match(/### 事業別業績/g)
-    ).toHaveLength(1);
-    expect(visible(directResult)).toContain('前期末');
-    expect(visible(directResult)).toContain('対象期');
-    expect(visible(directResult)).toContain('2026年度 上半期');
-    expect(wire().contexts.length).toBeLessThan(wire().observations.length * 2);
-    const reordered = review();
-    reordered.claims.reverse();
-    reordered.sources.reverse();
-    expect(visible(await generate(wire(), reordered))).toContain('↑増収 約+20.0%');
-  });
-  it('未知形式・不正数量・欠落した点検を採用せず、保存復元で正しい表と未整理の状態を維持する', async () => {
-    const result = await generate();
-    const copy = structuredClone(result.presentation);
-    copy.organization.observations[0].valueId = 'unknown-quantity';
-    expect(() => validatePresentation(copy, result.facts)).toThrow('REFERENCE');
-    expect(() =>
-      validatePresentation({ ...result.presentation, version: 3 }, result.facts)
-    ).toThrow('不正');
-    const wrongAxis = structuredClone(result.presentation);
-    wrongAxis.organization.observations[0].period = '2027年２月期中間期';
-    wrongAxis.organization.observations[0].comparison!.period = '2026年2月期第２四半期';
-    wrongAxis.organization.observations[0].comparison!.axis = 'periodEnd';
-    expect(() => validatePresentation(wrongAxis, result.facts)).toThrow('OBSERVATION_PERIOD');
-    const missing = structuredClone(result.presentation);
-    delete missing.organization.review!.claims['observation-0'];
-    expect(() => validatePresentation(missing, result.facts)).toThrow('点検範囲');
-    const duplicateReview = review();
-    duplicateReview.claims[1] = { ...duplicateReview.claims[0] };
-    const incompleteReview = review();
-    incompleteReview.sources.pop();
-    const verboseReview = review();
-    verboseReview.sources[0].reason = '長'.repeat(81);
-    for (const verdict of [
-      duplicateReview,
-      incompleteReview,
-      verboseReview,
-      { ...review(), version: 1 },
-    ]) {
-      const rejected = await generate(wire(), verdict);
-      expect(rejected.presentation.organization.status).toBe('unavailable');
-      expect(rejected.presentation.organization.observations).toEqual([]);
-      expect(visible(rejected)).toContain('営業利益');
-    }
-    const unsupported = structuredClone(result.presentation);
-    unsupported.organization.review!.claims['observation-0'] = '期間対応が未確認';
-    expect(visible({ ...result, presentation: unsupported })).not.toContain('↑増収 約+20.0%');
-    // Whole signed values stay native. A loss label does not authorize changing the sign.
-    expect(() =>
-      bindLiteralQuantities('15百万円の赤字', sources, draft.values, draft.excerpts)
-    ).toThrow('QUANTITY');
-    expect(bindLiteralQuantities('△15百万円', sources, draft.values, draft.excerpts)).toContain(
-      '{{value:'
-    );
-    expect(
-      literalValue({ id: 'q', raw: '1億27百万円', decimal: null, unit: '円', sourceIds: sources })
-    ).toBe('1億27百万円');
-    const quantity = (decimal: string) => ({
-      id: decimal,
-      raw: decimal + '百万円',
-      decimal,
-      unit: '百万円',
-      sourceIds: sources,
-    });
-    expect(quantityChange(quantity('10'), quantity('-10'), 'profit')).toBe('↑黒字転換');
-    expect(quantityChange(quantity('10'), quantity('0'), 'profit')).toContain('比較値ゼロ');
-    const missingContext = wire();
-    missingContext.observations[0].contextId = 'absent-context';
-    const duplicateContext = wire();
-    duplicateContext.contexts.push({ ...duplicateContext.contexts[0] });
-    const oversized = wire();
-    oversized.observations = Array.from({ length: ORGANIZATION_LIMITS.observations + 1 }, () => ({
-      ...oversized.observations[0],
-    }));
-    for (const raw of [
-      JSON.stringify(missingContext),
-      JSON.stringify(duplicateContext),
-      JSON.stringify(oversized),
-      JSON.stringify({ version: 3, tables: [], claims: [] }),
-      '{"version":6,"contexts":[],"observations":[],"claims":[],"claims":[]}',
-    ]) {
-      vi.mocked(generateText).mockReset().mockResolvedValueOnce(first).mockResolvedValueOnce(raw);
-      const partial = await generateVerifiedFactSummary(config, 'other', 'source', [page]);
-      expect(partial.presentation.organization.status).toBe('unavailable');
-      expect(renderFacts(partial.facts, partial.presentation)).toContain('営業利益');
-      expect(partial.presentation.organization.issues.length).toBeGreaterThan(0);
-      expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
-    }
-    const captioned = layoutPage(
-      [
-        ['（単位：百万円）', 0, 100, 90],
-        ['営業利益', 0, 124, 50],
-        ['120', 100, 124, 30],
-        ['100', 200, 124, 30],
-      ].map(([text, x, y, width], i) => ({
-        id: `p1s${i + 1}`,
-        text: String(text),
-        x: Number(x),
-        y: Number(y),
-        width: Number(width),
-        height: 10,
-      }))
-    );
-
-    const display = buildPresentation({ ...facts, facts: [] }, [captioned]);
-    const value = display.values.find((v) => v.raw === '120')!;
-    const owner = display.excerpts.find((e) => e.spanIds.includes(value.id))!;
-    expect(value.unit).toBe('百万円');
-    expect(value.sourceIds.length).toBeGreaterThan(1);
-    const token = `{{value:${value.id}}}`;
-    const closure = quantitySourceClosure(token, [owner.id], display.values, display.excerpts, {
-      ...facts,
-      facts: [],
-    });
-    expect(closure).toEqual(expect.arrayContaining(value.sourceIds));
-    checkText(token, closure, display.values, display.excerpts, facts, true);
-    expect(() =>
-      quantitySourceClosure(
-        token,
-        value.sourceIds.filter((id) => id !== owner.id),
-        display.values,
-        display.excerpts,
-        facts
-      )
-    ).toThrow('原文');
-    const signedPage = layoutPage([
-      { id: 'p1s1', text: '（単位：千円）', x: 0, y: 100, width: 90, height: 10 },
-      { id: 'p1s2', text: '財務活動によるキャッシュ・フロー', x: 0, y: 124, width: 90, height: 10 },
-      { id: 'p1s3', text: '△265,834', x: 250, y: 124, width: 60, height: 10 },
-      { id: 'p1s5', text: '△164,705', x: 150, y: 124, width: 60, height: 10 },
-      { id: 'p1s4', text: '使用した資金は265,834千円です。', x: 0, y: 160, width: 240, height: 10 },
-    ]);
-    const signed = buildPresentation({ ...facts, facts: [] }, [signedPage]);
-    const magnitude = signed.values.find((v) => v.decimal === '265834')!;
-    const cash = {
-      ...result.presentation.organization.observations[0],
-      entity: null,
-      scope: null,
-      basis: null,
-      metric: '財務活動によるキャッシュ・フロー',
-      measure: 'flow' as const,
-      period: null,
-      valueId: magnitude.id,
-      comparison: null,
-      conditions: [],
-      sourceIds: signed.excerpts.map((e) => e.id),
-    };
-    expect(() =>
-      checkObservation(cash, signed.values, signed.excerpts, { ...facts, facts: [] }, true)
-    ).toThrow('符号付き収支');
-    cash.valueId = signed.values.find((v) => v.decimal === '-265834')!.id;
-    expect(() =>
-      checkObservation(cash, signed.values, signed.excerpts, { ...facts, facts: [] }, true)
-    ).not.toThrow();
-    expect(organizationClaims(result.presentation.organization).length).toBe(8);
+    expect(reading).toContain('販売による収入');
+    expect(renderFacts(result.facts, result.presentation).match(/### 事業別業績/g)).toHaveLength(1);
+    for (const label of ['前期末', '対象期', '2026年度 上半期']) expect(reading).toContain(label);
+    expect(input.contexts.length).toBeLessThan(input.observations.length * 2);
+    expect(organizationClaims(result.presentation.organization)).toHaveLength(8);
     expect(
       organizationHash(result.presentation.organization, result.facts, draft.values, draft.excerpts)
     ).toBe(result.presentation.organization.review!.contentHash);
   });
-  it('説明の期限・点検失敗と重要項目の抽出不足が全体の表示を止めず、未確認を確定値で補わない', async () => {
+  it('説明点検の失敗でも確定済みの数値を表示し、失敗理由を記録する', async () => {
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(first)
@@ -565,14 +394,14 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(renderFacts(result.facts, result.presentation)).toContain('100百万円');
     expect(renderFacts(result.facts, result.presentation)).toContain('要約未作成');
     expect(attempts[attempts.length - 1]?.error).toBe('説明点検の期限');
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(3);
+  });
+  it('原文の対応が不足する項目は修復で補わず、未確認状態を保存復元する', async () => {
     const source = textPage(
       '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
     );
     const candidate = candidateResponse([numberCandidate(source)], [source], 'earnings');
-    vi.mocked(generateText)
-      .mockReset()
-      .mockResolvedValueOnce(candidate)
-      .mockResolvedValueOnce(candidateResponse([], [source], 'earnings'));
+    vi.mocked(generateText).mockReset().mockResolvedValueOnce(candidate);
     const incomplete = await generateVerifiedFacts(
       config,
       'earnings',
@@ -593,9 +422,185 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     ]);
     expect(renderFacts(empty, restoredEmpty)).toContain('数値・条件を確定できていません');
     expect(() => validateSavedFacts({ ...empty, unverified: [] })).toThrow('形式');
+    expect(incomplete.repairAttempted).toBe(false);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+  });
+});
 
+describe('説明候補と独立点検の契約', () => {
+  it.each<[string, (input: ReturnType<typeof wire>) => void, string]>([
+    [
+      '存在しない文脈ID',
+      (v) => (v.observations[0].contextId = 'absent-context'),
+      'OBSERVATION_CONTEXT',
+    ],
+    ['重複する文脈ID', (v) => v.contexts.push({ ...v.contexts[0] }), 'OBSERVATION_CONTEXT'],
+    [
+      '指標数の上限超過',
+      (v) => {
+        v.observations = Array.from({ length: ORGANIZATION_LIMITS.observations + 1 }, () => ({
+          ...v.observations[0],
+        }));
+      },
+      'OBSERVATION_SCHEMA',
+    ],
+    ['旧候補形式', (v) => Object.assign(v, { version: 3, tables: [] }), 'OBSERVATION_SCHEMA'],
+  ])('%sは点検へ進めず未整理として残す', async (_, change, error) => {
+    const input = wire();
+    change(input);
+    const result = await organize(JSON.stringify(input));
+    expect(result.status).toBe('unavailable');
+    expect(result.observations).toEqual([]);
+    expect(result.issues[0].reason).toContain(error);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+  });
+
+  it('JSONの同名キーを最後の値で上書きしない', () => {
     expect(() =>
-      validatePresentation({ ...incomplete.presentation, unknown: true }, incomplete.facts)
-    ).toThrow('不正');
+      parseNarrativeResponse(
+        '{"version":6,"contexts":[],"observations":[],"claims":[],"claims":[]}'
+      )
+    ).toThrow('重複');
+  });
+
+  it.each<[string, (verdict: ReturnType<typeof review>) => void]>([
+    ['判定IDの重複', (v) => (v.claims[1] = { ...v.claims[0] })],
+    ['対象段落の欠落', (v) => v.sources.pop()],
+    ['未知の判定ID', (v) => (v.claims[0].id = 'unknown-observation')],
+    ['理由の文字数超過', (v) => (v.sources[0].reason = '長'.repeat(81))],
+    ['旧点検形式', (v) => (v.version = 1)],
+  ])('%sの点検では指標も説明も採用しない', async (_, change) => {
+    const verdict = review();
+    change(verdict);
+    const result = await organize(JSON.stringify(wire()), verdict);
+    expect(result.status).toBe('unavailable');
+    expect(result.observations).toEqual([]);
+    expect(result.claims).toEqual([]);
+    expect(result.issues[0].reason).toContain('EXPLANATION_REVIEW');
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('保存された説明・比較の検証', () => {
+  let presentation: SummaryPresentation;
+  beforeAll(async () => {
+    presentation = { ...draft, organization: await organize() };
+  });
+
+  it.each<[string, (value: SummaryPresentation) => void, string]>([
+    [
+      '未知の数量ID',
+      (v) => (v.organization.observations[0].valueId = 'unknown-quantity'),
+      'REFERENCE',
+    ],
+    ['旧表示形式', (v) => Object.assign(v, { version: 3 }), '不正'],
+    ['余分な保存項目', (v) => Object.assign(v, { unknown: true }), '不正'],
+    [
+      '前年中間期末を前期末とする比較',
+      (v) => {
+        const observation = v.organization.observations[0];
+        observation.period = '2027年２月期中間期';
+        observation.comparison!.period = '2026年2月期第２四半期';
+        observation.comparison!.axis = 'periodEnd';
+      },
+      'OBSERVATION_PERIOD',
+    ],
+    ['判定IDの欠落', (v) => delete v.organization.review!.claims['observation-0'], '点検範囲'],
+  ])('%sは復元しない', (_, change, error) => {
+    const saved = structuredClone(presentation);
+    change(saved);
+    expect(() => validatePresentation(saved, facts)).toThrow(error);
+  });
+
+  it('独立点検で不支持の指標を表示しない', () => {
+    const unsupported = structuredClone(presentation);
+    unsupported.organization.review!.claims['observation-0'] = '期間対応が未確認';
+    expect(visible({ facts, presentation: unsupported })).not.toContain('↑増収 約+20.0%');
+  });
+});
+
+describe('原文数量の符号・単位・所有セル', () => {
+  it('損失という説明でも正の量へ変えず、原文の符号と複合単位を保持する', () => {
+    expect(() =>
+      bindLiteralQuantities('15百万円の赤字', sources, draft.values, draft.excerpts)
+    ).toThrow('QUANTITY');
+    expect(bindLiteralQuantities('△15百万円', sources, draft.values, draft.excerpts)).toContain(
+      '{{value:'
+    );
+    expect(
+      literalValue({ id: 'q', raw: '1億27百万円', decimal: null, unit: '円', sourceIds: sources })
+    ).toBe('1億27百万円');
+  });
+
+  it.each([
+    ['-10', '↑黒字転換'],
+    ['0', '↑増益（率算出不可：比較値ゼロ）'],
+  ])('比較値%sからの損益変化を表示する', (previous, expected) => {
+    const quantity = (decimal: string) => ({
+      id: decimal,
+      raw: decimal + '百万円',
+      decimal,
+      unit: '百万円',
+      sourceIds: sources,
+    });
+    expect(quantityChange(quantity('10'), quantity(previous), 'profit')).toBe(expected);
+  });
+
+  it('表の単位注記を数量根拠へ加えるが、数量の所有行を省略できない', () => {
+    const display = buildPresentation({ ...facts, facts: [] }, [financialTable('120', '100')]);
+    const value = display.values.find((v) => v.raw === '120')!;
+    const owner = display.excerpts.find((e) => e.spanIds.includes(value.id))!;
+    expect(value.unit).toBe('百万円');
+    expect(value.sourceIds.length).toBeGreaterThan(1);
+    const token = `{{value:${value.id}}}`;
+    const closure = quantitySourceClosure(token, [owner.id], display.values, display.excerpts, {
+      ...facts,
+      facts: [],
+    });
+    expect(closure).toEqual(expect.arrayContaining(value.sourceIds));
+    checkText(token, closure, display.values, display.excerpts, facts, true);
+    expect(() =>
+      quantitySourceClosure(
+        token,
+        value.sourceIds.filter((id) => id !== owner.id),
+        display.values,
+        display.excerpts,
+        facts
+      )
+    ).toThrow('原文');
+  });
+
+  it('CF表の負の収支を説明文の正の支出額で置き換えない', () => {
+    const signedPage = layoutPage([
+      { id: 'p1s1', text: '（単位：千円）', x: 0, y: 100, width: 90, height: 10 },
+      { id: 'p1s2', text: '財務活動によるキャッシュ・フロー', x: 0, y: 124, width: 90, height: 10 },
+      { id: 'p1s3', text: '△265,834', x: 250, y: 124, width: 60, height: 10 },
+      { id: 'p1s5', text: '△164,705', x: 150, y: 124, width: 60, height: 10 },
+      { id: 'p1s4', text: '使用した資金は265,834千円です。', x: 0, y: 160, width: 240, height: 10 },
+    ]);
+    const signed = buildPresentation({ ...facts, facts: [] }, [signedPage]);
+    const magnitude = signed.values.find((v) => v.decimal === '265834')!;
+    const cash = {
+      id: 'observation-0',
+      topic: 'cash' as const,
+      state: 'actual' as const,
+      entity: null,
+      scope: null,
+      basis: null,
+      metric: '財務活動によるキャッシュ・フロー',
+      measure: 'flow' as const,
+      period: null,
+      valueId: magnitude.id,
+      comparison: null,
+      conditions: [],
+      sourceIds: signed.excerpts.map((e) => e.id),
+    };
+    expect(() =>
+      checkObservation(cash, signed.values, signed.excerpts, { ...facts, facts: [] }, true)
+    ).toThrow('符号付き収支');
+    cash.valueId = signed.values.find((v) => v.decimal === '-265834')!.id;
+    expect(() =>
+      checkObservation(cash, signed.values, signed.excerpts, { ...facts, facts: [] }, true)
+    ).not.toThrow();
   });
 });
