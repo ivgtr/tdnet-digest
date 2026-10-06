@@ -15,7 +15,8 @@ import { buildPresentation } from '@/lib/fixtures/summary-narrative-source';
 import { summaryResultId } from '@/lib/summary-result-id';
 import { toValue } from '@/lib/score-extraction';
 import type { ExperimentalScore } from '@/lib/scoring';
-import type { AdditionalAnalysis } from '@/lib/additional-analysis';
+import { parseAnalysisResponse } from '@/lib/additional-analysis';
+import { buildAnalysisInput } from '@/lib/analysis-input';
 import { SUMMARY_TRACE_KEY, type SummaryTrace } from '@/lib/summary-trace';
 import SummaryButton from '../SummaryButton';
 import { useSummarize } from './useSummarize';
@@ -128,17 +129,23 @@ async function summaryRowFor(row: HTMLTableRowElement) {
   });
   return row.nextElementSibling as HTMLTableRowElement;
 }
-const additionalAnalysis: AdditionalAnalysis = {
-  version: 2,
-  interpretation: {
-    text: '営業利益の増加を確認できます',
-    factIds: facts.facts.map((fact) => fact.id),
-  },
-  shortTerm: { text: '判断不能', factIds: [] },
-  mediumTerm: { text: '判断不能', factIds: [] },
-  longTerm: { text: '判断不能', factIds: [] },
-  watchPoints: [],
-};
+const additionalAnalysis = parseAnalysisResponse(
+  JSON.stringify({
+    version: 3,
+    issues: [
+      {
+        title: '増益の継続条件',
+        conclusion: '増益だけで持続的な成長とは判断できません',
+        evidenceIds: facts.facts.map((fact) => `fact:${fact.id}`),
+        reading: '前年との差を確認し、増益要因の継続性を点検する必要があります',
+        caveat: '今回の確認済み入力では事業別の増減要因は未確認です',
+        nextCheck: '次の開示で本業の増益要因と一時要因の内訳を確認する',
+      },
+    ],
+  }),
+  buildAnalysisInput(facts, presentation)
+);
+
 function traceFor(runId: string, resultId: string | null): SummaryTrace {
   return {
     version: 1,
@@ -237,6 +244,58 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
       expect(sendMessage).not.toHaveBeenCalled();
     }
   );
+
+  it('同じ保存結果を開き直しても閉じる前の遅い分析が新しい分析を上書きしない', async () => {
+    const response = await responseFor();
+    const first = deferred<unknown>(),
+      second = deferred<unknown>();
+    sendMessage
+      .mockResolvedValueOnce(response)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const hook = await mount();
+    await act(async () => hook().summarize());
+    await act(async () => hook().analyze());
+    await act(async () => hook().reset());
+    await act(async () => hook().showCached());
+    await act(async () => hook().analyze());
+    const old = structuredClone(additionalAnalysis),
+      fresh = structuredClone(additionalAnalysis);
+    old.issues[0].title = '閉じる前の論点';
+    fresh.issues[0].title = '開き直した後の論点';
+    await act(async () => second.resolve({ analysis: fresh }));
+    await act(async () => first.resolve({ analysis: old }));
+    expect(hook().analysis.data).toEqual(fresh);
+    expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(fresh);
+  });
+
+  it('遅い保存読込が開始済みの追加分析を解除・置換しない', async () => {
+    const response = await responseFor();
+    const read = deferred<Record<string, unknown>>(),
+      analysis = deferred<unknown>();
+    sendMessage.mockResolvedValueOnce(response).mockReturnValueOnce(analysis.promise);
+    const hook = await mount();
+    await act(async () => hook().summarize());
+    await act(async () => hook().reset());
+    const originalGet = chrome.storage.local.get;
+    chrome.storage.local.get = ((keys: string | string[], callback?: (data: unknown) => void) =>
+      Array.isArray(keys)
+        ? read.promise
+        : originalGet(keys, callback!)) as typeof chrome.storage.local.get;
+    let restoring: Promise<void>;
+    await act(async () => {
+      restoring = hook().showCached();
+    });
+    await act(async () => hook().analyze());
+    expect(hook().analysis.loading).toBe(true);
+    await act(async () => {
+      read.resolve({});
+      await restoring;
+    });
+    expect(hook().analysis.loading).toBe(true);
+    await act(async () => analysis.resolve({ analysis: additionalAnalysis }));
+    expect(hook().analysis.data).toEqual(additionalAnalysis);
+  });
 
   it('smart→全文→通常へ切り替え、保存後は通信せず復元する', async () => {
     settings.extractionMode = 'smart';
@@ -487,7 +546,7 @@ describe('実Reactの要約行アクション配置', () => {
     expect(document.activeElement).toBe(analyze);
     expect(section.querySelector('#analysis-result')?.getAttribute('aria-busy')).toBe('false');
     expect(section.querySelector('#analysis-result')?.textContent).toContain(
-      additionalAnalysis.interpretation.text
+      additionalAnalysis.issues[0].conclusion
     );
     expect(section.querySelector('#analysis-result a')?.getAttribute('href')).toBe(
       `${pdfUrl}#page=1`
@@ -506,17 +565,17 @@ describe('実Reactの要約行アクション配置', () => {
       rerun.resolve({
         analysis: {
           ...additionalAnalysis,
-          interpretation: { ...additionalAnalysis.interpretation, text: '閉じた後の遅い分析結果' },
+          issues: [{ ...additionalAnalysis.issues[0], conclusion: '閉じた後の遅い分析結果' }],
         },
       })
     );
     expect(row.nextElementSibling).toBeNull();
-    expect(stored[`analysisCacheV2:${response.resultId}`]).toEqual(additionalAnalysis);
+    expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(additionalAnalysis);
     await click(button);
     const reopened = await summaryRowFor(row);
     expect(cell.textContent).toBe('閉じる');
     expect(reopened.querySelector('#analysis-result')?.textContent).toContain(
-      additionalAnalysis.interpretation.text
+      additionalAnalysis.issues[0].conclusion
     );
     expect(reopened.textContent).not.toContain('閉じた後の遅い分析結果');
     expect(sendMessage).toHaveBeenCalledTimes(4);

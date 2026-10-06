@@ -171,7 +171,7 @@ src/
   - OpenAI、Anthropic、Google、OpenRouter、カスタムの5種類
   - 各プロバイダーのデフォルトURL、デフォルトモデル、モデルリスト
 - **`fact-summary.ts`**: 候補v4・確定事実v6の根拠付き事実抽出。`summary-presentation.ts` / `summary-renderer.ts` は冒頭と本文を分け、全文の原文引用を確定事実と区別して保持・表示する。`fact-validation.ts` が原文字・構造・数量全断片・主体/範囲・期間・限定/条件・状態を照合し、採点は確定IDだけを参照する。詳細と対応境界は docs/development.md の承認済み設計・実装記録を正本とする
-- **`additional-analysis.ts`**: 検証済み事実IDに基づく追加分析
+- **`additional-analysis.ts`**: 確定事実・点検済み説明/指標・コード計算を使う論点型追加分析v3。結論と読みは推論として区別する。`analysis-input.ts` が根拠を構成し、`analysis-calculations.ts` が比較可能な金額だけを計算する。[設計・検証境界](docs/additional-analysis.md)を参照
 - **`prompts.ts`**: 旧要約経路の文書タイプ別プロンプト。現行の要約では使用しない
 - **`format-prompts.ts`**: 2パス要約のパス2用プロンプト
   - パス1の構造化データを文書タイプ別の固定テンプレートへ整形
@@ -203,6 +203,7 @@ src/
   - Viteの`?url`インポートで`pdfjs-dist/build/pdf.worker.min.mjs`を参照
   - `GlobalWorkerOptions.workerSrc`に`chrome.runtime.getURL()`で取得したURLを設定
   - Viteが自動的にWorkerファイルをバンドル（ハッシュ化されたファイル名で最適化）
+- **CMap**: 同版 `pdfjs-dist/cmaps` のpacked資産とLICENSEをViteプラグインがbuild/watchごとに同梱し、Offscreenから `chrome.runtime.getURL('cmaps/')` で読む。外部CDNや追加権限は不要
 - **抽出モード**:
   - **smartモード**: セクション検出→重要セクションフィルタ→品質ゲート→リトライ（最大2回、topK増加）
   - **fullモード（デフォルト・推奨）**: 全ページのテキストを返却。低コストモデルを前提に抽出量より精度を優先

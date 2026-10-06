@@ -26,7 +26,7 @@ interface TestResponse {
   facts: FactSummary;
   presentation: import('../lib/summary-presentation').SummaryPresentation;
   resultId: string;
-  analysis: { longTerm: { text: string } };
+  analysis: import('../lib/additional-analysis').AdditionalAnalysis;
   score: { value: number };
 }
 vi.mock('@/lib/llm-client', () => ({ generateText: mocked.generateText }));
@@ -400,12 +400,17 @@ describe('要約・採点・追加分析の分離', () => {
       .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))
       .mockResolvedValueOnce(
         JSON.stringify({
-          version: 2,
-          interpretation: { text: '判断不能', factIds: [] },
-          shortTerm: { text: '判断不能', factIds: [] },
-          mediumTerm: { text: '判断不能', factIds: [] },
-          longTerm: { text: '判断不能', factIds: [] },
-          watchPoints: [],
+          version: 3,
+          issues: [
+            {
+              title: '計画の実現条件',
+              conclusion: '会社計画の実現性は前提条件と実績の確認が必要です',
+              evidenceIds: [`fact:${facts.facts[0].id}`],
+              reading: '予想の水準だけから達成確度を決めることはできません',
+              caveat: '今回の確認済み入力では予想に対応する実績は未確認です',
+              nextCheck: '次の決算で同じ対象期間の実績と予想の前提を確認する',
+            },
+          ],
         })
       );
     const request = await setup(false);
@@ -417,7 +422,12 @@ describe('要約・採点・追加分析の分離', () => {
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     });
-    expect(analysis.analysis.longTerm.text).toBe('判断不能');
+    expect(analysis.analysis.issues).toHaveLength(1);
+    const sent = mocked.generateText.mock.calls.at(-1)!;
+    expect(sent[1][1].content).toContain('explanation:explanation-0');
+    expect(sent[1][1].content).toContain('開示された数値と条件を確認する');
+    expect(sent[0].maxOutputTokens).toBe(8192);
+    expect(sent[0].signal).toBeInstanceOf(AbortSignal);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
 
