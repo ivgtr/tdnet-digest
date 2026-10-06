@@ -807,12 +807,32 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           : [];
       for (const token of tokens)
         assert.ok(reading.includes(token), `通常表示の要点欠落: ${token}`);
+      if (item.id.startsWith('world')) {
+        const rows = await summary.locator('table tbody tr').allTextContents();
+        // Independent expectations from the source PDF: the rate must be in
+        // the same row, so a prose mention elsewhere cannot mask its absence.
+        for (const [business, profit, rate] of [
+          ['B2C', '4559', '0.1%'],
+          ['B2B', '3089', '12.3%'],
+          ['共通部門', '637', '39.4%'],
+        ])
+          assert.ok(
+            rows.some((row: string) => {
+              const text = row.normalize('NFKC').replace(/\s|,/g, '');
+              return text.includes(business) && text.includes(profit) && text.includes(rate);
+            }),
+            `事業別の同一行比較がありません: ${business} ${rate}`
+          );
+      }
       const toggles = summary.locator('details.tdnet-digest-source');
       assert.ok(await toggles.count());
       assert.ok(
         await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
       );
       await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-top.png` });
+      await summary.screenshot({
+        path: `evaluation/results/local/${item.id}-v91-summary-full.png`,
+      });
       await page.setViewportSize({ width: 600, height: 800 });
       await page.screenshot({ path: `evaluation/results/local/${item.id}-v91-summary-narrow.png` });
       await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>

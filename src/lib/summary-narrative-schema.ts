@@ -100,6 +100,7 @@ export function narrativeResponseSchema(
                     enum: ['supported', 'notApplicable', 'importantOmission', 'style'],
                   },
                   sourceIds: ref('sources'),
+                  claimIds: array({ type: 'string', enum: claimIds }),
                   reason: string,
                 }),
               ])
