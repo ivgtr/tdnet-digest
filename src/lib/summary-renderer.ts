@@ -416,16 +416,15 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       (value) => destination(value.topic, value.sourceIds) === section.title
     );
     lines.push('', `## ${literalMarkdown(section.title)}`);
-    const numericFacts = members.filter(numeric);
+    const numericRows = members.filter(numeric).map((fact) => reconciled.primary.get(fact.id)!);
     const referencesInPairs = new Set(
-      numericFacts.flatMap((f) => {
-        const pair = summaryComparison(f, facts.facts);
-        return pair ? [pair.reference.id] : [];
-      })
+      numericRows.flatMap((row) => (row.comparison ? [row.comparison.valueId] : []))
     );
-    const primary = numericFacts
-      .filter((f) => !referencesInPairs.has(f.id))
-      .map((f) => reconciled.primary.get(f.id)!);
+    // Keep every comparison owner. Only a leaf already displayed by one of
+    // those retained rows can be omitted, regardless of the incoming order.
+    const primary = numericRows.filter(
+      (row) => row.comparison !== null || !referencesInPairs.has(row.valueId)
+    );
     const supplement = sectionObservations;
     lines.push(...renderObservationGroups(primary, presentation, primarySubject, false));
     lines.push(...renderObservationGroups(supplement, presentation, primarySubject, true));
@@ -440,6 +439,31 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         const factContext = context(fact, shared, true, subjects);
         if (factContext) lines.push('', factContext);
         lines.push(`- 確認済み事項（原文）：${statement} ${ref(fact.page)}`);
+      }
+      // Linked notes qualify a verified statement even when the optional
+      // explanation is unavailable. Inline qualifications are already visible.
+      const compact = (value: string) => value.normalize('NFKC').replace(/\s/g, '');
+      const statementSource = compact(fact.statement!);
+      const conditionSources = new Set([
+        ...fact.evidence.contextIds,
+        ...fact.evidence.qualifierIds,
+      ]);
+      for (const condition of new Set([
+        ...fact.semantics.qualifiers,
+        ...fact.semantics.conditions,
+      ])) {
+        if (statementSource.includes(compact(condition))) continue;
+        const pages = presentation.excerpts
+          .filter(
+            (excerpt) =>
+              (conditionSources.has(excerpt.blockId) ||
+                excerpt.spanIds.some((id) => conditionSources.has(id))) &&
+              compact(excerpt.text).includes(compact(condition))
+          )
+          .map((excerpt) => excerpt.page);
+        lines.push(
+          `- 条件・限定（原文）：${literalMarkdown(condition)} ${references(pages.length ? pages : [fact.page])}`
+        );
       }
     }
     for (const claim of sectionClaims) {

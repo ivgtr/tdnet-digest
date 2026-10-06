@@ -18,9 +18,12 @@ import corpus from './fixtures/ir-semantic-corpus.json';
 import candidates from './fixtures/ir-semantic-expectations.json';
 import { extractPageLayout } from './pdf-layout';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
-import type { VerifiedFact } from './fact-contract';
+import type { FactSummary, VerifiedFact } from './fact-contract';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { reviewCandidates } from './fact-candidates';
+import { cells, tableAmount } from './fixtures/fact-review-source';
+import { buildDocumentContext } from './document-context';
+import { validateSavedFacts } from './fact-cache';
 import {
   summaryComparison,
   comparisonLabel,
@@ -215,6 +218,84 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       )
     ).toBeNull();
   });
+  it('3期の比較で中間期の所有行を残し、全確定値を順序によらず表示・保存復元する', () => {
+    const source = cells(
+      [
+        ['上場会社名 株式会社テスト', 0, 0, 240],
+        ['1. 連結経営成績', 0, 30, 280],
+        ['売上高', 280, 60, 140],
+        ['営業利益', 480, 60, 140],
+        ['当期純利益', 680, 60, 140],
+        ['百万円', 340, 90, 80],
+        ['百万円', 540, 90, 80],
+        ['百万円', 740, 90, 80],
+        ['2026年3月期', 0, 120, 140],
+        ['100', 340, 120, 80],
+        ['20', 540, 120, 80],
+        ['10', 740, 120, 80],
+        ['2025年3月期', 0, 150, 140],
+        ['90', 340, 150, 80],
+        ['15', 540, 150, 80],
+        ['8', 740, 150, 80],
+        ['2024年3月期', 0, 180, 140],
+        ['80', 340, 180, 80],
+        ['10', 540, 180, 80],
+        ['5', 740, 180, 80],
+      ],
+      1
+    );
+    const inputs = buildDocumentContext([source]).tableMappings.map((mapping) =>
+      tableAmount([source], mapping, {
+        period: source.spans.find((span) => span.id === mapping.periodIds[0])!.text,
+        subject: '株式会社テスト',
+        scope: '連結',
+        basis: null,
+        state: 'actual',
+      })
+    );
+    const reviewed = reviewCandidates(candidateResponse(inputs, [source], 'earnings'), 'earnings', [
+      source,
+    ]);
+    expect(reviewed.unverified).toEqual([]);
+    expect(reviewed.facts).toHaveLength(9);
+    for (const ordered of [reviewed.facts, [...reviewed.facts].reverse()]) {
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: ordered,
+        unverified: [],
+      };
+      const display = nativePresentation(summary, [source]);
+      const markdown = renderFacts(summary, display);
+      const rows = markdown
+        .split('\n')
+        .filter((line) => line.startsWith('| ') && line.includes('百万円'));
+      // A comparison-owning row must survive even when another row references it.
+      expect(rows).toHaveLength(6);
+      expect(
+        rows.some((row) => row.includes('90百万円') && row.includes('2024年3月期 80百万円'))
+      ).toBe(true);
+      expect(
+        rows.some((row) => row.includes('15百万円') && row.includes('2024年3月期 10百万円'))
+      ).toBe(true);
+      expect(
+        rows.some((row) => row.includes('8百万円') && row.includes('2024年3月期 5百万円'))
+      ).toBe(true);
+      const reading = buildSummaryHtml(markdown, null, {
+        companyName: 'テスト',
+        title: '決算',
+      }).replace(/<details\b[\s\S]*?<\/details>/g, '');
+      expect(reading).toContain('2024年3月期');
+      expect(reading).toContain('80百万円');
+      const savedFacts: unknown = JSON.parse(JSON.stringify(summary));
+      validateSavedFacts(savedFacts);
+      const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), savedFacts, [
+        source,
+      ]);
+      expect(renderFacts(savedFacts, restored)).toBe(markdown);
+    }
+  });
+
   it('成長率は十進値で概算し、符号転換・ゼロ基準・赤字額の率を区別する', () => {
     const original = facts.facts.find((f) => f.label === '営業利益')!;
     const pair = (now: string, before: string) => {

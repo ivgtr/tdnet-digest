@@ -193,19 +193,31 @@ async function organize(raw = JSON.stringify(wire()), verdict = review()) {
     .mockResolvedValueOnce(JSON.stringify(verdict));
   return generateSummaryOrganization(config, facts, draft.values, draft.excerpts, [page]);
 }
-function financialTable(current: string, previous: string) {
+function financialTable(current: string, previous: string, splitUnit = false) {
+  const amount = (text: string, x: number) =>
+    splitUnit
+      ? [
+          { text: text.replace(/百万円$/, ''), x, width: 20 },
+          { text: '百万円', x: x + 23, width: 30 },
+        ]
+      : [{ text, x, width: 60 }];
   return layoutPage([
     { id: 'p1s1', text: '（単位：百万円）', x: 0, y: 100, width: 90, height: 10 },
     { id: 'p1s2', text: '営業利益', x: 0, y: 124, width: 50, height: 10 },
-    { id: 'p1s3', text: current, x: 100, y: 124, width: 60, height: 10 },
-    { id: 'p1s4', text: previous, x: 200, y: 124, width: 60, height: 10 },
+    ...[...amount(current, 100), ...amount(previous, 200)].map((span, i) => ({
+      ...span,
+      id: `p1s${i + 3}`,
+      y: 124,
+      height: 10,
+    })),
   ]);
 }
 
 describe('構造化を主とする表示と未整理部分の保持', () => {
-  it('任意の補足生成に失敗しても確定済みの出来事を通常表示・保存復元する', async () => {
-    const statement = '業務提携契約を締結しました。';
-    const source = textPage(statement);
+  it('任意の補足生成に失敗しても確定済みの出来事と別注記の条件を通常表示・保存復元する', async () => {
+    const statement = '株式を取得する予定です。';
+    const condition = '（注）取得は当局の承認を条件とします。';
+    const source = textPage(`1. 株式取得\n${statement}\n${condition}`);
     const event = {
       ...facts.facts[0],
       kind: 'event' as const,
@@ -218,8 +230,8 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       quote: statement,
       evidence: {
         kind: 'prose' as const,
-        blockId: source.blocks[0].id,
-        assertionId: `${source.blocks[0].id}:a1`,
+        blockId: source.blocks[1].id,
+        assertionId: `${source.blocks[1].id}:a1`,
         quantityId: null,
         contextIds: [],
         scopeIds: [],
@@ -231,7 +243,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
         basis: null,
         periodKind: 'none' as const,
         metricKind: 'none' as const,
-        state: 'contracted' as const,
+        state: 'planned' as const,
         polarity: 'affirmative' as const,
         qualifiers: [],
         conditions: [],
@@ -250,6 +262,8 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     const reading = visible(result);
     expect(reading).toContain('確認済み事項（原文）');
     expect(reading).toContain(statement);
+    expect(result.facts.facts[0].semantics.conditions).toContain(condition);
+    expect(reading).toContain('当局の承認を条件とします');
     expect(reading).toContain('要約未作成');
     const savedFacts: unknown = JSON.parse(JSON.stringify(result.facts));
     validateSavedFacts(savedFacts);
@@ -263,57 +277,62 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     );
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
   });
-  it('同じ行の同額セルを別々に追跡し、確定事実の別名だけを同じセルとして扱う', () => {
-    const source = financialTable('100百万円', '100百万円');
-    const display = buildPresentation({ ...facts, facts: [] }, [source]);
-    const row = display.excerpts.find((e) => e.kind === 'row' && e.text.includes('営業利益'))!;
-    const [current, previous] = display.values.filter((v) => row.spanIds.includes(v.id));
-    expect(current.decimal).toBe(previous.decimal);
-    expect(display.values.some((v) => v.id.startsWith(`${row.blockId}:q`))).toBe(false);
-    const confirmed = {
-      ...facts.facts[0],
-      evidence: {
-        kind: 'table' as const,
-        valueId: current.id,
-        metricIds: [],
-        periodIds: [],
-        unitIds: [],
-        contextIds: [],
-        scopeIds: [],
-        qualifierIds: [],
-      },
-    };
-    const summary = { ...facts, facts: [confirmed] };
-    const values = [...display.values, { ...current, id: confirmed.id }];
-    const organization = emptyOrganization();
-    expect(unresolvedTableSources(organization, summary, values, display.excerpts)).toEqual([row]);
-    expect(
-      unresolvedTableSources(
-        organization,
-        summary,
-        values.filter((v) => v.id !== previous.id),
-        display.excerpts
-      )
-    ).toEqual([]);
-    expect(
-      unresolvedTableSources(
-        organization,
-        {
-          ...summary,
-          facts: [
-            ...summary.facts,
-            {
-              ...confirmed,
-              id: 'previous',
-              evidence: { ...confirmed.evidence, valueId: previous.id },
-            },
-          ],
+  it.each([false, true])(
+    '同額セルを別々に追跡し、位置で証明した別名だけをまとめる（単位分割=%s）',
+    (splitUnit) => {
+      const source = financialTable('100百万円', '100百万円', splitUnit);
+      const display = buildPresentation({ ...facts, facts: [] }, [source]);
+      const row = display.excerpts.find((e) => e.kind === 'row' && e.text.includes('営業利益'))!;
+      const [current, previous] = display.values.filter((v) => row.spanIds.includes(v.id));
+      expect(current.decimal).toBe(previous.decimal);
+      expect(display.values.some((v) => v.id.startsWith(`${row.blockId}:q`))).toBe(false);
+      const confirmed = {
+        ...facts.facts[0],
+        evidence: {
+          kind: 'table' as const,
+          valueId: current.id,
+          metricIds: [],
+          periodIds: [],
+          unitIds: [],
+          contextIds: [],
+          scopeIds: [],
+          qualifierIds: [],
         },
-        values,
-        display.excerpts
-      )
-    ).toEqual([]);
-  });
+      };
+      const summary = { ...facts, facts: [confirmed] };
+      const values = [...display.values, { ...current, id: confirmed.id }];
+      const organization = emptyOrganization();
+      expect(unresolvedTableSources(organization, summary, values, display.excerpts)).toEqual([
+        row,
+      ]);
+      expect(
+        unresolvedTableSources(
+          organization,
+          summary,
+          values.filter((v) => v.id !== previous.id),
+          display.excerpts
+        )
+      ).toEqual([]);
+      expect(
+        unresolvedTableSources(
+          organization,
+          {
+            ...summary,
+            facts: [
+              ...summary.facts,
+              {
+                ...confirmed,
+                id: 'previous',
+                evidence: { ...confirmed.evidence, valueId: previous.id },
+              },
+            ],
+          },
+          values,
+          display.excerpts
+        )
+      ).toEqual([]);
+    }
+  );
   it('事業別・受注・負のCFを表示し、説明を個別採否して同じ段落の未要約条件を残す', async () => {
     const input = wire();
     input.observations.reverse();
@@ -568,6 +587,74 @@ describe('原文数量の符号・単位・所有セル', () => {
         facts
       )
     ).toThrow('原文');
+  });
+
+  it('分割された単位を全原文位置で保持し、途中の単位を表示・保存しない', () => {
+    const summary = { ...facts, facts: [], unverified: ['未確認'] };
+    const split = (first: string, suffix: string, other: string, gap = 3) =>
+      layoutPage([
+        { id: 'p1s1', text: '数量', x: 0, y: 20, width: 30, height: 10 },
+        { id: 'p1s2', text: first, x: 100, y: 20, width: 30, height: 10 },
+        { id: 'p1s3', text: suffix, x: 130 + gap, y: 20, width: 20, height: 10 },
+        { id: 'p1s4', text: other, x: 200, y: 20, width: 60, height: 10 },
+      ]);
+    for (const [first, suffix, unit] of [
+      ['120百', '万円', '百万円'],
+      ['120k', 'Wh', 'kWh'],
+      ['120kW', 'h', 'kWh'],
+      ['120m', '2', 'm2'],
+    ]) {
+      const display = buildPresentation(summary, [split(first, suffix, `150${unit}`)]);
+      expect(display.values).toHaveLength(2);
+      expect(display.values[0]).toMatchObject({
+        id: 'p1s2',
+        raw: first + suffix,
+        decimal: '120',
+        unit,
+      });
+      expect(literalValue(display.values[0])).toBe(`120${unit}`);
+    }
+    for (const source of [
+      split('120百', '万円※', '150百万円'),
+      split('120m2', 'h', '150m2'),
+      split('120百', '万円', '150百万円', 7),
+    ]) {
+      const display = buildPresentation(summary, [source]);
+      expect(display.values.some((v) => v.id === 'p1s2')).toBe(false);
+    }
+    const source = split('120百', '万円', '150百万円');
+    const display = buildPresentation(summary, [source]);
+    const organization: SummaryPresentation['organization'] = {
+      ...emptyOrganization(),
+      status: 'ready',
+      observations: display.values.map((v, i) => ({
+        id: `observation-${i}`,
+        topic: 'other',
+        entity: null,
+        scope: null,
+        basis: null,
+        metric: '数量',
+        measure: 'other',
+        period: null,
+        state: 'actual',
+        conditions: [],
+        sourceIds: display.excerpts.map((e) => e.id),
+        valueId: v.id,
+        comparison: null,
+      })),
+    };
+    organization.review = {
+      contentHash: organizationHash(organization, summary, display.values, display.excerpts),
+      claims: Object.fromEntries(organization.observations.map((o) => [o.id, null])),
+      sources: {},
+    };
+    display.organization = organization;
+    const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), summary, [source]);
+    expect(restored.organization.status).toBe('ready');
+    expect(restored.values[0].raw).toBe('120百万円');
+    expect(unresolvedTableSources(organization, summary, display.values, display.excerpts)).toEqual(
+      []
+    );
   });
 
   it('CF表の負の収支を説明文の正の支出額で置き換えない', () => {

@@ -5,6 +5,7 @@ import {
   proseQuantities,
   declaredQuantityUnit,
   isUncaptionedUnit,
+  isUnitToken,
 } from './quantity';
 import type { SourceExcerpt } from './summary-source-inventory';
 import { headingLevel } from './document-structure';
@@ -96,14 +97,60 @@ function displayUnitCaption(raw: string): string | null {
   return unit && isUncaptionedUnit(unit) ? unit : null;
 }
 
+/** Keep a split literal's complete unit, never a valid-looking prefix of it. */
+function completePhysicalQuantity(
+  native: ExtractedPage['quantities'][number],
+  spans: ExtractedPage['spans']
+) {
+  const parsed = scalar(native.text);
+  if (!parsed) return null;
+  const ids = [...native.spanIds];
+  let text = native.text,
+    unit = parsed.unit,
+    last = spans.find((s) => s.id === ids[ids.length - 1])!;
+  while (last) {
+    const next = spans
+      .filter(
+        (s) =>
+          !ids.includes(s.id) &&
+          Math.abs(s.y - last.y) <= Math.min(s.height, last.height) * 0.25 &&
+          s.x - last.x - last.width >= -0.5
+      )
+      .sort((a, b) => a.x - b.x)[0];
+    if (!next || next.x - last.x - last.width > Math.min(next.height, last.height) * 0.6) break;
+    const continued = (unit ?? '') + compact(next.text);
+    if (!isUnitToken(continued)) {
+      if (unit !== null && isUncaptionedUnit(compact(next.text))) return null;
+      break;
+    }
+    unit = continued;
+    text += next.text;
+    ids.push(next.id);
+    last = next;
+  }
+  if (unit !== null && !isUncaptionedUnit(unit)) return null;
+  return {
+    ...native,
+    text,
+    spanIds: ids,
+    width: Math.max(native.x + native.width, last.x + last.width) - native.x,
+  };
+}
+
 export function narrativeValues(
   facts: FactSummary,
   pages: ExtractedPage[],
   excerpts: SourceExcerpt[]
 ): NarrativeValue[] {
   const values = new Map<string, NarrativeValue>();
+  const physicalQuantitySpans = new Map<string, string[]>();
   for (const page of pages.filter((p) => p.selection === 'selected')) {
-    for (const q of page.quantities) {
+    const consumed = new Set<string>();
+    for (const native of page.quantities) {
+      if (consumed.has(native.id)) continue;
+      const q = completePhysicalQuantity(native, page.spans);
+      if (!q) continue;
+      for (const id of q.spanIds.slice(1)) consumed.add(id);
       const sources = excerpts.filter(
         (e) => e.page === page.pageNumber && q.spanIds.some((id) => e.spanIds.includes(id))
       );
@@ -243,6 +290,12 @@ export function narrativeValues(
         unit: parsed.unit ?? adjacentUnit ?? columnUnit ?? commonUnit,
         sourceIds: [...new Set([...sources, ...unitSources].map((e) => e.id))],
       });
+      // A neighboring unit is part of this literal's physical extent only when
+      // the same-row/gap checks above selected it. Captions never extend a cell.
+      physicalQuantitySpans.set(q.id, [
+        ...q.spanIds,
+        ...(parsed.unit === null && adjacentUnit !== null ? [adjacent!.id] : []),
+      ]);
     }
     for (const e of excerpts.filter((e) => e.page === page.pageNumber && e.kind !== 'heading')) {
       // A row can be read as prose too. Offer its physical quantity ID once, using
@@ -263,13 +316,16 @@ export function narrativeValues(
         const end = start + compact(q.raw).length;
         if (
           mappedRow &&
-          page.quantities.filter(
-            (native) =>
-              values.has(native.id) &&
-              intervals.get(native.spanIds[0])?.start === start &&
-              intervals.get(native.spanIds[native.spanIds.length - 1])?.end === end &&
-              compact(native.text) === compact(q.raw)
-          ).length === 1
+          page.quantities.filter((native) => {
+            const ids = physicalQuantitySpans.get(native.id);
+            return (
+              ids &&
+              intervals.get(ids[0])?.start === start &&
+              intervals.get(ids[ids.length - 1])?.end === end &&
+              compact(ids.map((id) => page.spans.find((span) => span.id === id)!.text).join('')) ===
+                compact(q.raw)
+            );
+          }).length === 1
         )
           continue;
         const parsed = scalar(q.raw);
