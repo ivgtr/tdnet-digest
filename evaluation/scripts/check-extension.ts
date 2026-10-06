@@ -50,19 +50,25 @@ async function sourceBuildDigest(): Promise<string> {
   return digest.digest('hex');
 }
 /** Verify both the selectable JSON and the actual clipboard, after the user's click. */
-async function copiedDiagnostic(row: any, page: any, blocked = false) {
-  await row.getByRole('button', { name: '診断をコピー', exact: true }).click();
+async function copiedDiagnostic(summary: any, page: any, blocked = false) {
+  const info = summary.locator('[data-generation-info]');
+  if (!(await info.evaluate((element: HTMLDetailsElement) => element.open)))
+    await info.locator('summary').first().click();
+  await summary.getByRole('button', { name: '診断JSONをコピー', exact: true }).click();
   if (blocked)
-    await row
+    await summary
       .getByRole('alert')
       .filter({ hasText: 'コピーできませんでした' })
       .waitFor({ timeout: 10000 });
   else
-    await row.getByRole('status').filter({ hasText: 'コピーしました' }).waitFor({ timeout: 10000 });
-  if (!blocked) await row.getByText('診断JSONを表示', { exact: true }).click();
-  const text = await row.getByRole('textbox', { name: '診断JSON', exact: true }).inputValue();
+    await summary
+      .getByRole('status')
+      .filter({ hasText: 'コピーしました' })
+      .waitFor({ timeout: 10000 });
+  if (!blocked) await summary.getByText('診断JSONを表示', { exact: true }).click();
+  const text = await summary.getByRole('textbox', { name: '診断JSON', exact: true }).inputValue();
   if (blocked) {
-    const box = row.getByRole('textbox', { name: '診断JSON', exact: true });
+    const box = summary.getByRole('textbox', { name: '診断JSON', exact: true });
     await box.focus();
     assert.equal(
       await box.evaluate((el: HTMLTextAreaElement) =>
@@ -642,7 +648,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.equal(trace.resultId, null);
       assert.deepEqual(trace.attempts, []);
       assert.deepEqual(trace.usage, []);
-      assert.deepEqual(await copiedDiagnostic(row, page, copyBlocked), trace);
+      assert.deepEqual(await copiedDiagnostic(summary, page, copyBlocked), trace);
       assert.equal(apiCalls, 0);
       assert.equal(pdfRequests, 0);
       evidence.trace = trace;
@@ -756,7 +762,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         trace.attempts.map((a: any) => a.phase),
         ['first', 'repair']
       );
-      assert.deepEqual(await copiedDiagnostic(row, page), trace);
+      assert.deepEqual(await copiedDiagnostic(summary, page), trace);
       assert.equal(apiCalls, 2);
       evidence.stages.push(
         reviewCase === 'assertion-conflict'
@@ -898,7 +904,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
         nodes.forEach((n) => (n.open = false))
       );
-      await row.getByRole('button', { name: '非表示', exact: true }).click();
+      await row.getByRole('button', { name: '閉じる', exact: true }).click();
       assert.equal(await frame.locator('.tdnet-digest-summary-row').count(), 0);
       await row.getByRole('button', { name: '表示', exact: true }).click();
       await summary.waitFor();
@@ -926,7 +932,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         trace.attempts.map((a: any) => a.phase),
         narrativeReplay.attempts.map((a: any) => a.phase)
       );
-      assert.deepEqual(await copiedDiagnostic(row, page), trace);
+      assert.deepEqual(await copiedDiagnostic(summary, page), trace);
       evidence.trace = trace;
       evidence.stages.push(
         'public PDF → Offscreen → replayed extraction/synthesis/review → exact facts/presentation → closed source toggles → full original → cache restore without API → diagnostic clipboard'
@@ -1245,7 +1251,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         'real normal generation PDF/input/model/mode/contract/request limits match CLI conditions'
       );
     }
-    const exported = await copiedDiagnostic(row, page);
+    const exported = await copiedDiagnostic(summary, page);
     assert.deepEqual(exported, trace);
     evidence.stages.push('phase/raw/diagnostics/hash/usage trace copied from UI');
     evidence.sourceHash = stored.value.metadata.documentHash;
@@ -1410,7 +1416,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         );
       evidence.stages.push('current stored facts pass ordinary source meaning verification');
     } else assert.deepEqual(expectedErrors(item, stored.value.facts), []);
-    await row.getByRole('button', { name: '非表示', exact: true }).click();
+    await row.getByRole('button', { name: '閉じる', exact: true }).click();
     const callsBefore = apiCalls;
     await row.getByRole('button', { name: '表示', exact: true }).click();
     await summary
@@ -1459,14 +1465,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
 
     if (reviewDiagnostics) {
       // A cached result has no current request ID, but its exact result ID must match.
-      assert.deepEqual(await copiedDiagnostic(row, page), trace);
+      assert.deepEqual(await copiedDiagnostic(summary, page), trace);
       evidence.stages.push('cached result ID matches diagnostic export after reload');
       await worker.evaluate(async () => chrome.storage.sync.set({ apiKey: '' }));
       await summary.getByRole('button', { name: '再要約', exact: true }).click();
       await summary
         .getByText('APIキーが設定されていません', { exact: false })
         .waitFor({ timeout: 10000 });
-      const failed = await copiedDiagnostic(row, page);
+      const failed = await copiedDiagnostic(summary, page);
       assert.equal(apiCalls, callsBefore);
       const failure = await worker.evaluate(
         async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
@@ -1493,7 +1499,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
 
     if (reviewFixture) {
       const priorCalls = apiCalls;
-      assert.deepEqual(await copiedDiagnostic(row, page), trace);
+      assert.deepEqual(await copiedDiagnostic(summary, page), trace);
       evidence.stages.push('restored result ID matches exported diagnostic');
       const altered = structuredClone(stored.value.facts);
       if (reviewCase === 'attributes') {
@@ -1528,13 +1534,16 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.stages.push('altered saved facts refused before followup API');
     }
     if ((!fixed || reviewFixture) && args.includes('--live-followups')) {
-      await summary.getByRole('button', { name: '追加分析', exact: true }).click();
+      await summary.getByRole('button', { name: '追加分析する', exact: true }).click();
       await page.waitForFunction(
         () => {
           const result = document
             .querySelector<HTMLIFrameElement>('#main_list')
             ?.contentDocument?.querySelector('#analysis-result');
-          return !!result?.querySelector('h5') || !!result?.textContent?.includes('追加分析失敗');
+          return (
+            !!result?.textContent?.includes('解釈:') ||
+            !!result?.textContent?.includes('追加分析失敗')
+          );
         },
         {},
         { timeout: 330000 }
@@ -1578,7 +1587,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
     }
     if (fixed && !reviewFixture) {
-      await summary.getByRole('button', { name: '追加分析', exact: true }).click();
+      await summary.getByRole('button', { name: '追加分析する', exact: true }).click();
       await page.waitForFunction(
         () =>
           document
@@ -1625,7 +1634,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           : 'score retry refuses missing comparisons'
       );
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: false }));
-      await row.getByRole('button', { name: '非表示', exact: true }).click();
+      await row.getByRole('button', { name: '閉じる', exact: true }).click();
       await worker.evaluate(
         async (request: any) => {
           const settings = await chrome.storage.sync.get(['provider', 'model', 'extractionMode']);

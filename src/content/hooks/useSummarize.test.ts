@@ -15,6 +15,9 @@ import { buildPresentation } from '@/lib/fixtures/summary-narrative-source';
 import { summaryResultId } from '@/lib/summary-result-id';
 import { toValue } from '@/lib/score-extraction';
 import type { ExperimentalScore } from '@/lib/scoring';
+import type { AdditionalAnalysis } from '@/lib/additional-analysis';
+import { SUMMARY_TRACE_KEY, type SummaryTrace } from '@/lib/summary-trace';
+import SummaryButton from '../SummaryButton';
 import { useSummarize } from './useSummarize';
 
 const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
@@ -87,6 +90,81 @@ async function mount(url = pdfUrl) {
   root = createRoot(container);
   await act(async () => root.render(createElement(Probe)));
   return () => current;
+}
+async function mountButton() {
+  container = document.createElement('div');
+  document.body.append(container);
+  const table = document.createElement('table');
+  container.append(table);
+  const row = table.insertRow();
+  row.innerHTML = `<td>15:00</td><td>1234</td><td>株式会社テスト</td><td><a href="${pdfUrl}">開示</a></td>`;
+  const cell = row.insertCell();
+  root = createRoot(cell);
+  await act(async () =>
+    root.render(
+      createElement(SummaryButton, {
+        rowData: { ...options, time: '15:00' },
+        row,
+        iframeDoc: document,
+      })
+    )
+  );
+  return { row, cell, button: cell.querySelector('button')! };
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+async function click(button: HTMLElement) {
+  await act(async () => button.click());
+}
+async function summaryRowFor(row: HTMLTableRowElement) {
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(row.nextElementSibling?.className).toBe('tdnet-digest-summary-row');
+  });
+  return row.nextElementSibling as HTMLTableRowElement;
+}
+const additionalAnalysis: AdditionalAnalysis = {
+  version: 2,
+  interpretation: {
+    text: '営業利益の増加を確認できます',
+    factIds: facts.facts.map((fact) => fact.id),
+  },
+  shortTerm: { text: '判断不能', factIds: [] },
+  mediumTerm: { text: '判断不能', factIds: [] },
+  longTerm: { text: '判断不能', factIds: [] },
+  watchPoints: [],
+};
+function traceFor(runId: string, resultId: string | null): SummaryTrace {
+  return {
+    version: 1,
+    runId,
+    resultId,
+    pdfUrl,
+    startedAt: '2026-10-06T00:00:00.000Z',
+    documentType: 'other',
+    provider: 'openai',
+    model: 'fixture',
+    extractionMode: 'full',
+    fingerprint: buildAnalysisFingerprint({
+      provider: 'openai',
+      model: 'fixture',
+      extractionMode: 'full',
+    }),
+    buildDigest: 'fixture',
+    documentHash,
+    inputHash: null,
+    selectedPages: [1, 2],
+    attempts: [],
+    usage: [],
+    elapsedMs: 1,
+    outcome: resultId ? 'firstSuccess' : 'failure',
+    error: resultId ? null : '一部抽出で要約できませんでした',
+  };
 }
 async function changeSettings(update: Record<string, unknown>) {
   Object.assign(settings, update);
@@ -312,5 +390,270 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
         : { loading: false, data: null, error: '保存された採点の形式・確定事実との対応が不正です' }
     );
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+// 管理外の表行とReactポータルの接続を担当する。事実・診断照合の組合せは各契約テストへ置く。
+describe('実Reactの要約行アクション配置', () => {
+  it('一覧は要約・表示・閉じるだけにし、追加分析の連打・失敗・再試行でも本文と操作のフォーカスを保つ', async () => {
+    settings.extractionMode = 'smart';
+    settings.experimentalScoring = false;
+    const response = await responseFor('smart');
+    const summary = deferred<unknown>();
+    const analysis = deferred<unknown>();
+    const retry = deferred<unknown>();
+    const rerun = deferred<unknown>();
+    sendMessage
+      .mockReturnValueOnce(summary.promise)
+      .mockReturnValueOnce(analysis.promise)
+      .mockReturnValueOnce(retry.promise)
+      .mockReturnValueOnce(rerun.promise);
+    const { row, cell, button } = await mountButton();
+    const disclosure = row.cells[3];
+    const disclosureHtml = disclosure.innerHTML;
+    expect(cell.textContent).toBe('要約');
+    expect(cell.querySelectorAll('button')).toHaveLength(1);
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(button.textContent).toBe('要約中');
+    expect(button.disabled).toBe(true);
+    await act(async () =>
+      summary.resolve({
+        ...response,
+        metadata: {
+          ...response.metadata,
+          extractionMode: 'smart',
+          totalPages: 2,
+          extractedPages: [1],
+        },
+      })
+    );
+    const summaryRow = await summaryRowFor(row);
+    expect(cell.textContent).toBe('閉じる');
+    expect(cell.querySelectorAll('button')).toHaveLength(1);
+    const section = summaryRow.querySelector('[data-additional-analysis]')!;
+    expect(section.querySelector('h5')?.textContent).toBe('追加分析');
+    const analyze = section.querySelector<HTMLButtonElement>('#analyze-btn')!;
+    expect(analyze.textContent).toBe('追加分析する');
+    const diagnostics = summaryRow.querySelector<HTMLDetailsElement>('[data-generation-info]')!;
+    expect(diagnostics.open).toBe(false);
+    expect(diagnostics.querySelector('summary')?.textContent).toBe('生成情報・診断');
+    expect(diagnostics.querySelector('#full-retry-btn')).not.toBeNull();
+    expect(diagnostics.querySelector('[data-diagnostic-root] button')?.textContent).toBe(
+      '診断JSONをコピー'
+    );
+    expect(section.contains(diagnostics)).toBe(false);
+    // CSSの契約を確認する。jsdomは実画面での折り返しを検証しない。
+    const heading = summaryRow.querySelector('h4')!;
+    expect(heading.parentElement!.style.flexWrap).toBe('wrap');
+    expect(heading.style.minWidth).toBe('0');
+    expect(heading.parentElement!.parentElement!.style.overflowWrap).toBe('anywhere');
+    expect(button.style.whiteSpace).toBe('nowrap');
+    for (const action of summaryRow.querySelectorAll('button')) {
+      expect(action.style.whiteSpace).toBe('nowrap');
+      expect(action.style.minHeight).toBe('32px');
+      expect(action.style.fontSize).toBe('12px');
+    }
+    const body = summaryRow.querySelector('#score-result')!.previousElementSibling!;
+    const bodyHtml = body.innerHTML;
+    analyze.focus();
+    expect(analyze.style.outline).not.toBe('');
+    await act(async () => {
+      analyze.click();
+      analyze.click();
+    });
+    expect(sendMessage.mock.calls.filter(([request]) => request.action === 'analyze')).toHaveLength(
+      1
+    );
+    expect(analyze.textContent).toBe('分析中…');
+    expect(analyze.disabled).toBe(true);
+    expect(section.querySelector('#analysis-result')?.getAttribute('aria-busy')).toBe('true');
+    expect(section.querySelector('[role="status"]')?.textContent).toContain('追加分析を作成');
+    expect(document.activeElement).toBe(analyze);
+    await act(async () => analysis.resolve({ error: '固定応答の分析失敗' }));
+    expect(analyze.textContent).toBe('再試行');
+    expect(analyze.disabled).toBe(false);
+    expect(section.querySelector('[role="alert"]')?.textContent).toContain('固定応答の分析失敗');
+    expect(document.activeElement).toBe(analyze);
+    await click(analyze);
+    expect(analyze.textContent).toBe('分析中…');
+    await act(async () => retry.resolve({ analysis: additionalAnalysis }));
+    expect(section.querySelector('#analyze-btn')).toBe(analyze);
+    expect(analyze.textContent).toBe('分析し直す');
+    expect(analyze.disabled).toBe(false);
+    expect(document.activeElement).toBe(analyze);
+    expect(section.querySelector('#analysis-result')?.getAttribute('aria-busy')).toBe('false');
+    expect(section.querySelector('#analysis-result')?.textContent).toContain(
+      additionalAnalysis.interpretation.text
+    );
+    expect(section.querySelector('#analysis-result a')?.getAttribute('href')).toBe(
+      `${pdfUrl}#page=1`
+    );
+    expect(summaryRow.querySelector('#score-result')!.previousElementSibling).toBe(body);
+    expect(body.innerHTML).toBe(bodyHtml);
+    expect(row.cells[3]).toBe(disclosure);
+    expect(disclosure.innerHTML).toBe(disclosureHtml);
+    expect(diagnostics.open).toBe(false);
+    await click(analyze);
+    expect(analyze.textContent).toBe('分析中…');
+    await click(button);
+    expect(row.nextElementSibling).toBeNull();
+    expect(cell.textContent).toBe('表示');
+    await act(async () =>
+      rerun.resolve({
+        analysis: {
+          ...additionalAnalysis,
+          interpretation: { ...additionalAnalysis.interpretation, text: '閉じた後の遅い分析結果' },
+        },
+      })
+    );
+    expect(row.nextElementSibling).toBeNull();
+    expect(stored[`analysisCacheV2:${response.resultId}`]).toEqual(additionalAnalysis);
+    await click(button);
+    const reopened = await summaryRowFor(row);
+    expect(cell.textContent).toBe('閉じる');
+    expect(reopened.querySelector('#analysis-result')?.textContent).toContain(
+      additionalAnalysis.interpretation.text
+    );
+    expect(reopened.textContent).not.toContain('閉じた後の遅い分析結果');
+    expect(sendMessage).toHaveBeenCalledTimes(4);
+    expect(
+      sendMessage.mock.calls.filter(([request]) => request.action === 'summarize')
+    ).toHaveLength(1);
+  });
+
+  it('診断ポータルの手動コピーと状態を後続処理で保ち、別実行と閉じる前の遅い完了を表示しない', async () => {
+    const response = await responseFor();
+    const trace = traceFor(response.diagnosticRunId, response.resultId);
+    stored[SUMMARY_TRACE_KEY] = trace;
+    const score = deferred<unknown>();
+    const analysis = deferred<unknown>();
+    sendMessage.mockImplementation(({ action }) =>
+      action === 'summarize'
+        ? Promise.resolve(response)
+        : action === 'score'
+          ? score.promise
+          : analysis.promise
+    );
+    const writeText = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Clipboard denied'))
+      .mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { row, cell, button } = await mountButton();
+    await click(button);
+    const summaryRow = await summaryRowFor(row);
+    const diagnostics = summaryRow.querySelector<HTMLDetailsElement>('[data-generation-info]')!;
+    const host = diagnostics.querySelector<HTMLElement>('[data-diagnostic-root]')!;
+    const copy = host.querySelector('button')!;
+    await click(diagnostics.querySelector('summary')!);
+    expect(diagnostics.open).toBe(true);
+    copy.focus();
+    await click(copy);
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(trace, null, 2));
+    const textarea = host.querySelector('textarea')!;
+    expect(textarea.value).toBe(JSON.stringify(trace, null, 2));
+    expect(textarea.readOnly).toBe(true);
+    expect(textarea.style.width).toBe('100%');
+    expect(textarea.style.maxWidth).toBe('100%');
+    expect(textarea.style.boxSizing).toBe('border-box');
+    expect(textarea.closest('details')?.open).toBe(true);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('選択してコピー');
+    expect(document.activeElement).toBe(copy);
+    await act(async () => score.resolve({ error: '固定応答の採点失敗' }));
+    expect(summaryRow.querySelector('#score-result')?.textContent).toContain('固定応答の採点失敗');
+    expect(summaryRow.querySelector('[data-diagnostic-root]')).toBe(host);
+    expect(diagnostics.open).toBe(true);
+    expect(host.querySelector('textarea')).toBe(textarea);
+    expect(textarea.closest('details')?.open).toBe(true);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('選択してコピー');
+    expect(document.activeElement).toBe(copy);
+    await click(copy);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('コピーしました');
+    await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
+    await act(async () => analysis.resolve({ analysis: additionalAnalysis }));
+    expect(summaryRow.querySelector('[data-diagnostic-root]')).toBe(host);
+    expect(diagnostics.open).toBe(true);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe('コピーしました');
+    stored[SUMMARY_TRACE_KEY] = { ...trace, runId: 'another-run' };
+    await click(copy);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      'この要約結果に対応する診断がありません'
+    );
+    expect(host.querySelector('textarea')).toBeNull();
+    stored[SUMMARY_TRACE_KEY] = trace;
+    const pendingCopy = deferred<void>();
+    writeText.mockReturnValueOnce(pendingCopy.promise);
+    await click(copy);
+    expect(writeText).toHaveBeenCalledTimes(3);
+    await click(button);
+    expect(cell.textContent).toBe('表示');
+    expect(row.nextElementSibling).toBeNull();
+    await click(button);
+    const reopened = await summaryRowFor(row);
+    const reopenedHost = reopened.querySelector('[data-diagnostic-root]')!;
+    expect(reopenedHost).not.toBe(host);
+    await act(async () => pendingCopy.resolve());
+    expect(reopened.querySelector('textarea')).toBeNull();
+    expect(reopenedHost.querySelector('[role="status"]')?.textContent).toBe('');
+    expect(reopenedHost.querySelector('[role="alert"]')).toBeNull();
+    expect(reopened.querySelector<HTMLDetailsElement>('[data-generation-info]')?.open).toBe(false);
+    expect(writeText).toHaveBeenCalledTimes(3);
+  });
+
+  it('エラー行でも閉じると診断を用意し、エラーの隣の全文再要約で回復する', async () => {
+    settings.extractionMode = 'smart';
+    settings.experimentalScoring = false;
+    const trace = traceFor('failed-run', null);
+    stored[SUMMARY_TRACE_KEY] = trace;
+    const response = await responseFor('full');
+    const retry = deferred<unknown>();
+    sendMessage
+      .mockResolvedValueOnce({
+        error: trace.error,
+        diagnosticRunId: trace.runId,
+        retryExtractionMode: 'full',
+      })
+      .mockReturnValueOnce(retry.promise);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { row, cell, button } = await mountButton();
+    await click(button);
+    const errorRow = await summaryRowFor(row);
+    expect(cell.textContent).toBe('閉じる');
+    expect(button.disabled).toBe(false);
+    expect(cell.querySelectorAll('button')).toHaveLength(1);
+    expect(errorRow.querySelector('[data-additional-analysis]')).toBeNull();
+    expect(errorRow.querySelector('#resummarize-btn')?.textContent).toBe('再要約');
+    const error = errorRow.querySelector('[role="alert"]')!;
+    expect(error.textContent).toContain(trace.error);
+    const fullRetry = error.querySelector<HTMLButtonElement>('#full-retry-btn')!;
+    expect(fullRetry.textContent).toBe('全文で再要約');
+    expect(fullRetry.closest('details')).toBeNull();
+    const diagnostics = errorRow.querySelector<HTMLDetailsElement>('[data-generation-info]')!;
+    expect(diagnostics.open).toBe(false);
+    await click(diagnostics.querySelector('summary')!);
+    await click(diagnostics.querySelector<HTMLButtonElement>('[data-diagnostic-root] button')!);
+    expect(writeText).toHaveBeenCalledWith(JSON.stringify(trace, null, 2));
+    expect(diagnostics.querySelector('[role="status"]')?.textContent).toBe('コピーしました');
+    fullRetry.focus();
+    await click(fullRetry);
+    expect(row.nextElementSibling).toBeNull();
+    expect(button.textContent).toBe('要約中');
+    expect(document.activeElement).toBe(button);
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ action: 'summarize', forceExtractionMode: 'full' })
+    );
+    await act(async () => retry.resolve(response));
+    const success = await summaryRowFor(row);
+    expect(success.querySelector('[data-additional-analysis]')).not.toBeNull();
+    expect(success.querySelector('[role="alert"]')).toBeNull();
+    expect(success.querySelector('textarea')).toBeNull();
+    expect(cell.textContent).toBe('閉じる');
+    expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 });

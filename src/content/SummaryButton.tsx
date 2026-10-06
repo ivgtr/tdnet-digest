@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
 import { SUMMARY_TRACE_KEY, matchingSummaryTrace } from '@/lib/summary-trace';
-import { BUTTON_STYLES } from './constants/styles';
+import { ACTION_BUTTON_STYLE, BUTTON_STYLES, FOCUS_STYLE } from './constants/styles';
 
 interface RowData {
   time: string;
@@ -55,6 +56,10 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     rowData: summaryRowData,
   });
 
+  const [diagnosticHost, setDiagnosticHost] = useState<HTMLElement | null>(null);
+  const listButton = useRef<HTMLButtonElement>(null);
+  const summaryPending = useRef<Promise<void> | null>(null);
+
   // 行挿入・削除後にisVisibleを再評価するための再レンダリングトリガー
   const [, setForceUpdate] = useState(0);
   const triggerUpdate = useCallback(() => setForceUpdate((v) => v + 1), []);
@@ -66,7 +71,9 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
 
   useEffect(() => {
     if (priorCacheKey.current && priorCacheKey.current !== cacheKey) {
+      summaryPending.current = null;
       removeSummaryRow();
+      setDiagnosticHost(null);
       triggerUpdate();
     }
     priorCacheKey.current = cacheKey;
@@ -78,15 +85,19 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   useEffect(() => {
     if (result) {
       removeSummaryRow();
-      insertSummaryRow(
+      const host = insertSummaryRow(
         result.summary,
         result.error,
         result.metadata,
         () => {
+          setDiagnosticHost(null);
+          listButton.current?.focus();
           reset();
           summarize('full');
         },
         () => {
+          setDiagnosticHost(null);
+          listButton.current?.focus();
           reset();
           summarize();
         },
@@ -97,8 +108,12 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
         result.retryExtractionMode === 'full',
         result.facts?.facts
       );
+      setDiagnosticHost(host);
       triggerUpdate();
+    } else {
+      setDiagnosticHost(null);
     }
+    return removeSummaryRow;
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
 
   useEffect(() => {
@@ -115,6 +130,10 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     setDiagnosticError(null);
     setDiagnosticText(null);
     setDiagnosticCopied(false);
+    const pendingRequest = diagnosticRequest;
+    return () => {
+      pendingRequest.current++;
+    };
   }, [result]);
   const copyDiagnostic = async () => {
     const request = ++diagnosticRequest.current;
@@ -150,6 +169,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
 
     if (isVisible) {
       removeSummaryRow();
+      setDiagnosticHost(null);
       reset();
       triggerUpdate();
       return;
@@ -160,28 +180,36 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       return;
     }
 
-    summarize();
+    // 同一描画内の連打でも要約要求は一度だけ送る。
+    if (summaryPending.current) return;
+    const request = summarize();
+    summaryPending.current = request;
+    void request.finally(() => {
+      if (summaryPending.current === request) summaryPending.current = null;
+    });
   };
 
   // ボタンテキスト
-  const buttonText = loading ? '...' : hasCached ? (isVisible ? '非表示' : '表示') : '要約';
+  const buttonText = loading ? '要約中' : isVisible ? '閉じる' : hasCached ? '表示' : '要約';
 
   // スタイル: キャッシュ済みかどうかで分岐
   const containerStyle =
-    hasCached && !loading
+    (hasCached || isVisible) && !loading
       ? BUTTON_STYLES.containerCached(isVisible)
       : BUTTON_STYLES.container(loading);
   const buttonStyle =
-    hasCached && !loading ? BUTTON_STYLES.buttonCached(isVisible) : BUTTON_STYLES.button(loading);
+    (hasCached || isVisible) && !loading
+      ? BUTTON_STYLES.buttonCached(isVisible)
+      : BUTTON_STYLES.button(loading);
 
   const hoverBackground =
-    hasCached && !loading
+    (hasCached || isVisible) && !loading
       ? isVisible
         ? BUTTON_STYLES.buttonCachedHover
         : BUTTON_STYLES.buttonCachedShowHover
       : BUTTON_STYLES.buttonHover;
   const normalBackground =
-    hasCached && !loading
+    (hasCached || isVisible) && !loading
       ? isVisible
         ? BUTTON_STYLES.buttonCached(true).background
         : BUTTON_STYLES.buttonCached(false).background
@@ -191,8 +219,14 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     <div>
       <div style={containerStyle}>
         <button
+          ref={listButton}
           type="button"
           onClick={handleClick}
+          onFocus={(e) => Object.assign(e.currentTarget.style, FOCUS_STYLE)}
+          onBlur={(e) => {
+            e.currentTarget.style.removeProperty('outline');
+            e.currentTarget.style.removeProperty('outline-offset');
+          }}
           disabled={loading}
           style={buttonStyle}
           onMouseEnter={(e) => {
@@ -209,34 +243,62 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           {buttonText}
         </button>
       </div>
-      {result && (
-        <button type="button" onClick={() => void copyDiagnostic()} style={{ fontSize: 10 }}>
-          診断をコピー
-        </button>
-      )}
-      {diagnosticCopied && (
-        <span role="status" style={{ fontSize: 10 }}>
-          コピーしました
-        </span>
-      )}
-      {diagnosticText !== null && (
-        <details open={diagnosticError !== null} style={{ fontSize: 10 }}>
-          <summary>診断JSONを表示</summary>
-          <textarea
-            aria-label="診断JSON"
-            readOnly
-            value={diagnosticText}
-            rows={6}
-            onFocus={(e) => e.currentTarget.select()}
-            style={{ width: 320, maxWidth: '80vw', fontSize: 10 }}
-          />
-        </details>
-      )}
-      {diagnosticError && (
-        <span role="alert" style={{ fontSize: 10 }}>
-          {diagnosticError}
-        </span>
-      )}
+      {result &&
+        diagnosticHost &&
+        createPortal(
+          <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.6 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => void copyDiagnostic()}
+                style={ACTION_BUTTON_STYLE}
+              >
+                診断JSONをコピー
+              </button>
+              <span role="status" aria-live="polite" style={{ color: '#6b7280' }}>
+                {diagnosticCopied ? 'コピーしました' : ''}
+              </span>
+            </div>
+            {diagnosticText !== null && (
+              <details open={diagnosticError !== null} style={{ marginTop: 8 }}>
+                <summary style={{ cursor: 'pointer', padding: '4px 0' }}>診断JSONを表示</summary>
+                <textarea
+                  aria-label="診断JSON"
+                  readOnly
+                  value={diagnosticText}
+                  rows={6}
+                  onFocus={(e) => e.currentTarget.select()}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    maxWidth: '100%',
+                    minWidth: 0,
+                    boxSizing: 'border-box',
+                    resize: 'vertical',
+                    marginTop: 8,
+                    padding: 8,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 4,
+                    background: '#ffffff',
+                    color: '#374151',
+                  }}
+                />
+              </details>
+            )}
+            {diagnosticError && (
+              <p
+                role="alert"
+                style={{ margin: '8px 0 0', color: '#991b1b', overflowWrap: 'anywhere' }}
+              >
+                {diagnosticError}
+              </p>
+            )}
+          </div>,
+          diagnosticHost
+        )}
     </div>
   );
 };

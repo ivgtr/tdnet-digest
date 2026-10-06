@@ -17,9 +17,16 @@ import type { VerifiedFact } from '@/lib/fact-contract';
  */
 export function buildErrorHtml(errorText: string, fullRetry = false): string {
   return `
-    <div style="${SUMMARY_STYLES.errorContainer}">
-      <p style="${SUMMARY_STYLES.errorText}">${escapeMetadataText(errorText)}</p>
-      ${fullRetry ? `<button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button>` : ''}
+    <div style="${SUMMARY_STYLES.summaryContainer}">
+      <div style="${SUMMARY_STYLES.headerRow}">
+        <h4 style="${SUMMARY_STYLES.headerTitle}">要約できませんでした</h4>
+        <button type="button" id="resummarize-btn" style="${SUMMARY_STYLES.resummarizeButton}">再要約</button>
+      </div>
+      <div role="alert" style="${SUMMARY_STYLES.errorContainer}">
+        <p style="${SUMMARY_STYLES.errorText}">${escapeMetadataText(errorText)}</p>
+        ${fullRetry ? `<div style="margin-top: 12px;"><button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button></div>` : ''}
+      </div>
+      ${buildDiagnosticsHtml(null)}
     </div>
   `;
 }
@@ -91,7 +98,6 @@ export function buildSummaryHtml(
   analysis?: Stage<AdditionalAnalysis>,
   facts: VerifiedFact[] = []
 ): string {
-  const metadataHtml = buildMetadataHtml(metadata, 'info');
   const subjects = [...new Set(facts.map((fact) => fact.semantics.subject).filter(Boolean))];
   const companyName =
     metadata?.documentType &&
@@ -99,11 +105,6 @@ export function buildSummaryHtml(
     subjects.length === 1
       ? subjects[0]!
       : rowData.companyName;
-  const fullRetryButton =
-    metadata?.extractionMode === 'smart'
-      ? `<button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button>`
-      : '';
-
   return `
     <div style="${SUMMARY_STYLES.summaryContainer}">
       <div style="${SUMMARY_STYLES.headerRow}">
@@ -111,18 +112,43 @@ export function buildSummaryHtml(
           AI要約: ${escapeMetadataText(companyName)} - ${escapeMetadataText(rowData.title)}
         </h4>
         <div style="${SUMMARY_STYLES.buttonGroup}">
-          ${fullRetryButton}
           <button type="button" id="resummarize-btn" style="${SUMMARY_STYLES.resummarizeButton}">再要約</button>
-          <button type="button" id="analyze-btn" style="${SUMMARY_STYLES.resummarizeButton}">追加分析</button>
         </div>
       </div>
       ${buildMetadataHtml(metadata, 'warning')}
       <div style="${SUMMARY_STYLES.summaryText}">${parseSummaryMarkdown(summaryText, rowData.pdfUrl)}</div>
       <div id="score-result">${buildScoreStageHtml(score)}</div>
-      <div id="analysis-result">${buildAnalysisStageHtml(analysis, facts, rowData.pdfUrl)}</div>
-      ${metadataHtml ? `<details style="margin-top:8px;"><summary>生成情報</summary>${metadataHtml}</details>` : ''}
+      <section data-additional-analysis style="${SUMMARY_STYLES.analysisSection}">
+        <h5 style="${SUMMARY_STYLES.sectionTitle}">追加分析</h5>
+        <p style="${SUMMARY_STYLES.sectionDescription}">確認済みの事実をもとに、解釈・時間軸別の見方・確認点を整理します。</p>
+        <div style="${SUMMARY_STYLES.buttonGroup}">
+          <button type="button" id="analyze-btn" style="${SUMMARY_STYLES.analyzeButton}" ${analysis?.loading ? 'disabled' : ''}>${analysisButtonLabel(analysis)}</button>
+          <span id="analysis-status" role="status" aria-live="polite" style="font-size: 12px; color: #6b7280;">${analysis?.loading ? '追加分析を作成しています…' : ''}</span>
+        </div>
+        <div id="analysis-result" style="${SUMMARY_STYLES.summaryText}" aria-busy="${analysis?.loading === true}">${buildAnalysisStageHtml(analysis, facts, rowData.pdfUrl)}</div>
+      </section>
+      ${buildDiagnosticsHtml(metadata)}
     </div>
   `;
+}
+
+function buildDiagnosticsHtml(metadata: SummaryMetadata | null): string {
+  return `<details data-generation-info style="${SUMMARY_STYLES.diagnostics}">
+    <summary style="${SUMMARY_STYLES.disclosure}">生成情報・診断</summary>
+    ${buildMetadataHtml(metadata, 'info')}
+    ${metadata?.extractionMode === 'smart' ? `<div style="margin: 8px 0;"><button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button></div>` : ''}
+    <div data-diagnostic-root></div>
+  </details>`;
+}
+
+export function analysisButtonLabel(analysis?: Stage<AdditionalAnalysis>): string {
+  return analysis?.loading
+    ? '分析中…'
+    : analysis?.error
+      ? '再試行'
+      : analysis?.data
+        ? '分析し直す'
+        : '追加分析する';
 }
 
 export function buildScoreStageHtml(score?: Stage<ExperimentalScore>): string {
@@ -141,9 +167,9 @@ export function buildAnalysisStageHtml(
   pdfUrl?: string
 ): string {
   return analysis?.loading
-    ? '追加分析中…'
+    ? ''
     : analysis?.error
-      ? `追加分析失敗: ${escapeMetadataText(analysis.error)}`
+      ? `<p role="alert" style="${SUMMARY_STYLES.warningBox} margin-top: 12px;">追加分析失敗: ${escapeMetadataText(analysis.error)}</p>`
       : analysis?.data
         ? buildAnalysisHtml(analysis.data, facts, pdfUrl)
         : '';
@@ -165,7 +191,7 @@ function buildAnalysisHtml(
   };
   const view = (label: string, item: AnalysisView) =>
     `<p><strong>${label}:</strong> ${escapeMetadataText(item.text)}${item.factIds.length ? `（根拠: ${item.factIds.map(reference).join(', ')}）` : ''}</p>`;
-  return `<section><h5>追加分析</h5>${view('解釈', analysis.interpretation)}${view('短期', analysis.shortTerm)}${view('中期', analysis.mediumTerm)}${view('長期', analysis.longTerm)}${analysis.watchPoints.map((item) => view('確認点', item)).join('')}</section>`;
+  return `<div>${view('解釈', analysis.interpretation)}${view('短期', analysis.shortTerm)}${view('中期', analysis.mediumTerm)}${view('長期', analysis.longTerm)}${analysis.watchPoints.map((item) => view('確認点', item)).join('')}</div>`;
 }
 
 export function buildScoreHtml(score: ExperimentalScore): string {
