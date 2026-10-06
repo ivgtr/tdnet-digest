@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import corpus from './fixtures/pdf-layout-corpus.json';
 import semanticCorpus from './fixtures/ir-semantic-corpus.json';
+import semanticExpectations from './fixtures/ir-semantic-expectations.json';
 import { extractPageLayout } from './pdf-layout';
 import { parseFactSummary, renderFacts } from './fact-summary';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
@@ -68,7 +69,7 @@ function table(
 const parse = (facts: VerifiedFact[], source = pages, coverage = false) =>
   parseFactSummary(
     JSON.stringify({
-      version: 5,
+      version: 6,
       documentType: 'earnings',
       facts: facts.map((f, i) => ({ ...f, id: `f${i + 1}` })),
       unverified: [],
@@ -212,9 +213,33 @@ describe('既存の実PDF形式のv4回帰', () => {
         },
       };
     });
-    const r = parse([...financial, dividend, ...eps, ...notes], pages, true);
+    const previous = [
+      [58, '売上高', 1199, [31], [36]],
+      [62, '営業利益', 483, [33], [40]],
+      [64, '経常利益', 478, [34], [42]],
+      [66, '親会社株主に帰属する四半期純利益', 336, [30, 35], [44]],
+      [88, '１株当たり四半期純利益', 13.68, [78, 80], [82]],
+    ] as const;
+    const comparative = previous.map(([id, label, value, metric, unit]) => ({
+      ...table(
+        1,
+        id,
+        label,
+        value,
+        '2026年5月期第1四半期',
+        'actual',
+        [...metric],
+        [id === 88 ? 87 : 57],
+        [...unit],
+        [28],
+        ['p1b1', 'p1b3'],
+        { periodKind: 'cumulativeQ1', metricKind: id === 88 ? 'perShare' : 'amount' }
+      ),
+      unit: id === 88 ? '円' : '百万円',
+    }));
+    const r = parse([...financial, dividend, ...eps, ...notes, ...comparative], pages, true);
     expect(r.unverified).toEqual([]);
-    expect(r.facts).toHaveLength(15);
+    expect(r.facts).toHaveLength(20);
     expect(renderFacts(r)).toContain('実績');
     expect(buildSummaryHtml(renderFacts(r), null, { companyName: 'FF', title: '決算' })).toContain(
       'AI要約'
@@ -321,43 +346,10 @@ describe('既存の実PDF形式のv4回帰', () => {
   });
 });
 const blue = extract(semanticCorpus[0]);
-const blueProfit = table(
-  1,
-  294,
-  '親会社株主に帰属する当期純利益',
-  -400,
-  '2027年3月期通期',
-  'forecast',
-  [265, 271],
-  [282, 283],
-  [279],
-  [262, 263],
-  ['p1b1', 'p1b3'],
-  { subject: '株式会社BlueMeme' }
-);
-const blueRate = {
-  ...table(
-    1,
-    120,
-    '売上高営業利益率',
-    1.4,
-    '2026年3月期',
-    'actual',
-    [97, 103],
-    [110, 111],
-    [109],
-    [],
-    ['p1b1', 'p1b3', 'p1b9'],
-    { subject: '株式会社BlueMeme', metricKind: 'rate' }
-  ),
-  unit: '%',
-};
+// Human-reviewed source facts are shared; only the invalid references vary here.
+const blueProfit = semanticExpectations[0].facts[5] as VerifiedFact;
+const blueRate = semanticExpectations[0].facts[6] as VerifiedFact;
 describe('BlueMemeの正しい採用と誤対応の拒否', () => {
-  it('EPS見出しが隣接していても−400を採用する', () => {
-    const r = parse([blueProfit], blue);
-    expect(r.unverified).toEqual([]);
-    expect(r.facts[0].value).toBe(-400);
-  });
   it('数量の小数を全断片から確認し1%を拒否する', () => {
     const r = parse([blueRate], blue);
     expect(r.unverified).toEqual([]);

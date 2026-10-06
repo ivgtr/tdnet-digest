@@ -212,7 +212,15 @@ export function buildTableRegions(page: {
   for (const unitRow of rows.filter((r) => r.length >= 2)) {
     const unitY = unitRow[0].y,
       height = unitRow[0].height;
-    const nextUnit = rows.find((r) => r[0].y > unitY + height * 0.3)?.[0].y ?? Infinity;
+    const nextUnit =
+      rows.find(
+        (r) =>
+          r[0].y > unitY + height * 0.3 &&
+          (r.length >= 2 ||
+            physical
+              .find((run) => run.some((s) => r[0].ids.includes(s.id)))!
+              .every((s) => r.some((unit) => unit.ids.includes(s.id))))
+      )?.[0].y ?? Infinity;
     const boundary = physical
       .filter(
         (run) =>
@@ -236,7 +244,7 @@ export function buildTableRegions(page: {
         (physical.some(
           (row) =>
             row.some((s) => Math.abs(s.y - q.y) <= Math.min(s.height, q.height) * 1.2) &&
-            /20\d{2}年\d{1,2}月(?:期|\d{1,2}日|度)?|通期|予想|実績|増減/.test(
+            /20\d{2}年\d{1,2}月(?:期|\d{1,2}日|度)?|第[1-4]四半期|中間期|通期|予想|実績|増減/.test(
               normalized(
                 row
                   .filter((s) => s.x + s.width < cx(unitRow[0]))
@@ -245,7 +253,7 @@ export function buildTableRegions(page: {
               )
             )
         ) ||
-          /予想|実績|通期|20\d{2}年/.test(
+          /予想|実績|第[1-4]四半期|中間期|通期|20\d{2}年/.test(
             normalized(
               tableRowAxis(
                 {
@@ -353,6 +361,35 @@ export function tableColumnBand(
   // A whole-table cell does not prove an individual column.
   return cell && cell.right - cell.left < height * 14 ? [cell.left, cell.right] : null;
 }
+/** A closed parent header can own several numeric subcolumns (amount and rate). */
+export function tableMetricColumnBand(
+  region: TableRegion,
+  unitIds: string[],
+  height: number
+): [number, number] | null {
+  if (region.method !== 'ruled') return null;
+  const column = tableColumnBand(region, unitIds, height);
+  if (!column) return null;
+  const cells = region.cells
+    .filter((c) => unitIds.every((id) => c.spanIds.includes(id)))
+    .sort(
+      (a, b) => (a.right - a.left) * (a.bottom - a.top) - (b.right - b.left) * (b.bottom - b.top)
+    );
+  const top = cells[0].top;
+  const headers = region.cells
+    .filter(
+      (c) =>
+        c.bottom <= top + 0.8 &&
+        c.left <= column[0] + 0.8 &&
+        c.right >= column[1] - 0.8 &&
+        c.spanIds.length > 0 &&
+        !c.spanIds.some((id) => region.unitIds.includes(id) || region.valueIds.includes(id)) &&
+        c.right - c.left <= (column[1] - column[0]) * 2 + 0.8
+    )
+    .sort((a, b) => b.bottom - a.bottom || a.right - a.left - (b.right - b.left));
+  const header = headers[0];
+  return header ? [header.left, header.right] : null;
+}
 /** Closed neighboring cells form one row declaration before interpretation. */
 function closedAxisParts(
   region: Pick<TableRegion, 'cells' | 'valueIds' | 'unitIds'>,
@@ -400,7 +437,7 @@ function closedAxisParts(
         normalized(runs[0].map((s) => s.text).join(''))
       );
     const parts = members.filter((s) => sharedPeriod || (cy(s) > band.top && cy(s) < band.bottom));
-    return lineRuns(parts)
+    return physicalRows(parts)
       .filter((run) => {
         const text = normalized(run.map((s) => s.text).join(''));
         return !/20\d{2}年\d{1,2}月\d{1,2}日.*発表/.test(text) && !tableUnit(text);

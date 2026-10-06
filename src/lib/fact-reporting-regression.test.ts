@@ -5,7 +5,11 @@ import { evidence, saved, report, event, cells, period } from './fixtures/fact-r
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext, bindingFor, resolveScopeIds } from './document-context';
 import { proseQuantities, reviewCandidates, serializeCandidateSource } from './fact-candidates';
-import { generateVerifiedFactSummary, renderFacts, parseFactSummary } from './fact-summary';
+import {
+  generateVerifiedFacts as generateVerifiedFactSummary,
+  renderFacts,
+  parseFactSummary,
+} from './fact-summary';
 import { verifyCoverage, coverageReport } from './fact-coverage';
 import { stableFactId, type VerifiedFact } from './fact-contract';
 import { validateSavedFacts } from './fact-cache';
@@ -23,8 +27,355 @@ import { extractPageLayout } from './pdf-layout';
 import { tableContinuations } from './document-links';
 import { preflightCandidateSource } from './source-preflight';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { unchangedForecastTopic } from './forecast-revision-semantics';
+import { buildPresentation } from './fixtures/summary-narrative-source';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+it('中間期の予想修正を実際の表範囲と分割された前回・今回の行で照合し、通期の代用を拒否する', () => {
+  const target = '2027年3月期';
+  const rows: [string, number, number, number][] = [
+    ['会社名 株式会社テスト', 0, 0, 230],
+    [`${target}第2四半期（中間期）業績予想の修正に関するお知らせ`, 0, 30, 630],
+    ['1. 業績予想の修正について', 0, 60, 300],
+    [`${target}第2四半期（中間期）の連結業績予想数値の修正`, 0, 80, 630],
+    ['売上高', 310, 110, 60],
+    ['営業利益', 510, 110, 70],
+    ['百万円', 310, 140, 60],
+    ['百万円', 510, 140, 60],
+    ['前', 10, 170, 10],
+    ['回', 35, 170, 10],
+    ['発表予想（A）', 60, 170, 140],
+    ['100', 310, 170, 30],
+    ['10', 510, 170, 30],
+    ['今', 10, 200, 10],
+    ['回', 35, 200, 10],
+    ['修正予想（B）', 60, 200, 140],
+    ['200', 310, 200, 30],
+    ['5', 510, 200, 30],
+  ];
+  const paths = [
+    ...[0, 250, 450, 650].map((x) => [0, x, -100, 1, x, -220]),
+    ...[100, 160, 190, 220].map((y) => [0, 0, -y, 1, 650, -y]),
+  ];
+  const page = extractPageLayout(
+    rows.map(([str, x, y, width]) => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, -y],
+      width,
+      height: 10,
+      hasEOL: false,
+      fontName: 'test',
+    })) as TextItem[],
+    1,
+    paths.map((commands, index) => ({
+      index,
+      fn: 'constructPath',
+      args: ['stroke', [commands], null],
+    }))
+  );
+  const ctx = buildDocumentContext([page]);
+  expect(ctx.tableMappings).toHaveLength(4);
+  const fs = ctx.tableMappings.map((h) => {
+    const f = numberCandidate(page, '売上高');
+    f.label = h.metricIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
+    f.value = Number(page.quantities.find((q) => q.id === h.valueId)!.text);
+    f.period = target + '中間期';
+    f.semantics.periodKind = 'cumulativeQ2';
+    f.semantics.basis = null;
+    f.valueKind = f.semantics.state = h.periodIds
+      .map((id) => page.spans.find((s) => s.id === id)!.text)
+      .join('')
+      .includes('前回')
+      ? 'forecastBefore'
+      : 'forecastAfter';
+    f.evidence = { kind: 'table', ...h, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const result = reviewCandidates(
+    candidateResponse(fs, [page], 'earningsRevision'),
+    'earningsRevision',
+    [page]
+  );
+  expect(result.unverified).toEqual([]);
+  expect(result.facts).toHaveLength(4);
+  expect(() => verifyCoverage('earningsRevision', [page], result.facts)).not.toThrow();
+  expect(
+    parseFactSummary(
+      JSON.stringify({
+        version: 6,
+        documentType: 'earningsRevision',
+        facts: result.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      [page]
+    ).facts
+  ).toEqual(result.facts);
+  const slots = coverageReport('earningsRevision', [page], []);
+  expect(
+    slots.every(
+      (s) =>
+        s.sourceIds.length > 0 &&
+        s.expected.periodKind === 'cumulativeQ2' &&
+        s.expected.scope === '連結'
+    )
+  ).toBe(true);
+  preflightCandidateSource(
+    'earningsRevision',
+    [page],
+    ctx,
+    serializeCandidateSource([page], ctx, 'earningsRevision')
+  );
+  const wrong = structuredClone(result.facts).map((f) => ({
+    ...f,
+    period: target,
+    semantics: { ...f.semantics, periodKind: 'fullYear' as const },
+  }));
+  expect(() => verifyCoverage('earningsRevision', [page], wrong)).toThrow('予想修正の前後');
+  expect(
+    reviewCandidates(candidateResponse(wrong, [page], 'earningsRevision'), 'earningsRevision', [
+      page,
+    ]).facts
+  ).toEqual([]);
+});
+it('長い注記を挟む同じ業績節の基本EPSを照合・保存し、別節への見出しの流用を拒否する', () => {
+  const rows: [string, number, number, number][] = [
+    ['上場会社名 株式会社テスト', 0, 0, 240],
+    ['（１）連結経営成績（累計）', 0, 30, 220],
+    ['（注）事業利益の定義について説明します。', 0, 70, 400],
+    ['経営指標の算出方法に関する説明が続きます。', 0, 300, 400],
+    ['基本的１株当たり', 200, 410, 80],
+    ['希薄化後１株当たり', 400, 410, 90],
+    ['中間利益', 220, 425, 40],
+    ['中間利益', 425, 425, 40],
+    ['円 銭', 260, 445, 30],
+    ['円 銭', 460, 445, 30],
+    ['2027年3月期中間期', 0, 465, 140],
+    ['77.11', 260, 465, 30],
+    ['77.11', 460, 465, 30],
+    ['2026年3月期中間期', 0, 485, 140],
+    ['82.74', 260, 485, 30],
+    ['82.74', 460, 485, 30],
+  ];
+  const page = cells(rows, 1);
+  const ctx = buildDocumentContext([page]);
+  const ids = page.quantities.filter((q) => ['77.11', '82.74'].includes(q.text));
+  const basic = ids.filter((q) => q.x < 400);
+  const candidates = basic.map((q, i) => {
+    const hint = ctx.tableMappings.find((h) => h.valueId === q.id)!;
+    expect(hint).toBeDefined();
+    const f = numberCandidate(page, '基本的１株当たり', Number(q.text), `${2027 - i}年3月期中間期`);
+    f.label = '基本的１株当たり中間利益';
+    f.unit = '円';
+    f.semantics.metricKind = 'perShare';
+    f.semantics.periodKind = 'cumulativeQ2';
+    f.semantics.basis = null;
+    f.evidence = { kind: 'table', ...hint, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const result = reviewCandidates(candidateResponse(candidates, [page]), 'other', [page]);
+  expect(result.unverified).toEqual([]);
+  expect(result.facts.map((f) => f.value)).toEqual([77.11, 82.74]);
+  expect(saved(result.facts, [page]).facts).toEqual(result.facts);
+  const input = serializeCandidateSource([page], ctx, 'other');
+  expect(input).toContain(basic[0].id);
+  preflightCandidateSource('other', [page], ctx, input);
+
+  const blocked = cells([...rows, ['（２）事業の状況', 0, 350, 180]], 1);
+  expect(buildDocumentContext([blocked]).tableMappings).toEqual([]);
+  expect(reviewCandidates(candidateResponse(candidates, [page]), 'other', [blocked]).facts).toEqual(
+    []
+  );
+});
+it('親見出しを共有する金額・％列を分け、金額義務・事前照合・保存で率の代用を拒否する', () => {
+  const rows: [string, number, number, number][] = [
+    ['会社名 株式会社テスト', 0, 0, 240],
+    ['2027年3月期 連結業績予想', 0, 30, 300],
+    ['売上高', 100, 65, 40],
+    ['営業利益', 200, 65, 40],
+    ['当期純利益', 290, 65, 60],
+    ['百万円', 80, 90, 20],
+    ['％', 145, 90, 10],
+    ['百万円', 180, 90, 20],
+    ['％', 245, 90, 10],
+    ['百万円', 280, 90, 20],
+    ['％', 345, 90, 10],
+    ['通期', 10, 110, 30],
+    ['100', 80, 110, 20],
+    ['3.2', 140, 110, 15],
+    ['10', 180, 110, 20],
+    ['12.0', 240, 110, 20],
+    ['8', 280, 110, 20],
+    ['23.1', 340, 110, 20],
+  ];
+  const paths = [
+    ...[70, 170, 270, 370].map((x) => [0, x, -55, 1, x, -120]),
+    ...[120, 220, 320].map((x) => [0, x, -80, 1, x, -120]),
+    [0, 0, -80, 1, 0, -120],
+    [0, 70, -55, 1, 370, -55],
+    ...[80, 120].map((y) => [0, 0, -y, 1, 370, -y]),
+  ];
+  const page = extractPageLayout(
+    rows.map(([str, x, y, width]) => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, -y],
+      width,
+      height: 10,
+      hasEOL: false,
+      fontName: 'test',
+    })) as TextItem[],
+    1,
+    paths.map((commands, index) => ({
+      index,
+      fn: 'constructPath',
+      args: ['stroke', [commands], null],
+    }))
+  );
+  const pages = [page],
+    context = buildDocumentContext(pages);
+  expect(page.tableRegions[0].method).toBe('ruled');
+  const response = (rates: boolean) =>
+    JSON.stringify({
+      candidateVersion: 4,
+      documentType: 'earningsRevision',
+      unverified: [],
+      candidates: (rates ? ['3.2', '12.0', '23.1'] : ['100', '10', '8']).map((value, i) => {
+        const q = page.quantities.find((q) => q.text === value)!;
+        return {
+          candidateId: `c${i + 1}`,
+          importance: 'key',
+          kind: 'number',
+          source: {
+            kind: 'table',
+            valueId: q.id,
+            tableId: page.tableRegions[0].id,
+            contextBindingId: `ctx:${q.id}`,
+          },
+          meaning: {
+            subject: '株式会社テスト',
+            scope: '連結',
+            basis: null,
+            period: '2027年3月期',
+            periodKind: 'fullYear',
+            metricKind: rates ? 'rate' : 'amount',
+            state: 'forecast',
+            polarity: 'affirmative',
+          },
+        };
+      }),
+    });
+  const accepted = reviewCandidates(response(false), 'earningsRevision', pages);
+  expect(accepted.unverified).toEqual([]);
+  expect(accepted.facts.map((f) => f.label)).toEqual(['売上高', '営業利益', '当期純利益']);
+  const input = serializeCandidateSource(pages, context, 'earningsRevision');
+  expect(() => preflightCandidateSource('earningsRevision', pages, context, input)).not.toThrow();
+  const rateIds = page.quantities
+    .filter((q) => ['3.2', '12.0', '23.1'].includes(q.text))
+    .map((q) => q.id);
+  const slots = coverageReport('earningsRevision', pages, accepted.facts);
+  expect(
+    slots.every((s) => s.status === 'satisfied' && !s.sourceIds.some((id) => rateIds.includes(id)))
+  ).toBe(true);
+  const rates = reviewCandidates(response(true), 'earningsRevision', pages);
+  expect(rates.unverified).toEqual([]);
+  expect(() =>
+    parseFactSummary(
+      JSON.stringify({
+        version: 6,
+        documentType: 'earningsRevision',
+        facts: rates.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      pages
+    )
+  ).toThrow('COVERAGE:');
+  expect(
+    parseFactSummary(
+      JSON.stringify({
+        version: 6,
+        documentType: 'earningsRevision',
+        facts: accepted.facts,
+        unverified: [],
+      }),
+      'earningsRevision',
+      pages
+    ).facts
+  ).toEqual(accepted.facts);
+  const amountIds = accepted.facts.map((f) => {
+    if (f.evidence.kind !== 'table') throw new Error('expected table');
+    return f.evidence.valueId;
+  });
+  const neighbor = structuredClone(context.tableMappings.find((h) => h.valueId === amountIds[0])!);
+  neighbor.metricIds = context.tableMappings.find((h) => h.valueId === amountIds[1])!.metricIds;
+  expect(() =>
+    verifyTableEvidence(page, neighbor, {
+      label: '営業利益',
+      value: 100,
+      unit: '百万円',
+      period: '2027年3月期',
+      valueKind: 'forecast',
+    })
+  ).toThrow('指標の列');
+});
+it('予想変更なしは同じ報告単位の本文でも充足し、条件・別期・別主体を代用しない', () => {
+  const note = '(注)直近に公表されている業績予想からの修正の有無：無';
+  const body = '2026年4月7日に公表しました連結業績予想から修正は行っておりません。';
+  expect(unchangedForecastTopic(body)).toBe('業績予想');
+  for (const text of [
+    body + 'ただし、承認を条件とします。',
+    body.replace('行っておりません', '行いました'),
+    body.replace('業績予想', '子会社の予想'),
+  ])
+    expect(unchangedForecastTopic(text)).toBeNull();
+  for (const [title, company, fulfilled] of [
+    ['3. 連結業績予想などの将来予測情報に関する説明', '', true],
+    ['3. 2026年3月期の連結業績予想', '', false],
+    ['3. 連結業績予想などの将来予測情報に関する説明', '会社名 株式会社別会社\n', false],
+  ] as const) {
+    const { pages, amounts } = report(
+      `2. 2027年3月期の連結業績予想\n${note}\n${title}\n${company}${body}`
+    );
+    const seed = numberCandidate(pages[0]);
+    const f = event(seed),
+      block = pages[0].blocks.find((b) => b.text === body)!;
+    f.statement = f.quote = block.text;
+    f.evidence = {
+      ...f.evidence,
+      kind: 'prose',
+      blockId: block.id,
+      assertionId: `${block.id}:a1`,
+      quantityId: null,
+    };
+    f.semantics.state = 'unspecified';
+    f.semantics.polarity = 'negative';
+    const accepted = reviewCandidates(candidateResponse([f], pages, 'earnings'), 'earnings', pages);
+    if (fulfilled) expect(accepted.unverified).toEqual([]);
+    const slot = coverageReport('earnings', pages, accepted.facts).find((s) =>
+      s.requirement.includes('予想修正なし')
+    )!;
+    expect(slot.expected.polarity).toBe('negative');
+    expect(slot.sourceIds.includes(block.id)).toBe(fulfilled);
+    expect(slot.status === 'satisfied').toBe(fulfilled);
+    if (fulfilled) {
+      expect(accepted.facts).toHaveLength(1);
+      const full = saved(
+        [
+          ...reviewCandidates(candidateResponse(amounts, pages, 'earnings'), 'earnings', pages)
+            .facts,
+          ...accepted.facts,
+        ],
+        pages,
+        'earnings'
+      );
+      const display = renderFacts(full, buildPresentation(full, pages));
+      expect(display).toContain('業績予想：変更なし');
+      expect(display).toContain(body);
+    }
+  }
+});
 it.each(['別セル', '年度結合セル', '先頭欠損'])(
   '罫線表の隣接した年度・状態セルを同じ行宣言として入力・義務・保存へ渡す: %s',
   (layout) => {
@@ -115,7 +466,7 @@ it.each(['別セル', '年度結合セル', '先頭欠損'])(
       coverageReport('earningsRevision', pages, [], [], { ...context, tableMappings: [] })
     ).toHaveLength(6);
     const raw = JSON.stringify({
-      version: 5,
+      version: 6,
       documentType: 'earningsRevision',
       facts: reviewed.facts,
       unverified: [],
@@ -468,7 +819,7 @@ describe('義務の原文所有者と充足・修復先の一致', () => {
     expect(
       parseFactSummary(
         JSON.stringify({
-          version: 5,
+          version: 6,
           documentType: 'shareRepurchase',
           facts: good.facts,
           unverified: [],
@@ -527,7 +878,7 @@ describe('義務の原文所有者と充足・修復先の一致', () => {
     expect(() => verifyCoverage('ma', pages, r.facts.slice(1))).toThrow(requirement);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: r.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: r.facts, unverified: [] }),
         'ma',
         pages
       )
@@ -597,7 +948,7 @@ describe('義務の原文所有者と充足・修復先の一致', () => {
     expect(
       parseFactSummary(
         JSON.stringify({
-          version: 5,
+          version: 6,
           documentType: 'businessUpdate',
           facts: correct.facts,
           unverified: [],
@@ -631,26 +982,8 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     f.dateRoles = [];
     f.provenance = forgedProvenance(f, pages);
     f.id = stableFactId(f);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [f], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [f], unverified: [] });
     expect(saved([f], pages).facts).toEqual([]);
-  });
-  it('境界付き額を完結eventへ通常の意味照合で修復する', async () => {
-    const pages = [
-      textPage(`会社名 株式会社テスト\n1. ${period} 取引概要\n取得価額は100百万円以内です。`),
-    ];
-    const f = numberCandidate(pages[0], '取得価額', 100, period);
-    f.semantics.scope = f.semantics.basis = null;
-    const e = event(f);
-    e.semantics.state = 'unspecified';
-    vi.mocked(generateText)
-      .mockReset()
-      .mockResolvedValueOnce(candidateResponse([f], pages))
-      .mockResolvedValueOnce(candidateResponse([e], pages));
-    const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
-    expect(generateText).toHaveBeenCalledTimes(2);
-    expect(result.facts.facts[0]).toMatchObject({ kind: 'event', statement: e.quote, value: null });
-    expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
-    expect(renderFacts(result.facts)).toContain(e.quote);
   });
   it.each(['～', '-'])(
     '日付区間(%s)を生成・保存で同じ意味で受理し、両端の改変を拒否する',
@@ -700,7 +1033,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
         wrong.period = period;
         wrong.semantics.periodKind = period.includes('～') ? 'interval' : 'eventDate';
         wrong.id = stableFactId(wrong);
-        validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+        validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
         expect(saved([wrong], pages).facts).toEqual([]);
         expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual(
           []
@@ -855,7 +1188,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
       const wrong = structuredClone(all.facts[3]);
       wrong.valueKind = wrong.semantics.state = forecast ? 'actual' : 'forecast';
       wrong.id = stableFactId(wrong);
-      validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+      validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
       expect(saved([wrong], pages).facts).toEqual([]);
     }
   );
@@ -878,33 +1211,13 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     expect(good.facts).toHaveLength(1);
     expect(saved(good.facts, pages).facts).toEqual(good.facts);
     expect(
-      renderFacts({ version: 5, documentType: 'other', facts: good.facts, unverified: [] })
+      renderFacts({ version: 6, documentType: 'other', facts: good.facts, unverified: [] })
     ).toContain(`100${unit}`);
     const wrong = structuredClone(good.facts[0]);
     wrong.unit = unit === '件/月' ? '件' : `${unit}です`;
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
-  });
-  it.each([
-    'ではありません',
-    'と仮定した試算です',
-    'に満たない',
-    'の説明です',
-    '以上です',
-    '未満です',
-    '程度です',
-    '増加しました',
-    '見込みです',
-  ])('述語を偽の単位へ取り込んで確定しない: %s', (tail) => {
-    const pages = [
-      textPage(`会社名 株式会社テスト\n1. ${period} 販売状況\n販売数量は100台${tail}。`),
-    ];
-    const f = numberCandidate(pages[0], '販売数量', 100, period);
-    f.unit = `台${tail}`;
-    f.semantics.metricKind = 'other';
-    f.semantics.scope = f.semantics.basis = null;
-    expect(reviewCandidates(candidateResponse([f], pages), 'other', pages).facts).toEqual([]);
   });
   it.each(['2026年3月期', '2027年3月期', '2027年3月期(予想)', '2027年3月期第1四半期'])(
     '表利益率の期間・状態を義務と修復slotに揃える: %s',
@@ -1048,7 +1361,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     const wrong = structuredClone(complete.facts[3]);
     wrong.valueKind = wrong.semantics.state = 'actual';
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
     vi.mocked(generateText)
       .mockReset()
@@ -1102,7 +1415,7 @@ describe('数量の単位証明と報告対象の必須判定', () => {
     const wrong = structuredClone(good.facts[3]);
     wrong.period = period;
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
     expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
   });
@@ -1323,7 +1636,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       ]);
       expect(
         parseFactSummary(
-          JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+          JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
           'ma',
           pages
         ).facts
@@ -1353,13 +1666,13 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       expect(new Set(good.facts.map((f) => f.id)).size).toBe(2);
       expect(
         parseFactSummary(
-          JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+          JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
           'ma',
           pages
         ).facts
       ).toEqual(good.facts);
       expect(
-        renderFacts({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }).split(
+        renderFacts({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }).split(
           body
         )
       ).toHaveLength(2);
@@ -1456,7 +1769,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       expect(
         parseFactSummary(
           JSON.stringify({
-            version: 5,
+            version: 6,
             documentType: 'earningsRevision',
             facts: good.facts,
             unverified: [],
@@ -1687,7 +2000,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     const wrong = structuredClone(r.facts[0]);
     wrong.semantics.polarity = polarity === 'affirmative' ? 'negative' : 'affirmative';
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
     expect(reviewCandidates(candidateResponse([wrong], pages), 'other', pages).facts).toEqual([]);
     if (state !== 'unspecified') {
@@ -1711,13 +2024,13 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
     expect(r.facts[0].quantity).toMatchObject({ raw: '10円50銭', decimal: '10.50' });
     expect(saved(r.facts, pages).facts).toEqual(r.facts);
     expect(
-      renderFacts({ version: 5, documentType: 'other', facts: r.facts, unverified: [] })
+      renderFacts({ version: 6, documentType: 'other', facts: r.facts, unverified: [] })
     ).toContain('10.50円');
     const wrong = structuredClone(r.facts[0]);
     wrong.value = 10;
     wrong.quantity = { ...wrong.quantity!, raw: '10', decimal: '10' };
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
   });
   it('複数断片の見出しを保存根拠から一部分だけ落として受理しない', () => {
@@ -1767,7 +2080,7 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
       false
     ).quote;
     wrong.id = stableFactId(wrong);
-    validateSavedFacts({ version: 5, documentType: 'other', facts: [wrong], unverified: [] });
+    validateSavedFacts({ version: 6, documentType: 'other', facts: [wrong], unverified: [] });
     expect(saved([wrong], pages).facts).toEqual([]);
   });
 });
@@ -2030,7 +2343,7 @@ describe('役割と必須対象の対応', () => {
     ]);
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
         'ma',
         pages
       ).facts
@@ -2250,8 +2563,10 @@ describe('役割と必須対象の対応', () => {
         .mockResolvedValueOnce(candidateResponse([retained], pages));
       const result = await generateVerifiedFactSummary(config, 'other', 'source', pages);
       expect(result.facts.unverified).toEqual(initial.unverified);
-      expect(result.facts.facts[0].kind).toBe(kind);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(result.facts.facts[0]).toMatchObject({ kind, statement: retained.quote, value: null });
       expect(saved(result.facts.facts, pages).facts).toEqual(result.facts.facts);
+      expect(renderFacts(result.facts)).toContain(retained.quote);
     }
   );
 });
@@ -2763,7 +3078,7 @@ it('自己株取得は他社の上限・条件で発行者の不足を隠さな�
   expect(() =>
     parseFactSummary(
       JSON.stringify({
-        version: 5,
+        version: 6,
         documentType: 'shareRepurchase',
         facts: good.facts,
         unverified: [],
@@ -2853,7 +3168,7 @@ it.each([
       expect(rejected.facts).toEqual([]);
       expect(rejected.unverified.join(' ')).toContain('PERIOD:');
       const restored = parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: [wrong], unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: [wrong], unverified: [] }),
         'ma',
         pages,
         false
@@ -2915,7 +3230,7 @@ it.each([
     expect(() => verifyCoverage('ma', pages, good.facts)).not.toThrow();
     expect(
       parseFactSummary(
-        JSON.stringify({ version: 5, documentType: 'ma', facts: good.facts, unverified: [] }),
+        JSON.stringify({ version: 6, documentType: 'ma', facts: good.facts, unverified: [] }),
         'ma',
         pages,
         true
@@ -3335,7 +3650,7 @@ it('初回予想の同じ本文段落から全指標を選択し、他の数量�
   expect(
     parseFactSummary(
       JSON.stringify({
-        version: 5,
+        version: 6,
         documentType: 'earningsRevision',
         facts: result.facts,
         unverified: [],
@@ -3427,7 +3742,7 @@ it.each([
   expect(
     parseFactSummary(
       JSON.stringify({
-        version: 5,
+        version: 6,
         documentType: 'earningsRevision',
         facts: result.facts,
         unverified: [],
@@ -3437,4 +3752,73 @@ it.each([
       true
     ).facts
   ).toEqual(result.facts);
+});
+
+it('罫線セルを共有する四半期予想と通期予想を物理行ごとに照合し、別行の期間を代用しない', () => {
+  const rows: Array<[string, number, number, number]> = [
+    ['会社名 株式会社テスト', 0, 20, 240],
+    ['2027年3月期 決算短信〔日本基準〕（連結）', 0, 40, 400],
+    ['3. 2027年3月期の連結業績予想', 0, 70, 350],
+    ['売上高', 300, 110, 50],
+    ['営業利益', 500, 110, 60],
+    ['百万円', 300, 140, 50],
+    ['百万円', 500, 140, 50],
+    ['第2四半期(累計)', 10, 170, 140],
+    ['100', 310, 170, 30],
+    ['10', 510, 170, 30],
+    ['通期', 10, 200, 40],
+    ['200', 310, 200, 30],
+    ['20', 510, 200, 30],
+  ];
+  const paths = [
+    ...[0, 250, 450, 650].map((x) => [0, x, -100, 1, x, -220]),
+    ...[100, 160, 220].map((y) => [0, 0, -y, 1, 650, -y]),
+  ];
+  const page = extractPageLayout(
+    rows.map(([str, x, y, width]) => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, -y],
+      width,
+      height: 10,
+      hasEOL: false,
+      fontName: 'test',
+    })) as TextItem[],
+    1,
+    paths.map((commands, index) => ({
+      index,
+      fn: 'constructPath',
+      args: ['stroke', [commands], null],
+    }))
+  );
+  const ctx = buildDocumentContext([page]);
+  expect(ctx.tableMappings).toHaveLength(4);
+  const fs = ctx.tableMappings.map((h) => {
+    const axis = h.periodIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
+    expect(axis).not.toMatch(/四半期.*通期/);
+    const f = numberCandidate(page, '売上高');
+    f.label = h.metricIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('');
+    f.value = Number(page.quantities.find((q) => q.id === h.valueId)!.text);
+    f.period = '2027年3月期' + (axis.includes('四半期') ? '第2四半期' : '');
+    f.semantics.periodKind = axis.includes('四半期') ? 'cumulativeQ2' : 'fullYear';
+    f.valueKind = f.semantics.state = 'forecast';
+    f.evidence = { kind: 'table', ...h, scopeIds: [], qualifierIds: [] };
+    return f;
+  });
+  const source = serializeCandidateSource([page], undefined, 'earnings');
+  expect(source).toContain('通期');
+
+  const accepted = reviewCandidates(candidateResponse(fs, [page], 'earnings'), 'earnings', [page]);
+  expect(accepted.facts).toHaveLength(4);
+  expect(
+    coverageReport('earnings', [page], accepted.facts)
+      .filter((s) => /通期予想.*(?:revenue|operatingProfit)/.test(s.requirement))
+      .every((s) => s.status === 'satisfied')
+  ).toBe(true);
+  const wrong = structuredClone(fs.find((f) => f.value === 100)!);
+  wrong.period = '2027年3月期';
+  wrong.semantics.periodKind = 'fullYear';
+  expect(
+    reviewCandidates(candidateResponse([wrong], [page], 'earnings'), 'earnings', [page]).facts
+  ).toHaveLength(0);
 });

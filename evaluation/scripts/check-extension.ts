@@ -13,6 +13,7 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { stableFactId, FACT_SCHEMA_VERSION, type VerifiedFact } from '../../src/lib/fact-contract';
 import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
 import { parseFactSummary } from '../../src/lib/fact-summary';
+import { buildPresentation } from '../../src/lib/summary-presentation';
 import { ANALYSIS_SCHEMA_VERSION } from '../../src/lib/analysis-version';
 import { additionalReviewFixture } from './additional-review-fixture';
 import { seedOldExtensionProfile } from './extension-upgrade-fixture';
@@ -48,8 +49,128 @@ async function sourceBuildDigest(): Promise<string> {
       digest.update(`${directory}/${file}`).update(await readFile(`${directory}/${file}`));
   return digest.digest('hex');
 }
+/** Verify both the selectable JSON and the actual clipboard, after the user's click. */
+async function copiedDiagnostic(row: any, page: any, blocked = false) {
+  await row.getByRole('button', { name: '診断をコピー', exact: true }).click();
+  if (blocked)
+    await row
+      .getByRole('alert')
+      .filter({ hasText: 'コピーできませんでした' })
+      .waitFor({ timeout: 10000 });
+  else
+    await row.getByRole('status').filter({ hasText: 'コピーしました' }).waitFor({ timeout: 10000 });
+  if (!blocked) await row.getByText('診断JSONを表示', { exact: true }).click();
+  const text = await row.getByRole('textbox', { name: '診断JSON', exact: true }).inputValue();
+  if (blocked) {
+    const box = row.getByRole('textbox', { name: '診断JSON', exact: true });
+    await box.focus();
+    assert.equal(
+      await box.evaluate((el: HTMLTextAreaElement) =>
+        el.value.slice(el.selectionStart, el.selectionEnd)
+      ),
+      text
+    );
+    return JSON.parse(text);
+  }
+  // Grant read only after copying; the extension must write through the click itself.
+  await page
+    .context()
+    .grantPermissions(['clipboard-read'], { origin: 'https://www.release.tdnet.info' });
+  try {
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), text);
+  } finally {
+    await page.context().clearPermissions();
+  }
+  return JSON.parse(text);
+}
+/** Read each visible fact with its shared table context; never use the entire body as one fact. */
+async function displayedFacts(summary: any): Promise<string[]> {
+  return summary.evaluate(
+    new Function(
+      'root',
+      `
+    const text = (node) => node?.textContent ?? '';
+    const first = root.querySelector('h2');
+    const shared =
+      text(root.querySelector('h4')) +
+      ' ' +
+      (first?.previousElementSibling?.tagName === 'P' ? text(first.previousElementSibling) : '');
+    const context = (node) =>
+      node.previousElementSibling?.tagName === 'P' ? text(node.previousElementSibling) : '';
+    const refs = (node) =>
+      node.nextElementSibling?.tagName === 'P' && text(node.nextElementSibling).startsWith('根拠：')
+        ? text(node.nextElementSibling)
+        : '';
+    return [
+      ...Array.from(root.querySelectorAll('li'))
+        .filter((node) => !node.closest('details'))
+        .map(
+          (node) =>
+            shared +
+            ' ' +
+            context(node.closest('ul')) +
+            ' ' +
+            text(node) +
+            ' ' +
+            refs(node.closest('ul'))
+        ),
+      ...Array.from(root.querySelectorAll('tbody tr')).flatMap((row) => {
+        const table = row.closest('table');
+        const wrapper = table.parentElement;
+        const headers = Array.from(table.querySelectorAll('thead th'));
+        const cells = Array.from(row.children);
+        const notes =
+          text(headers.at(-1) ?? null) === '条件・基準' ? text(cells.at(-1) ?? null) : '';
+        return cells.slice(1, text(headers.at(-1) ?? null) === '条件・基準' ? -1 : undefined).map((cell, offset) => {
+          const index = offset + 1;
+          const header = text(headers[index]);
+          const period = header === '比率（％）' ? text(headers[index - 1]) : header;
+          const unit = header.match(/（([^）]+)）$/)?.[1] ?? '';
+          // One value cell with its own period, unit, row label and common context.
+          return (
+            shared +
+            ' ' +
+            context(wrapper) +
+            ' ' +
+            text(cells[0]) +
+            ' ' +
+            period +
+            ' ' +
+            text(cell) +
+            unit +
+            ' ' +
+            notes +
+            ' ' +
+            refs(wrapper)
+          );
+        });
+      }),
+    ];
+  `
+    )
+  );
+}
 /** Called by the existing evaluator after its ordinary configuration load. No secrets are logged. */
 export async function checkExtension(item: BrowserCase, config: LLMConfig, args: string[]) {
+  // The normal fixed smoke has a credential-free, current-contract entry point.
+  // Keep explicitly requested historical review/live replay tooling separate.
+  const manualReviewFlags = [
+    '--additional-review-case',
+    '--narrative-replay',
+    '--review-upgrade',
+    '--review-rejected-url',
+    '--review-diagnostics',
+    '--review-copy-blocked',
+    '--review-settings-change',
+    '--smart-full',
+    '--with-comparison',
+    '--live-followups',
+  ];
+  if (args.includes('--fixed-api') && !manualReviewFlags.some((flag) => args.includes(flag)))
+    throw new Error(
+      '固定APIスモークは node --import tsx evaluation/scripts/check-extension-smoke.ts を使用してください。' +
+      ' --preflight-only はブラウザー不要、--smoke-outcome success|partial|failure で対象を選べます。'
+    );
   const arg = (flag: string) => args[args.indexOf(flag) + 1];
   if (!args.includes('--browser-module') || !args.includes('--browser-executable'))
     throw new Error('既存PlaywrightモジュールとChromiumを指定してください');
@@ -58,16 +179,48 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     ? arg('--additional-review-case')
     : null;
   if (reviewCase && (!args.includes('--fixed-api') || !args.includes('--fixture-source')))
-    throw new Error('追加レビューは固定API・合成PDF専用です');
+    throw new Error('追加レビューは固定API・固定PDF専用です');
+  const copyBlocked = args.includes('--review-copy-blocked');
+  if (copyBlocked && !args.includes('--review-rejected-url'))
+    throw new Error('コピー拒否検証は生成前エラーの固定経路専用です');
   const reviewFixture = reviewCase ? await additionalReviewFixture(reviewCase) : null;
   if (reviewFixture)
     item = {
       ...item,
+      ...(reviewCase === 'summary-format-kyokuto' ? { id: 'kyokuto-20261005', code: '2300' } : {}),
+      ...(reviewCase === 'summary-format-karura' ? { id: 'karura-20261005', code: '2789' } : {}),
+      ...(reviewCase === 'summary-format-daiseki' ? { id: 'daiseki-20261005', code: '9793' } : {}),
+      ...(reviewCase === 'summary-format-echo' ? { id: 'echo-20261005', code: '7427' } : {}),
+      ...(reviewCase === 'summary-format-world' ? { id: 'world-20261005', code: '3612' } : {}),
+      ...(reviewCase === 'summary-format-createsd'
+        ? { id: 'createsd-20261005', code: '3148' }
+        : {}),
+      ...(reviewCase?.startsWith('summary-format-nachi')
+        ? {
+            id:
+              reviewCase === 'summary-format-nachi-comparison'
+                ? 'nachi-comparison-20261005'
+                : 'nachi-20261005',
+            code: '6474',
+          }
+        : {}),
       documentType: reviewFixture.documentType,
       title:
-        reviewFixture.documentType === 'earnings'
-          ? '2027年3月期 決算短信〔日本基準〕（連結）'
-          : '追加セルフレビュー用開示',
+        reviewCase === 'summary-format-echo'
+          ? '2027年２月期第２四半期（中間期）業績予想の修正に関するお知らせ'
+          : reviewCase === 'summary-format-world'
+            ? '2027年２月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）'
+            : reviewCase === 'summary-format-createsd'
+              ? '2027年５月期 第１四半期決算短信〔日本基準〕（連結）'
+              : reviewCase === 'summary-format-kyokuto'
+                ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）'
+                : reviewCase === 'summary-format-karura' || reviewCase === 'summary-format-daiseki'
+                  ? '2027年２月期第２四半期（中間期）決算短信〔日本基準〕（連結）'
+                  : reviewCase?.startsWith('summary-format-nachi')
+                    ? '2026年11月期 第３四半期決算短信〔日本基準〕（連結）'
+                    : reviewFixture.documentType === 'earnings'
+                      ? '2027年3月期 決算短信〔日本基準〕（連結）'
+                      : '追加セルフレビュー用開示',
     };
   const withComparison = args.includes('--with-comparison');
   const fixedFailure =
@@ -83,6 +236,20 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     throw new Error('比較固定試験はBlueMemeの固定APIでのみ使用します');
   const fixed = args.includes('--fixed-api'),
     fixtureSource = args.includes('--fixture-source');
+  const narrativeReplay = args.includes('--narrative-replay')
+    ? JSON.parse(await readFile(arg('--narrative-replay'), 'utf8'))
+    : null;
+  if (
+    narrativeReplay &&
+    (!fixed ||
+      !fixtureSource ||
+      reviewCase ||
+      !narrativeReplay.result ||
+      narrativeReplay.presentation?.version !== 6 ||
+      !narrativeReplay.presentation?.organization ||
+      narrativeReplay.item.id !== item.id)
+  )
+    throw new Error('説明要約の再生は同じ資料の生成・点検済み記録・固定API・固定PDF専用です');
   const reviewUpgrade = args.includes('--review-upgrade');
   if (
     reviewUpgrade &&
@@ -137,13 +304,22 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     source: reviewRejectedUrl
       ? 'rejected-link'
       : reviewFixture
-        ? 'synthetic-PDF-through-offscreen'
+        ? reviewCase === 'summary-format-kyokuto' ||
+          reviewCase === 'summary-format-karura' ||
+          reviewCase?.startsWith('summary-format-nachi') ||
+          reviewCase === 'summary-format-daiseki' ||
+          reviewCase === 'summary-format-world' ||
+          reviewCase === 'summary-format-createsd' ||
+          reviewCase === 'summary-format-echo'
+          ? 'public-PDF-through-offscreen'
+          : 'synthetic-PDF-through-offscreen'
         : fixtureSource
           ? 'fixture'
           : 'TDnet',
     buildDigest,
     sourceBuildDigest: sourceDigest,
     stages: [],
+    narrativeReplay: narrativeReplay ? arg('--narrative-replay') : null,
     success: false,
   };
   try {
@@ -219,22 +395,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
     if (fixed) {
       const source = expectations.find((e) => e.id === item.id);
-      if (!source) throw new Error('固定候補がありません');
-      const fixedFacts = structuredClone(source.facts) as unknown as CandidateFact[];
-      if (withComparison) {
-        const previous = structuredClone(fixedFacts[0]);
-        previous.id = 'f20';
-        previous.value = 2365;
-        previous.period = '2025年3月期';
-        if (!('valueId' in previous.evidence)) throw new Error('table expected');
-        previous.evidence.valueId = 'p1s80';
-        previous.evidence.periodIds = ['p1s78', 'p1s79'];
-        fixedFacts.push(previous);
-      }
+      if (!source && !reviewFixture && !narrativeReplay) throw new Error('固定候補がありません');
+      const fixedFacts = (reviewFixture
+        ? []
+        : structuredClone(source?.facts ?? [])) as unknown as CandidateFact[];
       const fixture = corpus.find((c) => c.id === item.id)!;
-      const sourcePages = fixture.pages.map((p) =>
-        extractPageLayout(p.items as TextItem[], p.pageNumber)
-      );
+      const sourcePages = reviewFixture
+        ? reviewFixture.pages
+        : (fixture?.pages ?? []).map((p) => extractPageLayout(p.items as TextItem[], p.pageNumber));
       await context.route('https://api.openai.com/**', async (route: any) => {
         const prompt = route
           .request()
@@ -247,6 +415,17 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           await firstResponse;
         }
         let result: any;
+        if (narrativeReplay) {
+          const attempt = narrativeReplay.attempts[apiCalls - 1];
+          if (!attempt) throw new Error('固定した説明要約の応答を使い切りました');
+          await route.fulfill({
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{ message: { content: attempt.response }, finish_reason: 'stop' }],
+            }),
+          });
+          return;
+        }
         if (reviewFixture && !prompt.includes('"interpretation"')) {
           await route.fulfill({
             contentType: 'application/json',
@@ -373,12 +552,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await context.route('https://www.release.tdnet.info/inbs/fixture-main.html', (route: any) =>
         route.fulfill({
           contentType: 'text/html',
+          headers: copyBlocked ? { 'Permissions-Policy': 'clipboard-write=()' } : {},
           body: '<html><meta charset="utf-8"><iframe id="main_list" src="fixture-list.html" style="width:100%;height:880px"></iframe></html>',
         })
       );
       await context.route('https://www.release.tdnet.info/inbs/fixture-list.html', (route: any) =>
         route.fulfill({
           contentType: 'text/html',
+          headers: copyBlocked ? { 'Permissions-Policy': 'clipboard-write=()' } : {},
           body: `<html><meta charset="utf-8"><table id="list-head"><tr><td class="header-R">表題</td></tr></table><table id="main-list-table"><tbody><tr><td class="kjTime oddnew-L">15:00</td><td class="kjCode oddnew-M">${item.code ?? (item.id.startsWith('bluememe') ? '4069' : item.id.startsWith('buyback') ? '9313' : '3979')}</td><td class="kjName oddnew-M">公開PDF検証</td><td class="kjTitle oddnew-M"><a href="${pdfUrl}">${item.title}</a></td><td class="oddnew-R"></td></tr></tbody></table></html>`,
         })
       );
@@ -461,16 +642,15 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.equal(trace.resultId, null);
       assert.deepEqual(trace.attempts, []);
       assert.deepEqual(trace.usage, []);
-      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const downloaded = await downloadEvent;
-      assert.deepEqual(JSON.parse(await readFile(await downloaded.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page, copyBlocked), trace);
       assert.equal(apiCalls, 0);
       assert.equal(pdfRequests, 0);
       evidence.trace = trace;
       evidence.pdfRequests = pdfRequests;
       evidence.stages.push(
-        'rejected URL → own failed run → diagnostic download; PDF/API requests 0'
+        copyBlocked
+          ? 'rejected URL → clipboard denied → selectable JSON; PDF/API requests 0'
+          : 'rejected URL → own failed run → diagnostic clipboard copy; PDF/API requests 0'
       );
       await context.close();
       context = null;
@@ -536,6 +716,23 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       sourceDigest,
       '実行Workerと現在の製品ソースが一致しません'
     );
+    if (smartFull && completedTrace.outcome === 'failure') {
+      assert.ok(completedTrace.error.includes('全文で再要約'));
+      assert.equal(apiCalls, 0, '不足したsmart入力でAPIを呼びません');
+      assert.deepEqual(completedTrace.attempts, []);
+      evidence.smart = { error: completedTrace.error, attempts: completedTrace.attempts };
+      await summary.getByRole('button', { name: '全文で再要約', exact: true }).click();
+      await summary
+        .getByRole('heading', { name: '開示の要点', exact: true })
+        .waitFor({ timeout: 330000 });
+      Object.assign(
+        completedTrace,
+        await worker.evaluate(
+          async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+        )
+      );
+      evidence.stages.push('smart completeness failure without API → explicit full retry');
+    }
     if (!fixedFailure && completedTrace.outcome === 'failure')
       throw new Error(completedTrace.error);
     if (fixedFailure) {
@@ -559,10 +756,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         trace.attempts.map((a: any) => a.phase),
         ['first', 'repair']
       );
-      const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const download = await downloadEvent;
-      assert.deepEqual(JSON.parse(await readFile(await download.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
       assert.equal(apiCalls, 2);
       evidence.stages.push(
         reviewCase === 'assertion-conflict'
@@ -575,53 +769,6 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return;
     }
 
-    if (smartFull) {
-      const before = await worker.evaluate(async () => {
-        const entries = await chrome.storage.local.get();
-        return Object.entries(entries).find(
-          ([k, v]: [string, any]) =>
-            k.startsWith('summaryCacheV2:') && v.metadata?.extractionMode === 'smart'
-        )?.[1];
-      });
-      assert.ok(before?.facts?.facts.length, 'smart事実が確定しませんでした');
-      evidence.smart = before;
-      // Re-fetch through the built extension's offscreen route, then recheck exactly
-      // the same confirmed facts without generation or addition of full-page facts.
-      const fullExtraction = await worker.evaluate(async (url: string) => {
-        const data = await (await fetch(url)).arrayBuffer();
-        return chrome.runtime.sendMessage({
-          action: 'extractPdfText',
-          pdfData: Array.from(new Uint8Array(data)),
-          extractionMode: 'full',
-          documentType: 'earnings',
-        });
-      }, pdfUrl);
-      assert.ok(fullExtraction.success);
-      const checked = parseFactSummary(
-        JSON.stringify(before.facts),
-        'earnings',
-        fullExtraction.pages,
-        false
-      );
-      assert.deepEqual(
-        checked.facts.map((f) => f.id),
-        before.facts.facts.map((f: any) => f.id)
-      );
-      evidence.stages.push('smart facts retain IDs after extension full PDF retrieval');
-      const priorCalls = apiCalls;
-      await summary.getByRole('button', { name: '全文で再要約', exact: true }).click();
-      await page.waitForFunction(
-        () =>
-          document
-            .querySelector<HTMLIFrameElement>('#main_list')
-            ?.contentDocument?.querySelector('.tdnet-digest-summary-row')
-            ?.textContent?.includes('全文抽出'),
-        {},
-        { timeout: 330000 }
-      );
-      assert.ok(apiCalls > priorCalls);
-      evidence.stages.push('smart → full regenerates with the same candidate contract');
-    }
     const body = await summary.innerText();
     evidence.rendered = body;
     const expected = reviewFixture
@@ -644,9 +791,18 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         : item.id.startsWith('buyback')
           ? ['200000', '206200000', '上限', '予定', '2026年7月15日', '可能性']
           : item.id.startsWith('monthly')
-            ? ['2026年6月', '338214', 'NJSS', '速報', '修正する可能性']
+            ? ['2026年6月', '338214', 'NJSS', '速報']
             : [];
-    for (const term of expected) assert.ok(body.includes(term), `表示に必要な意味がない: ${term}`);
+    for (const term of expected)
+      assert.ok(
+        body.replace(/(?<=\d),(?=\d)/g, '').includes(term),
+        `表示に必要な意味がない: ${term}`
+      );
+    if (!reviewFixture && item.id.startsWith('monthly'))
+      assert.ok(
+        ['修正する可能性', '修正される可能性', '修正の可能性'].some((term) => body.includes(term)),
+        '月次の速報値が修正される可能性の説明がない'
+      );
     const stored = await worker.evaluate(async (version: number) => {
       const data = await chrome.storage.local.get();
       const entry = Object.entries(data).find(
@@ -656,7 +812,381 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    const renderedLines = await summary.locator('li').allTextContents();
+    assert.ok(stored.value.presentation?.version === 6);
+    if (narrativeReplay) {
+      // UI replay must preserve the model evaluation outcome, including warnings.
+      // It is not a way to turn a failed model assessment into a success.
+      const replayErrors = expectedErrors(item, stored.value.facts);
+      assert.deepEqual(replayErrors, narrativeReplay.errors);
+      assert.deepEqual(stored.value.presentation, narrativeReplay.presentation);
+      assert.deepEqual(stored.value.facts, narrativeReplay.result);
+      assert.equal(stored.value.metadata.generationCalls, apiCalls);
+      assert.equal(apiCalls, narrativeReplay.attempts.length);
+      const reading = (await summary.innerText()).normalize('NFKC').replace(/\s|,/g, '');
+      assert.ok(!reading.includes('原文抜粋'));
+      assert.ok(!reading.includes('本資料に記載されている業績予想につきましては'));
+      const tokens = item.id.startsWith('world')
+        ? ['B2C', 'B2B', '共通部門', '4559', '3089', '637', 'IFRS']
+        : item.id.startsWith('kyokuto')
+          ? ['営業', '投資', '財務', '374683', '64186', '265834', '311963']
+          : [];
+      for (const token of tokens)
+        assert.ok(reading.includes(token), `通常表示の要点欠落: ${token}`);
+      if (item.id.startsWith('kyokuto'))
+        // Cash movement can be stated as the independently verified starting
+        // balance (267,301) or the increase (44,662), alongside the closing balance.
+        assert.ok(
+          reading.includes('267301') || reading.includes('44662'),
+          '現金残高の変化がありません'
+        );
+      if (item.id.startsWith('world')) {
+        const rows = await summary.locator('table tbody tr').allTextContents();
+        // Independent expectations from the source PDF: the rate must be in
+        // the same row, so a prose mention elsewhere cannot mask its absence.
+        // Calculated rates use independently verified rounded source amounts;
+        // B2B 3,089 / 2,752 gives 12.2%, distinct from the reported 12.3%.
+        for (const [business, profit, rate, calculated] of [
+          ['B2C', '4559', '0.1%', '0.1%'],
+          ['B2B', '3089', '12.3%', '12.2%'],
+          ['共通部門', '637', '39.4%', '39.4%'],
+        ])
+          assert.ok(
+            rows.some((row: string) => {
+              const text = row.normalize('NFKC').replace(/\s|,/g, '');
+              return (
+                text.includes(business) &&
+                text.includes(profit) &&
+                (text.includes(rate) || (text.includes('約') && text.includes(calculated)))
+              );
+            }),
+            `事業別の同一行比較がありません: ${business} ${rate}`
+          );
+      }
+      const toggles = summary.locator('details.tdnet-digest-source');
+      assert.ok(await toggles.count());
+      assert.ok(
+        await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
+      );
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v${ANALYSIS_SCHEMA_VERSION}-summary-top.png` });
+      for (const [title, suffix] of [
+        ['事業別業績', 'business'],
+        ['キャッシュフロー', 'cash-flow'],
+      ]) {
+        const heading = summary.getByRole('heading', { name: title, exact: true });
+        if (!(await heading.count())) continue;
+        await heading.scrollIntoViewIfNeeded();
+        await heading.evaluate((node: HTMLElement) => {
+          const view = node.ownerDocument.defaultView!;
+          view.scrollTo(0, view.scrollY + node.getBoundingClientRect().top - 16);
+        });
+        await page.screenshot({
+          path: `evaluation/results/local/${item.id}-v${ANALYSIS_SCHEMA_VERSION}-summary-${suffix}.png`,
+        });
+      }
+      await summary.evaluate((node: HTMLElement) => node.ownerDocument.defaultView!.scrollTo(0, 0));
+      await page.setViewportSize({ width: 600, height: 800 });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v${ANALYSIS_SCHEMA_VERSION}-summary-narrow.png` });
+      await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
+        nodes.forEach((n) => (n.open = true))
+      );
+      const original = (await summary.innerText()).normalize('NFKC').replace(/\s/g, '');
+      for (const excerpt of stored.value.presentation.excerpts)
+        assert.ok(
+          original.includes(excerpt.text.normalize('NFKC').replace(/\s/g, '')),
+          `原文欠落: ${excerpt.id}`
+        );
+      await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
+        nodes.forEach((n) => (n.open = false))
+      );
+      await row.getByRole('button', { name: '非表示', exact: true }).click();
+      assert.equal(await frame.locator('.tdnet-digest-summary-row').count(), 0);
+      await row.getByRole('button', { name: '表示', exact: true }).click();
+      await summary.waitFor();
+      assert.equal((await summary.innerText()).normalize('NFKC').replace(/\s|,/g, ''), reading);
+      assert.equal(apiCalls, narrativeReplay.attempts.length);
+      evidence.presentation = stored.value.presentation;
+      evidence.modelEvaluationSuccess = narrativeReplay.success;
+      evidence.modelEvaluationErrors = narrativeReplay.errors;
+      evidence.metadata = stored.value.metadata;
+      evidence.reading = reading;
+      evidence.pdfHash = pdfHash;
+      const trace = await worker.evaluate(
+        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+      );
+      assert.equal(
+        trace.outcome,
+        narrativeReplay.result.unverified.length ||
+          ['partial', 'unavailable'].includes(narrativeReplay.presentation.organization.status)
+          ? 'partialSuccess'
+          : narrativeReplay.repairAttempted
+            ? 'repairSuccess'
+            : 'firstSuccess'
+      );
+      assert.deepEqual(
+        trace.attempts.map((a: any) => a.phase),
+        narrativeReplay.attempts.map((a: any) => a.phase)
+      );
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
+      evidence.trace = trace;
+      evidence.stages.push(
+        'public PDF → Offscreen → replayed extraction/synthesis/review → exact facts/presentation → closed source toggles → full original → cache restore without API → diagnostic clipboard'
+      );
+      await context.close();
+      context = null;
+      evidence.success = true;
+      return;
+    }
+    if (
+      !reviewFixture &&
+      !withComparison &&
+      !reviewSettingsChange &&
+      item.id === 'bluememe-20260930'
+    ) {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of [
+        '売上高:↑増収約+39.5%3,298百万円(前期2,365百万円)',
+        '営業利益:↑増益約+20.5%47百万円(前期39百万円)',
+        '経常利益:↑増益約+75.9%51百万円(前期29百万円)',
+        '純利益:↑黒字転換24百万円(前期-10百万円)',
+      ])
+        assert.ok(reading.includes(term), `成長率・黒字転換が欠落: ${term}`);
+      evidence.reading = reading;
+    }
+    if (reviewCase === 'summary-format-world') {
+      const overview = body.split('業績と増減要因')[0].normalize('NFKC').replace(/\s|,/g, '');
+      assert.ok(overview.includes('親会社の所有者に帰属する中間利益'));
+      for (const term of ['約+4.2%', '5877百万円', '5640百万円'])
+        assert.ok(overview.includes(term), `中間利益の当期比較が欠落: ${term}`);
+      assert.ok(!overview.includes('12600百万円'), '通期予想が当期実績へ混入しました');
+      assert.ok(!overview.includes('サステナビリティ'));
+      assert.equal((overview.match(/会社説明\(原文抜粋\)/g) ?? []).length, 1);
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      const excerpts = await summary
+        .locator('li')
+        .evaluateAll((nodes: HTMLElement[]) =>
+          nodes.filter((n) => !n.closest('details')).map((n) => n.textContent?.trim() ?? '')
+        );
+      assert.ok(
+        !excerpts.some((text: string) => /^[)）]を早期適用/.test(text)),
+        '引用内の句点で文が分断されました'
+      );
+      assert.ok(reading.includes('人材オペレーション'), 'ページをまたぐ説明が分断されました');
+      assert.ok(!reading.includes('これらの業績予想のみに依拠して投資判断'));
+      assert.ok(!reading.includes('業績予想の前提となる条件及び業績予想のご利用'));
+      assert.ok(!excerpts.some((text: string) => text === '純損益に振替えられる可能性のある項目'));
+      evidence.reading = reading;
+      const facts = stored.value.facts.facts;
+      for (const [value, year] of [
+        [77.11, 2027],
+        [82.74, 2026],
+      ]) {
+        const eps = facts.find(
+          (f: any) =>
+            f.value === value && f.label.startsWith('基本的') && f.period.startsWith(String(year))
+        );
+        assert.ok(eps, `基本EPSの当年・前年が欠落: ${year}`);
+        assert.equal(eps.unit, '円');
+        assert.ok(
+          eps.provenance.adjustments.some((a: any) => a.basis === 'splitAdjusted'),
+          'EPSの分割注記が欠落'
+        );
+      }
+      assert.equal(completedTrace.outcome, 'firstSuccess');
+    }
+    if (reviewCase === 'summary-format-createsd') {
+      const facts = stored.value.facts.facts;
+      for (const [value, periodKind] of [
+        [262800, 'cumulativeQ2'],
+        [541000, 'fullYear'],
+      ] as const) {
+        const f = facts.find((f: any) => f.value === value && f.label === '売上高');
+        assert.equal(f?.semantics.periodKind, periodKind);
+        assert.equal(f?.semantics.state, 'forecast');
+      }
+      assert.equal(completedTrace.outcome, 'firstSuccess');
+      assert.deepEqual(stored.value.facts.unverified, []);
+    }
+    if (reviewCase === 'summary-format-daiseki') {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of ['74,200', '11,200', '業績予想:変更なし', '配当予想:変更なし'])
+        assert.ok(reading.includes(term), `金額・修正有無が欠落: ${term}`);
+      assert.equal(completedTrace.outcome, 'repairSuccess');
+      const [first, repair] = completedTrace.attempts;
+      assert.equal(first.confirmedIds.length, 17);
+      assert.equal(first.slots.filter((s: any) => s.status !== 'satisfied').length, 4);
+      assert.equal(repair.confirmedIds.length, 21);
+      assert.ok(first.confirmedIds.every((id: string) => repair.confirmedIds.includes(id)));
+      assert.ok(stored.value.facts.facts.some((f: any) => f.evidence.blockId === 'p4b14'));
+      assert.ok(!stored.value.facts.facts.some((f: any) => f.evidence.blockId === 'p1b42'));
+      evidence.reading = reading;
+    }
+    if (reviewCase?.startsWith('summary-format-nachi')) {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const blockId of ['p2b11', 'p2b12', 'p2b13']) {
+        const original = stored.value.presentation.excerpts.find((e: any) => e.blockId === blockId);
+        assert.ok(original, `定型文の全文保持が欠落: ${blockId}`);
+        assert.equal(original.role, 'document');
+        assert.ok(
+          !reading.includes(original.text.normalize('NFKC').replace(/\s/g, '')),
+          `定型文が通常表示へ混入: ${blockId}`
+        );
+      }
+      const previous = stored.value.facts.facts.filter((f: any) =>
+        f.period?.startsWith('2025年11月期')
+      );
+      assert.equal(previous.length, 5);
+      for (const term of [
+        '売上高:↑増収約+10.4%192,326百万円(前年同期174,194百万円)',
+        '営業利益:↑増益約+72.9%11,457百万円(前年同期6,628百万円)',
+        '経常利益:↑増益約+111.5%10,873百万円(前年同期5,141百万円)',
+        '純利益:↑増益約+82.1%6,629百万円(前年同期3,640百万円)',
+      ])
+        assert.ok(reading.includes(term), `前年の確定値による比較が欠落: ${term}`);
+      if (reviewCase === 'summary-format-nachi') {
+        assert.equal(completedTrace.outcome, 'repairSuccess');
+        const [first, repair] = completedTrace.attempts;
+        assert.equal(first.confirmedIds.length, 14);
+        const missing = first.slots.filter((s: any) => s.requirement.includes('前年決算実績'));
+        assert.equal(missing.length, 5);
+        assert.ok(missing.every((s: any) => s.status === 'absent'));
+        assert.equal(repair.confirmedIds.length, 19);
+        assert.ok(first.confirmedIds.every((id: string) => repair.confirmedIds.includes(id)));
+      }
+      evidence.reading = reading;
+    }
+    if (reviewCase === 'summary-format-karura') {
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of [
+        '売上高:↑増収約+1.4%3,989百万円(前年同期3,935百万円)',
+        '営業利益:↓減益約−20.1%211百万円(前年同期264百万円)',
+        '経常利益:↓減益約−17.9%215百万円(前年同期262百万円)',
+        '純利益:↓減益約−66.1%83百万円(前年同期245百万円)',
+        '修正あり',
+        '修正前の数値・方向は本資料では未確認',
+        '人件費及び原材料費',
+      ])
+        assert.ok(reading.includes(term), `冒頭の変化・説明が欠落: ${term}`);
+      for (const blockId of ['p2b14', 'p3b3', 'p3b4', 'p11b4', 'p11b7', 'p11b9']) {
+        const original = stored.value.presentation.excerpts.find((e: any) => e.blockId === blockId);
+        assert.ok(original, `原文保持が欠落: ${blockId}`);
+        assert.ok(
+          !reading.includes(original.text.normalize('NFKC').replace(/\s/g, '')),
+          `定型文が通常表示へ混入: ${blockId}`
+        );
+      }
+      assert.ok(
+        stored.value.presentation.sections
+          .find((s: any) => s.title === '通期見通し・前提')
+          .excerptIds.includes('source:p5b11')
+      );
+      evidence.reading = reading;
+    }
+    if (reviewCase === 'summary-format-kyokuto') {
+      const headings = await summary.locator('h2').allTextContents();
+      for (const title of ['業績と増減要因', '通期見通し・前提', '配当', '財政状態・資金の動き'])
+        assert.equal(headings.filter((heading: string) => heading === title).length, 1);
+      assert.ok(!headings.some((heading: string) => /^[１-９1-9（(]/.test(heading)));
+      const performance = stored.value.presentation.sections.find(
+        (section: any) => section.title === '業績と増減要因'
+      );
+      assert.ok(
+        performance.excerptIds.includes('source:p1b8') &&
+          performance.excerptIds.includes('source:p4b7')
+      );
+      const finance = stored.value.presentation.sections.find(
+        (section: any) => section.title === '財政状態・資金の動き'
+      );
+      assert.ok(finance.excerptIds.includes('source:p7b5'), '貸借対照表の続きは同じ話題へ保持');
+      assert.ok(body.includes('前年同期 3,130') && body.includes('前年同期 309'));
+      for (const term of ['燃料費', '節約志向', '季節', '年間11']) assert.ok(body.includes(term));
+      const reading = (await displayedFacts(summary))
+        .join('\n')
+        .normalize('NFKC')
+        .replace(/\s/g, '');
+      for (const term of [
+        '燃料費',
+        '節約志向',
+        '3月から5月に偏る',
+        '新規出店3店舗',
+        '470店舗',
+        '長期化した場合',
+        '4.9%',
+        '20.2%',
+        '18.8%',
+        '15.5%',
+      ])
+        assert.ok(reading.includes(term), `通常表示の説明が欠落: ${term}`);
+      for (const block of ['p4b3', 'p4b4', 'p4b7', 'p4b8', 'p4b9']) {
+        const original = stored.value.presentation.excerpts.find(
+          (e: any) => e.blockId === block
+        ).text;
+        assert.ok(
+          !reading.includes(original.normalize('NFKC').replace(/\s/g, '')),
+          `段落全文が抜粋として重複: ${block}`
+        );
+      }
+    }
+    const sourceToggles = summary.locator('details.tdnet-digest-source');
+    assert.equal(
+      await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
+        nodes.some((node) => node.open)
+      ),
+      false
+    );
+    assert.equal(await summary.locator('details').filter({ hasText: '生成情報' }).count(), 1);
+    evidence.presentation = stored.value.presentation;
+    await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-top.png` });
+    await page.setViewportSize({ width: 600, height: 800 });
+    await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-narrow.png` });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    assert.equal(await summary.locator('blockquote').count(), 0);
+    if (await sourceToggles.count()) {
+      await sourceToggles.first().locator('summary').click();
+      assert.equal(
+        await sourceToggles.first().evaluate((node: HTMLDetailsElement) => node.open),
+        true
+      );
+      await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) => {
+        for (const node of nodes) node.open = true;
+      });
+    }
+    const visibleText = (await summary.innerText()).normalize('NFKC').replace(/\s/g, '');
+    for (const excerpt of stored.value.presentation.excerpts)
+      assert.ok(
+        visibleText.includes(excerpt.text.normalize('NFKC').replace(/\s/g, '')),
+        `原文の表示が欠落: ${excerpt.id}`
+      );
+    if (await sourceToggles.count()) {
+      await sourceToggles.first().scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-summary-supplement.png` });
+      await sourceToggles.first().locator('summary').click();
+      assert.equal(
+        await sourceToggles.first().evaluate((node: HTMLDetailsElement) => node.open),
+        false
+      );
+      await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) => {
+        for (const node of nodes) node.open = false;
+      });
+      evidence.stages.push(
+        'source toggles closed initially; open reveals all source; close preserves facts'
+      );
+    }
+    const renderedLines = await displayedFacts(summary);
     assert.deepEqual(renderedFactErrors(stored.value.facts.facts, renderedLines), []);
     evidence.renderedLines = renderedLines;
     if (reviewSettingsChange) {
@@ -715,12 +1245,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         'real normal generation PDF/input/model/mode/contract/request limits match CLI conditions'
       );
     }
-    const downloadEvent = page.waitForEvent('download', { timeout: 10000 });
-    await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-    const download = await downloadEvent;
-    const exported = JSON.parse(await readFile(await download.path(), 'utf8'));
+    const exported = await copiedDiagnostic(row, page);
     assert.deepEqual(exported, trace);
-    evidence.stages.push('phase/raw/diagnostics/hash/usage trace exported from UI');
+    evidence.stages.push('phase/raw/diagnostics/hash/usage trace copied from UI');
     evidence.sourceHash = stored.value.metadata.documentHash;
     evidence.facts = stored.value.facts;
     evidence.metadata = stored.value.metadata;
@@ -887,11 +1414,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     const callsBefore = apiCalls;
     await row.getByRole('button', { name: '表示', exact: true }).click();
     await summary
-      .getByRole('heading', { name: '確認できた事実', exact: true })
+      .getByRole('heading', { name: '開示の要点', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
     assert.deepEqual(
-      renderedFactErrors(stored.value.facts.facts, await summary.locator('li').allTextContents()),
+      renderedFactErrors(stored.value.facts.facts, await displayedFacts(summary)),
       []
     );
     evidence.stages.push('hide/show/cache without API');
@@ -899,6 +1426,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       .frames()
       .find((f: any) => /I_list_|fixture-list/.test(f.url()))!
       .url();
+    if (smartFull)
+      await worker.evaluate(async () => chrome.storage.sync.set({ extractionMode: 'full' }));
     await page.reload();
     // Reload resets the list date. Restore the tested date before waiting for its table.
     await page.locator('#main_list').waitFor({ state: 'attached', timeout: 20000 });
@@ -908,14 +1437,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     await frame.locator('#main-list-table').waitFor({ timeout: 20000 });
     await row.getByRole('button', { name: '表示', exact: true }).click({ timeout: 20000 });
     await summary
-      .getByRole('heading', { name: '確認できた事実', exact: true })
+      .getByRole('heading', { name: '開示の要点', exact: true })
       .waitFor({ timeout: 10000 });
     assert.equal(apiCalls, callsBefore);
-    const expectedRestored = smartFull ? evidence.smart.facts : stored.value.facts;
-    assert.deepEqual(
-      renderedFactErrors(expectedRestored.facts, await summary.locator('li').allTextContents()),
-      []
-    );
+    const expectedRestored = stored.value.facts;
+    assert.deepEqual(renderedFactErrors(expectedRestored.facts, await displayedFacts(summary)), []);
     const restoredValue = await worker.evaluate(
       async (request: any) => {
         const settings = await chrome.storage.sync.get(['provider', 'model', 'extractionMode']);
@@ -927,25 +1453,20 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       { version: ANALYSIS_SCHEMA_VERSION, pdfUrl }
     );
     assert.deepEqual(restoredValue.facts, expectedRestored);
-    assert.equal(restoredValue.metadata.extractionMode, smartFull ? 'smart' : 'full');
+    assert.equal(restoredValue.metadata.extractionMode, 'full');
     evidence.restoredFacts = restoredValue.facts;
     evidence.stages.push('page reload restores exact configured-mode facts without API');
 
     if (reviewDiagnostics) {
       // A cached result has no current request ID, but its exact result ID must match.
-      const restoredDownload = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const restored = await restoredDownload;
-      assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
       evidence.stages.push('cached result ID matches diagnostic export after reload');
       await worker.evaluate(async () => chrome.storage.sync.set({ apiKey: '' }));
       await summary.getByRole('button', { name: '再要約', exact: true }).click();
       await summary
         .getByText('APIキーが設定されていません', { exact: false })
         .waitFor({ timeout: 10000 });
-      const failedDownload = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const failed = await failedDownload;
+      const failed = await copiedDiagnostic(row, page);
       assert.equal(apiCalls, callsBefore);
       const failure = await worker.evaluate(
         async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
@@ -959,7 +1480,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.equal(failure.inputHash, null);
       assert.deepEqual(failure.attempts, []);
       assert.deepEqual(failure.usage, []);
-      assert.deepEqual(JSON.parse(await readFile(await failed.path(), 'utf8')), failure);
+      assert.deepEqual(failed, failure);
       evidence.earlyFailureTrace = failure;
       evidence.stages.push(
         'same-PDF settings failure exports its own trace without stale response or API call'
@@ -972,12 +1493,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
 
     if (reviewFixture) {
       const priorCalls = apiCalls;
-      const restoredDownload = page.waitForEvent('download', { timeout: 10000 });
-      await row.getByRole('button', { name: '診断を保存', exact: true }).click();
-      const restored = await restoredDownload;
-      assert.deepEqual(JSON.parse(await readFile(await restored.path(), 'utf8')), trace);
+      assert.deepEqual(await copiedDiagnostic(row, page), trace);
       evidence.stages.push('restored result ID matches exported diagnostic');
-      const altered = structuredClone(reviewFixture.legacy);
+      const altered = structuredClone(stored.value.facts);
       if (reviewCase === 'attributes') {
         altered.facts[0].semantics.scope = '連結';
         altered.facts[0].semantics.basis = '日本基準';
@@ -998,13 +1516,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           code: '1234',
           companyName: '株式会社テスト',
           facts: altered,
+          presentation: buildPresentation(altered, reviewFixture.pages),
           resultId: stored.value.resultId,
           fingerprint: stored.value.metadata.analysisFingerprint,
         }
       );
       await extensionPage.close();
       assert.equal(typeof invalid.error, 'string');
-      assert.ok(invalid.error.includes('識別子'));
+      assert.ok(/(?:冒頭要約|本文)の参照|識別子/.test(invalid.error), invalid.error);
       assert.equal(apiCalls, priorCalls);
       evidence.stages.push('altered saved facts refused before followup API');
     }
@@ -1027,7 +1546,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.analysis = analysis;
       assert.ok(analysis, '実API追加分析の現行キャッシュがありません');
       assert.equal(analysis.version, 2);
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       evidence.stages.push(
         reviewFixture
           ? 'fixed additional analysis preserves rechecked facts'
@@ -1046,7 +1565,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         { timeout: 330000 }
       );
       evidence.followupRendered = await summary.innerText();
-      assert.ok(evidence.followupRendered.includes('確認できた事実'));
+      assert.ok(evidence.followupRendered.includes('開示の要点'));
       const score = await worker.evaluate(async () => {
         const entries = await chrome.storage.local.get();
         return Object.entries(entries).find(([k]) => k.startsWith('scoreCacheV4:'))?.[1];
@@ -1069,14 +1588,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         {},
         { timeout: 30000 }
       );
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       evidence.stages.push('explicit additional analysis while scoring OFF');
       failScore = true;
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: true }));
       await summary
         .getByRole('button', { name: '採点を再試行', exact: true })
         .waitFor({ timeout: 30000 });
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       evidence.stages.push('scoring ON failure preserves summary');
       failScore = false;
       await summary.getByRole('button', { name: '採点を再試行', exact: true }).click();
@@ -1084,12 +1603,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         (compare) =>
           document
             .querySelector<HTMLIFrameElement>('#main_list')
-            ?.contentDocument?.querySelector('.tdnet-digest-summary-row')
+            ?.contentDocument?.querySelector('.tdnet-digest-summary-row #score-result')
             ?.textContent?.includes(compare ? '55' : '比較値'),
         withComparison,
         { timeout: 30000 }
       );
-      assert.ok((await summary.innerText()).includes('確認できた事実'));
+      assert.ok((await summary.innerText()).includes('開示の要点'));
       if (withComparison) {
         const score = await worker.evaluate(async () => {
           const entries = await chrome.storage.local.get();

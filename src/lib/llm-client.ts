@@ -10,6 +10,7 @@ export interface LLMConfig {
   baseUrl?: string; // カスタムプロバイダー用
   maxOutputTokens?: number;
   reasoningEffort?: 'low' | 'high';
+  reasoningEnabled?: boolean;
   temperature?: number; // 生成温度（0-2、低いほど安定した出力）
   onUsage?: (usage: {
     inputTokens: number | null;
@@ -18,7 +19,12 @@ export interface LLMConfig {
     finishReason?: string | null;
     reasoningTokens?: number | null;
   }) => void;
-  responseFormat?: 'json_object';
+  responseFormat?:
+    | 'json_object'
+    | {
+        type: 'json_schema';
+        json_schema: { name: string; strict: true; schema: Record<string, unknown> };
+      };
   signal?: AbortSignal;
   onResponse?: (response: string) => void;
 }
@@ -51,6 +57,13 @@ export async function generateText(config: LLMConfig, messages: ChatMessage[]): 
     (!Number.isInteger(config.maxOutputTokens) || config.maxOutputTokens <= 0)
   )
     throw new Error('APIの出力上限は正の整数で指定してください');
+  if (
+    config.reasoningEnabled !== undefined &&
+    (typeof config.reasoningEnabled !== 'boolean' || config.provider !== 'openrouter')
+  )
+    throw new Error('推論の有効指定はOpenRouterで真偽値を指定してください');
+  if (config.reasoningEnabled !== undefined && config.reasoningEffort !== undefined)
+    throw new Error('推論の有効指定と推論強度は同時に指定できません');
   // プロバイダーに応じて適切なAPIを呼び出す
   switch (config.provider) {
     case 'anthropic':
@@ -89,10 +102,16 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
       })),
       ...(config.maxOutputTokens !== undefined && { max_tokens: config.maxOutputTokens }),
       ...(config.provider === 'openrouter' &&
-        config.reasoningEffort && { reasoning: { effort: config.reasoningEffort } }),
+        (config.reasoningEnabled !== undefined
+          ? { reasoning: { enabled: config.reasoningEnabled } }
+          : config.reasoningEffort && {
+              reasoning: { effort: config.reasoningEffort, exclude: true },
+            })),
       ...(config.temperature !== undefined && { temperature: config.temperature }),
-      ...(config.responseFormat === 'json_object' && {
-        response_format: { type: 'json_object' },
+      ...(config.responseFormat && {
+        response_format:
+          config.responseFormat === 'json_object' ? { type: 'json_object' } : config.responseFormat,
+        ...(config.provider === 'openrouter' && { provider: { require_parameters: true } }),
       }),
     }),
   });

@@ -6,7 +6,7 @@ import { normalizeTdnetPdfUrl } from './tdnet-url';
 export const SUMMARY_TRACE_KEY = 'summaryLastRunV1';
 export type Usage = Parameters<NonNullable<LLMConfig['onUsage']>>[0];
 export interface SummaryAttempt {
-  phase: 'first' | 'repair';
+  phase: 'first' | 'repair' | 'summary' | 'summaryRepair' | 'summaryReview' | 'summaryReviewRepair';
   response: string;
   error: string | null;
   diagnostics?: Diagnostic[];
@@ -32,7 +32,7 @@ export interface SummaryTrace {
   attempts: SummaryAttempt[];
   usage: Usage[];
   elapsedMs: number;
-  outcome: 'running' | 'firstSuccess' | 'repairSuccess' | 'failure';
+  outcome: 'running' | 'firstSuccess' | 'repairSuccess' | 'partialSuccess' | 'failure';
   error: string | null;
 }
 /** A fresh attempt must match its run; cached success must match its exact result. */
@@ -51,7 +51,7 @@ export function matchingSummaryTrace(
       ? value.runId !== runId
       : !resultId ||
         value.resultId !== resultId ||
-        !['firstSuccess', 'repairSuccess'].includes(String(value.outcome)))
+        !['firstSuccess', 'repairSuccess', 'partialSuccess'].includes(String(value.outcome)))
   )
     throw new Error('この要約結果に対応する診断がありません');
   // A rejected URL remains raw in its failed run. Exporting that diagnostic

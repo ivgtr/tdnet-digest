@@ -1,5 +1,12 @@
 import { expect, it } from 'vitest';
-import { parseQuantity, proseQuantities, parseExactNumeric } from './quantity';
+import {
+  parseQuantity,
+  proseQuantities,
+  parseExactNumeric,
+  isUncaptionedUnit,
+  quantityNumber,
+  parseExactRange,
+} from './quantity';
 import { quantityCells } from './document-structure';
 import type { PdfSpan } from './pdf-layout';
 import { buildTableCells, buildTableRegions, type TableCell } from './table-layout';
@@ -60,7 +67,11 @@ it('本文の単位証明は構文と後続の述語を区別する', () => {
     '増加しました',
     'ではありません',
     'に満たない',
+    'と仮定した試算です',
+    'の説明です',
+    '見込みです',
   ]) {
+    expect(isUncaptionedUnit(`百万円${suffix}`)).toBe(false);
     expect(proseQuantities({ id: 'b', text: `取得価額は100百万円${suffix}です。` })[0].raw).toBe(
       '100百万円'
     );
@@ -164,4 +175,16 @@ it('表の最終行が複数行数量でも全断片を表の所属へ渡す', (
   expect(ranges).toHaveLength(2);
   expect(table.valueIds).toEqual(ranges.map((q) => q.id));
   expect(ranges.flatMap((q) => q.spanIds).every((id) => table.spanIds.includes(id))).toBe(true);
+});
+
+it('数量の数値化で精度を失う値を採用しない', () => {
+  expect(quantityNumber('9007199254740993')).toBeNull();
+  expect(quantityNumber('1.0000000000000001')).toBeNull();
+  expect(quantityNumber('1.40')?.value).toBe(1.4);
+});
+
+it('範囲数量の両端・符号・順序を保持し、不完全な構文を拒否する', () => {
+  for (const raw of ['200～100', '1,00～200', '1～', '～2', '1～2～3'])
+    expect(parseExactRange(raw)).toBeNull();
+  expect(parseExactRange('−1.5～−0.1百万円')).toMatchObject({ lower: '-1.5', upper: '-0.1' });
 });

@@ -1,12 +1,9 @@
 import { candidateResponse } from './fixtures/candidate-test-source';
+import { numberCandidate, textPage } from './fixtures/v4-test-source';
 import type { VerifiedFact } from './fact-contract';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { generateText, type LLMConfig } from './llm-client';
-import { generateVerifiedFactSummary, renderFacts } from './fact-summary';
-import { extractPageLayout } from './pdf-layout';
-import corpus from './fixtures/ir-semantic-corpus.json';
-import expectations from './fixtures/ir-semantic-expectations.json';
+import { generateVerifiedFacts as generateVerifiedFactSummary } from './fact-summary';
 
 const config = {
   provider: 'anthropic',
@@ -23,10 +20,13 @@ const response = (text: unknown, stopReason = 'end_turn', outputTokens = 6000) =
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } }
   );
-const pages = corpus[0].pages.map((page) =>
-  extractPageLayout(page.items as TextItem[], page.pageNumber)
+// Transport tests only need one valid source fact; real PDF coverage belongs to the corpus tests.
+const page = textPage(
+  '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
 );
-const raw = (facts: unknown[]) => candidateResponse(facts as VerifiedFact[], pages, 'earnings');
+const pages = [page];
+const fact = numberCandidate(page);
+const raw = (facts: VerifiedFact[]) => candidateResponse(facts, pages);
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -75,25 +75,17 @@ describe('Anthropicの出力予算と完了判定', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('大きな事実v4を初回・不足分修復とも拡張予算で原文照合して表示する', async () => {
-    const facts = expectations[0].facts;
+  it('初回と不足分修復の両方へ拡張予算と生成設定を渡す', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(response(raw(facts.slice(0, 6))))
-      .mockResolvedValueOnce(response(raw(facts.slice(6))));
+      .mockResolvedValueOnce(response(raw([])))
+      .mockResolvedValueOnce(response(raw([fact])));
     vi.stubGlobal('fetch', fetchMock);
-    const result = await generateVerifiedFactSummary(
-      config,
-      'earnings',
-      pages.map((page) => page.text).join('\n'),
-      pages
-    );
+    const result = await generateVerifiedFactSummary(config, 'other', page.text, pages);
     expect(result.repairAttempted).toBe(true);
-    expect(result.facts.facts).toHaveLength(facts.length);
+    expect(result.facts.facts).toHaveLength(1);
     expect(result.facts.unverified).toEqual([]);
-    expect(renderFacts(result.facts)).toContain('-400百万円');
-    expect(renderFacts(result.facts)).toContain('1.4%');
-    expect(renderFacts(result.facts)).toContain('翌連結会計年度');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const [, init] of fetchMock.mock.calls) {
       const body = JSON.parse(init.body);
       expect(body.max_tokens).toBe(32768);
@@ -106,23 +98,77 @@ describe('Anthropicの出力予算と完了判定', () => {
     ['claude-3-5-sonnet-20241022', undefined, 8192],
     [config.model, 16384, 16384],
   ])('モデル %s と明示予算 %s を初回生成へ反映する', async (model, limit, expected) => {
-    const fetchMock = vi.fn().mockResolvedValue(response(raw(expectations[0].facts)));
+    const fetchMock = vi.fn().mockResolvedValue(response(raw([fact])));
     vi.stubGlobal('fetch', fetchMock);
     await generateVerifiedFactSummary(
       { ...config, model, maxOutputTokens: limit },
-      'earnings',
-      pages.map((page) => page.text).join('\n'),
+      'other',
+      page.text,
       pages
     );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).max_tokens).toBe(expected);
   });
 
   it('原文に正しい事実があっても打ち切り応答の部分採用や同じ上限での修復をしない', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(response(raw(expectations[0].facts), 'max_tokens'));
+    const fetchMock = vi.fn().mockResolvedValue(response(raw([fact]), 'max_tokens'));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(
-      generateVerifiedFactSummary(config, 'earnings', pages[0].text, pages)
-    ).rejects.toThrow('上限');
+    await expect(generateVerifiedFactSummary(config, 'other', page.text, pages)).rejects.toThrow(
+      '上限'
+    );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Transport semantics belong here; narrative policy is checked by its existing owner.
+describe('OpenRouterの任意推論', () => {
+  it('推論無効を明示し、強度との競合は送信前に拒否する', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] }),
+            { status: 200 }
+          )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const router = {
+      provider: 'openrouter',
+      model: 'deepseek/deepseek-v4.1-flash',
+      apiKey: 'test',
+      reasoningEnabled: false,
+    };
+    await generateText({ ...router, responseFormat: 'json_object' }, messages);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.reasoning).toEqual({ enabled: false });
+    expect(body.response_format).toEqual({ type: 'json_object' });
+    expect(body.provider).toEqual({ require_parameters: true });
+    const schema = {
+      type: 'json_schema' as const,
+      json_schema: {
+        name: 'current',
+        strict: true as const,
+        schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+      },
+    };
+    await generateText(
+      {
+        provider: router.provider,
+        model: router.model,
+        apiKey: router.apiKey,
+        reasoningEffort: 'low',
+        responseFormat: schema,
+      },
+      messages
+    );
+    const structuredBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(structuredBody.response_format).toEqual(schema);
+    expect(structuredBody.reasoning).toEqual({ effort: 'low', exclude: true });
+    expect(structuredBody.provider).toEqual({ require_parameters: true });
+    await expect(generateText({ ...router, reasoningEffort: 'low' }, messages)).rejects.toThrow(
+      '同時に指定'
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

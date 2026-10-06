@@ -1,7 +1,11 @@
 import { candidateResponse, candidateFixture } from './fixtures/candidate-test-source';
 import { describe, it, expect, vi } from 'vitest';
 import { generateText } from './llm-client';
-import { parseFactSummary, generateVerifiedFactSummary, renderFacts } from './fact-summary';
+import {
+  parseFactSummary,
+  generateVerifiedFacts as generateVerifiedFactSummary,
+  renderFacts,
+} from './fact-summary';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import type { VerifiedFact } from './fact-contract';
 import { serializeLayout } from './pdf-layout';
@@ -10,7 +14,7 @@ const page = textPage(
   '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。'
 );
 const fact = numberCandidate(page);
-const raw = (facts: VerifiedFact[], version = 5) =>
+const raw = (facts: VerifiedFact[], version = 6) =>
   JSON.stringify({ version, documentType: 'other', facts, unverified: [] });
 const parse = (candidate: VerifiedFact, source = [page]) =>
   parseFactSummary(raw([candidate]), 'other', source, false);
@@ -38,6 +42,9 @@ describe('v4の原文と意味の照合', () => {
     expect(r.repairAttempted).toBe(false);
     expect(r.facts.facts[0].quantity).toMatchObject({ raw: '1,000', decimal: '1000' });
     expect(parseFactSummary(JSON.stringify(r.facts), 'earnings', source)).toEqual(r.facts);
+    const system = vi.mocked(generateText).mock.calls[0][1][0].content;
+    expect(system).toContain('本文のnumber/rangeは参照するquantity.kindと一致させます');
+    expect(system).toContain('event/statusのみassertions.allowedKindsから選びます');
   });
   it('原数量・共通属性を保持し、保存した事実を再検証する', () => {
     const result = parse(fact);
@@ -45,9 +52,12 @@ describe('v4の原文と意味の照合', () => {
     expect(result.facts[0].quantity?.decimal).toBe('100');
     expect(result.facts[0].id).toMatch(/^fact-/);
     expect(parseFactSummary(raw(result.facts), 'other', [page], false)).toEqual(result);
-    expect(renderFacts(result)).toContain(
-      '100百万円（2026年3月期、株式会社テスト、連結、日本基準、実績'
-    );
+    expect(result.facts[0]).toMatchObject({
+      value: 100,
+      unit: '百万円',
+      period: '2026年3月期',
+      semantics: { subject: '株式会社テスト', scope: '連結', basis: '日本基準', state: 'actual' },
+    });
   });
   it.each([
     { value: 101 },
@@ -135,17 +145,15 @@ describe('v4の原文と意味の照合', () => {
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(candidateResponse([fact, event], sources));
-    const result = await generateVerifiedFactSummary(
-      { provider: 'openai', model: 'test', apiKey: 'test' },
-      'other',
-      page.text,
-      sources
-    );
-    expect(result.facts.facts).toHaveLength(1);
-    expect(result.facts.unverified.join(' ')).toContain('未選択ページ');
-    expect(vi.mocked(generateText).mock.calls[0][1][1].content).not.toContain(
-      '取得の方法は翌月の市場買付です。'
-    );
+    await expect(
+      generateVerifiedFactSummary(
+        { provider: 'openai', model: 'test', apiKey: 'test' },
+        'other',
+        page.text,
+        sources
+      )
+    ).rejects.toThrow('全文で再要約');
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
     omitted.status = 'failed';
     expect(() => parseFactSummary(raw([fact]), 'other', sources)).toThrow('抽出失敗');
   });

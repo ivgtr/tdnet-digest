@@ -41,12 +41,11 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
       'other',
     ].includes(String(value.documentType)) ||
     !Array.isArray(value.facts) ||
-    !value.facts.length ||
-    value.facts.length > 20 ||
     !Array.isArray(value.unverified) ||
-    !value.unverified.every((x) => typeof x === 'string')
+    !value.unverified.every((x) => typeof x === 'string') ||
+    (!value.facts.length && !value.unverified.length)
   )
-    throw new Error('保存された事実v5の形式が不正です');
+    throw new Error('保存された事実v6の形式が不正です');
   const ids = new Set<string>();
   for (const fact of value.facts) {
     if (

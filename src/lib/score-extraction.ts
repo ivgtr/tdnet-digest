@@ -1,5 +1,10 @@
 import { generateText, type LLMConfig } from './llm-client';
-import { generateVerifiedFactSummary, type FactSummary, type VerifiedFact } from './fact-summary';
+import {
+  FACT_SCHEMA_VERSION,
+  generateVerifiedFacts,
+  type FactSummary,
+  type VerifiedFact,
+} from './fact-summary';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { getProviderCapabilities } from './structured-output';
 import { record, exact } from './fact-contract';
@@ -226,15 +231,17 @@ export async function extractScoreInput(
   searchStatus: string,
   facts?: FactSummary
 ): Promise<ScoreInput> {
-  if (!facts || facts.version !== 5 || !documents.length)
-    throw new Error('採点にはv4の共通確定事実が必要です');
+  if (!facts || facts.version !== FACT_SCHEMA_VERSION || !documents.length)
+    throw new Error('採点には現行の共通確定事実が必要です');
   const registry: ScoreFacts[] = [{ document: documents[0], facts }];
   for (const document of documents.slice(1)) {
-    const extracted = await generateVerifiedFactSummary(
-      config,
+    const extracted = await generateVerifiedFacts(
+      { ...config, signal: config.signal ?? AbortSignal.timeout(300_000) },
       'other',
       document.text,
-      document.pages
+      document.pages,
+      undefined,
+      true
     );
     registry.push({ document, facts: extracted.facts });
   }

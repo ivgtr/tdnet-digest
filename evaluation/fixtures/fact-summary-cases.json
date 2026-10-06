@@ -2483,5 +2483,1862 @@
         }
       }
     ]
+  },
+  {
+    "id": "nachi-20261005",
+    "title": "2026年11月期 第３四半期決算短信〔日本基準〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261002545509.pdf",
+    "sourceHash": "b8ac6a6a4ee91a4388f4d4f0ff88a0c133273930fe48e5b10901e4abd2727e46",
+    "code": "6474",
+    "publishedDate": "2026-10-05",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年11月期第3四半期",
+          "2026年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 192326,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期",
+          "2026年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 11457,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期",
+          "2026年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 10873,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期",
+          "2026年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 6629,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "１株当たり四半期純利益"
+        ],
+        "periods": [
+          "2026年11月期第3四半期",
+          "2026年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 304.28,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2025年11月期第3四半期",
+          "2025年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 174194,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2025年11月期第3四半期",
+          "2025年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 6628,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2025年11月期第3四半期",
+          "2025年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5141,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2025年11月期第3四半期",
+          "2025年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 3640,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "１株当たり四半期純利益"
+        ],
+        "periods": [
+          "2025年11月期第3四半期",
+          "2025年11月期第3四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 161.29,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社不二越",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ3",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      }
+    ]
+  },
+  {
+    "id": "daiseki-20261005",
+    "title": "2027年２月期 第２四半期（中間期）決算短信〔日本基準〕(連結)",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261003544976.pdf",
+    "sourceHash": "8e445ce9586fc2d5507bb7414d7bd4685eaee6543a806474533cc1b8fd4ca757",
+    "code": "9793",
+    "publishedDate": "2026-10-05",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 37492,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 8345,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 8657,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する中間純利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 5805,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり中間純利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 122.77,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 36117,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 7450,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 7629,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する中間純利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 4712,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり中間純利益"
+        ],
+        "periods": [
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計",
+          "2026年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 99.07,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 74200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 16800,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 17000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 11200,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 236.83,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "年間配当金合計"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 86,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": null,
+          "basis": null,
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "conditions": []
+        }
+      }
+    ],
+    "expectedEvidence": [
+      {
+        "page": 1,
+        "blockId": "p1b35",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": null,
+          "basis": null,
+          "periodKind": "none",
+          "metricKind": "none",
+          "state": "unspecified",
+          "polarity": "negative",
+          "conditions": []
+        }
+      },
+      {
+        "page": 1,
+        "blockId": "p1b42",
+        "kind": "event",
+        "semantics": {
+          "subject": "株式会社ダイセキ",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "none",
+          "metricKind": "none",
+          "state": "unspecified",
+          "polarity": "negative",
+          "conditions": []
+        },
+        "alternatives": [
+          {
+            "page": 4,
+            "blockId": "p4b14"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "world-20261005",
+    "title": "2027年２月期 第２四半期（中間期）決算短信〔ＩＦＲＳ〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261001544846.pdf",
+    "sourceHash": "a2957635486a22dedbea2c45f9698a29138eb8a4071da946740bb1506bfd031b",
+    "code": "3612",
+    "publishedDate": "2026-10-05",
+    "expected": [
+      {
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 142489,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 8409,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社の所有者に帰属する中間利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5877,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "基本的1株当たり中間利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 77.11,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 136916,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 8307,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社の所有者に帰属する中間利益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5640,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "基本的1株当たり中間利益"
+        ],
+        "periods": [
+          "2026年2月期中間期",
+          "2026年2月期第2四半期",
+          "2026年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 82.74,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上収益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 300000,
+            "unit": "百万円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 17500,
+            "unit": "百万円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社の所有者に帰属する当期利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 12600,
+            "unit": "百万円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "基本的1株当たり当期利益"
+        ],
+        "periods": [
+          "2027年2月期"
+        ],
+        "variants": [
+          {
+            "value": 173.1,
+            "unit": "円",
+            "page": 2
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社ワールド",
+          "scope": "連結",
+          "basis": "IFRS",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative"
+        }
+      }
+    ]
+  },
+  {
+    "id": "echo-20261005",
+    "title": "2027年２月期第２四半期（中間期）業績予想の修正に関するお知らせ",
+    "documentType": "earningsRevision",
+    "url": "https://www.release.tdnet.info/inbs/140120261005545723.pdf",
+    "sourceHash": "db4dae9bb3c06482d374f99c7a87ee8649f77e2f0d86220ecae68a9d78d7e8bb",
+    "code": "7427",
+    "publishedDate": "2026-10-05",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 54500,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 555,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 554,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する中間純利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 371,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり中間純利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 61.09,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "forecastBefore",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 55064,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 330,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 314,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する中間純利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 187,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "1株当たり中間純利益"
+        ],
+        "periods": [
+          "2027年2月期中間期",
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 30.84,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "エコートレーディング株式会社",
+          "scope": "連結",
+          "basis": null,
+          "periodKind": "cumulativeQ2",
+          "metricKind": "perShare",
+          "state": "forecastAfter",
+          "polarity": "affirmative"
+        }
+      }
+    ]
+  },
+  {
+    "id": "createsd-20261005",
+    "code": "3148",
+    "date": "2026-10-05",
+    "title": "2027年５月期 第１四半期決算短信〔日本基準〕（連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261002545520.pdf",
+    "sourceHash": "f9b5c94eaf749f87e18842c3bf9ee04f27536e8c5c419a592c5af54114d0fa75",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 129540,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5404,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5630,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 3788,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり四半期純利益"
+        ],
+        "periods": [
+          "2027年5月期第1四半期",
+          "2027年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 58.64,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 121586,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5633,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 5908,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する四半期純利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 3996,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり四半期純利益"
+        ],
+        "periods": [
+          "2026年5月期第1四半期",
+          "2026年5月期第1四半期累計"
+        ],
+        "variants": [
+          {
+            "value": 61.87,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ1",
+          "metricKind": "perShare",
+          "state": "actual",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 541000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 25300,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 26500,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "親会社株主に帰属する当期純利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 17000,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "amount",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      },
+      {
+        "labels": [
+          "1株当たり当期純利益"
+        ],
+        "periods": [
+          "2027年5月期"
+        ],
+        "variants": [
+          {
+            "value": 263.15,
+            "unit": "円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社クリエイトSDホールディングス",
+          "scope": "連結",
+          "basis": "日本基準",
+          "periodKind": "fullYear",
+          "metricKind": "perShare",
+          "state": "forecast",
+          "polarity": "affirmative",
+          "qualifiers": [],
+          "conditions": []
+        }
+      }
+    ]
+  },
+  {
+    "id": "kyokuto-20261005",
+    "title": "2027年２月期第２四半期（中間期）決算短信〔日本基準〕（非連結）",
+    "documentType": "earnings",
+    "url": "https://www.release.tdnet.info/inbs/140120261005545843.pdf",
+    "code": "2300",
+    "publishedDate": "2026-10-05",
+    "sourceHash": "1a830c4c97addb7a4eb6f418eb45c444a326ea13f4e8bb7fb67a0f70391a5775",
+    "expected": [
+      {
+        "labels": [
+          "売上高"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 2976,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "営業利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 247,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "経常利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 288,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      },
+      {
+        "labels": [
+          "中間純利益"
+        ],
+        "periods": [
+          "2027年2月期第2四半期",
+          "2027年2月期第2四半期累計",
+          "2027年2月期中間期"
+        ],
+        "variants": [
+          {
+            "value": 207,
+            "unit": "百万円",
+            "page": 1
+          }
+        ],
+        "semantics": {
+          "subject": "株式会社きょくとう",
+          "scope": "非連結",
+          "basis": "日本基準",
+          "periodKind": "cumulativeQ2",
+          "metricKind": "amount",
+          "state": "actual",
+          "polarity": "affirmative"
+        }
+      }
+    ]
   }
 ]

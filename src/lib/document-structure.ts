@@ -5,10 +5,13 @@ import {
   calendarDatePattern,
   calendarIntervalSeparator,
   explicitCalendarAxisMatches,
+  REPORTING_PERIOD_SHAPE_PATTERN,
+  reportingPeriodShapes,
 } from './period-semantics';
 import {
   tableRowAxis,
   tableColumnBand,
+  tableMetricColumnBand,
   tableUnitRuns,
   physicalRows,
   type TableCell,
@@ -105,10 +108,10 @@ export function forecastReportingTitle(text: string): { period: string | null } 
   const title = normalized(text).replace(/^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/, '');
   const match = title.match(
     new RegExp(
-      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の)?)?(?:通期)?(?:${reportingScopeHeading})?業績予想(?:数値)?(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
+      `^(?:(20\\d{2}年\\d{1,2}月期)(?:の?${REPORTING_PERIOD_SHAPE_PATTERN})?(?:\\(中間期\\))?(?:の)?)?(?:通期)?(?:${reportingScopeHeading})?業績予想(?:数値)?(?:(?:の修正)?(?:及び|および|並びに)配当予想)?(?:(?:の修正|の概要)?(?:について|に関するお知らせ)?|に関する(?:説明|定性的情報)|などの将来予測情報に関する説明)(?:\\(${calendarDatePattern}${calendarIntervalSeparator}${calendarDatePattern}\\))?$`
     )
   );
-  if (match) return { period: match[1] ?? null };
+  if (match && reportingPeriodShapes(title).length <= 1) return { period: match[1] ?? null };
   return /^(?:20\d{2}年\d{1,2}月期(?:の)?)?今後の見通し(?:について)?$/.test(title)
     ? { period: null }
     : null;
@@ -460,22 +463,26 @@ export function tableHeaderColumns(region: TableRegion, spans: PdfSpan[]) {
     if (peers.length < 2) return [];
     const i = peers.indexOf(unit);
     const drawnBand = tableColumnBand(region, unit.ids, unit.height);
+    const parentBand = tableMetricColumnBand(region, unit.ids, unit.height);
     const left =
+      parentBand?.[0] ??
       drawnBand?.[0] ??
       (i
         ? (midpoint(peers[i - 1]) + midpoint(unit)) / 2
         : midpoint(unit) - (midpoint(peers[1]) - midpoint(unit)) / 2);
     const right =
+      parentBand?.[1] ??
       drawnBand?.[1] ??
       (i + 1 < peers.length
         ? (midpoint(unit) + midpoint(peers[i + 1])) / 2
         : midpoint(unit) + (midpoint(unit) - midpoint(peers[i - 1])) / 2);
     const metricRight =
-      peers[i + 1]?.text === '%' && unit.text !== '%'
+      parentBand?.[1] ??
+      (normalized(peers[i + 1]?.text ?? '') === '%' && normalized(unit.text) !== '%'
         ? i + 2 < peers.length
           ? (midpoint(peers[i + 1]) + midpoint(peers[i + 2])) / 2
           : right + (midpoint(peers[i + 1]) - midpoint(unit)) / 2
-        : right;
+        : right);
     const top = Math.max(region.top, unit.y - unit.height * 10);
     const metricIds = runs
       .filter((run) => {
@@ -613,12 +620,13 @@ function rawTableReferenceHints(
       .filter(
         (run) =>
           run[0].y < Math.min(...metrics.map((s) => s.y)) &&
-          value.y - run[0].y < value.height * 32 &&
           (isPerformanceReportingTitle(run.map((s) => s.text).join('')) ||
             forecastReportingTitle(run.map((s) => s.text).join('')) ||
             /配当(?:の状況|予想)/.test(normalized(run.map((s) => s.text).join(''))))
       )
       .sort((a, b) => b[0].y - a[0].y)[0];
+    // The region already owns this title and stops at intervening section headings.
+    // Notes between related tables do not change that ownership.
     if (!axes.length || !context) continue;
     hints.push({
       valueId: value.id,

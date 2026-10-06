@@ -11,7 +11,13 @@ import {
 } from '@/lib/fact-summary';
 import { analyzeFacts, type AdditionalAnalysis } from '@/lib/additional-analysis';
 import { serializePagesForAnalysis } from '@/lib/page-text';
-import { canonicalJSON } from '@/lib/fact-contract';
+import { summaryResultId as resultId } from '@/lib/summary-result-id';
+import {
+  revalidatePresentation,
+  SummarySourceSelectionError,
+  validatePresentation,
+  type SummaryPresentation,
+} from '@/lib/summary-presentation';
 import { validatePages } from '@/lib/fact-validation';
 import { buildAnalysisFingerprint } from '@/lib/analysis-version';
 import { normalizeTdnetPdfUrl as fullUrl } from '@/lib/tdnet-url';
@@ -40,6 +46,7 @@ interface SummarizeRequest extends BaseRequest {
 interface FollowupRequest extends BaseRequest {
   action: 'score' | 'analyze';
   facts: FactSummary;
+  presentation: SummaryPresentation;
   resultId: string;
   fingerprint: string;
 }
@@ -84,6 +91,7 @@ chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) =
     .catch((error) =>
       sendResponse({
         error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof SummarySourceSelectionError ? { retryExtractionMode: 'full' } : {}),
         ...(diagnosticRunId ? { diagnosticRunId } : {}),
       })
     );
@@ -165,17 +173,6 @@ async function hashPdf(data: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', data);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-async function resultId(
-  pdfUrl: string,
-  fingerprint: string,
-  facts: FactSummary,
-  documentHash: string
-): Promise<string> {
-  const bytes = new TextEncoder().encode(canonicalJSON([pdfUrl, fingerprint, documentHash, facts]));
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 async function handleSummarize(request: SummarizeRequest, runId: string) {
   const started = performance.now();
   const trace: SummaryTrace = {
@@ -265,9 +262,15 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
       }
     );
     facts = generated.facts;
-    id = await resultId(request.pdfUrl, fingerprint, facts, documentHash);
+    id = await resultId(request.pdfUrl, fingerprint, facts, documentHash, generated.presentation);
     trace.resultId = id;
-    trace.outcome = generated.repairAttempted ? 'repairSuccess' : 'firstSuccess';
+    trace.outcome =
+      facts.unverified.length ||
+      ['partial', 'unavailable'].includes(generated.presentation.organization.status)
+        ? 'partialSuccess'
+        : generated.repairAttempted
+          ? 'repairSuccess'
+          : 'firstSuccess';
 
     await saveTrace();
     const metadata: SummaryMetadata = {
@@ -276,10 +279,17 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
       analysisSchemaVersion: FACT_SCHEMA_VERSION,
       provider: settings.provider,
       model: settings.model,
-      summaryMode: 'one-pass',
+      summaryMode: 'sourced-summary',
+      generationCalls: trace.attempts.length,
       analysisFingerprint: fingerprint,
     };
-    return { summary: renderFacts(facts), facts, resultId: id, metadata };
+    return {
+      summary: renderFacts(facts, generated.presentation),
+      facts,
+      presentation: generated.presentation,
+      resultId: id,
+      metadata,
+    };
   } catch (error) {
     trace.outcome = 'failure';
     trace.error = error instanceof Error ? error.message : String(error);
@@ -291,6 +301,7 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
 async function handleFollowup(
   request: FollowupRequest
 ): Promise<{ score?: ExperimentalScore; analysis?: AdditionalAnalysis }> {
+  validatePresentation(request.presentation, request.facts);
   const settings = await getSettings();
   const fingerprints = (['full', 'smart'] as const).map((extractionMode) =>
     buildAnalysisFingerprint({ provider: settings.provider, model: settings.model, extractionMode })
@@ -309,9 +320,15 @@ async function handleFollowup(
     extraction.pages,
     false
   );
+  const presentation = revalidatePresentation(request.presentation, facts, extraction.pages);
   if (
-    (await resultId(request.pdfUrl, request.fingerprint, facts, await hashPdf(data))) !==
-    request.resultId
+    (await resultId(
+      request.pdfUrl,
+      request.fingerprint,
+      facts,
+      await hashPdf(data),
+      presentation
+    )) !== request.resultId
   )
     throw new Error('要約結果の識別子が一致しません');
   const config = configOf(settings);

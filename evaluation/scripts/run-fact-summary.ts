@@ -14,9 +14,11 @@ import {
   renderFacts,
   parseFactSummary,
 } from '../../src/lib/fact-summary';
+import contentExpectations from '../../src/lib/fixtures/summary-content-expectations.json';
 import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
 import { getProvider } from '../../src/lib/llm-providers';
+import type { SummaryAttempt } from '../../src/lib/summary-trace';
 
 import { expectedErrors, independentAssessment, type Case } from './fact-summary-expectations';
 import { parseFactSummaryArgs } from './fact-summary-args';
@@ -60,6 +62,7 @@ const implementationFiles = [
   'src/lib/fact-candidates.ts',
   'src/lib/assertion-semantics.ts',
   'src/lib/dividend-semantics.ts',
+  'src/lib/forecast-revision-semantics.ts',
   'src/lib/metric-semantics.ts',
   'src/lib/quantity.ts',
   'src/lib/period-semantics.ts',
@@ -74,7 +77,18 @@ const implementationFiles = [
   'src/lib/fact-validation.ts',
   'src/lib/fact-coverage.ts',
   'src/lib/fact-summary.ts',
+  'src/lib/summary-content-policy.ts',
+  'src/lib/summary-source-inventory.ts',
+  'src/lib/summary-presentation.ts',
+  'src/lib/summary-narrative.ts',
+  'src/lib/summary-organization.ts',
+  'src/lib/disclosure-observation.ts',
+  'src/lib/summary-narrative-renderer.ts',
+  'src/lib/summary-renderer.ts',
+  'src/lib/summary-result-id.ts',
   'src/lib/llm-client.ts',
+  'src/lib/llm-providers.ts',
+  'src/lib/structured-output.ts',
 ];
 const implementationHash = createHash('sha256');
 for (const file of implementationFiles)
@@ -109,7 +123,7 @@ for (const item of selected) {
   const started = performance.now();
   let attempt: Awaited<ReturnType<typeof generateVerifiedFactSummary>> | null = null;
   let errors: string[] = [];
-  const attempts: Array<{ phase: 'first' | 'repair'; response: string; error: string | null }> = [];
+  const attempts: SummaryAttempt[] = [];
   let failedResponses: { first: string; repaired: string } | null = null;
   try {
     attempt = await generateVerifiedFactSummary(
@@ -124,7 +138,14 @@ for (const item of selected) {
       item.documentType,
       serializePagesForAnalysis(pages),
       pages,
-      (attempt) => attempts.push(attempt)
+      async (attempt) => {
+        attempts.push(attempt);
+        await writeFile(
+          `evaluation/results/local/${item.id}-pending-attempts.json`,
+          JSON.stringify({ item, attempts, usage, sourceHash, implementationDigest })
+        );
+        console.log(`${item.id}: ${attempt.phase} ${attempt.error ? '拒否' : '完了'}`);
+      }
     );
   } catch (error) {
     errors = [error instanceof Error ? error.message : String(error)];
@@ -133,12 +154,27 @@ for (const item of selected) {
   }
   const elapsedSeconds = Number(((performance.now() - started) / 1000).toFixed(1));
   const result = attempt?.facts ?? null;
+  const compact = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+  const retainedText = compact(attempt?.presentation.excerpts.map((e) => e.text).join('\n') ?? '');
+  const missingSourceContent =
+    contentExpectations.realPdfs
+      .find((c) => c.id === item.id)
+      ?.retained.filter((text) => !retainedText.includes(compact(text))) ?? [];
   if (result) {
+    errors.push(...missingSourceContent.map((text) => `原文の説明・条件が不足: ${text}`));
     errors.push(...expectedErrors(item, result));
     validateSavedFacts(result);
-    const restored = parseFactSummary(JSON.stringify(result), item.documentType, pages);
+    const restored = parseFactSummary(JSON.stringify(result), item.documentType, pages, false);
     if (JSON.stringify(restored) !== JSON.stringify(result))
       errors.push('保存再照合で確定結果が変わりました');
+  }
+  let renderedSummary: string | null = null;
+  if (result && attempt) {
+    try {
+      renderedSummary = renderFacts(result, attempt.presentation);
+    } catch (error) {
+      errors.push(`表示照合: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   const output = {
     item,
@@ -153,6 +189,7 @@ for (const item of selected) {
     promptHash: createHash('sha256')
       .update(JSON.stringify(factPrompt(item.documentType, sourceInput)))
       .digest('hex'),
+    missingSourceContent,
     independentAssessment: result ? independentAssessment(item, result) : null,
     inputChars: serializeCandidateSource(pages, undefined, item.documentType).length,
     extractionMs,
@@ -166,9 +203,14 @@ for (const item of selected) {
     pages: pages.length,
     repairAttempted: attempt?.repairAttempted ?? attempts.some((a) => a.phase === 'repair'),
     success: errors.length === 0,
+    completedStructure: !!result && errors.length === 0 && !result.unverified.length,
+    explanationStatus: attempt?.presentation.organization.status ?? null,
+    rendered: renderedSummary !== null,
+
     errors,
     result,
-    summary: result ? renderFacts(result) : null,
+    presentation: attempt?.presentation ?? null,
+    summary: renderedSummary,
     attempts,
     failedResponses,
   };
@@ -177,6 +219,6 @@ for (const item of selected) {
   await writeFile(`evaluation/results/local/${item.id}-${runId}-fact-summary.json`, serialized);
   await writeFile(`evaluation/results/local/${item.id}-fact-summary.json`, serialized);
   console.log(`${item.id}: ${errors.length ? errors.join(' / ') : '成功'} (${elapsedSeconds}秒)`);
-  if (result) console.log(renderFacts(result));
+  if (renderedSummary) console.log(renderedSummary);
   if (errors.length) process.exitCode = 1;
 }

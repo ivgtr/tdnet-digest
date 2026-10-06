@@ -41,8 +41,12 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   });
 
   const summaryRowData = useMemo(
-    () => ({ companyName: rowData.companyName, title: rowData.title }),
-    [rowData.companyName, rowData.title]
+    () => ({
+      companyName: rowData.companyName,
+      title: rowData.title,
+      pdfUrl: rowData.pdfUrl,
+    }),
+    [rowData.companyName, rowData.title, rowData.pdfUrl]
   );
 
   const { removeSummaryRow, insertSummaryRow, updateStages, isSummaryRowVisible } = useSummaryRow({
@@ -87,37 +91,57 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
           summarize();
         },
         () => analyzeRef.current(),
-        () => retryScoreRef.current()
+        () => retryScoreRef.current(),
+        undefined,
+        undefined,
+        result.retryExtractionMode === 'full',
+        result.facts?.facts
       );
       triggerUpdate();
     }
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
 
   useEffect(() => {
-    updateStages(scoringEnabled ? score : undefined, analysis);
+    updateStages(scoringEnabled ? score : undefined, analysis, result?.facts?.facts);
     if (result?.summary && scoringEnabled) startScore();
   }, [score, analysis, scoringEnabled, result, updateStages, startScore]);
 
   const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
-  const exportDiagnostic = async () => {
+  const [diagnosticText, setDiagnosticText] = useState<string | null>(null);
+  const [diagnosticCopied, setDiagnosticCopied] = useState(false);
+  const diagnosticRequest = useRef(0);
+  useEffect(() => {
+    diagnosticRequest.current++;
+    setDiagnosticError(null);
+    setDiagnosticText(null);
+    setDiagnosticCopied(false);
+  }, [result]);
+  const copyDiagnostic = async () => {
+    const request = ++diagnosticRequest.current;
+    setDiagnosticError(null);
+    setDiagnosticText(null);
+    setDiagnosticCopied(false);
     try {
       const saved = await chrome.storage.local.get(SUMMARY_TRACE_KEY);
+      if (request !== diagnosticRequest.current) return;
       const trace = matchingSummaryTrace(
         saved[SUMMARY_TRACE_KEY],
         rowData.pdfUrl,
         result?.diagnosticRunId ?? null,
         result?.resultId ?? null
       );
-      const url = URL.createObjectURL(
-        new Blob([JSON.stringify(trace, null, 2)], { type: 'application/json' })
-      );
-      const a = iframeDoc.createElement('a');
-      a.href = url;
-      a.download = 'tdnet-summary-diagnostic.json';
-      a.click();
-      URL.revokeObjectURL(url);
-      setDiagnosticError(null);
+      const text = JSON.stringify(trace, null, 2);
+      setDiagnosticText(text);
+      try {
+        await navigator.clipboard.writeText(text);
+        if (request !== diagnosticRequest.current) return;
+        setDiagnosticCopied(true);
+      } catch {
+        if (request !== diagnosticRequest.current) return;
+        setDiagnosticError('コピーできませんでした。診断JSONの欄を選択してコピーしてください。');
+      }
     } catch (e) {
+      if (request !== diagnosticRequest.current) return;
       setDiagnosticError(e instanceof Error ? e.message : String(e));
     }
   };
@@ -186,9 +210,27 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
         </button>
       </div>
       {result && (
-        <button type="button" onClick={() => void exportDiagnostic()} style={{ fontSize: 10 }}>
-          診断を保存
+        <button type="button" onClick={() => void copyDiagnostic()} style={{ fontSize: 10 }}>
+          診断をコピー
         </button>
+      )}
+      {diagnosticCopied && (
+        <span role="status" style={{ fontSize: 10 }}>
+          コピーしました
+        </span>
+      )}
+      {diagnosticText !== null && (
+        <details open={diagnosticError !== null} style={{ fontSize: 10 }}>
+          <summary>診断JSONを表示</summary>
+          <textarea
+            aria-label="診断JSON"
+            readOnly
+            value={diagnosticText}
+            rows={6}
+            onFocus={(e) => e.currentTarget.select()}
+            style={{ width: 320, maxWidth: '80vw', fontSize: 10 }}
+          />
+        </details>
       )}
       {diagnosticError && (
         <span role="alert" style={{ fontSize: 10 }}>

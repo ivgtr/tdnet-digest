@@ -27,7 +27,13 @@ import {
   parseExactNumeric,
   isQuantityPrefix,
 } from './quantity';
-import { quantityCells, lineRuns, fiscalHeadingRuns } from './document-structure';
+import {
+  quantityCells,
+  lineRuns,
+  fiscalHeadingRuns,
+  isPerformanceReportingTitle,
+  forecastReportingTitle,
+} from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
 import { unchangedDividendReference, quantityPeriodAxis } from './dividend-semantics';
 import {
@@ -35,6 +41,7 @@ import {
   tableUnitRuns,
   tableForValue,
   tableColumnBand,
+  tableMetricColumnBand,
   tableRowAxis,
   type TableRegion,
 } from './table-layout';
@@ -358,17 +365,72 @@ export function verifyTableEvidence(
   }
   const inBand = (s: PdfSpan) => center(s) > metricBand[0] && center(s) < metricBand[1];
   const drawnBand = table
-    ? tableColumnBand(
+    ? (tableMetricColumnBand(
         table,
         units.map((s) => s.id),
         value.height
-      )
+      ) ??
+      tableColumnBand(
+        table,
+        units.map((s) => s.id),
+        value.height
+      ))
     : null;
   if (!metricOnRow && drawnBand) metricBand = drawnBand;
   const headerHeight = Math.max(...metrics.map((s) => s.height), value.height);
   const above = (s: PdfSpan) => s.y < value.y && value.y - s.y <= headerHeight * 18;
+  // A single calendar KPI header can apply to several explicitly labelled
+  // fiscal columns. Prove the complete axes, units and unique header; proximity
+  // to the first column alone must not exclude the previous-year value.
+  const sharedCalendarMetric = (() => {
+    if (metricOnRow || !adjacentUnit || expectedUnit === '%') return false;
+    const left = tableSpans.filter(
+      (s) => sameRow(s, value) && s.x + s.width < Math.min(...rowNumbers.map((q) => q.x))
+    );
+    if (!/^\d{1,2}月$/.test(joined(left))) return false;
+    const fiscal = fiscalHeadingRuns(tableSpans.filter((s) => above(s)));
+    if (!fiscal.length) return false;
+    const top = Math.max(...fiscal.map((run) => run[0].y));
+    const axes = fiscal
+      .filter((run) => top - run[0].y <= headerHeight * 1.2)
+      .sort((a, b) => a[0].x - b[0].x);
+    const amounts = rowNumbers.filter((q) =>
+      tableSpans.some(
+        (s) =>
+          sameRow(s, q) &&
+          s.x >= q.x + q.width &&
+          s.x - q.x - q.width < q.height * 1.2 &&
+          declaredQuantityUnit(s.text) === expectedUnit
+      )
+    );
+    if (axes.length < 2 || axes.length !== amounts.length) return false;
+    const bands = axes.map((run) => ({
+      ...run[0],
+      width: run[run.length - 1].x + run[run.length - 1].width - run[0].x,
+    }));
+    if (!amounts.every((q, i) => bandFor(q, bands).index === i)) return false;
+    const owned = axes[bandFor(value, bands).index];
+    if (!owned.every((s) => contexts.some((c) => c.id === s.id))) return false;
+    const firstDataY = Math.min(
+      ...tableQuantities
+        .filter((q) => q.y > top && rowNumbers.some((r) => r.x === q.x))
+        .map((q) => q.y)
+    );
+    const headers = tableSpans.filter(
+      (s) =>
+        s.y > top &&
+        s.y < firstDataY - value.height * 0.3 &&
+        !parseExactQuantity(s.text) &&
+        !isUncaptionedUnit(compact(s.text)) &&
+        !/比|率/.test(compact(s.text))
+    );
+    return (
+      headers.length === metrics.length && headers.every((s) => metrics.some((m) => m.id === s.id))
+    );
+  })();
   if (
     !metricOnRow &&
+    !sharedCalendarMetric &&
     !metrics.every((s) => {
       const run = lineRuns(tableSpans).find((run) => run.some((part) => part.id === s.id))!;
       const left = Math.min(...run.map((part) => part.x)),
@@ -543,11 +605,27 @@ export function verifyTableEvidence(
     ...metrics.map((s) => s.y),
     ...periods.filter((s) => !commonPeriodIds.has(s.id)).map((s) => s.y)
   );
+  // Region construction binds a reporting title without crossing a section boundary.
+  // Use that ownership for distant titles; other context still needs local geometry.
+  const ownedTitleIds = new Set(
+    table
+      ? physicalRows(tableSpans)
+          .filter((row) => {
+            const text = row.map((s) => s.text).join('');
+            return (
+              isPerformanceReportingTitle(text) ||
+              forecastReportingTitle(text) ||
+              /配当(?:の状況|予想)/.test(compact(text))
+            );
+          })
+          .flatMap((row) => row.map((s) => s.id))
+      : []
+  );
   if (
     !contexts.every(
       (s) =>
         (s.y <= firstHeaderY || rowPeriods.some((axis) => axis.id === s.id)) &&
-        value.y - s.y < value.height * 32
+        (ownedTitleIds.has(s.id) || value.y - s.y < value.height * 32)
     )
   )
     fail('文脈の適用範囲');

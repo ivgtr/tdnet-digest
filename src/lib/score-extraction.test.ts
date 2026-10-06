@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
+import { candidateResponse } from './fixtures/candidate-test-source';
 import { parseFactSummary } from './fact-summary';
 import {
   validateScoreInput,
@@ -22,7 +23,7 @@ const previous = textPage(
 );
 const facts = parseFactSummary(
   JSON.stringify({
-    version: 5,
+    version: 6,
     documentType: 'other',
     facts: [
       numberCandidate(current),
@@ -149,6 +150,36 @@ describe('共通確定事実からの採点入力', () => {
       '数値・期間・範囲・限定・状態を書き直しません'
     );
   });
+  it('過去資料は事実抽出だけで比較でき、表示用の補足生成・点検を要求しない', async () => {
+    const historical = {
+      ...registry[0].document,
+      url: 'https://issuer.example/previous.pdf',
+      documentHash: 'b'.repeat(64),
+      publishedDate: '2025-09-30',
+      pages: [previous],
+      text: previous.text,
+    };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([facts.facts[1]], historical.pages))
+      .mockImplementationOnce(async (_config, messages) => {
+        const sources = JSON.parse(messages[1].content.split('\n').slice(-1)[0]);
+        return raw({ ...claim, previous: sources[1].facts[0].id });
+      });
+    const result = await extractScoreInput(
+      { provider: 'openai', model: 'test', apiKey: 'test' },
+      'earnings',
+      [registry[0].document, historical],
+      '過去PDF',
+      { ...facts, facts: [facts.facts[0]] }
+    );
+    expect(result.unverified).toEqual([]);
+    expect(result.claims[0].current.value).toBe(100);
+    expect(result.claims[0].previous?.value).toBe(80);
+    expect(result.claims[0].previous?.source.url).toBe(historical.url);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(generateText).mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 it('据置配当の原文証明を採点入力・保存照合へ渡し、証明なしの配当予想を拒否する', () => {
@@ -177,7 +208,7 @@ it('据置配当の原文証明を採点入力・保存照合へ渡し、証明�
     return f;
   });
   const facts = parseFactSummary(
-    JSON.stringify({ version: 5, documentType: 'other', facts: candidates, unverified: [] }),
+    JSON.stringify({ version: 6, documentType: 'other', facts: candidates, unverified: [] }),
     'other',
     pages
   );
@@ -205,8 +236,8 @@ it('据置配当の原文証明を採点入力・保存照合へ渡し、証明�
   );
   expect(selected.unverified).toEqual([]);
   expect(selected.claims).toHaveLength(1);
-  const comparison = assessClaim(selected.claims[0]);
-  expect(comparison).not.toBeNull();
+  const comparison = '35→40円（14.3%）';
+  expect(assessClaim(selected.claims[0])).toBe(comparison);
   const score = {
     value: 70,
     verdict: '好材料',

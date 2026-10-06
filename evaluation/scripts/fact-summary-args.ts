@@ -10,6 +10,7 @@ const flags = new Set([
   '--review-upgrade',
   '--review-rejected-url',
   '--review-diagnostics',
+  '--review-copy-blocked',
   '--review-settings-change',
   '--live-followups',
 ]);
@@ -19,6 +20,7 @@ const values = new Set([
   '--baseline-dir',
   '--same-input-as',
   '--additional-review-case',
+  '--narrative-replay',
 ]);
 
 /** Resolve the optional case ID independently of flags and their values. */

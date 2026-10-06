@@ -64,7 +64,7 @@ for (const item of selected as Case[]) {
         };
         const review = reviewCandidates(
           JSON.stringify({
-            candidateVersion: 3,
+            candidateVersion: 4,
             documentType: item.documentType,
             candidates: [candidate],
             unverified: [],
@@ -87,7 +87,7 @@ for (const item of selected as Case[]) {
     if (matches.length === 1) facts.push(matches[0]);
   }
   const errors = expectedErrors(item, { facts });
-  const saved = { version: 5, documentType: item.documentType, facts, unverified: [] };
+  const saved = { version: 6, documentType: item.documentType, facts, unverified: [] };
   // This proves all frozen numeric expectations and save identity, not a model
   // generation or complete handling of nonnumeric obligations/reasons.
   const restored = parseFactSummary(JSON.stringify(saved), item.documentType, pages, false);

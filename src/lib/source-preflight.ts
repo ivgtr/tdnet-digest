@@ -9,15 +9,15 @@ import {
   proseQuantities,
 } from './quantity';
 import { verifyTableEvidence, verifyProseQuantity, verifyProsePeriod } from './numeric-evidence';
-import { proseReportingMetrics } from './metric-semantics';
+import { proseReportingMetrics, classifyMetric } from './metric-semantics';
 import { continuationSpans, continuationPage } from './document-links';
 /** Required source choices must survive serialization before spending a generation attempt. */
-export function preflightCandidateSource(
+export function inspectCandidateSource(
   type: DocumentType,
   pages: ExtractedPage[],
   context: DocumentContext,
   input: string
-): void {
+): string[] {
   const source = JSON.parse(input);
   const failures: string[] = [];
   for (const slot of coverageReport(type, pages, [], [], context).filter(
@@ -74,6 +74,11 @@ export function preflightCandidateSource(
               !serialized.quantities.some((q: { id: string }) => q.id === quantity.id)
             )
               continue;
+            if (
+              slot.expected.metricKind &&
+              classifyMetric(label, parsed.unit, block.text) !== slot.expected.metricKind
+            )
+              continue;
             try {
               const claim = {
                 label,
@@ -122,6 +127,11 @@ export function preflightCandidateSource(
           ? parsed.unit
           : declaredQuantityUnit(text(hint.unitIds));
       if (!unit) return `${id}:単位の役割を確認できません`;
+      if (
+        slot.expected.metricKind &&
+        classifyMetric(text(hint.metricIds), unit) !== slot.expected.metricKind
+      )
+        return `${id}:必要な数量種別=${slot.expected.metricKind}と原文の単位が一致しません`;
       try {
         verifyTableEvidence(
           continuationPage(pages, page, id),
@@ -146,6 +156,17 @@ export function preflightCandidateSource(
     });
     if (issues.every((i) => i !== null)) failures.push(`${slot.requirement}:${issues.join(' / ')}`);
   }
+  return failures;
+}
+
+/** Complete extraction remains available to callers that require every slot. */
+export function preflightCandidateSource(
+  type: DocumentType,
+  pages: ExtractedPage[],
+  context: DocumentContext,
+  input: string
+): void {
+  const failures = inspectCandidateSource(type, pages, context, input);
   if (failures.length)
     throw new Error(
       `SOURCE_PREFLIGHT:重要事実を生成入力から検証可能な形で選べません: ${failures.join(' / ')}`
