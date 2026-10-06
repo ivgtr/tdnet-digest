@@ -9,6 +9,11 @@ import {
 import { reportingMetricKey } from './metric-semantics';
 import { summaryComparison } from './summary-comparison';
 import {
+  REPORTING_FISCAL_PERIOD_PATTERN,
+  reportingPeriodText,
+  reportingPeriodShapes,
+} from './period-semantics';
+import {
   checkText,
   quantitySourceClosure,
   type NarrativeLine,
@@ -166,6 +171,33 @@ export function checkObservation(
   facts: FactSummary,
   compile = false
 ): string[] {
+  // An explicit fiscal quarter is a period coordinate, regardless of its label spelling.
+  // Unknown company-specific periods remain for independent review; no date is invented.
+  if (value.period && value.comparison) {
+    const coordinate = (label: string) => {
+      const text = reportingPeriodText(label);
+      if (!new RegExp(`^${REPORTING_FISCAL_PERIOD_PATTERN}$`).test(text)) return null;
+      const fiscal = [...text.matchAll(/(20\d{2})年(\d{1,2})月期/g)];
+      const shapes = reportingPeriodShapes(text);
+      return fiscal.length === 1 && shapes.length <= 1
+        ? { year: Number(fiscal[0][1]), month: Number(fiscal[0][2]), shape: shapes[0] ?? '通期' }
+        : null;
+    };
+    const now = coordinate(value.period),
+      before = coordinate(value.comparison.period);
+    if (now && before) {
+      const yearly =
+        now.year === before.year + 1 && now.month === before.month && now.shape === before.shape;
+      const same =
+        now.year === before.year && now.month === before.month && now.shape === before.shape;
+      if (
+        (value.comparison.axis === 'yearOnYear' && !yearly) ||
+        (value.comparison.axis === 'revision' && !same) ||
+        (value.comparison.axis === 'periodEnd' && yearly && before.shape !== '通期')
+      )
+        throw new Error('OBSERVATION_PERIOD:比較軸と明示された報告期間の組が不一致です');
+    }
+  }
   const tokens = observationTokens(value);
   const sourceIds = compile
     ? quantitySourceClosure(
@@ -200,6 +232,29 @@ export function checkObservation(
     throw new Error('OBSERVATION_QUANTITY:開示増減率の単位が不正です');
   if (value.measure === 'loss' && [current, previous].some((q) => q?.decimal?.startsWith('-')))
     throw new Error('OBSERVATION_QUANTITY:正の損失額と符号付き損益を混同しています');
+  if (value.measure === 'profit' || value.measure === 'flow') {
+    const compact = (text: string) => text.normalize('NFKC').replace(/[\s・･]/g, '');
+    const rows = excerpts.filter(
+      (e) =>
+        sourceIds.includes(e.id) &&
+        e.kind === 'row' &&
+        compact(e.text).includes(compact(value.metric))
+    );
+    for (const selected of [current, previous]) {
+      if (!selected?.decimal || selected.decimal.startsWith('-')) continue;
+      const witnesses = values.filter(
+        (q) =>
+          q.unit === selected.unit &&
+          q.decimal?.replace(/^-/, '') === selected.decimal &&
+          rows.some((e) => e.spanIds.includes(q.id))
+      );
+      if (
+        witnesses.some((q) => q.decimal!.startsWith('-')) &&
+        !witnesses.some((q) => !q.decimal!.startsWith('-'))
+      )
+        throw new Error('OBSERVATION_QUANTITY:符号付き収支の根拠表と正の数量が矛盾しています');
+    }
+  }
   return sourceIds;
 }
 export function observationRole(topic: ObservationTopic): ContentRole | null {

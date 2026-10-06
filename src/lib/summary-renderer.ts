@@ -391,6 +391,9 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     const supplement = sectionObservations;
     lines.push(...renderObservationGroups(primary, presentation, primarySubject, false));
     lines.push(...renderObservationGroups(supplement, presentation, primarySubject, true));
+    const structured = [...primary, ...supplement];
+    const shownConditions = new Set(structured.flatMap((value) => value.conditions));
+    const shownClaimContexts = new Set<string>();
     for (const fact of members.filter((f) => !numeric(f))) {
       const statement = statementText(fact);
       if (/^(?:配当予想|業績予想)：/.test(statement))
@@ -398,9 +401,36 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       else if (fact.kind === 'status') lines.push('- ' + statement);
     }
     for (const claim of sectionClaims) {
+      const claimContext = [claim.period, claim.state, claim.scope, claim.basis].join('|');
+      if (
+        !shownClaimContexts.has(claimContext) &&
+        !structured.some(
+          (value) =>
+            value.period === claim.period &&
+            value.state === claim.state &&
+            value.scope === claim.scope &&
+            value.basis === claim.basis
+        )
+      ) {
+        shownClaimContexts.add(claimContext);
+        const context = [
+          claim.period,
+          claim.state !== 'actual' && claim.state !== 'unspecified'
+            ? stateLabels[claim.state]
+            : null,
+          claim.scope !== shared.scope ? claim.scope : null,
+          claim.basis !== shared.basis ? claim.basis : null,
+        ].filter(Boolean);
+        if (context.length) lines.push('', context.map((s) => literalMarkdown(s!)).join('／'));
+      }
       lines.push(
         '- ' + (claim.entity ? `**${literalMarkdown(claim.entity)}**：` : '') + text(claim.text)
       );
+      for (const condition of claim.conditions) {
+        if (shownConditions.has(condition)) continue;
+        shownConditions.add(condition);
+        lines.push('- 条件：' + text(condition));
+      }
     }
     const residual = excerpts.filter((e) => unresolved.has(e.id));
     const headings = new Map<string, number[]>();

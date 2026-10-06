@@ -848,7 +848,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.ok(
         await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
       );
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v94-summary-top.png` });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v95-summary-top.png` });
       for (const [title, suffix] of [
         ['事業別業績', 'business'],
         ['キャッシュフロー', 'cash-flow'],
@@ -861,12 +861,12 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           view.scrollTo(0, view.scrollY + node.getBoundingClientRect().top - 16);
         });
         await page.screenshot({
-          path: `evaluation/results/local/${item.id}-v94-summary-${suffix}.png`,
+          path: `evaluation/results/local/${item.id}-v95-summary-${suffix}.png`,
         });
       }
       await summary.evaluate((node: HTMLElement) => node.ownerDocument.defaultView!.scrollTo(0, 0));
       await page.setViewportSize({ width: 600, height: 800 });
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v94-summary-narrow.png` });
+      await page.screenshot({ path: `evaluation/results/local/${item.id}-v95-summary-narrow.png` });
       await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
         nodes.forEach((n) => (n.open = true))
       );

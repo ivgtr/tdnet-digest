@@ -14,12 +14,14 @@ import {
   organizationHash,
   explanationSources,
   supportedExplanations,
+  ORGANIZATION_LIMITS,
 } from './summary-organization';
 import { validateSavedFacts } from './fact-cache';
 import { bindLiteralQuantities, quantitySourceClosure, checkText } from './summary-narrative';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import type { SummaryAttempt } from './summary-trace';
 import { literalValue, quantityChange } from './summary-narrative-renderer';
+import { checkObservation } from './disclosure-observation';
 
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openrouter', model: 'deepseek/deepseek-v4.1-flash', apiKey: 'fixture' };
@@ -266,6 +268,9 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       renderFacts(directResult.facts, directResult.presentation).match(/### 事業別業績/g)
     ).toHaveLength(1);
     expect(visible(directResult)).toContain('前期末');
+    expect(visible(directResult)).toContain('対象期');
+    expect(visible(directResult)).toContain('2026年度 上半期');
+    expect(wire().contexts.length).toBeLessThan(wire().observations.length * 2);
   });
   it('未知形式・不正数量・欠落した点検を採用せず、保存復元で正しい表と未整理の状態を維持する', async () => {
     const result = await generate();
@@ -275,6 +280,11 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(() =>
       validatePresentation({ ...result.presentation, version: 3 }, result.facts)
     ).toThrow('不正');
+    const wrongAxis = structuredClone(result.presentation);
+    wrongAxis.organization.observations[0].period = '2027年２月期中間期';
+    wrongAxis.organization.observations[0].comparison!.period = '2026年2月期第２四半期';
+    wrongAxis.organization.observations[0].comparison!.axis = 'periodEnd';
+    expect(() => validatePresentation(wrongAxis, result.facts)).toThrow('OBSERVATION_PERIOD');
     const missing = structuredClone(result.presentation);
     delete missing.organization.review!.claims['observation-0'];
     expect(() => validatePresentation(missing, result.facts)).toThrow('点検範囲');
@@ -300,7 +310,18 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     });
     expect(quantityChange(quantity('10'), quantity('-10'), 'profit')).toBe('↑黒字転換');
     expect(quantityChange(quantity('10'), quantity('0'), 'profit')).toContain('比較値ゼロ');
+    const missingContext = wire();
+    missingContext.observations[0].contextId = 'absent-context';
+    const duplicateContext = wire();
+    duplicateContext.contexts.push({ ...duplicateContext.contexts[0] });
+    const oversized = wire();
+    oversized.observations = Array.from({ length: ORGANIZATION_LIMITS.observations + 1 }, () => ({
+      ...oversized.observations[0],
+    }));
     for (const raw of [
+      JSON.stringify(missingContext),
+      JSON.stringify(duplicateContext),
+      JSON.stringify(oversized),
       JSON.stringify({ version: 3, tables: [], claims: [] }),
       '{"version":6,"contexts":[],"observations":[],"claims":[],"claims":[]}',
     ]) {
@@ -348,6 +369,35 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
         facts
       )
     ).toThrow('原文');
+    const signedPage = layoutPage([
+      { id: 'p1s1', text: '（単位：千円）', x: 0, y: 100, width: 90, height: 10 },
+      { id: 'p1s2', text: '財務活動によるキャッシュ・フロー', x: 0, y: 124, width: 90, height: 10 },
+      { id: 'p1s3', text: '△265,834', x: 250, y: 124, width: 60, height: 10 },
+      { id: 'p1s5', text: '△164,705', x: 150, y: 124, width: 60, height: 10 },
+      { id: 'p1s4', text: '使用した資金は265,834千円です。', x: 0, y: 160, width: 240, height: 10 },
+    ]);
+    const signed = buildPresentation({ ...facts, facts: [] }, [signedPage]);
+    const magnitude = signed.values.find((v) => v.decimal === '265834')!;
+    const cash = {
+      ...result.presentation.organization.observations[0],
+      entity: null,
+      scope: null,
+      basis: null,
+      metric: '財務活動によるキャッシュ・フロー',
+      measure: 'flow' as const,
+      period: null,
+      valueId: magnitude.id,
+      comparison: null,
+      conditions: [],
+      sourceIds: signed.excerpts.map((e) => e.id),
+    };
+    expect(() =>
+      checkObservation(cash, signed.values, signed.excerpts, { ...facts, facts: [] }, true)
+    ).toThrow('符号付き収支');
+    cash.valueId = signed.values.find((v) => v.decimal === '-265834')!.id;
+    expect(() =>
+      checkObservation(cash, signed.values, signed.excerpts, { ...facts, facts: [] }, true)
+    ).not.toThrow();
     expect(organizationClaims(result.presentation.organization).length).toBe(8);
     expect(
       organizationHash(result.presentation.organization, result.facts, draft.values, draft.excerpts)
