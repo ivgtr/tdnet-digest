@@ -42,6 +42,9 @@ describe('v4の原文と意味の照合', () => {
     expect(r.repairAttempted).toBe(false);
     expect(r.facts.facts[0].quantity).toMatchObject({ raw: '1,000', decimal: '1000' });
     expect(parseFactSummary(JSON.stringify(r.facts), 'earnings', source)).toEqual(r.facts);
+    const system = vi.mocked(generateText).mock.calls[0][1][0].content;
+    expect(system).toContain('本文のnumber/rangeは参照するquantity.kindと一致させます');
+    expect(system).toContain('event/statusのみassertions.allowedKindsから選びます');
   });
   it('原数量・共通属性を保持し、保存した事実を再検証する', () => {
     const result = parse(fact);

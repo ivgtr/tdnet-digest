@@ -302,11 +302,6 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     }
     lines.push('- ' + overviewNumber(f, facts, presentation));
   }
-  for (const id of presentation.overview) {
-    const f = byId.get(id);
-    if (f && !numeric(f) && /^(?:配当予想|業績予想)：/.test(statementText(f)))
-      lines.push('- ' + overviewStatement(f, facts));
-  }
   const organization = presentation.organization;
   const accepted = supportedExplanations(organization);
   const observations = supportedObservations(organization);
@@ -325,6 +320,49 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     )
   );
   const text = (value: string) => literalMarkdown(renderNarrativeText(value, presentation.values));
+  const overviewClaims = new Set<string>();
+  for (const id of presentation.overview) {
+    const fact = byId.get(id);
+    if (fact && numeric(fact)) continue;
+    if (fact && /^(?:配当予想|業績予想)：/.test(statementText(fact))) {
+      lines.push('- ' + overviewStatement(fact, facts));
+      continue;
+    }
+    const source = fact
+      ? presentation.excerpts.find(
+          (e) => fact.evidence.kind === 'prose' && e.blockId === fact.evidence.blockId
+        )
+      : sources.get(id);
+    if (!source) continue;
+    const claims = accepted.filter((claim) => claim.sourceIds.includes(source.id));
+    for (const claim of claims) {
+      if (overviewClaims.has(claim.id)) continue;
+      overviewClaims.add(claim.id);
+      const claimContext = [
+        claim.period,
+        claim.state !== 'actual' && claim.state !== 'unspecified' ? stateLabels[claim.state] : null,
+        claim.scope,
+        claim.basis,
+      ].filter(Boolean);
+      if (claimContext.length)
+        lines.push('', claimContext.map((s) => literalMarkdown(s!)).join('／'));
+      lines.push(
+        '- ' + (claim.entity ? `**${literalMarkdown(claim.entity)}**：` : '') + text(claim.text)
+      );
+      for (const condition of claim.conditions) lines.push('- 条件：' + text(condition));
+      lines.push(
+        `根拠：${references(claim.sourceIds.map((sourceId) => sources.get(sourceId)!.page))}`
+      );
+    }
+    if (!claims.length || unresolved.has(source.id)) {
+      const section = presentation.sections.find((s) => s.excerptIds.includes(source.id))!;
+      lines.push(
+        fact
+          ? `- 確認済み事項（原文）：「${literalMarkdown(section.title)}」に記載 ${ref(fact.page)}${unresolved.has(source.id) ? '（説明は未整理）' : ''}`
+          : `- ${claims.length ? '要点の説明に未整理部分' : '要点の説明未作成'}：${literalMarkdown(source.heading?.text ?? section.title)} ${ref(source.page)}（原文を見る）`
+      );
+    }
+  }
   if (overviewFacts.length)
     lines.push(
       '',
@@ -398,7 +436,11 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       const statement = statementText(fact);
       if (/^(?:配当予想|業績予想)：/.test(statement))
         lines.push('- ' + overviewStatement(fact, facts));
-      else if (fact.kind === 'status') lines.push('- ' + statement);
+      else {
+        const factContext = context(fact, shared, true, subjects);
+        if (factContext) lines.push('', factContext);
+        lines.push(`- 確認済み事項（原文）：${statement} ${ref(fact.page)}`);
+      }
     }
     for (const claim of sectionClaims) {
       const claimContext = [claim.period, claim.state, claim.scope, claim.basis].join('|');

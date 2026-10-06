@@ -1,7 +1,7 @@
 import { generateText, type LLMConfig } from './llm-client';
 import {
   FACT_SCHEMA_VERSION,
-  generateVerifiedFactSummary,
+  generateVerifiedFacts,
   type FactSummary,
   type VerifiedFact,
 } from './fact-summary';
@@ -235,11 +235,13 @@ export async function extractScoreInput(
     throw new Error('採点には現行の共通確定事実が必要です');
   const registry: ScoreFacts[] = [{ document: documents[0], facts }];
   for (const document of documents.slice(1)) {
-    const extracted = await generateVerifiedFactSummary(
-      config,
+    const extracted = await generateVerifiedFacts(
+      { ...config, signal: config.signal ?? AbortSignal.timeout(300_000) },
       'other',
       document.text,
-      document.pages
+      document.pages,
+      undefined,
+      true
     );
     registry.push({ document, facts: extracted.facts });
   }

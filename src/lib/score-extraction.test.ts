@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
+import { candidateResponse } from './fixtures/candidate-test-source';
 import { parseFactSummary } from './fact-summary';
 import {
   validateScoreInput,
@@ -148,6 +149,36 @@ describe('共通確定事実からの採点入力', () => {
     expect(vi.mocked(generateText).mock.calls[0][1][1].content).toContain(
       '数値・期間・範囲・限定・状態を書き直しません'
     );
+  });
+  it('過去資料は事実抽出だけで比較でき、表示用の補足生成・点検を要求しない', async () => {
+    const historical = {
+      ...registry[0].document,
+      url: 'https://issuer.example/previous.pdf',
+      documentHash: 'b'.repeat(64),
+      publishedDate: '2025-09-30',
+      pages: [previous],
+      text: previous.text,
+    };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([facts.facts[1]], historical.pages))
+      .mockImplementationOnce(async (_config, messages) => {
+        const sources = JSON.parse(messages[1].content.split('\n').slice(-1)[0]);
+        return raw({ ...claim, previous: sources[1].facts[0].id });
+      });
+    const result = await extractScoreInput(
+      { provider: 'openai', model: 'test', apiKey: 'test' },
+      'earnings',
+      [registry[0].document, historical],
+      '過去PDF',
+      { ...facts, facts: [facts.facts[0]] }
+    );
+    expect(result.unverified).toEqual([]);
+    expect(result.claims[0].current.value).toBe(100);
+    expect(result.claims[0].previous?.value).toBe(80);
+    expect(result.claims[0].previous?.source.url).toBe(historical.url);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(generateText).mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
   });
 });
 

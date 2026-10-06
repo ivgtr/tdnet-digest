@@ -138,25 +138,15 @@ export function unresolvedTableSources(
         for (const id of match[1] === 'value' ? [match[2]] : match[2].split('|').slice(0, 2))
           shown.add(id);
   }
-  const covered = values.filter((v) => shown.has(v.id));
   return excerpts.filter(
     (e) =>
       e.kind === 'row' &&
       e.role !== 'document' &&
       values.some(
         (v) =>
-          e.spanIds.includes(v.id) &&
+          (e.spanIds.includes(v.id) || v.id.startsWith(`${e.blockId}:q`)) &&
           v.unit !== null &&
-          !shown.has(v.id) &&
-          !covered.some(
-            (c) =>
-              (c.decimal !== null
-                ? c.decimal === v.decimal
-                : c.raw.normalize('NFKC').replace(/\s/g, '') ===
-                  v.raw.normalize('NFKC').replace(/\s/g, '')) &&
-              c.unit === v.unit &&
-              c.sourceIds.includes(e.id)
-          )
+          !shown.has(v.id)
       )
   );
 }

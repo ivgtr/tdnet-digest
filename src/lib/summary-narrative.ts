@@ -245,7 +245,33 @@ export function narrativeValues(
       });
     }
     for (const e of excerpts.filter((e) => e.page === page.pageNumber && e.kind !== 'heading')) {
+      // A row can be read as prose too. Offer its physical quantity ID once, using
+      // text offsets to prove ownership even when two columns have equal values.
+      const spans = e.spanIds.map((id) => page.spans.find((span) => span.id === id)!);
+      let offset = 0;
+      const intervals = new Map(
+        spans.map((span) => {
+          const start = offset;
+          offset += compact(span.text).length;
+          return [span.id, { start, end: offset }] as const;
+        })
+      );
+      const mappedRow =
+        e.kind === 'row' && compact(spans.map((span) => span.text).join('')) === compact(e.text);
       for (const q of displayQuantities({ id: e.blockId, text: e.text })) {
+        const start = compact(e.text.normalize('NFKC').slice(0, q.start)).length;
+        const end = start + compact(q.raw).length;
+        if (
+          mappedRow &&
+          page.quantities.filter(
+            (native) =>
+              values.has(native.id) &&
+              intervals.get(native.spanIds[0])?.start === start &&
+              intervals.get(native.spanIds[native.spanIds.length - 1])?.end === end &&
+              compact(native.text) === compact(q.raw)
+          ).length === 1
+        )
+          continue;
         const parsed = scalar(q.raw);
         const text = e.text.normalize('NFKC');
         const before = text.slice(0, q.start);

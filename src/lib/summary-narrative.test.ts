@@ -14,6 +14,8 @@ import {
   organizationHash,
   explanationSources,
   supportedExplanations,
+  unresolvedTableSources,
+  emptyOrganization,
   ORGANIZATION_LIMITS,
 } from './summary-organization';
 import { validateSavedFacts } from './fact-cache';
@@ -206,6 +208,131 @@ function visible(result: Awaited<ReturnType<typeof generate>>) {
 }
 
 describe('構造化を主とする表示と未整理部分の保持', () => {
+  it('任意の補足生成に失敗しても確定済みの出来事を通常表示・保存復元する', async () => {
+    const statement = '業務提携契約を締結しました。';
+    const source = textPage(statement);
+    const event = {
+      ...facts.facts[0],
+      kind: 'event' as const,
+      label: statement,
+      value: null,
+      unit: null,
+      period: null,
+      valueKind: null,
+      statement,
+      quote: statement,
+      evidence: {
+        kind: 'prose' as const,
+        blockId: source.blocks[0].id,
+        assertionId: `${source.blocks[0].id}:a1`,
+        quantityId: null,
+        contextIds: [],
+        scopeIds: [],
+        qualifierIds: [],
+      },
+      semantics: {
+        subject: null,
+        scope: null,
+        basis: null,
+        periodKind: 'none' as const,
+        metricKind: 'none' as const,
+        state: 'contracted' as const,
+        polarity: 'affirmative' as const,
+        qualifiers: [],
+        conditions: [],
+      },
+      quantity: null,
+      provenance: null,
+      dateRoles: null,
+    };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(candidateResponse([event], [source]))
+      .mockRejectedValueOnce(new Error('補足生成のタイムアウト'));
+    const result = await generateVerifiedFactSummary(config, 'other', statement, [source]);
+    expect(result.facts.facts).toHaveLength(1);
+    expect(result.presentation.organization.status).toBe('unavailable');
+    const reading = visible({ ...result, attempts: [] });
+    expect(reading).toContain('確認済み事項（原文）');
+    expect(reading).toContain(statement);
+    expect(reading).toContain('要約未作成');
+    const savedFacts: unknown = JSON.parse(JSON.stringify(result.facts));
+    validateSavedFacts(savedFacts);
+    const restored = revalidatePresentation(
+      JSON.parse(JSON.stringify(result.presentation)),
+      savedFacts,
+      [source]
+    );
+    expect(renderFacts(result.facts, restored)).toBe(
+      renderFacts(result.facts, result.presentation)
+    );
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+  });
+  it('同じ行の同額セルを別々に追跡し、確定事実の別名だけを同じセルとして扱う', () => {
+    const source = layoutPage(
+      [
+        ['（単位：百万円）', 0, 100, 90],
+        ['営業利益', 0, 124, 50],
+        ['100百万円', 100, 124, 60],
+        ['100百万円', 200, 124, 60],
+      ].map(([text, x, y, width], i) => ({
+        id: `p1s${i + 1}`,
+        text: String(text),
+        x: Number(x),
+        y: Number(y),
+        width: Number(width),
+        height: 10,
+      }))
+    );
+    const display = buildPresentation({ ...facts, facts: [] }, [source]);
+    const row = display.excerpts.find((e) => e.kind === 'row' && e.text.includes('営業利益'))!;
+    const [current, previous] = display.values.filter((v) => row.spanIds.includes(v.id));
+    expect(current.decimal).toBe(previous.decimal);
+    expect(display.values.some((v) => v.id.startsWith(`${row.blockId}:q`))).toBe(false);
+    const confirmed = {
+      ...facts.facts[0],
+      evidence: {
+        kind: 'table' as const,
+        valueId: current.id,
+        metricIds: [],
+        periodIds: [],
+        unitIds: [],
+        contextIds: [],
+        scopeIds: [],
+        qualifierIds: [],
+      },
+    };
+    const summary = { ...facts, facts: [confirmed] };
+    const values = [...display.values, { ...current, id: confirmed.id }];
+    const organization = emptyOrganization();
+    expect(unresolvedTableSources(organization, summary, values, display.excerpts)).toEqual([row]);
+    expect(
+      unresolvedTableSources(
+        organization,
+        summary,
+        values.filter((v) => v.id !== previous.id),
+        display.excerpts
+      )
+    ).toEqual([]);
+    expect(
+      unresolvedTableSources(
+        organization,
+        {
+          ...summary,
+          facts: [
+            ...summary.facts,
+            {
+              ...confirmed,
+              id: 'previous',
+              evidence: { ...confirmed.evidence, valueId: previous.id },
+            },
+          ],
+        },
+        values,
+        display.excerpts
+      )
+    ).toEqual([]);
+  });
   it('事業別・受注・負のCFを表示し、説明を個別採否して同じ段落の未要約条件を残す', async () => {
     const result = await generate();
     expect(result.presentation.version).toBe(6);

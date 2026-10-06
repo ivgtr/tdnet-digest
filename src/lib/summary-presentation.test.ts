@@ -78,6 +78,30 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
         .join('\n')
     ).toContain('新事業は「ソリュー ション」の提案を進めました。');
     expect(display.excerpts.some((e) => e.text === reasons[1])).toBe(true);
+    const selected = display.overview.find((id) => id.startsWith('source:'))!;
+    expect(selected).toBeDefined();
+    const content = fixedNarrativeContent(document, display);
+    content.sections[0].summary = [
+      { id: 'reason', text: '新店効果が売上を押し上げた。', sourceIds: [selected] },
+    ];
+    const supported = completePresentation(display, document, content);
+    supported.organization.status = 'partial';
+    const overview = renderFacts(document, supported).split('## 業績と増減要因')[0];
+    expect(overview).toContain('新店効果が売上を押し上げた。');
+    expect(overview).toContain('[p.1](tdnet-page:1)');
+    expect(overview).not.toContain(reasons[0]);
+    const pending = nativePresentation(document, [first, second]);
+    const pendingOverview = renderFacts(document, pending).split('## 業績と増減要因')[0];
+    expect(pendingOverview).toContain('要点の説明未作成');
+    expect(pendingOverview).not.toContain(reasons[0]);
+    expect(
+      renderFacts(document, revalidatePresentation(supported, document, [first, second]))
+    ).toBe(renderFacts(document, supported));
+    const incomplete = structuredClone(supported);
+    incomplete.organization.review!.sources[selected] = '説明の一部が未要約';
+    const incompleteOverview = renderFacts(document, incomplete).split('## 業績と増減要因')[0];
+    expect(incompleteOverview).toContain('新店効果が売上を押し上げた。');
+    expect(incompleteOverview).toContain('要点の説明に未整理部分');
   });
 
   it('目次・定型注意書き・記載省略・該当なしを冒頭の理由や条件にせず全文は保持する', () => {
