@@ -1,3 +1,11 @@
+/** Bounded, explicit checks of the reading goals, alongside factual verification. */
+export const NARRATIVE_READING_CHECKS = [
+  'businessComparisons',
+  'demandComparisons',
+  'cashFlowFocus',
+  'summaryFocus',
+] as const;
+
 /** Wire schemas only. Native quantities and meanings still require local validation. */
 export function narrativeResponseSchema(
   sourceIds: string[],
@@ -54,7 +62,7 @@ export function narrativeResponseSchema(
   const root =
     mode === 'review'
       ? object({
-          version: version(4),
+          version: version(5),
           claims: object(
             Object.fromEntries(
               claimIds.map((id) => [
@@ -79,6 +87,18 @@ export function narrativeResponseSchema(
                 {
                   anyOf: [{ type: 'null' }, object({ sourceIds: ref('sources'), reason: string })],
                 },
+              ])
+            )
+          ),
+          reading: object(
+            Object.fromEntries(
+              NARRATIVE_READING_CHECKS.map((check) => [
+                check,
+                object({
+                  status: { type: 'string', enum: ['supported', 'importantOmission', 'style'] },
+                  sourceIds: ref('sources'),
+                  reason: string,
+                }),
               ])
             )
           ),

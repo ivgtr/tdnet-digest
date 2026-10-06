@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FactSummary } from './fact-contract';
-import { narrativeResponseSchema } from './summary-narrative-schema';
+import { narrativeResponseSchema, NARRATIVE_READING_CHECKS } from './summary-narrative-schema';
 import { generateText } from './llm-client';
 import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { reviewCandidates } from './fact-candidates';
@@ -244,7 +244,21 @@ function wireReview(
       coverage[draft.excerpts[0].role] = { sourceIds: f.sourceIds, reason: f.reason };
     else claims[f.claimId!] = { status: f.status, sourceIds: f.sourceIds, reason: f.reason };
   }
-  return { version: 4, claims, coverage };
+  return {
+    version: 5,
+    claims,
+    coverage,
+    reading: Object.fromEntries(
+      NARRATIVE_READING_CHECKS.map((key) => [
+        key,
+        {
+          status: 'supported',
+          sourceIds: sources,
+          reason: '本文の横断比較と短い主因、比較条件を確認した。',
+        },
+      ])
+    ),
+  };
 }
 describe('説明要約の生成・点検・数値参照', () => {
   it('通常の生成経路を原文照合→要約→独立点検→同じ保存表示へ接続する', async () => {
@@ -298,7 +312,10 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(generationInput).not.toContain('valueColumns');
     for (const e of draft.excerpts) expect(generationInput).toContain(JSON.stringify(e.text));
     expect(generated.repairAttempted).toBe(false);
-    expect(generated.presentation.narrative!.review.findings).toEqual(review.findings);
+    expect(generated.presentation.narrative!.review.findings).toEqual([
+      ...review.findings,
+      ...Object.values(wireReview(summary).reading).map((issue) => ({ ...issue, claimId: null })),
+    ]);
     const invalidReview = structuredClone(generated.presentation) as unknown as {
       narrative: { review: { findings: Array<{ status: string }> } };
     };
@@ -955,6 +972,10 @@ describe('説明要約の生成・点検・数値参照', () => {
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(5);
     const incompleteWire = wireReview(summary);
     delete incompleteWire.claims[narrativeClaims(summary)[0].id];
+    const missingReading = wireReview(summary);
+    delete (missingReading.reading as Record<string, unknown>).businessComparisons;
+    const nullReading = wireReview(summary);
+    (nullReading.reading as Record<string, unknown>).businessComparisons = null;
     const completeWire = JSON.stringify(wireReview(summary));
     const duplicateWire = completeWire.replace(
       '"claims":{',
@@ -963,7 +984,9 @@ describe('説明要約の生成・点検・数値参照', () => {
     for (const [wire, error] of [
       [JSON.stringify(incompleteWire), '全主張/全話題'],
       [duplicateWire, '重複した判定キー'],
-      [JSON.stringify({ version: 3, findings: [] }), 'version=4'],
+      [JSON.stringify(missingReading), '読みやすさ'],
+      [JSON.stringify(nullReading), '読みやすさ判定'],
+      [JSON.stringify({ version: 3, findings: [] }), 'version=5'],
     ]) {
       vi.mocked(generateText)
         .mockReset()
