@@ -154,6 +154,9 @@ export function narrativeValues(
       const sources = excerpts.filter(
         (e) => e.page === page.pageNumber && q.spanIds.some((id) => e.spanIds.includes(id))
       );
+      // Administrative blocks are deliberately absent from the source inventory.
+      // A nearby unit caption cannot provide ownership for their quantities.
+      if (!sources.length) continue;
       const parsed = scalar(q.text);
       if (!parsed) continue;
       // Block classification is a reading aid, not evidence of numeric ownership.

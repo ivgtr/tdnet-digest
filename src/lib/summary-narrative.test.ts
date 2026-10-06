@@ -15,6 +15,7 @@ import {
   organizationHash,
   explanationSources,
   supportedExplanations,
+  unresolvedExplanationSources,
   unresolvedTableSources,
   emptyOrganization,
   ORGANIZATION_LIMITS,
@@ -447,6 +448,89 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
 });
 
 describe('説明候補と独立点検の契約', () => {
+  it('長い資料でも点検対象段落を制限し、採用した説明と指標を保って対象外は未整理で保存する', async () => {
+    const notes = textPage(
+      Array.from(
+        { length: ORGANIZATION_LIMITS.reviewSources * 3 },
+        () => '販売方針には継続して検討すべき条件があります。'
+      ).join('\n'),
+      2
+    );
+    const pages = [page, notes];
+    const display = buildPresentation(facts, pages);
+    const prose = explanationSources(display.excerpts);
+    const noteIds = prose.filter((e) => e.page === 2).map((e) => e.id);
+    const lastNote = noteIds[noteIds.length - 1];
+    const input = wire();
+    input.claims = [input.claims[0]];
+    input.contexts.find((c) => c.id === 'business-note')!.sourceIds = [lastNote];
+    input.claims[0].sourceIds = [
+      ...sources,
+      ...noteIds.slice(0, ORGANIZATION_LIMITS.reviewSources),
+    ];
+    // A referenced final paragraph precedes unrelated earlier prose; relevant overflow
+    // must also remain unresolved rather than expanding the output obligation.
+    const reviewedIds = [
+      lastNote,
+      ...explanationSources(draft.excerpts).map((e) => e.id),
+      ...noteIds,
+    ].slice(0, ORGANIZATION_LIMITS.reviewSources);
+    const verdict = {
+      ...review(input),
+      sources: reviewedIds.map((id) => ({ id, reason: null })),
+    };
+    vi.mocked(generateText)
+      .mockReset()
+      .mockResolvedValueOnce(JSON.stringify(input))
+      .mockResolvedValueOnce(JSON.stringify(verdict));
+    const organization = await generateSummaryOrganization(
+      config,
+      facts,
+      display.values,
+      display.excerpts,
+      pages
+    );
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    const [request, messages] = vi.mocked(generateText).mock.calls[1];
+    expect(JSON.parse(messages[1].content.split('\n対象段落: ')[1])).toEqual(reviewedIds);
+    expect(request.responseFormat).toMatchObject({
+      type: 'json_schema',
+      json_schema: {
+        schema: {
+          properties: {
+            claims: { minItems: verdict.claims.length, maxItems: verdict.claims.length },
+            sources: {
+              minItems: ORGANIZATION_LIMITS.reviewSources,
+              maxItems: ORGANIZATION_LIMITS.reviewSources,
+              items: { properties: { id: { enum: reviewedIds } } },
+            },
+          },
+        },
+      },
+    });
+    expect(organization.status).toBe('partial');
+    expect(supportedExplanations(organization)).toHaveLength(1);
+    expect(organization.review!.claims).toEqual(
+      Object.fromEntries(verdict.claims.map(({ id }) => [id, null]))
+    );
+    expect(Object.keys(organization.review!.sources)).toEqual(prose.map((e) => e.id));
+    const omitted = prose.filter((e) => !reviewedIds.includes(e.id));
+    expect(omitted.length).toBeGreaterThan(0);
+    for (const source of omitted)
+      expect(organization.review!.sources[source.id]).toContain('点検対象外');
+    expect(unresolvedExplanationSources(organization, display.excerpts)).toEqual(omitted);
+    const restored = revalidatePresentation(
+      JSON.parse(JSON.stringify({ ...display, organization })),
+      facts,
+      pages
+    );
+    expect(restored.organization).toEqual(organization);
+    expect(renderFacts(facts, restored)).toContain('価格転嫁');
+    expect(renderFacts(facts, restored)).toContain('100百万円');
+    delete restored.organization.review!.sources[omitted[0].id];
+    expect(() => validatePresentation(restored, facts)).toThrow('点検範囲');
+  });
+
   it.each<[string, (input: ReturnType<typeof wire>) => void, string]>([
     [
       '存在しない文脈ID',
@@ -539,6 +623,25 @@ describe('保存された説明・比較の検証', () => {
 });
 
 describe('原文数量の符号・単位・所有セル', () => {
+  it('除外した管理欄の数値を表示値に混ぜず、有効な事実を表示・保存復元する', () => {
+    const administrative = layoutPage(
+      [
+        { id: 'p2s1', text: 'コード番号', x: 0, y: 20, width: 60, height: 10 },
+        { id: 'p2s2', text: '1234', x: 100, y: 20, width: 40, height: 10 },
+      ],
+      2
+    );
+    const pages = [page, administrative];
+    const display = buildPresentation(facts, pages);
+    expect(display.excerpts.some((e) => e.text.includes('コード番号'))).toBe(false);
+    expect(display.values.some((v) => v.raw === '1234')).toBe(false);
+    expect(display.values.every((v) => v.sourceIds.length > 0)).toBe(true);
+    const rendered = renderFacts(facts, display);
+    expect(rendered).toContain('100百万円');
+    const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), facts, pages);
+    expect(renderFacts(facts, restored)).toBe(rendered);
+  });
+
   it('損失という説明でも正の量へ変えず、原文の符号と複合単位を保持する', () => {
     expect(() =>
       bindLiteralQuantities('15百万円の赤字', sources, draft.values, draft.excerpts)
