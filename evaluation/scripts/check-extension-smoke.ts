@@ -157,9 +157,7 @@ export async function checkExtensionSmoke(args: string[]) {
       const summary = frame.locator('.tdnet-digest-summary-row');
       await row.getByRole('button', { name: '要約', exact: true }).click({ timeout: 20000 });
       await summary.waitFor({ timeout: 30000 });
-      await row
-        .getByRole('button', { name: outcome === 'failure' ? '要約' : '非表示', exact: true })
-        .waitFor({ timeout: 30000 });
+      await row.getByRole('button', { name: '閉じる', exact: true }).waitFor({ timeout: 30000 });
       const readStored = () =>
         worker.evaluate(async (traceKey: string) => {
           const data = await chrome.storage.local.get();
