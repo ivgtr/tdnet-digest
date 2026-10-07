@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { summaryResultId } from '@/lib/summary-result-id';
 import { normalizeTdnetPdfUrl } from '@/lib/tdnet-url';
-import { buildAnalysisFingerprint, buildSummaryCacheKey } from '@/lib/analysis-version';
+import {
+  buildAnalysisFingerprint,
+  buildSummaryCacheKey,
+  type AnalysisFingerprintSettings,
+} from '@/lib/analysis-version';
+import { configuredApiUrl } from '@/lib/llm-endpoint';
 import { FACT_SCHEMA_VERSION, renderFacts } from '@/lib/fact-summary';
 import { validateSavedFacts, validateSavedScore } from '@/lib/fact-cache';
 import type { FactSummary } from '@/lib/fact-summary';
@@ -75,11 +80,12 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const [cacheKey, setCacheKey] = useState<string | null>(null);
   const keyRef = useRef<string | null>(null);
   const configuredKeyRef = useRef<string | null>(null);
-  const settingsRef = useRef<{
-    provider: string;
-    model: string;
-    extractionMode: ExtractionMode;
-  } | null>(null);
+  const settingsRef = useRef<
+    | (AnalysisFingerprintSettings & {
+        fingerprints: Record<ExtractionMode, string>;
+      })
+    | null
+  >(null);
   const idRef = useRef<string | null>(null);
   const scoreStarted = useRef<string | null>(null);
   const runRef = useRef(0);
@@ -91,40 +97,91 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     mountedRef.current = true;
     let active = true;
     let settingsRequest = 0;
-    const keys = ['provider', 'model', 'extractionMode', 'experimentalScoring'];
-    const refresh = () => {
-      const request = ++settingsRequest;
-      chrome.storage.sync.get(keys, (settings) => {
-        if (!active || request !== settingsRequest) return;
-        const mode = settings.extractionMode ?? 'full';
-        const currentSettings = {
-          provider: settings.provider ?? 'openai',
-          model: settings.model ?? 'gpt-4o',
-          extractionMode: mode as ExtractionMode,
+    let configuredSignature: string | null = null;
+    let storedSettings: Record<string, unknown> | null = null;
+    const keys = ['provider', 'model', 'customUrl', 'extractionMode', 'experimentalScoring'];
+    const invalidate = () => {
+      configuredKeyRef.current = null;
+      keyRef.current = null;
+      settingsRef.current = null;
+      idRef.current = null;
+      scoreStarted.current = null;
+      runRef.current++;
+      setLoading(false);
+      setResult(null);
+      setScore(emptyStage());
+      setAnalysis(emptyStage());
+      setHasCached(false);
+      setPersistenceWarning(null);
+      setStagesReady(false);
+      setCacheKey(null);
+    };
+    const applySettings = async (settings: Record<string, unknown>, request: number) => {
+      if (!active || request !== settingsRequest) return;
+      storedSettings = { ...settings };
+      try {
+        const provider = settings.provider ?? 'openai';
+        const model = settings.model ?? 'gpt-4o';
+        const customUrl = settings.customUrl ?? '';
+        const extractionMode = settings.extractionMode ?? 'full';
+        if (
+          typeof provider !== 'string' ||
+          typeof model !== 'string' ||
+          typeof customUrl !== 'string' ||
+          (extractionMode !== 'full' && extractionMode !== 'smart')
+        )
+          throw new Error('設定値が不正です');
+        const currentSettings: AnalysisFingerprintSettings = {
+          provider,
+          model,
+          baseUrl: configuredApiUrl({ provider, customUrl }),
+          extractionMode,
         };
-        const next = buildSummaryCacheKey(pdfUrl, buildAnalysisFingerprint(currentSettings));
-        settingsRef.current = currentSettings;
+        const signature = JSON.stringify([
+          currentSettings.provider,
+          currentSettings.model,
+          currentSettings.extractionMode,
+          currentSettings.baseUrl,
+        ]);
+        if (signature !== configuredSignature) {
+          // Invalidate before hashing so old responses cannot win the async digest race.
+          configuredSignature = signature;
+          invalidate();
+        }
+        setScoringEnabled(settings.experimentalScoring === true);
+        const [full, smart] = await Promise.all(
+          (['full', 'smart'] as const).map((extractionMode) =>
+            buildAnalysisFingerprint({ ...currentSettings, extractionMode })
+          )
+        );
+        const fingerprints = { full, smart };
+        const next = buildSummaryCacheKey(pdfUrl, fingerprints[currentSettings.extractionMode]);
+        if (!active || request !== settingsRequest) return;
+        settingsRef.current = { ...currentSettings, fingerprints };
         if (next !== configuredKeyRef.current) {
           configuredKeyRef.current = next;
           keyRef.current = next;
-          idRef.current = null;
-          scoreStarted.current = null;
-          runRef.current++;
-          setLoading(false);
-          setResult(null);
-          setScore(emptyStage());
-          setAnalysis(emptyStage());
-          setHasCached(false);
-          setPersistenceWarning(null);
-          setStagesReady(false);
           setCacheKey(next);
         }
-        setScoringEnabled(settings.experimentalScoring === true);
-      });
+      } catch {
+        if (!active || request !== settingsRequest) return;
+        configuredSignature = null;
+        invalidate();
+      }
+    };
+    const refresh = () => {
+      const request = ++settingsRequest;
+      chrome.storage.sync.get(keys, (settings) => void applySettings(settings, request));
     };
     refresh();
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === 'sync' && keys.some((key) => key in changes)) refresh();
+      if (area !== 'sync' || !keys.some((key) => key in changes)) return;
+      if (!storedSettings) return refresh();
+      // StorageChange carries complete values. Apply them immediately so a delayed
+      // sync.get cannot let an old summary or follow-up response be persisted.
+      const next = { ...storedSettings };
+      for (const key of keys) if (key in changes) next[key] = changes[key].newValue;
+      void applySettings(next, ++settingsRequest);
     };
     chrome.storage.onChanged.addListener(changed);
     const pendingRun = runRef;
@@ -348,10 +405,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (!settings) throw new Error('設定の読み込みが完了していません');
         const expectedKey = buildSummaryCacheKey(
           pdfUrl,
-          buildAnalysisFingerprint({
-            ...settings,
-            extractionMode: forceExtractionMode ?? settings.extractionMode,
-          })
+          settings.fingerprints[forceExtractionMode ?? settings.extractionMode]
         );
         const response = await chrome.runtime.sendMessage({
           action: 'summarize',

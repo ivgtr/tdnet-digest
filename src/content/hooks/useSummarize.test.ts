@@ -48,17 +48,22 @@ const facts = parseFactSummary(
 );
 const presentation = buildPresentation(facts, pages);
 const documentHash = 'c'.repeat(64);
-const keyFor = (mode: 'smart' | 'full', url = pdfUrl) =>
+const keyFor = async (mode: 'smart' | 'full', url = pdfUrl) =>
   'summaryCacheV2:' +
   buildSummaryCacheKey(
     url,
-    buildAnalysisFingerprint({ provider: 'openai', model: 'fixture', extractionMode: mode })
+    await buildAnalysisFingerprint({ provider: 'openai', model: 'fixture', extractionMode: mode })
   );
-async function responseFor(mode: 'smart' | 'full' = 'full') {
-  const analysisFingerprint = buildAnalysisFingerprint({
+async function responseFor(
+  mode: 'smart' | 'full' = 'full',
+  endpoint: { provider: string; customUrl: string } | undefined = undefined
+) {
+  const analysisFingerprint = await buildAnalysisFingerprint({
     provider: 'openai',
     model: 'fixture',
     extractionMode: mode,
+    ...endpoint,
+    baseUrl: endpoint?.customUrl,
   });
   return {
     error: null,
@@ -93,6 +98,11 @@ async function mount(url = pdfUrl) {
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root.render(createElement(Probe)));
+  if (!vi.isMockFunction(chrome.storage.sync.get))
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(current.cacheKey).not.toBeNull();
+    });
   return () => current;
 }
 async function mountButton() {
@@ -113,6 +123,10 @@ async function mountButton() {
       })
     )
   );
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(chrome.storage.local.get).toHaveBeenCalled();
+  });
   return { row, cell, button: cell.querySelector('button')! };
 }
 function deferred<T>() {
@@ -151,7 +165,7 @@ const additionalAnalysis = parseAnalysisResponse(
   buildAnalysisInput(facts, presentation)
 );
 
-function traceFor(runId: string, resultId: string | null): SummaryTrace {
+async function traceFor(runId: string, resultId: string | null): Promise<SummaryTrace> {
   return {
     version: 1,
     runId,
@@ -162,7 +176,7 @@ function traceFor(runId: string, resultId: string | null): SummaryTrace {
     provider: 'openai',
     model: 'fixture',
     extractionMode: 'full',
-    fingerprint: buildAnalysisFingerprint({
+    fingerprint: await buildAnalysisFingerprint({
       provider: 'openai',
       model: 'fixture',
       extractionMode: 'full',
@@ -180,7 +194,10 @@ function traceFor(runId: string, resultId: string | null): SummaryTrace {
 }
 async function changeSettings(update: Record<string, unknown>) {
   Object.assign(settings, update);
-  await act(async () => listeners.forEach((listener) => listener(update, 'sync')));
+  const changes = Object.fromEntries(
+    Object.entries(update).map(([key, newValue]) => [key, { newValue }])
+  );
+  await act(async () => listeners.forEach((listener) => listener(changes, 'sync')));
 }
 
 beforeEach(() => {
@@ -206,9 +223,16 @@ beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
   vi.stubGlobal('chrome', {
     storage: {
-      sync: { get: (_keys: string[], callback: (value: unknown) => void) => callback(settings) },
+      sync: {
+        get: (keys: string[], callback: (value: unknown) => void) =>
+          callback(
+            Object.fromEntries(
+              keys.filter((key) => key in settings).map((key) => [key, settings[key]])
+            )
+          ),
+      },
       local: {
-        get: async (keys: string | string[], callback?: (data: unknown) => void) => {
+        get: vi.fn(async (keys: string | string[], callback?: (data: unknown) => void) => {
           const data = Object.fromEntries(
             [keys]
               .flat()
@@ -217,7 +241,7 @@ beforeEach(() => {
           );
           callback?.(data);
           return data;
-        },
+        }),
         set: save,
         remove,
       },
@@ -303,6 +327,12 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     await act(async () => {
       restoring = hook().showCached();
     });
+    // Source/result-ID verification must finish before analysis can be started;
+    // only the independent stage-cache read is deliberately left pending.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(hook().result?.resultId).toBe(response.resultId);
+    });
     await act(async () => hook().analyze());
     expect(hook().analysis.loading).toBe(true);
     await act(async () => {
@@ -322,13 +352,13 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     const hook = await mount();
     await act(async () => hook().summarize('full'));
     expect(hook().result).toMatchObject({ error: null, diagnosticRunId: 'full-run' });
-    expect(stored[keyFor('full')]).toBeDefined();
+    expect(stored[await keyFor('full')]).toBeDefined();
     const displayed = hook().result;
     await changeSettings({ experimentalScoring: false });
     expect(hook().result).toBe(displayed);
     await act(async () => hook().summarize());
     expect(hook().result).toMatchObject({ error: null, diagnosticRunId: 'smart-run' });
-    expect(stored[keyFor('smart')]).toBeDefined();
+    expect(stored[await keyFor('smart')]).toBeDefined();
     await act(async () => hook().reset());
     await act(async () => hook().showCached());
     expect(hook().result).toMatchObject({
@@ -385,6 +415,63 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('customUrlだけの変更で保存要約・分析を外し、遅い旧分析を保存しない', async () => {
+    const endpoint = { provider: 'custom', customUrl: 'https://api.example.com/v1/chat?route=a' };
+    Object.assign(settings, endpoint);
+    const response = await responseFor('full', endpoint);
+    const oldKey =
+      'summaryCacheV2:' + buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint);
+    stored[oldKey] = response;
+    stored[`analysisCacheV3:${response.resultId}`] = additionalAnalysis;
+    const hook = await mount();
+    await act(async () => hook().showCached());
+    expect(hook().result?.resultId).toBe(response.resultId);
+    expect(hook().analysis.data).toEqual(additionalAnalysis);
+    // The event is enough even when a follow-up storage read would remain pending.
+    const pendingSettingsRead = vi.fn();
+    chrome.storage.sync.get = pendingSettingsRead;
+    await changeSettings({ customUrl: 'HTTPS://API.EXAMPLE.COM:443/x/../v1/chat?route=a#ignored' });
+    expect(hook().result?.resultId).toBe(response.resultId);
+    expect(hook().analysis.data).toEqual(additionalAnalysis);
+    const oldAnalysis = deferred<unknown>();
+    sendMessage.mockReturnValueOnce(oldAnalysis.promise);
+    await act(async () => hook().analyze());
+    expect(hook().analysis.loading).toBe(true);
+    await changeSettings({ customUrl: 'https://api.example.com/v1/chat?route=b' });
+    expect(hook().result).toBeNull();
+    expect(hook().analysis).toEqual({ loading: false, data: null, error: null });
+    expect(hook().hasCached).toBe(false);
+    await act(async () =>
+      oldAnalysis.resolve({
+        analysis: {
+          ...additionalAnalysis,
+          issues: [{ ...additionalAnalysis.issues[0], title: '旧APIの遅い分析' }],
+        },
+      })
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(hook().analysis.data).toBeNull();
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(hook().cacheKey).not.toBeNull();
+    });
+    expect('summaryCacheV2:' + hook().cacheKey).not.toBe(oldKey);
+    await act(async () => hook().showCached());
+    expect(hook().result).toBeNull();
+    expect(hook().hasCached).toBe(false);
+    const fresh = await responseFor('full', {
+      ...endpoint,
+      customUrl: settings.customUrl as string,
+    });
+    expect(fresh.resultId).not.toBe(response.resultId);
+    sendMessage.mockResolvedValueOnce(fresh);
+    await act(async () => hook().summarize());
+    expect(hook().result?.resultId).toBe(fresh.resultId);
+    expect(hook().analysis.data).toBeNull();
+    expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(additionalAnalysis);
+    expect(pendingSettingsRead).not.toHaveBeenCalled();
+  });
+
   it('算出不能スコアを保存せず、要約を保ち、明示再試行を許す', async () => {
     sendMessage
       .mockResolvedValueOnce(await responseFor())
@@ -405,7 +492,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
 
   it('保存済み算出不能スコアを削除し、再採点可能な要約を復元する', async () => {
     const response = await responseFor();
-    stored[keyFor('full')] = response;
+    stored[await keyFor('full')] = response;
     stored[`scoreCacheV4:${response.resultId}`] = { value: null, unverified: ['過去の失敗'] };
     const hook = await mount();
     await act(async () => hook().showCached());
@@ -455,7 +542,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
         },
       ],
     };
-    stored[keyFor('full', url)] = response;
+    stored[await keyFor('full', url)] = response;
     stored[`scoreCacheV4:${response.resultId}`] = score;
     const hook = await mount(url);
     await act(async () => hook().showCached());
@@ -603,7 +690,7 @@ describe('実Reactの要約行アクション配置', () => {
 
   it('診断ポータルの手動コピーと状態を後続処理で保ち、別実行と閉じる前の遅い完了を表示しない', async () => {
     const response = await responseFor();
-    const trace = traceFor(response.diagnosticRunId, response.resultId);
+    const trace = await traceFor(response.diagnosticRunId, response.resultId);
     stored[SUMMARY_TRACE_KEY] = trace;
     const score = deferred<unknown>();
     const analysis = deferred<unknown>();
@@ -684,7 +771,7 @@ describe('実Reactの要約行アクション配置', () => {
   it('エラー行でも閉じると診断を用意し、エラーの隣の全文再要約で回復する', async () => {
     settings.extractionMode = 'smart';
     settings.experimentalScoring = false;
-    const trace = traceFor('failed-run', null);
+    const trace = await traceFor('failed-run', null);
     stored[SUMMARY_TRACE_KEY] = trace;
     const response = await responseFor('full');
     const retry = deferred<unknown>();
@@ -780,7 +867,7 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
   it('削除通知で表示を要約へ戻し、通知前のキャッシュミスも一度のクリックで回復する', async () => {
     settings.experimentalScoring = false;
     const response = await responseFor();
-    const key = keyFor('full');
+    const key = await keyFor('full');
     stored[key] = response;
     sendMessage.mockResolvedValue(response);
     const { row, button } = await mountButton();
@@ -817,7 +904,7 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
 
   it('削除前に開始した遅いキャッシュ読込を表示にも存在判定にも戻さない', async () => {
     const response = await responseFor();
-    const key = keyFor('full');
+    const key = await keyFor('full');
     stored[key] = response;
     const availability = deferred<Record<string, unknown>>();
     const first = deferred<Record<string, unknown>>();
@@ -895,6 +982,10 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     await act(async () => {
       stopContentScript = startContentScript();
     });
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(chrome.storage.local.get).toHaveBeenCalled();
+    });
     return fixture;
   }
 
@@ -927,12 +1018,18 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     await toggle(true);
     await toggle(true);
     expect(doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
-    expect(listeners.size).toBe(subscriptions);
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(listeners.size).toBe(subscriptions);
+    });
     await click(row.querySelector('button')!);
     await summaryRowFor(row);
     await toggle(false);
     await toggle(true);
-    expect(listeners.size).toBe(subscriptions);
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(listeners.size).toBe(subscriptions);
+    });
     expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
   });
 

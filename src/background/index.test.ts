@@ -495,6 +495,46 @@ describe('要約・採点・追加分析の分離', () => {
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
 
+  it('customUrlだけの変更で旧要約の追加分析・採点を通信前に拒否する', async () => {
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
+    const request = await setup(true);
+    const settings = {
+      provider: 'custom',
+      model: 'test',
+      apiKey: 'private-api-key',
+      customUrl: 'HTTPS://API.EXAMPLE.COM:443/v1/chat?deployment=a&token=private-token#ignored',
+      extractionMode: 'full',
+      experimentalScoring: true,
+    };
+    chrome.storage.sync.get = vi.fn(async () => settings) as typeof chrome.storage.sync.get;
+    const summary = await request({ action: 'summarize' });
+    expect(summary.error).toBeUndefined();
+    expect(mocked.generateText.mock.calls[0][0].baseUrl).toBe(
+      'https://api.example.com/v1/chat?deployment=a&token=private-token'
+    );
+    const persisted = JSON.stringify(vi.mocked(chrome.storage.local.set).mock.calls);
+    expect(persisted).not.toContain('private-api-key');
+    expect(persisted).not.toContain('private-token');
+    expect(summary.metadata.analysisFingerprint).not.toContain('api.example.com');
+    const fetches = vi.mocked(fetch).mock.calls.length;
+    settings.customUrl = settings.customUrl.replace('deployment=a', 'deployment=b');
+    for (const action of ['analyze', 'score']) {
+      const stale = await request({
+        action,
+        facts: summary.facts,
+        presentation: summary.presentation,
+        resultId: summary.resultId,
+        fingerprint: summary.metadata.analysisFingerprint,
+      });
+      expect(stale.error).toContain('設定が変更されています');
+    }
+    expect(fetch).toHaveBeenCalledTimes(fetches);
+    expect(mocked.generateText).toHaveBeenCalledTimes(1);
+    expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+  });
+
   it('スコアONの採点は別要求で事実を起点にする', async () => {
     mocked.generateText.mockResolvedValue(
       candidateResponse(facts.facts, [nativePage], facts.documentType)

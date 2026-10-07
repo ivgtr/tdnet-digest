@@ -266,3 +266,156 @@ it.each([false, true])(
     ).toBe(markdown);
   }
 );
+
+it('原数量を先に照合し、明確な文脈矛盾だけを除き、別名・未知の文脈・別セルは残す', () => {
+  const { facts, fact, display, observation } = reviewedTable('営業利益', '20');
+  const nativeId = fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.id;
+  const selected = { ...observation, valueId: nativeId, comparison: null };
+  const classify = (claim: DisclosureObservation, input = facts) =>
+    reconcileObservations(input, [claim], display.excerpts, display.values);
+  for (const change of [
+    { state: 'forecast' as const },
+    { scope: '個別' },
+    { metric: '売上高' },
+    { metric: '営業損失', measure: 'loss' as const },
+    { period: '2025年3月期' },
+  ]) {
+    const claim = { ...selected, ...change };
+    expect(classify(claim).conflicts).toEqual([claim]);
+    expect(classify(claim).primary.get(fact.id)?.unresolved).toBe(false);
+  }
+  for (const change of [
+    { entity: '当社' },
+    { entity: null, scope: null, period: null, state: 'unspecified' as const },
+    { scope: 'グループ全体', period: '当期' },
+    { period: '２０２６年３月期通期' },
+    { period: '2026年03月期' },
+  ])
+    expect(classify({ ...selected, ...change }).conflicts).toEqual([]);
+
+  const withMeaning = (
+    scope: string,
+    basis: string,
+    period = fact.period!,
+    state = fact.semantics.state
+  ): FactSummary => ({
+    ...facts,
+    facts: facts.facts.map((f) =>
+      f.id === fact.id ? { ...f, period, semantics: { ...f.semantics, scope, basis, state } } : f
+    ),
+  });
+  expect(
+    classify({ ...selected, scope: '非連結', basis: '国際会計基準' }, withMeaning('個別', 'IFRS'))
+      .conflicts
+  ).toEqual([]);
+  expect(
+    classify({ ...selected, basis: '日本基準' }, withMeaning('連結', 'IFRS')).conflicts
+  ).toHaveLength(1);
+  expect(
+    classify(
+      { ...selected, state: 'forecast' },
+      withMeaning('連結', 'IFRS', fact.period!, 'forecastAfter')
+    ).conflicts
+  ).toEqual([]);
+  expect(
+    classify(
+      { ...selected, state: 'forecastBefore' },
+      withMeaning('連結', 'IFRS', fact.period!, 'forecastAfter')
+    ).conflicts
+  ).toHaveLength(1);
+  expect(
+    classify(
+      { ...selected, period: '2026年3月期第2四半期' },
+      withMeaning('連結', 'IFRS', '2026年3月期第2四半期累計')
+    ).conflicts
+  ).toEqual([]);
+
+  expect(
+    classify(
+      { ...selected, period: '2026年3月期第1四半期単独' },
+      withMeaning('連結', 'IFRS', '2026年3月期第1四半期累計')
+    ).conflicts
+  ).toHaveLength(1);
+
+  const other = facts.facts.find((f) => f.id !== fact.id && f.value === 20)!;
+  expect(other.evidence).not.toEqual(fact.evidence);
+  const distinct = {
+    ...selected,
+    state: 'forecast' as const,
+    valueId: other.evidence.kind === 'table' ? other.evidence.valueId : other.id,
+  };
+  expect(
+    classify(distinct, { ...facts, facts: facts.facts.filter((f) => f.id !== other.id) }).conflicts
+  ).toEqual([]);
+  const alternate = {
+    ...fact,
+    id: 'alternate',
+    semantics: { ...fact.semantics, state: 'forecast' as const },
+  };
+  expect(
+    classify({ ...selected, state: 'forecast' }, { ...facts, facts: [...facts.facts, alternate] })
+      .conflicts
+  ).toEqual([]);
+});
+
+it('補足側だけの現在値でも比較原数量の文脈を照合し、複数の確定文脈を順序で拒否しない', () => {
+  const { facts, fact, display, observation } = reviewedTable('営業利益');
+  const nativeCurrent = fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.id;
+  const supplemental = {
+    ...observation,
+    valueId: nativeCurrent,
+    comparison: { ...observation.comparison!, state: 'forecast' as const },
+  };
+  const onlyReference = { ...facts, facts: facts.facts.filter((f) => f.id !== fact.id) };
+  expect(
+    reconcileObservations(onlyReference, [supplemental], display.excerpts, display.values).conflicts
+  ).toEqual([supplemental]);
+  const organization = { ...emptyOrganization(), observations: [supplemental] };
+  organization.review = {
+    contentHash: organizationHash(organization, onlyReference, display.values, display.excerpts),
+    claims: { [supplemental.id]: null },
+    sources: {},
+  };
+  expect(
+    unresolvedTableSources(organization, onlyReference, display.values, display.excerpts).some(
+      (source) => source.spanIds.includes(nativeCurrent)
+    )
+  ).toBe(true);
+  const reference = facts.facts.find((f) => f.id === observation.comparison!.valueId)!;
+  const alternate = {
+    ...reference,
+    id: 'alternate',
+    semantics: { ...reference.semantics, scope: '個別' },
+  };
+  const multiple = { ...facts, facts: [alternate, ...facts.facts] };
+  const result = reconcileObservations(multiple, [observation], display.excerpts, display.values);
+  expect(result.conflicts).toEqual([]);
+  expect(result.primary.get(fact.id)?.comparison).toEqual(observation.comparison);
+});
+
+it('意味点検が同一実績セルを予想として誤承認しても、保存復元後の本文・分析・計算へ通さない', () => {
+  const { facts, fact, page, display, observation, review } = reviewedTable('営業利益');
+  const misapproved = {
+    ...observation,
+    state: 'forecast' as const,
+    comparison: null,
+    valueId: fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.id,
+  };
+  review([misapproved]);
+  const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), facts, [page]);
+  const markdown = renderFacts(facts, restored);
+  expect(markdown).toContain('補足指標の未整理');
+  expect(markdown).toContain('20百万円');
+  expect(markdown.split('## 開示内容')[0]).toContain('↑増益');
+  expect(markdown).not.toContain('2026年3月期／予想／連結');
+  expect(
+    supportedObservations(restored.organization!, facts, restored.values, restored.excerpts)
+  ).toEqual([]);
+  const analysis = buildAnalysisInput(facts, restored);
+  expect(analysis.coverage.observations).toBe(0);
+  expect(analysis.evidence.some((e) => e.kind === 'observation')).toBe(false);
+  expect(
+    buildAnalysisCalculations(facts, restored).every((c) => c.sourceObservationIds.length === 0)
+  ).toBe(true);
+  expect(restored.organization!.observations).toEqual([misapproved]);
+});

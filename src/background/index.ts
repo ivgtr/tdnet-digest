@@ -1,6 +1,7 @@
 import { SUMMARY_TRACE_KEY, summaryBuildDigest, type SummaryTrace } from '@/lib/summary-trace';
 import { serializeCandidateSource } from '@/lib/fact-candidates';
 import type { LLMConfig } from '@/lib/llm-client';
+import { configuredApiUrl } from '@/lib/llm-endpoint';
 import { detectDocumentType, type DocumentType } from '@/lib/document-type';
 import {
   FACT_SCHEMA_VERSION,
@@ -170,7 +171,7 @@ function configOf(settings: Settings): LLMConfig {
     provider: settings.provider,
     apiKey: settings.apiKey,
     model: settings.model,
-    baseUrl: settings.customUrl || undefined,
+    baseUrl: configuredApiUrl(settings),
   };
 }
 async function fetchPDF(url: string): Promise<ArrayBuffer> {
@@ -239,9 +240,8 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     await setupOffscreenDocument();
     const extraction = await extractTextFromPDF(data, documentType, mode);
     const config = configOf(settings);
-    const fingerprint = buildAnalysisFingerprint({
-      provider: settings.provider,
-      model: settings.model,
+    const fingerprint = await buildAnalysisFingerprint({
+      ...config,
       extractionMode: mode,
     });
     const documentHash = await hashPdf(data);
@@ -313,8 +313,11 @@ async function handleFollowup(
 ): Promise<{ score?: ExperimentalScore; analysis?: AdditionalAnalysis }> {
   validatePresentation(request.presentation, request.facts);
   const settings = await getSettings();
-  const fingerprints = (['full', 'smart'] as const).map((extractionMode) =>
-    buildAnalysisFingerprint({ provider: settings.provider, model: settings.model, extractionMode })
+  const config = configOf(settings);
+  const fingerprints = await Promise.all(
+    (['full', 'smart'] as const).map((extractionMode) =>
+      buildAnalysisFingerprint({ ...config, extractionMode })
+    )
   );
   if (!fingerprints.includes(request.fingerprint))
     throw new Error('設定が変更されています。要約をやり直してください');
@@ -341,7 +344,6 @@ async function handleFollowup(
     )) !== request.resultId
   )
     throw new Error('要約結果の識別子が一致しません');
-  const config = configOf(settings);
   if (request.action === 'analyze')
     return { analysis: await analyzeFacts(config, facts, presentation) };
   if (!settings.experimentalScoring) throw new Error('実験的スコアがOFFです');

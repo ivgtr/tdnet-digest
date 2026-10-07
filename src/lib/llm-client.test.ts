@@ -33,6 +33,33 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it.each(['custom', 'anthropic'])(
+  '実効URLを%sの送信にも使用し、経路とqueryを保つ',
+  async (provider) => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () =>
+        provider === 'anthropic'
+          ? response('{}')
+          : new Response(
+              JSON.stringify({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] })
+            )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    await generateText(
+      {
+        ...config,
+        provider,
+        baseUrl: ' HTTPS://API.EXAMPLE.COM:443/x/../v1/chat/?deployment=a&deployment=b#fragment ',
+      },
+      messages
+    );
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://api.example.com/v1/chat/?deployment=a&deployment=b'
+    );
+  }
+);
+
 describe('Anthropicの出力予算と完了判定', () => {
   it('既定値と明示した出力予算をMessages APIへ渡す', async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(response('{}')));

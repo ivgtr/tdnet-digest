@@ -473,6 +473,77 @@ export function factObservation(
   };
 }
 
+/** Only disjoint, explicitly understood meanings are contradictions. Free-form labels,
+ * aliases and missing metadata still belong to the independent semantic review. */
+function contradictsConfirmedContext(
+  confirmed: DisclosureObservation,
+  claimed: DisclosureObservation
+): boolean {
+  const compact = (value: string | null) => value?.normalize('NFKC').replace(/\s/g, '') ?? null;
+  const scope = (value: string | null) => {
+    const text = compact(value);
+    return text === '連結'
+      ? 'consolidated'
+      : /^(個別|単体|非連結)$/.test(text ?? '')
+        ? 'separate'
+        : null;
+  };
+  const basis = (value: string | null) => {
+    const text = compact(value)?.toUpperCase();
+    return text === 'IFRS' || text === '国際会計基準'
+      ? 'IFRS'
+      : text === '日本基準' || text === '米国基準'
+        ? text
+        : null;
+  };
+  const period = (value: string | null) => {
+    if (!value) return null;
+    const text = reportingPeriodText(value);
+    if (!new RegExp(`^${REPORTING_FISCAL_PERIOD_PATTERN}$`).test(text)) return null;
+    const fiscal = text
+      .match(/^(20\d{2})年(\d{1,2})月期/)!
+      .slice(1)
+      .map(Number)
+      .join(':');
+    const shape = reportingPeriodShapes(text)[0] ?? '通期';
+    const qualifier = /単独/.test(text)
+      ? '単独'
+      : /累計|中間期/.test(text) || shape === '第1四半期'
+        ? '累計'
+        : null;
+    return { fiscal, shape, qualifier };
+  };
+  const different = (a: string | null, b: string | null) => a !== null && b !== null && a !== b;
+  const numericStates = ['actual', 'forecast', 'forecastBefore', 'forecastAfter'];
+  const stateConflict =
+    numericStates.includes(confirmed.state) &&
+    numericStates.includes(claimed.state) &&
+    confirmed.state !== claimed.state &&
+    !(
+      [confirmed.state, claimed.state].includes('forecast') &&
+      confirmed.state.startsWith('forecast') &&
+      claimed.state.startsWith('forecast')
+    );
+  const before = period(confirmed.period),
+    after = period(claimed.period);
+  const periodConflict =
+    before &&
+    after &&
+    (before.fiscal !== after.fiscal ||
+      before.shape !== after.shape ||
+      different(before.qualifier, after.qualifier));
+  return (
+    stateConflict ||
+    (confirmed.measure !== 'other' &&
+      claimed.measure !== 'other' &&
+      confirmed.measure !== claimed.measure) ||
+    different(reportingMetricKey(confirmed.metric), reportingMetricKey(claimed.metric)) ||
+    different(scope(confirmed.scope), scope(claimed.scope)) ||
+    different(basis(confirmed.basis), basis(claimed.basis)) ||
+    !!periodConflict
+  );
+}
+
 /** Join independently reviewed relationships with confirmed amounts by native identity. */
 export function reconcileObservations(
   facts: FactSummary,
@@ -499,14 +570,46 @@ export function reconcileObservations(
   );
   const supplement: DisclosureObservation[] = [];
   const conflicts: DisclosureObservation[] = [];
+  const periodKey = (period: string | null) =>
+    period &&
+    reportingPeriodText(period)
+      .replace(/(20\d{2})年0?(\d{1,2})月期/, '$1年$2月期')
+      .replace(/^(20\d{2}年\d{1,2}月期)通期$/, '$1')
+      .replace(/中間期(?:累計)?(?:期間)?$/, '第2四半期累計')
+      .replace(/\((累計|単独)\)(?:期間)?$/, '$1')
+      .replace(/(累計|単独)期間$/, '$1');
   const grouped = new Map<string, DisclosureObservation[]>();
+  const owners = new Map<string, ConfirmedObservation[]>();
+  for (const confirmed of primary.values()) {
+    const id = native(confirmed.valueId);
+    owners.set(id, [...(owners.get(id) ?? []), confirmed]);
+  }
+  const contradicted = (claim: DisclosureObservation) => {
+    const confirmed = owners.get(native(claim.valueId)) ?? [];
+    // One physical quantity may legitimately have several confirmed contexts.
+    // A compatible or ambiguous owner prevents declaring a clear contradiction.
+    return (
+      confirmed.length > 0 && confirmed.every((value) => contradictsConfirmedContext(value, claim))
+    );
+  };
   for (const observation of observations) {
+    // Resolve physical identity before semantic matching: a changed state/metric
+    // must not escape reconciliation as a supposedly new quantity. Apply the same
+    // rule to comparison operands, even when the current quantity is supplemental.
+    if (
+      contradicted(observation) ||
+      (observation.comparison && contradicted({ ...observation, ...observation.comparison }))
+    ) {
+      conflicts.push(observation);
+      continue;
+    }
     const matches = [...primary.values()].filter(
       (p) =>
         native(p.valueId) === native(observation.valueId) &&
         (observation.entity === null || observation.entity === p.entity) &&
         observation.metric === p.metric &&
         observation.state === p.state &&
+        (observation.period === null || periodKey(observation.period) === periodKey(p.period)) &&
         (observation.scope === null || observation.scope === p.scope) &&
         (observation.basis === null || observation.basis === p.basis)
     );
@@ -517,13 +620,6 @@ export function reconcileObservations(
     const current = matches[0];
     grouped.set(current.id, [...(grouped.get(current.id) ?? []), observation]);
   }
-  const periodKey = (period: string | null) =>
-    period &&
-    reportingPeriodText(period)
-      .replace(/^(20\d{2}年\d{1,2}月期)通期$/, '$1')
-      .replace(/中間期(?:累計)?(?:期間)?$/, '第2四半期累計')
-      .replace(/\((累計|単独)\)(?:期間)?$/, '$1')
-      .replace(/(累計|単独)期間$/, '$1');
   const comparisonKey = (comparison: ObservationComparison) =>
     canonicalJSON([
       native(comparison.valueId),
@@ -552,21 +648,18 @@ export function reconcileObservations(
         fact.provenance?.adjustments ?? [],
       ]);
     const fact = facts.facts.find((f) => f.id === id)!;
-    const incompatibleReference = comparisons.some((c) =>
-      facts.facts.some(
-        (f) =>
-          native(f.id) === native(c.valueId) &&
-          (comparisonBasis(fact) !== comparisonBasis(f) ||
-            periodKey(c.period) !== periodKey(factPeriodName(f)) ||
-            c.state !== f.semantics.state)
-      )
-    );
+    const compatibleReference = (c: ObservationComparison, f: VerifiedFact) =>
+      native(f.id) === native(c.valueId) &&
+      comparisonBasis(fact) === comparisonBasis(f) &&
+      periodKey(c.period) === periodKey(factPeriodName(f)) &&
+      c.state === f.semantics.state;
+    const incompatibleReference = comparisons.some((c) => {
+      const references = facts.facts.filter((f) => native(f.id) === native(c.valueId));
+      return references.length > 0 && !references.some((f) => compatibleReference(c, f));
+    });
     if (
       measures.size > 1 ||
       new Set(reviewed.map((o) => o.topic)).size > 1 ||
-      reviewed.some(
-        (o) => o.period !== null && periodKey(o.period) !== periodKey(current.period)
-      ) ||
       new Set(comparisons.map(comparisonKey)).size > 1 ||
       rateIds.size > 1 ||
       incompatibleReference
@@ -578,8 +671,7 @@ export function reconcileObservations(
       continue;
     }
     const comparison = comparisons[0] ?? null;
-    const reference =
-      comparison && facts.facts.find((f) => native(f.id) === native(comparison.valueId));
+    const reference = comparison && facts.facts.find((f) => compatibleReference(comparison, f));
     primary.set(current.id, {
       ...current,
       topic: reviewed[0].topic,
