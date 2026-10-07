@@ -115,6 +115,7 @@ export function buildSummaryHtml(
           <button type="button" id="resummarize-btn" style="${SUMMARY_STYLES.resummarizeButton}">再要約</button>
         </div>
       </div>
+      <p data-persistence-warning role="status" hidden style="font-size:12px;color:#92400e;margin:8px 0;"></p>
       ${buildMetadataHtml(metadata, 'warning')}
       <div style="${SUMMARY_STYLES.summaryText}">${parseSummaryMarkdown(summaryText, rowData.pdfUrl)}</div>
       <div id="score-result">${buildScoreStageHtml(score)}</div>
@@ -157,7 +158,7 @@ export function buildScoreStageHtml(score?: Stage<ExperimentalScore>): string {
     : score?.error
       ? `採点失敗: ${escapeMetadataText(score.error)} <button type="button" id="retry-score-btn" style="${SUMMARY_STYLES.retryButton}">採点を再試行</button>`
       : score?.data
-        ? buildScoreHtml(score.data)
+        ? buildScoreHtml(score.data) + buildPersistenceWarningHtml(score.persistenceWarning)
         : '';
 }
 
@@ -171,8 +172,15 @@ export function buildAnalysisStageHtml(
     : analysis?.error
       ? `<p role="alert" style="${SUMMARY_STYLES.warningBox} margin-top: 12px;">追加分析失敗: ${escapeMetadataText(analysis.error)}</p>`
       : analysis?.data
-        ? buildAnalysisHtml(analysis.data, facts, pdfUrl)
+        ? buildAnalysisHtml(analysis.data, facts, pdfUrl) +
+          buildPersistenceWarningHtml(analysis.persistenceWarning)
         : '';
+}
+
+function buildPersistenceWarningHtml(warning?: string): string {
+  return warning
+    ? `<p role="status" style="font-size:12px;color:#92400e;margin:8px 0;">${escapeMetadataText(warning)}</p>`
+    : '';
 }
 
 function buildAnalysisHtml(

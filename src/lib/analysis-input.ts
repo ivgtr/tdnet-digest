@@ -105,7 +105,12 @@ export function buildAnalysisInput(
   });
 
   const explanations = supportedExplanations(presentation.organization);
-  const observations = supportedObservations(presentation.organization);
+  const observations = supportedObservations(
+    presentation.organization,
+    facts,
+    presentation.values,
+    presentation.excerpts
+  );
   for (const [kind, items] of [
     ['explanation', explanations],
     ['observation', observations],

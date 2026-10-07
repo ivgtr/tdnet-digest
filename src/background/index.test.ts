@@ -22,7 +22,7 @@ interface TestResponse {
   error?: string;
   diagnosticRunId: string;
   summary: string;
-  metadata: { analysisFingerprint: string; score?: unknown };
+  metadata: { analysisFingerprint: string; score?: unknown; persistenceWarning?: string };
   facts: FactSummary;
   presentation: import('../lib/summary-presentation').SummaryPresentation;
   resultId: string;
@@ -347,6 +347,70 @@ describe('要約・採点・追加分析の分離', () => {
       expect(
         matchingSummaryTrace(saved, 'test.pdf', newer.diagnosticRunId, newer.resultId ?? null)
       ).toEqual(saved);
+    }
+  );
+
+  it('診断保存の失敗は完成結果と生成元のエラーを覆わず、後続の保存も妨げない', async () => {
+    const request = await setup(false);
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
+    vi.mocked(chrome.storage.local.set).mockRejectedValue(new Error('storage quota exceeded'));
+    const success = await request({ action: 'summarize' });
+    expect(success.error).toBeUndefined();
+    expect(success.summary).toContain('1150百万円');
+    expect(success.metadata.persistenceWarning).toContain('診断を保存できませんでした');
+    mocked.generateText.mockRejectedValueOnce(new Error('generation failed'));
+    const failure = await request({ action: 'summarize' });
+    expect(failure.error).toBe('generation failed');
+    vi.mocked(chrome.storage.local.set).mockResolvedValue(undefined);
+    const next = await request({ action: 'summarize' });
+    expect(next.error).toBeUndefined();
+    expect(next.metadata.persistenceWarning).toBeUndefined();
+    expect(vi.mocked(chrome.storage.local.set).mock.calls.at(-1)?.[0]).toMatchObject({
+      summaryLastRunV1: { runId: next.diagnosticRunId, outcome: 'firstSuccess' },
+    });
+  });
+
+  it.each([false, true])(
+    '同時初回要求はOffscreen初期化を共有し、失敗=%sの後も再確認する',
+    async (fails) => {
+      const request = await setup(false);
+      mocked.generateText.mockResolvedValue(
+        candidateResponse(facts.facts, [nativePage], facts.documentType)
+      );
+      chrome.runtime.getContexts = vi.fn(async () => []);
+      let finish!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      vi.mocked(chrome.offscreen.createDocument)
+        .mockImplementationOnce(async () => {
+          entered();
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+          if (fails) throw new Error('offscreen creation failed');
+        })
+        .mockResolvedValue(undefined);
+      const first = request({ action: 'summarize', pdfUrl: 'first.pdf' });
+      await started;
+      const second = request({ action: 'summarize', pdfUrl: 'second.pdf' });
+      // Both requests have downloaded before the shared initialization completes.
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledTimes(1);
+      finish();
+      const results = await Promise.all([first, second]);
+      for (const result of results) {
+        if (fails) expect(result.error).toBe('offscreen creation failed');
+        else expect(result.summary).toContain('1150百万円');
+      }
+      expect(chrome.runtime.getContexts).toHaveBeenCalledTimes(1);
+      const next = await request({ action: 'summarize' });
+      expect(next.error).toBeUndefined();
+      expect(chrome.runtime.getContexts).toHaveBeenCalledTimes(2);
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledTimes(2);
     }
   );
 

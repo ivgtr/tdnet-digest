@@ -22,6 +22,7 @@ import {
 import { literalValue, quantityChange } from './summary-narrative-renderer';
 import type { SourceExcerpt } from './summary-source-inventory';
 import type { ContentRole } from './summary-content-policy';
+import type { SourceProvenance } from './source-provenance';
 
 /** Meaning, not a table layout. Company-specific metrics and periods remain named data. */
 export const OBSERVATION_TOPICS = [
@@ -80,6 +81,29 @@ export interface DisclosureObservation extends DisclosureContext {
   measure: (typeof OBSERVATION_MEASURES)[number];
   valueId: string;
   comparison: ObservationComparison | null;
+}
+/** Derived only from saved, confirmed facts; never accepted from the model's wire format. */
+export interface ConfirmedObservation extends DisclosureObservation {
+  sourceBasis: Pick<SourceProvenance, 'denominator' | 'adjustments'>;
+  comparisonSourceBasis: Pick<SourceProvenance, 'denominator' | 'adjustments'> | null;
+  unresolved: boolean;
+}
+export const adjustmentLabels: Record<SourceProvenance['adjustments'][number]['basis'], string> = {
+  splitAdjusted: '株式分割調整済み',
+  beforeSplit: '株式分割前',
+  afterSplit: '株式分割後',
+};
+export function observationBasis(
+  value: DisclosureObservation | ConfirmedObservation,
+  comparison = false
+): string[] {
+  if (!('sourceBasis' in value)) return [];
+  const basis = comparison ? value.comparisonSourceBasis : value.sourceBasis;
+  if (!basis) return [];
+  return [
+    ...(basis.denominator && !/[1１]株(?:当たり|あたり)/.test(value.metric) ? ['1株当たり'] : []),
+    ...new Set(basis.adjustments.map((a) => adjustmentLabels[a.basis])),
+  ];
 }
 export interface DisclosureExplanation extends NarrativeLine, DisclosureContext {}
 const named = (v: unknown): v is string => typeof v === 'string' && !!v.trim() && v.length <= 1000;
@@ -291,9 +315,11 @@ export function observationGroup(value: DisclosureObservation): string {
   return canonicalJSON([value.topic, value.scope, value.basis, value.conditions]);
 }
 export function observationChange(
-  value: DisclosureObservation,
+  value: DisclosureObservation | ConfirmedObservation,
   values: NarrativeValue[]
 ): { text: string; calculated: boolean } {
+  if ('unresolved' in value && value.unresolved)
+    return { text: '指標区分・比較は未確認', calculated: false };
   if (!value.comparison) return { text: '', calculated: false };
   const current = values.find((q) => q.id === value.valueId)!;
   const previous = values.find((q) => q.id === value.comparison!.valueId)!;
@@ -365,7 +391,7 @@ export function factObservation(
   facts: FactSummary,
   excerpts: SourceExcerpt[],
   values: NarrativeValue[]
-): DisclosureObservation {
+): ConfirmedObservation {
   const pair = summaryComparison(fact, facts.facts);
   const metric = reportingMetricKey(fact.label);
   const rates = facts.facts.filter((rate) => canPair(fact, rate));
@@ -382,9 +408,20 @@ export function factObservation(
             : 'profit'
           : 'other';
   const owner = fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.evidence.blockId;
+  const sourceBasis = {
+    denominator: fact.provenance?.denominator ?? null,
+    adjustments: fact.provenance?.adjustments ?? [],
+  };
+  const basisSources = new Set([
+    ...(sourceBasis.denominator?.sourceIds ?? []),
+    ...sourceBasis.adjustments.map((a) => a.noteId),
+  ]);
   const sourceIds = [
     ...new Set([
       ...excerpts.filter((e) => e.blockId === owner || e.spanIds.includes(owner)).map((e) => e.id),
+      ...excerpts
+        .filter((e) => basisSources.has(e.blockId) || e.spanIds.some((id) => basisSources.has(id)))
+        .map((e) => e.id),
       ...values
         .filter(
           (q) =>
@@ -425,6 +462,14 @@ export function factObservation(
       ]),
     ],
     sourceIds,
+    sourceBasis,
+    comparisonSourceBasis: pair
+      ? {
+          denominator: pair.reference.provenance?.denominator ?? null,
+          adjustments: pair.reference.provenance?.adjustments ?? [],
+        }
+      : null,
+    unresolved: false,
   };
 }
 
@@ -434,7 +479,11 @@ export function reconcileObservations(
   observations: DisclosureObservation[],
   excerpts: SourceExcerpt[],
   values: NarrativeValue[]
-): { primary: Map<string, DisclosureObservation>; supplement: DisclosureObservation[] } {
+): {
+  primary: Map<string, ConfirmedObservation>;
+  supplement: DisclosureObservation[];
+  conflicts: DisclosureObservation[];
+} {
   const native = (id: string) => {
     const fact = facts.facts.find((f) => f.id === id);
     return fact?.evidence.kind === 'table'
@@ -449,6 +498,8 @@ export function reconcileObservations(
       .map((f) => [f.id, factObservation(f, facts, excerpts, values)])
   );
   const supplement: DisclosureObservation[] = [];
+  const conflicts: DisclosureObservation[] = [];
+  const grouped = new Map<string, DisclosureObservation[]>();
   for (const observation of observations) {
     const matches = [...primary.values()].filter(
       (p) =>
@@ -464,27 +515,93 @@ export function reconcileObservations(
       continue;
     }
     const current = matches[0];
+    grouped.set(current.id, [...(grouped.get(current.id) ?? []), observation]);
+  }
+  const periodKey = (period: string | null) =>
+    period &&
+    reportingPeriodText(period)
+      .replace(/^(20\d{2}年\d{1,2}月期)通期$/, '$1')
+      .replace(/中間期(?:累計)?(?:期間)?$/, '第2四半期累計')
+      .replace(/\((累計|単独)\)(?:期間)?$/, '$1')
+      .replace(/(累計|単独)期間$/, '$1');
+  const comparisonKey = (comparison: ObservationComparison) =>
+    canonicalJSON([
+      native(comparison.valueId),
+      comparison.axis,
+      periodKey(comparison.period),
+      comparison.state,
+    ]);
+  for (const [id, reviewed] of grouped) {
+    const current = primary.get(id)!;
+    const measures = new Set(
+      [current, ...reviewed].map((o) => o.measure).filter((measure) => measure !== 'other')
+    );
+    const comparisons = [current, ...reviewed].flatMap((o) => (o.comparison ? [o.comparison] : []));
+    const rateIds = new Set(comparisons.flatMap((c) => (c.rateId ? [native(c.rateId)] : [])));
+    const comparisonBasis = (fact: VerifiedFact) =>
+      canonicalJSON([
+        fact.semantics.subject,
+        fact.semantics.scope,
+        fact.semantics.basis,
+        fact.semantics.metricKind,
+        fact.semantics.qualifiers,
+        fact.semantics.conditions,
+        fact.provenance?.denominator
+          ? [fact.provenance.denominator.value, fact.provenance.denominator.unit]
+          : null,
+        fact.provenance?.adjustments ?? [],
+      ]);
+    const fact = facts.facts.find((f) => f.id === id)!;
+    const incompatibleReference = comparisons.some((c) =>
+      facts.facts.some(
+        (f) =>
+          native(f.id) === native(c.valueId) &&
+          (comparisonBasis(fact) !== comparisonBasis(f) ||
+            periodKey(c.period) !== periodKey(factPeriodName(f)) ||
+            c.state !== f.semantics.state)
+      )
+    );
+    if (
+      measures.size > 1 ||
+      new Set(reviewed.map((o) => o.topic)).size > 1 ||
+      reviewed.some(
+        (o) => o.period !== null && periodKey(o.period) !== periodKey(current.period)
+      ) ||
+      new Set(comparisons.map(comparisonKey)).size > 1 ||
+      rateIds.size > 1 ||
+      incompatibleReference
+    ) {
+      // Never let order decide which independently reviewed meaning wins. The
+      // confirmed amounts remain visible; incompatible review stays unresolved.
+      conflicts.push(...reviewed);
+      primary.set(id, { ...current, unresolved: true });
+      continue;
+    }
+    const comparison = comparisons[0] ?? null;
+    const reference =
+      comparison && facts.facts.find((f) => native(f.id) === native(comparison.valueId));
     primary.set(current.id, {
       ...current,
-      comparison:
-        current.comparison &&
-        observation.comparison &&
-        native(current.comparison.valueId) === native(observation.comparison.valueId) &&
-        current.comparison.axis === observation.comparison.axis &&
-        current.comparison.state === observation.comparison.state
-          ? {
-              ...current.comparison,
-              rateId: current.comparison.rateId ?? observation.comparison.rateId,
-            }
-          : (current.comparison ?? observation.comparison),
-      conditions: [...new Set([...current.conditions, ...observation.conditions])],
-      sourceIds: [...new Set([...current.sourceIds, ...observation.sourceIds])],
+      topic: reviewed[0].topic,
+      measure: [...measures][0] ?? 'other',
+      comparison: comparison
+        ? { ...comparison, rateId: comparisons.find((c) => c.rateId)?.rateId ?? null }
+        : null,
+      comparisonSourceBasis: reference
+        ? {
+            denominator: reference.provenance?.denominator ?? null,
+            adjustments: reference.provenance?.adjustments ?? [],
+          }
+        : null,
+      conditions: [...new Set([current, ...reviewed].flatMap((o) => o.conditions))],
+      sourceIds: [...new Set([current, ...reviewed].flatMap((o) => o.sourceIds))],
     });
   }
   // A comparison value already has a visible place in its owning observation.
   const displayed = [...primary.values(), ...supplement];
   return {
     primary,
+    conflicts,
     supplement: supplement.filter(
       (p) =>
         p.comparison ||

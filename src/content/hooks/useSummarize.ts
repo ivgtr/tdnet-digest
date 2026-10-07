@@ -34,6 +34,7 @@ export interface Stage<T> {
   loading: boolean;
   data: T | null;
   error: string | null;
+  persistenceWarning?: string;
 }
 const emptyStage = <T>(): Stage<T> => ({ loading: false, data: null, error: null });
 const SUMMARY_PREFIX = 'summaryCacheV2:';
@@ -69,6 +70,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const [analysis, setAnalysis] = useState<Stage<AdditionalAnalysis>>(emptyStage());
   const [scoringEnabled, setScoringEnabled] = useState(false);
   const [hasCached, setHasCached] = useState(false);
+  const [persistenceWarning, setPersistenceWarning] = useState<string | null>(null);
   const [stagesReady, setStagesReady] = useState(false);
   const [cacheKey, setCacheKey] = useState<string | null>(null);
   const keyRef = useRef<string | null>(null);
@@ -82,13 +84,18 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const scoreStarted = useRef<string | null>(null);
   const runRef = useRef(0);
   const stageRequestRef = useRef({ score: 0, analyze: 0 });
+  const mountedRef = useRef(false);
+  const cacheRevisionRef = useRef(0);
 
   useEffect(() => {
+    mountedRef.current = true;
     let active = true;
+    let settingsRequest = 0;
     const keys = ['provider', 'model', 'extractionMode', 'experimentalScoring'];
-    const refresh = () =>
+    const refresh = () => {
+      const request = ++settingsRequest;
       chrome.storage.sync.get(keys, (settings) => {
-        if (!active) return;
+        if (!active || request !== settingsRequest) return;
         const mode = settings.extractionMode ?? 'full';
         const currentSettings = {
           provider: settings.provider ?? 'openai',
@@ -108,38 +115,73 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           setScore(emptyStage());
           setAnalysis(emptyStage());
           setHasCached(false);
+          setPersistenceWarning(null);
           setStagesReady(false);
           setCacheKey(next);
         }
         setScoringEnabled(settings.experimentalScoring === true);
       });
+    };
     refresh();
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === 'sync' && keys.some((key) => key in changes)) refresh();
     };
     chrome.storage.onChanged.addListener(changed);
+    const pendingRun = runRef;
     return () => {
       active = false;
+      mountedRef.current = false;
+      pendingRun.current++;
+      keyRef.current = null;
+      configuredKeyRef.current = null;
+      settingsRef.current = null;
       chrome.storage.onChanged.removeListener(changed);
     };
   }, [pdfUrl]);
 
   useEffect(() => {
     if (!cacheKey) return;
-    chrome.storage.local.get(SUMMARY_PREFIX + cacheKey, async (data) => {
-      if (cacheKey !== keyRef.current) return;
-      const entry = data[SUMMARY_PREFIX + cacheKey] as CachedSummary | undefined;
-      const valid =
-        isCachedSummary(entry, cacheKey, pdfUrl) &&
-        (await summaryResultId(
-          pdfUrl,
-          entry.metadata.analysisFingerprint!,
-          entry.facts,
-          entry.metadata.documentHash!,
-          entry.presentation
-        )) === entry.resultId;
-      if (cacheKey === keyRef.current) setHasCached(valid);
-    });
+    let active = true;
+    let request = 0;
+    const storageKey = SUMMARY_PREFIX + cacheKey;
+    const refresh = async () => {
+      const read = ++request;
+      const revision = cacheRevisionRef.current;
+      const current = () =>
+        active &&
+        read === request &&
+        revision === cacheRevisionRef.current &&
+        cacheKey === keyRef.current;
+      try {
+        const data = await chrome.storage.local.get(storageKey);
+        const entry = data[storageKey] as CachedSummary | undefined;
+        const valid =
+          isCachedSummary(entry, cacheKey, pdfUrl) &&
+          (await summaryResultId(
+            pdfUrl,
+            entry.metadata.analysisFingerprint!,
+            entry.facts,
+            entry.metadata.documentHash!,
+            entry.presentation
+          )) === entry.resultId;
+        if (current()) setHasCached(valid);
+      } catch {
+        if (current()) setHasCached(false);
+      }
+    };
+    const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local' || !(storageKey in changes)) return;
+      cacheRevisionRef.current++;
+      // A deleted entry must not remain clickable while an older read is in flight.
+      setHasCached(false);
+      void refresh();
+    };
+    chrome.storage.onChanged.addListener(changed);
+    void refresh();
+    return () => {
+      active = false;
+      chrome.storage.onChanged.removeListener(changed);
+    };
   }, [cacheKey, pdfUrl]);
 
   const restoreStages = useCallback(
@@ -154,11 +196,24 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       const current = () => idRef.current === id && runRef.current === epoch;
       const canRestore = (stage: 'score' | 'analyze') =>
         current() && stageRequestRef.current[stage] === requests[stage];
-      const data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
+      let data: Record<string, unknown>;
+      try {
+        data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
+      } catch {
+        if (!current()) return;
+        setPersistenceWarning((warning) =>
+          [warning, '保存された採点・追加分析を読み込めませんでした。再実行できます']
+            .filter(Boolean)
+            .join(' / ')
+        );
+        setStagesReady(true);
+        return;
+      }
       if (!current()) return;
       const cachedScore = data[SCORE_PREFIX + id] as ExperimentalScore | undefined;
       if (cachedScore?.value === null && canRestore('score')) {
-        await chrome.storage.local.remove(SCORE_PREFIX + id);
+        // Failure to clean up a legacy failed score must not hide a valid summary.
+        await chrome.storage.local.remove(SCORE_PREFIX + id).catch(() => {});
         if (!current()) return;
       }
       if (canRestore('score')) {
@@ -201,12 +256,30 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   );
 
   const showCached = useCallback(async () => {
+    if (!mountedRef.current) return true;
     const run = ++runRef.current;
     const key = keyRef.current;
-    if (!key) return;
+    if (!key) return true;
+    const revision = cacheRevisionRef.current;
     setStagesReady(false);
-    const data = await chrome.storage.local.get(SUMMARY_PREFIX + key);
-    if (key !== keyRef.current || run !== runRef.current) return;
+    const invalidate = () => {
+      setHasCached(false);
+      idRef.current = null;
+      scoreStarted.current = null;
+      setResult(null);
+      setScore(emptyStage());
+      setAnalysis(emptyStage());
+      setPersistenceWarning(null);
+    };
+    let data: Record<string, unknown>;
+    try {
+      data = await chrome.storage.local.get(SUMMARY_PREFIX + key);
+    } catch {
+      if (key !== keyRef.current || run !== runRef.current) return true;
+      invalidate();
+      return false;
+    }
+    if (key !== keyRef.current || run !== runRef.current) return true;
     const entry = data[SUMMARY_PREFIX + key] as CachedSummary | undefined;
     const valid =
       isCachedSummary(entry, key, pdfUrl) &&
@@ -217,7 +290,11 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         entry.metadata.documentHash!,
         entry.presentation
       )) === entry.resultId;
-    if (key !== keyRef.current || run !== runRef.current) return;
+    if (key !== keyRef.current || run !== runRef.current) return true;
+    if (revision !== cacheRevisionRef.current || !valid) {
+      invalidate();
+      if (revision !== cacheRevisionRef.current || entry === undefined) return false;
+    }
     if (!valid) {
       if (entry !== undefined)
         setResult({
@@ -229,11 +306,11 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           diagnosticRunId: null,
           error: '保存された現行要約の形式・原数量・設定が不正です。再要約してください。',
         });
-      return;
+      return true;
     }
-    if (key !== keyRef.current || run !== runRef.current) return;
-    if (!entry) return;
+    if (!entry) return false;
     idRef.current = entry.resultId;
+    setPersistenceWarning(entry.metadata.persistenceWarning ?? null);
     setResult({
       summary: entry.summary,
       metadata: entry.metadata,
@@ -249,16 +326,19 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       entry.metadata.documentHash!,
       entry.presentation
     );
+    return true;
   }, [restoreStages, pdfUrl]);
 
   const summarize = useCallback(
     async (forceExtractionMode?: ExtractionMode) => {
+      if (!mountedRef.current) return;
       const run = ++runRef.current;
       setLoading(true);
       setResult(null);
       setScore(emptyStage());
       setAnalysis(emptyStage());
       setStagesReady(false);
+      setPersistenceWarning(null);
       scoreStarted.current = null;
       idRef.current = null;
       let diagnosticRunId: string | null = null;
@@ -321,6 +401,8 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           error: null,
         });
         setStagesReady(true);
+        const diagnosticWarning = response.metadata.persistenceWarning ?? null;
+        setPersistenceWarning(diagnosticWarning);
         const entry: CachedSummary = {
           summary: response.summary,
           facts: response.facts,
@@ -332,8 +414,28 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           code,
           cachedAt: Date.now(),
         };
-        await chrome.storage.local.set({ [SUMMARY_PREFIX + key]: entry });
-        if (key === keyRef.current) setHasCached(true);
+        const cacheRevision = cacheRevisionRef.current;
+        try {
+          await chrome.storage.local.set({ [SUMMARY_PREFIX + key]: entry });
+          if (
+            run === runRef.current &&
+            key === keyRef.current &&
+            cacheRevision === cacheRevisionRef.current
+          ) {
+            // A newer storage event owns availability. A late write completion
+            // must not undo a deletion or let a pre-write read replace this state.
+            cacheRevisionRef.current++;
+            setHasCached(true);
+          }
+        } catch {
+          if (run === runRef.current) {
+            setPersistenceWarning(
+              [diagnosticWarning, '要約を保存できませんでした。表示結果は利用できます']
+                .filter(Boolean)
+                .join(' / ')
+            );
+          }
+        }
       } catch (error) {
         if (run === runRef.current)
           setResult({
@@ -355,11 +457,18 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
 
   const requestStage = useCallback(
     async (action: 'score' | 'analyze', current: SummaryResult) => {
-      if (!current.facts || !current.resultId || !current.metadata?.analysisFingerprint) return;
+      if (
+        !mountedRef.current ||
+        !current.facts ||
+        !current.resultId ||
+        !current.metadata?.analysisFingerprint
+      )
+        return;
       const id = current.resultId;
       const epoch = runRef.current;
       const requestNumber = ++stageRequestRef.current[action];
       const isCurrent = () =>
+        mountedRef.current &&
         idRef.current === id &&
         runRef.current === epoch &&
         stageRequestRef.current[action] === requestNumber;
@@ -392,7 +501,17 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (action === 'score' && data.value === null)
           throw new Error(data.unverified?.join(' / ') || '採点の根拠を確認できません');
         set({ loading: false, data, error: null });
-        await chrome.storage.local.set({ [cache]: data });
+        try {
+          await chrome.storage.local.set({ [cache]: data });
+        } catch {
+          if (isCurrent())
+            set({
+              loading: false,
+              data,
+              error: null,
+              persistenceWarning: `${action === 'score' ? '採点' : '追加分析'}を保存できませんでした。表示結果は利用できます`,
+            });
+        }
       } catch (error) {
         if (isCurrent())
           set({
@@ -431,6 +550,8 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     idRef.current = null;
     scoreStarted.current = null;
     setResult(null);
+    setLoading(false);
+    setPersistenceWarning(null);
     setScore(emptyStage());
     setAnalysis(emptyStage());
     setStagesReady(false);
@@ -442,6 +563,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     analysis,
     scoringEnabled,
     hasCached,
+    persistenceWarning,
     cacheKey,
     summarize,
     showCached,

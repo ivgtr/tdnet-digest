@@ -29,23 +29,21 @@ interface UseSummaryRowOptions {
 
 export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions) {
   const stageHtml = useRef<{ row: Element; score: string; analysis: string } | null>(null);
+  const ownedRow = useRef<HTMLTableRowElement | null>(null);
   /**
    * 既存の要約行を削除
    */
   const removeSummaryRow = useCallback(() => {
     stageHtml.current = null;
-    const existingSummaryRow = row.nextElementSibling;
-    if (existingSummaryRow?.classList.contains('tdnet-digest-summary-row')) {
-      existingSummaryRow.remove();
-    }
-  }, [row]);
+    ownedRow.current?.remove();
+    ownedRow.current = null;
+  }, []);
 
   /**
    * 要約行が表示中かどうかを判定
    */
   const isSummaryRowVisible = useCallback((): boolean => {
-    const next = row.nextElementSibling;
-    return next?.classList.contains('tdnet-digest-summary-row') ?? false;
+    return ownedRow.current !== null && row.nextElementSibling === ownedRow.current;
   }, [row]);
 
   /**
@@ -73,6 +71,7 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       // 要約行を作成
       const summaryRow = iframeDoc.createElement('tr');
       summaryRow.className = 'tdnet-digest-summary-row';
+      ownedRow.current = summaryRow;
 
       const summaryCell = iframeDoc.createElement('td');
       summaryCell.setAttribute('colspan', '8');
@@ -161,12 +160,18 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
     (
       score?: Stage<ExperimentalScore>,
       analysis?: Stage<AdditionalAnalysis>,
-      facts: VerifiedFact[] = []
+      facts: VerifiedFact[] = [],
+      persistenceWarning: string | null = null
     ) => {
-      const summaryRow = row.nextElementSibling;
-      if (!summaryRow?.classList.contains('tdnet-digest-summary-row')) return;
+      const summaryRow = ownedRow.current;
+      if (!summaryRow) return;
       const scoreCell = summaryRow.querySelector('#score-result');
       const analysisCell = summaryRow.querySelector('#analysis-result');
+      const warning = summaryRow.querySelector<HTMLElement>('[data-persistence-warning]');
+      if (warning) {
+        warning.textContent = persistenceWarning ?? '';
+        warning.hidden = !persistenceWarning;
+      }
       const scoreHtml = buildScoreStageHtml(score);
       const analysisHtml = buildAnalysisStageHtml(analysis, facts, rowData.pdfUrl);
       const previous = stageHtml.current?.row === summaryRow ? stageHtml.current : null;
@@ -187,7 +192,7 @@ export function useSummaryRow({ row, iframeDoc, rowData }: UseSummaryRowOptions)
       }
       stageHtml.current = { row: summaryRow, score: scoreHtml, analysis: analysisHtml };
     },
-    [row, rowData.pdfUrl]
+    [rowData.pdfUrl]
   );
 
   return { removeSummaryRow, insertSummaryRow, updateStages, isSummaryRowVisible };

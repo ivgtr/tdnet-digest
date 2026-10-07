@@ -98,16 +98,26 @@ chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) =
   return true;
 });
 
-async function setupOffscreenDocument(): Promise<void> {
-  const existing = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType],
-  });
-  if (!existing.length)
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['DOM_PARSER' as chrome.offscreen.Reason],
-      justification: 'PDF.jsによる文字抽出',
+// Concurrent summary/follow-up requests share only the in-flight initialization.
+// Recheck contexts after completion so a subsequently closed document is recreated.
+let offscreenSetup: Promise<void> | null = null;
+function setupOffscreenDocument(): Promise<void> {
+  if (!offscreenSetup) {
+    offscreenSetup = (async () => {
+      const existing = await chrome.runtime.getContexts({
+        contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType],
+      });
+      if (!existing.length)
+        await chrome.offscreen.createDocument({
+          url: 'offscreen.html',
+          reasons: ['DOM_PARSER' as chrome.offscreen.Reason],
+          justification: 'PDF.jsによる文字抽出',
+        });
+    })().finally(() => {
+      offscreenSetup = null;
     });
+  }
+  return offscreenSetup;
 }
 
 async function getSettings(): Promise<Settings> {
@@ -196,6 +206,7 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     outcome: 'running',
     error: null,
   };
+  let persistenceWarning: string | undefined;
   const saveTrace = async () => {
     trace.elapsedMs = Math.round(performance.now() - started);
     try {
@@ -204,13 +215,11 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
         if (currentSummaryRunId === runId)
           await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: snapshot });
       });
-      // A failed write belongs to its request, and cannot poison later requests.
+      // Diagnostic persistence cannot fail generation or poison later writes.
       traceWriteQueue = write.catch(() => {});
       await write;
     } catch {
-      throw new Error(
-        `診断の保存に失敗しました。${trace.error ?? '直近実行を保存できませんでした'}`
-      );
+      persistenceWarning = '診断を保存できませんでした。表示結果は利用できます';
     }
   };
 
@@ -282,6 +291,7 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
       summaryMode: 'sourced-summary',
       generationCalls: trace.attempts.length,
       analysisFingerprint: fingerprint,
+      ...(persistenceWarning ? { persistenceWarning } : {}),
     };
     return {
       summary: renderFacts(facts, generated.presentation),

@@ -34,6 +34,7 @@ export interface QualityWarning {
 }
 
 export interface SummaryMetadata {
+  persistenceWarning?: string;
   documentHash?: string;
   totalPages: number;
   extractedPages: number[];

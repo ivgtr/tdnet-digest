@@ -26,6 +26,7 @@ import {
   type DisclosureContext,
   observationLine,
   checkObservation,
+  reconcileObservations,
   type DisclosureObservation,
   type DisclosureExplanation,
 } from './disclosure-observation';
@@ -100,10 +101,26 @@ const verdicts = (value: unknown, keys: string[]): value is Record<string, strin
 export function supportedExplanations(result: SummaryOrganization): DisclosureExplanation[] {
   return result.review ? result.claims.filter((c) => result.review!.claims[c.id] === null) : [];
 }
-export function supportedObservations(result: SummaryOrganization): DisclosureObservation[] {
-  return result.review
+export function reconciledOrganizationObservations(
+  result: SummaryOrganization,
+  facts: FactSummary,
+  values: NarrativeValue[],
+  excerpts: SourceExcerpt[]
+) {
+  const reviewed = result.review
     ? result.observations.filter((value) => result.review!.claims[value.id] === null)
     : [];
+  const reconciled = reconcileObservations(facts, reviewed, excerpts, values);
+  const conflicts = new Set(reconciled.conflicts.map((o) => o.id));
+  return { ...reconciled, accepted: reviewed.filter((o) => !conflicts.has(o.id)) };
+}
+export function supportedObservations(
+  result: SummaryOrganization,
+  facts: FactSummary,
+  values: NarrativeValue[],
+  excerpts: SourceExcerpt[]
+): DisclosureObservation[] {
+  return reconciledOrganizationObservations(result, facts, values, excerpts).accepted;
 }
 export function unresolvedExplanationSources(
   result: SummaryOrganization,
@@ -126,7 +143,7 @@ export function unresolvedTableSources(
   const shown = new Set(
     facts.facts.flatMap((f) => (f.evidence.kind === 'table' ? [f.evidence.valueId, f.id] : [f.id]))
   );
-  for (const value of supportedObservations(result)) {
+  for (const value of supportedObservations(result, facts, values, excerpts)) {
     shown.add(value.valueId);
     if (value.comparison) {
       shown.add(value.comparison.valueId);
@@ -155,9 +172,11 @@ function statusOf(
   facts: FactSummary,
   values: NarrativeValue[]
 ) {
-  if (!supportedExplanations(result).length && !supportedObservations(result).length)
+  const observations = reconciledOrganizationObservations(result, facts, values, excerpts);
+  if (!supportedExplanations(result).length && !observations.accepted.length)
     return 'unavailable' as const;
   return result.issues.length ||
+    observations.conflicts.length ||
     unresolvedExplanationSources(result, excerpts).length ||
     unresolvedTableSources(result, facts, values, excerpts).length ||
     Object.values(result.review?.claims ?? {}).some((verdict) => verdict !== null)

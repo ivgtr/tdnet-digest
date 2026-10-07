@@ -20,6 +20,7 @@ import { buildAnalysisInput } from '@/lib/analysis-input';
 import { SUMMARY_TRACE_KEY, type SummaryTrace } from '@/lib/summary-trace';
 import SummaryButton from '../SummaryButton';
 import { useSummarize } from './useSummarize';
+import { startContentScript } from '../contentLifecycle';
 
 const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
 const options = { pdfUrl, title: '開示', code: '1234', companyName: '株式会社テスト' };
@@ -71,6 +72,7 @@ async function responseFor(mode: 'smart' | 'full' = 'full') {
 }
 
 let root: Root;
+let stopContentScript: (() => void) | undefined;
 let container: HTMLDivElement;
 let settings: Record<string, unknown>;
 let stored: Record<string, unknown>;
@@ -78,6 +80,7 @@ const sendMessage = vi.fn();
 const save = vi.fn();
 const remove = vi.fn();
 const listeners = new Set<(changes: Record<string, unknown>, area: string) => void>();
+const messages = new Set<(request: { action: string; enabled: boolean }) => void>();
 
 // Only the Chrome transport/storage boundary is replaced. React owns state, effects and rerenders.
 async function mount(url = pdfUrl) {
@@ -114,10 +117,12 @@ async function mountButton() {
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 async function click(button: HTMLElement) {
   await act(async () => button.click());
@@ -187,6 +192,7 @@ beforeEach(() => {
   };
   stored = {};
   listeners.clear();
+  messages.clear();
   sendMessage.mockReset();
   save
     .mockReset()
@@ -222,13 +228,24 @@ beforeEach(() => {
           listeners.delete(listener),
       },
     },
-    runtime: { sendMessage },
+    runtime: {
+      sendMessage,
+      onMessage: {
+        addListener: (listener: (request: { action: string; enabled: boolean }) => void) =>
+          messages.add(listener),
+        removeListener: (listener: (request: { action: string; enabled: boolean }) => void) =>
+          messages.delete(listener),
+      },
+    },
   });
 });
 afterEach(async () => {
   await act(async () => root?.unmount());
+  await act(async () => stopContentScript?.());
+  stopContentScript = undefined;
   container?.remove();
   expect(listeners.size).toBe(0);
+  expect(messages.size).toBe(0);
   vi.unstubAllGlobals();
 });
 
@@ -282,7 +299,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
       Array.isArray(keys)
         ? read.promise
         : originalGet(keys, callback!)) as typeof chrome.storage.local.get;
-    let restoring: Promise<void>;
+    let restoring: Promise<boolean>;
     await act(async () => {
       restoring = hook().showCached();
     });
@@ -714,5 +731,248 @@ describe('実Reactの要約行アクション配置', () => {
     expect(success.querySelector('textarea')).toBeNull();
     expect(cell.textContent).toBe('閉じる');
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Storage failures and lifecycle races belong here: real state/effects/DOM,
+// with only Chrome messaging and storage substituted at the boundary.
+describe('保存失敗と一覧ライフサイクルの回復', () => {
+  it('保存失敗を生成失敗にせず、要約・追加分析を表示して保存警告を分ける', async () => {
+    settings.experimentalScoring = false;
+    const response = await responseFor();
+    const saveSummary = deferred<void>();
+    save.mockReturnValueOnce(saveSummary.promise).mockRejectedValue(new Error('QUOTA_BYTES'));
+    sendMessage
+      .mockResolvedValueOnce({
+        ...response,
+        metadata: { ...response.metadata, persistenceWarning: '診断を保存できませんでした' },
+      })
+      .mockResolvedValueOnce({ analysis: additionalAnalysis });
+    const { row, button } = await mountButton();
+    await click(button);
+    const summaryRow = await summaryRowFor(row);
+    const body = summaryRow.querySelector('#score-result')!.previousElementSibling!;
+    const analysisButton = summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!;
+    // A completed result is usable before its independent cache write finishes.
+    await click(analysisButton);
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain(
+      additionalAnalysis.issues[0].conclusion
+    );
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain(
+      '追加分析を保存できませんでした'
+    );
+    expect(summaryRow.querySelector('[role="alert"]')).toBeNull();
+    // The late cache rejection must not replace the completed body or analysis.
+    await act(async () => saveSummary.reject(new Error('QUOTA_BYTES')));
+    expect(summaryRow.querySelector('[data-persistence-warning]')?.textContent).toContain(
+      '診断を保存できませんでした'
+    );
+    expect(summaryRow.querySelector('[data-persistence-warning]')?.textContent).toContain(
+      '要約を保存できませんでした'
+    );
+    expect(summaryRow.querySelector('#score-result')!.previousElementSibling).toBe(body);
+    expect(button.textContent).toBe('閉じる');
+    await click(button);
+    expect(button.textContent).toBe('要約');
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('削除通知で表示を要約へ戻し、通知前のキャッシュミスも一度のクリックで回復する', async () => {
+    settings.experimentalScoring = false;
+    const response = await responseFor();
+    const key = keyFor('full');
+    stored[key] = response;
+    sendMessage.mockResolvedValue(response);
+    const { row, button } = await mountButton();
+    await vi.waitFor(() => expect(button.textContent).toBe('表示'));
+    delete stored[key];
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { oldValue: response } }, 'local'))
+    );
+    expect(button.textContent).toBe('要約');
+    stored[key] = response;
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { newValue: response } }, 'local'))
+    );
+    await vi.waitFor(() => expect(button.textContent).toBe('表示'));
+    delete stored[key];
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    await summaryRowFor(row);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(button.textContent).toBe('閉じる');
+    await click(button);
+    const get = chrome.storage.local.get;
+    chrome.storage.local.get = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('storage read failed'))
+      .mockImplementation(get);
+    await click(button);
+    await summaryRowFor(row);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(button.textContent).toBe('閉じる');
+  });
+
+  it('削除前に開始した遅いキャッシュ読込を表示にも存在判定にも戻さない', async () => {
+    const response = await responseFor();
+    const key = keyFor('full');
+    stored[key] = response;
+    const availability = deferred<Record<string, unknown>>();
+    const first = deferred<Record<string, unknown>>();
+    const originalGet = chrome.storage.local.get;
+    chrome.storage.local.get = vi
+      .fn()
+      .mockReturnValueOnce(availability.promise)
+      .mockReturnValueOnce(first.promise)
+      .mockImplementation(originalGet);
+    const hook = await mount();
+    let showing!: Promise<boolean>;
+    await act(async () => {
+      showing = hook().showCached();
+    });
+    delete stored[key];
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { oldValue: response } }, 'local'))
+    );
+    await act(async () => {
+      first.resolve({ [key]: response });
+      availability.resolve({ [key]: response });
+      await showing;
+    });
+    expect(await showing).toBe(false);
+    expect(hook().hasCached).toBe(false);
+    expect(hook().result).toBeNull();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // Commit notification, deletion, then write completion: deletion wins.
+    const write = deferred<void>();
+    save.mockImplementation((entries) => {
+      Object.assign(stored, entries);
+      listeners.forEach((listener) => listener({ [key]: { newValue: entries[key] } }, 'local'));
+      return write.promise;
+    });
+    sendMessage.mockResolvedValue(response);
+    let generating!: Promise<void>;
+    await act(async () => {
+      generating = hook().summarize();
+    });
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(save).toHaveBeenCalledOnce();
+    });
+    delete stored[key];
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { oldValue: response } }, 'local'))
+    );
+    await act(async () => {
+      write.resolve();
+      await generating;
+    });
+    expect(hook().hasCached).toBe(false);
+    expect(hook().result?.error).toBeNull();
+  });
+
+  function frameFixture() {
+    const frame = document.createElement('iframe');
+    frame.id = 'main_list';
+    container.append(frame);
+    const doc = frame.contentDocument!;
+    doc.body.innerHTML = `<table id="list-head"><tbody><tr><td class="header-R" style="border-radius:4px">表題</td></tr></tbody></table>
+      <table id="main-list-table"><tbody><tr><td class="oddnew-L kjTime">15:00</td><td class="oddnew-M kjCode">1234</td><td class="oddnew-M kjName">株式会社テスト</td><td class="oddnew-R kjTitle"><a href="${pdfUrl}">開示</a></td></tr></tbody></table>`;
+    return { frame, doc, row: doc.querySelector<HTMLTableRowElement>('#main-list-table tr')! };
+  }
+  async function toggle(enabled: boolean) {
+    await act(async () =>
+      messages.forEach((listener) => listener({ action: 'toggleExtension', enabled }))
+    );
+  }
+  async function mountLifecycle() {
+    container = document.createElement('div');
+    document.body.append(container);
+    const fixture = frameFixture();
+    await act(async () => {
+      stopContentScript = startContentScript();
+    });
+    return fixture;
+  }
+
+  it('OFFでReactと購読を破棄し、遅い応答を保存・再表示せず、ONで一組だけ作り直す', async () => {
+    settings.experimentalScoring = false;
+    const pending = deferred<unknown>();
+    sendMessage.mockReturnValueOnce(pending.promise).mockResolvedValue(await responseFor());
+    const { frame, doc, row } = await mountLifecycle();
+    const subscriptions = listeners.size;
+    await act(async () => {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    expect(listeners.size).toBe(subscriptions);
+    expect(messages.size).toBe(1);
+    await click(row.querySelector('button')!);
+    await toggle(false);
+    expect(
+      doc.querySelectorAll(
+        '.tdnet-digest-button-cell, .tdnet-digest-summary-row, .tdnet-digest-header'
+      )
+    ).toHaveLength(0);
+    expect(listeners.size).toBe(1); // Only the lifecycle's enable/disable control remains.
+    expect(row.lastElementChild?.className).toBe('oddnew-R kjTitle');
+    expect(doc.querySelector('#list-head td')?.className).toBe('header-R');
+    await act(async () => pending.resolve(await responseFor()));
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+    await toggle(true);
+    await toggle(true);
+    expect(doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
+    expect(listeners.size).toBe(subscriptions);
+    await click(row.querySelector('button')!);
+    await summaryRowFor(row);
+    await toggle(false);
+    await toggle(true);
+    expect(listeners.size).toBe(subscriptions);
+    expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
+  });
+
+  it('同じ行のPDF変更・行削除・iframe再読込と置換で旧rootを残さない', async () => {
+    settings.experimentalScoring = false;
+    const stale = deferred<unknown>();
+    sendMessage.mockReturnValueOnce(stale.promise);
+    const { frame, doc, row } = await mountLifecycle();
+    const subscriptions = listeners.size;
+    const oldButton = row.querySelector('button')!;
+    await click(oldButton);
+    await act(async () => row.querySelector('a')!.setAttribute('href', 'replacement.pdf'));
+    expect(row.querySelector('button')).not.toBe(oldButton);
+    expect(row.querySelector('button')?.textContent).toBe('要約');
+    await act(async () => stale.resolve(await responseFor()));
+    expect(row.nextElementSibling).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+    const reloadButton = row.querySelector('button');
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    expect(row.querySelector('button')).not.toBe(reloadButton);
+    expect(listeners.size).toBe(subscriptions);
+    await act(async () => row.querySelector('a')!.setAttribute('href', pdfUrl));
+    sendMessage.mockResolvedValue(await responseFor());
+    await click(row.querySelector('button')!);
+    const displayed = await summaryRowFor(row);
+    await act(async () => row.remove());
+    expect(displayed.isConnected).toBe(false);
+    expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
+    expect(listeners.size).toBe(1);
+    expect(row.querySelector('.tdnet-digest-button-cell')).toBeNull();
+    let replacement!: ReturnType<typeof frameFixture>;
+    await act(async () => {
+      frame.remove();
+      replacement = frameFixture();
+    });
+    expect(doc.querySelector('.tdnet-digest-header')).toBeNull();
+    expect(replacement.doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
+    expect(listeners.size).toBe(subscriptions);
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    expect(doc.querySelector('.tdnet-digest-header')).toBeNull();
+    expect(replacement.doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
   });
 });

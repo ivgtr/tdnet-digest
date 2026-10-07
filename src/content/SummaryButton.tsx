@@ -27,6 +27,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     analysis,
     scoringEnabled,
     hasCached,
+    persistenceWarning,
     cacheKey,
     summarize,
     showCached,
@@ -117,9 +118,14 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   }, [result, removeSummaryRow, insertSummaryRow, reset, summarize, triggerUpdate]);
 
   useEffect(() => {
-    updateStages(scoringEnabled ? score : undefined, analysis, result?.facts?.facts);
+    updateStages(
+      scoringEnabled ? score : undefined,
+      analysis,
+      result?.facts?.facts,
+      persistenceWarning
+    );
     if (result?.summary && scoringEnabled) startScore();
-  }, [score, analysis, scoringEnabled, result, updateStages, startScore]);
+  }, [score, analysis, scoringEnabled, result, persistenceWarning, updateStages, startScore]);
 
   const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
   const [diagnosticText, setDiagnosticText] = useState<string | null>(null);
@@ -175,18 +181,16 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       return;
     }
 
-    if (hasCached) {
-      showCached();
-      return;
-    }
-
     // 同一描画内の連打でも要約要求は一度だけ送る。
     if (summaryPending.current) return;
-    const request = summarize();
+    const request = (async () => {
+      if (!hasCached || !(await showCached())) await summarize();
+    })();
     summaryPending.current = request;
-    void request.finally(() => {
+    const clearPending = () => {
       if (summaryPending.current === request) summaryPending.current = null;
-    });
+    };
+    void request.then(clearPending, clearPending);
   };
 
   // ボタンテキスト

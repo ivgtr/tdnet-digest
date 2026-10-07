@@ -19,6 +19,9 @@ import { verifyCoverage, coverageReport } from './fact-coverage';
 import { preflightCandidateSource } from './source-preflight';
 import { buildDocumentContext } from './document-context';
 import { stableFactId } from './fact-contract';
+import { buildPresentation, revalidatePresentation } from './summary-presentation';
+import { factObservation, observationBasis, adjustmentLabels } from './disclosure-observation';
+import { literalMarkdown } from './summary-renderer';
 function proseEvent(
   blockId: string,
   candidateId: string,
@@ -242,6 +245,46 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
     };
     validateSavedFacts(summary);
     expect(parseFactSummary(JSON.stringify(summary), 'other', pages)).toEqual(summary);
+    const adjusted = summary.facts.filter((f) => f.provenance!.adjustments.length);
+    if (adjusted.length) {
+      const display = buildPresentation(summary, pages);
+      const markdown = renderFacts(summary, display);
+      const visible = markdown.split('\n## 原文\n')[0];
+      for (const fact of adjusted) {
+        const observation = factObservation(fact, summary, display.excerpts, display.values);
+        expect(observation.sourceBasis).toEqual({
+          denominator: fact.provenance!.denominator,
+          adjustments: fact.provenance!.adjustments,
+        });
+        const row = visible
+          .split('\n')
+          .find((line) => line.startsWith('| ') && line.includes(literalMarkdown(fact.label)))!;
+        expect(row).toBeDefined();
+        for (const adjustment of fact.provenance!.adjustments) {
+          expect(row).toContain(adjustmentLabels[adjustment.basis]);
+          expect(visible).toContain(literalMarkdown(adjustment.text));
+          expect(observation.sourceIds).toContain(`source:${adjustment.noteId}`);
+        }
+        for (const basis of observationBasis(observation)) expect(row).toContain(basis);
+        if (observation.comparison) {
+          const comparison = summary.facts.find((f) => f.id === observation.comparison!.valueId)!;
+          expect(observation.comparisonSourceBasis).toEqual({
+            denominator: comparison.provenance!.denominator,
+            adjustments: comparison.provenance!.adjustments,
+          });
+          for (const basis of observationBasis(observation, true)) {
+            expect(row.split('前年同期')[1]).toContain(basis);
+            const headline = visible
+              .split('\n')
+              .find((line) => line.startsWith('- ') && line.includes(literalMarkdown(fact.label)))!;
+            expect(headline.split('前年同期')[0]).toContain(basis);
+            expect(headline.split('前年同期')[1]).toContain(basis);
+          }
+        }
+      }
+      const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), summary, pages);
+      expect(renderFacts(summary, restored)).toBe(markdown);
+    }
     if (fixture.id === 'holdout-remix-20260611') {
       const context = buildDocumentContext(pages);
       expect(() =>
