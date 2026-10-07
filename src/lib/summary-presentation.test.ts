@@ -94,17 +94,19 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     expect(overview).toContain('[p.1](tdnet-page:1)');
     expect(overview).not.toContain(reasons[0]);
     const pending = nativePresentation(document, [first, second]);
-    const pendingOverview = renderFacts(document, pending).split('## 業績と増減要因')[0];
-    expect(pendingOverview).toContain('要点の説明未作成');
+    const pendingSummary = renderFacts(document, pending);
+    const pendingOverview = pendingSummary.split('## 業績と増減要因')[0];
+    expect(pendingSummary).toContain('補足要約の未整理部分');
     expect(pendingOverview).not.toContain(reasons[0]);
     expect(
       renderFacts(document, revalidatePresentation(supported, document, [first, second]))
     ).toBe(renderFacts(document, supported));
     const incomplete = structuredClone(supported);
     incomplete.organization.review!.sources[selected] = '説明の一部が未要約';
-    const incompleteOverview = renderFacts(document, incomplete).split('## 業績と増減要因')[0];
+    const incompleteSummary = renderFacts(document, incomplete);
+    const incompleteOverview = incompleteSummary.split('## 業績と増減要因')[0];
     expect(incompleteOverview).toContain('新店効果が売上を押し上げた。');
-    expect(incompleteOverview).toContain('要点の説明に未整理部分');
+    expect(incompleteSummary).toContain('補足要約の未整理部分');
   });
 
   it('目次・定型注意書き・記載省略・該当なしを冒頭の理由や条件にせず全文は保持する', () => {
@@ -413,18 +415,58 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     expect(reading).toContain('開始時期と翌年度への影響は未定');
     expect(reading).not.toContain('原文抜粋');
     expect(reading).not.toContain('価格改定も行いました。');
+    expect(reading).not.toContain('補足要約の未整理部分');
     expect(html).toContain('価格改定も行いました。');
     expect(revalidatePresentation(display, facts, [page])).toEqual(display);
   });
   it('説明の内訳・混在した状態・未分類の施策を原文のまま保持する', () => {
     expect(sourceInventory([page]).map((e) => e.text)).toEqual(expectation.retained);
     expect(revalidatePresentation(presentation, facts, [page])).toEqual(presentation);
-    const body = renderFacts(facts, presentation).split('## 業績と増減要因')[1];
+    const body = renderFacts(facts, presentation).split('\n## 業績と増減要因\n')[1];
     expect(body).toContain('価格改定も行いました。');
     expect(body).toContain('承認を条件に実施する予定です。');
     expect(body).toContain('詳細は未定です。');
     // Literal source quotations do not become verified semantic facts used for scoring.
     expect(facts.facts).toHaveLength(2);
+  });
+  it('未整理の説明と表を章・ページ別に一度だけ知らせ、全原文を末尾の一つのトグルへ残す', () => {
+    const table = cells(
+      [
+        ['４．キャッシュ・フロー', 0, 10, 180],
+        ['営業活動', 0, 40, 70],
+        ['50百万円', 150, 40, 60],
+        ['40百万円', 250, 40, 60],
+      ],
+      2
+    );
+    const display = nativePresentation(facts, [page, table]);
+    const summary = renderFacts(facts, display);
+    const coverage = summary.split('## 補足要約の未整理部分\n')[1].split('\n## 原文\n')[0];
+    expect(coverage.match(/^- 業績と増減要因：/gm)).toHaveLength(1);
+    expect(coverage).toContain('説明 [p.1](tdnet-page:1)');
+    expect(coverage).toContain('財政状態・資金の動き：数値・表 [p.2](tdnet-page:2)');
+    expect(summary.match(/^## 補足要約の未整理部分$/gm)).toHaveLength(1);
+    expect(summary).not.toContain('要約未作成');
+    expect(summary).not.toContain('\n## 財政状態・資金の動き\n');
+    const html = buildSummaryHtml(summary, null, {
+      companyName: 'テスト',
+      title: '決算',
+      pdfUrl: 'https://www.release.tdnet.info/inbs/test.pdf',
+    });
+    const toggles = html.match(/<details class="tdnet-digest-source"[^>]*>[\s\S]*?<\/details>/g)!;
+    expect(toggles).toHaveLength(1);
+    expect(toggles[0]).not.toMatch(/^<details[^>]*\bopen\b/);
+    expect(toggles[0]).toContain('価格改定も行いました。');
+    expect(toggles[0]).toContain('50百万円');
+    expect(toggles[0]).toContain('test.pdf#page=2');
+    expect(toggles[0]).not.toContain('<table');
+    const reading = html.replace(toggles[0], '');
+    expect(reading).toContain('<table');
+    expect(reading).toContain('1,000百万円');
+    expect(reading).toContain('補足要約の未整理部分');
+    expect(reading).not.toContain('価格改定も行いました。');
+    expect(reading).not.toContain('50百万円');
+    expect(renderFacts(facts, revalidatePresentation(display, facts, [page, table]))).toBe(summary);
   });
   it('冒頭の選択を減らしても本文の全事実と引用は変わらない', () => {
     const brief = { ...presentation, overview: [facts.facts[0].id] };

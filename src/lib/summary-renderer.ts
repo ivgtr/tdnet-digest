@@ -176,7 +176,7 @@ function renderExcerpts(excerpts: SourceExcerpt[]): string[] {
       paragraph.push(literalMarkdown(e.text));
     } else {
       flush();
-      if (e.kind === 'heading') lines.push('', `#### ${literalMarkdown(e.text)}`);
+      if (e.kind === 'heading') lines.push('', `##### ${literalMarkdown(e.text)}`);
       else {
         if (!same || previous?.kind !== 'row') lines.push('');
         lines.push(literalMarkdown(e.text));
@@ -354,12 +354,10 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         `根拠：${references(claim.sourceIds.map((sourceId) => sources.get(sourceId)!.page))}`
       );
     }
-    if (!claims.length || unresolved.has(source.id)) {
+    if (fact && (!claims.length || unresolved.has(source.id))) {
       const section = presentation.sections.find((s) => s.excerptIds.includes(source.id))!;
       lines.push(
-        fact
-          ? `- 確認済み事項（原文）：「${literalMarkdown(section.title)}」に記載 ${ref(fact.page)}${unresolved.has(source.id) ? '（説明は未整理）' : ''}`
-          : `- ${claims.length ? '要点の説明に未整理部分' : '要点の説明未作成'}：${literalMarkdown(source.heading?.text ?? section.title)} ${ref(source.page)}（原文を見る）`
+        `- 確認済み事項（原文）：「${literalMarkdown(section.title)}」に記載 ${ref(fact.page)}`
       );
     }
   }
@@ -407,7 +405,6 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   const primarySubject = single('subject');
   // Every accepted fact has a body location, independently of organization output.
   for (const section of sections) {
-    const excerpts = section.excerptIds.map((id) => sources.get(id)!);
     const members = section.factIds.map((id) => byId.get(id)!);
     const sectionClaims = accepted.filter(
       (value) => destination(value.topic, value.sourceIds) === section.title
@@ -415,6 +412,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     const sectionObservations = reconciled.supplement.filter(
       (value) => destination(value.topic, value.sourceIds) === section.title
     );
+    if (!members.length && !sectionClaims.length && !sectionObservations.length) continue;
     lines.push('', `## ${literalMarkdown(section.title)}`);
     const numericRows = members.filter(numeric).map((fact) => reconciled.primary.get(fact.id)!);
     const referencesInPairs = new Set(
@@ -498,25 +496,11 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         lines.push('- 条件：' + text(condition));
       }
     }
-    const residual = excerpts.filter((e) => unresolved.has(e.id));
-    const headings = new Map<string, number[]>();
-    for (const e of residual) {
-      const heading = e.heading?.text ?? section.title;
-      headings.set(heading, [...(headings.get(heading) ?? []), e.page]);
-    }
-    for (const [heading, pages] of headings)
-      lines.push(`- 要約未作成：${literalMarkdown(heading)} ${references(pages)}`);
-    const remainingRows = excerpts.filter((e) => unresolvedTables.has(e.id));
-    if (remainingRows.length)
-      lines.push(
-        `- 未整理の数値・表：${references(remainingRows.map((e) => e.page))}（原文を見る）`
-      );
     if (sectionClaims.length)
       lines.push(
         '',
         `根拠：${references(sectionClaims.flatMap((c) => c.sourceIds.map((id) => sources.get(id)!.page)))}`
       );
-    if (excerpts.length) lines.push('', '### 原文を見る', ...renderExcerpts(excerpts));
   }
   if (
     overviewFacts.some((f) => {
@@ -558,6 +542,37 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         '### 確認の詳細（原文）',
         ...facts.unverified.map((s) => '- ' + literalMarkdown(s))
       );
+  }
+  // Disclose missing coverage once, without interleaving unorganized source material
+  // with confirmed facts. The same Markdown remains complete when copied or restored.
+  if (unresolved.size || unresolvedTables.size) {
+    lines.push(
+      '',
+      '## 補足要約の未整理部分',
+      '',
+      '以下には要約に反映できていない説明・数値があります。末尾の原文を確認してください。'
+    );
+    for (const section of sections) {
+      const excerpts = section.excerptIds.map((id) => sources.get(id)!);
+      const remaining = [
+        ['説明', unresolved],
+        ['数値・表', unresolvedTables],
+      ] as const;
+      const coverage = remaining.flatMap(([label, ids]) => {
+        const pages = excerpts.filter((e) => ids.has(e.id)).map((e) => e.page);
+        return pages.length ? [`${label} ${references(pages)}`] : [];
+      });
+      if (coverage.length)
+        lines.push(`- ${literalMarkdown(section.title)}：${coverage.join('／')}`);
+    }
+  }
+  if (presentation.excerpts.length) {
+    lines.push('', '## 原文', '', '### 原文を見る');
+    for (const section of sections) {
+      const excerpts = section.excerptIds.map((id) => sources.get(id)!);
+      if (excerpts.length)
+        lines.push('', `#### ${literalMarkdown(section.title)}`, ...renderExcerpts(excerpts));
+    }
   }
   return lines.join('\n');
 }

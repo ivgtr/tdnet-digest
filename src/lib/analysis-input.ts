@@ -160,7 +160,6 @@ export function buildAnalysisInput(
     pages: unique(evidence.flatMap((e) => e.pages)).sort((a, b) => a - b),
     organizationStatus: presentation.organization.status,
     unresolvedSources: unique([
-      ...presentation.organization.issues.flatMap((i) => i.sourceIds),
       ...unresolvedExplanationSources(presentation.organization, presentation.excerpts).map(
         (e) => e.id
       ),

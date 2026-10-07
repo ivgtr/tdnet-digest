@@ -109,12 +109,11 @@ export function unresolvedExplanationSources(
   result: SummaryOrganization,
   excerpts: SourceExcerpt[]
 ): SourceExcerpt[] {
+  // Failed candidates do not undo coverage independently proved by surviving claims.
   const accepted = supportedExplanations(result);
   return explanationSources(excerpts).filter(
     (e) =>
-      result.review?.sources[e.id] !== null ||
-      !accepted.some((c) => c.sourceIds.includes(e.id)) ||
-      result.issues.some((issue) => issue.sourceIds.includes(e.id))
+      result.review?.sources[e.id] !== null || !accepted.some((c) => c.sourceIds.includes(e.id))
   );
 }
 /** Each numeric cell is tracked separately; one confirmed value does not consume a row. */
@@ -460,57 +459,77 @@ export async function generateSummaryOrganization(
       draft.claims.length > ORGANIZATION_LIMITS.claims
     )
       throw new Error('OBSERVATION_SCHEMA:共通文脈と指標候補の形式が不正です');
-    const contexts = new Map<string, DisclosureContext>();
-    for (const context of draft.contexts) {
+    // Generation may repeat a known reference. Canonicalize only this boundary;
+    // cached records and every unknown, empty or non-string reference stay strict.
+    const normalizeRefs = (value: unknown): string[] => {
       if (
-        !record(context) ||
-        !exact(context, ['id', ...contextKeys]) ||
-        typeof context.id !== 'string' ||
-        !context.id.trim() ||
-        contexts.has(context.id) ||
-        !contextShape(context) ||
-        !refs(context.sourceIds, sourceIds)
+        !Array.isArray(value) ||
+        !value.length ||
+        !value.every((id) => typeof id === 'string' && sourceIds.has(id))
       )
-        throw new Error('OBSERVATION_CONTEXT:共通文脈・根拠の形式が不正です');
-      const { id, ...meaning } = context;
-      contexts.set(id, meaning as unknown as DisclosureContext);
+        throw new Error('EXPLANATION_SCHEMA:根拠IDの形式が不正です');
+      return [...new Set(value)] as string[];
+    };
+    const candidateSources = (input: unknown): string[] => {
+      const ids =
+        record(input) && Array.isArray(input.sourceIds)
+          ? [
+              ...new Set(
+                input.sourceIds.filter(
+                  (id): id is string => typeof id === 'string' && sourceIds.has(id)
+                )
+              ),
+            ]
+          : [];
+      return ids.length ? ids : [...sourceIds];
+    };
+    const contexts = new Map<string, DisclosureContext>();
+    // Ambiguous IDs invalidate every dependent item, never pick the first/last meaning.
+    const contextIds = draft.contexts.flatMap((v) =>
+      record(v) && typeof v.id === 'string' ? [v.id] : []
+    );
+    for (const context of draft.contexts) {
+      try {
+        if (
+          !record(context) ||
+          !exact(context, ['id', ...contextKeys]) ||
+          typeof context.id !== 'string' ||
+          !context.id.trim() ||
+          contextIds.filter((id) => id === context.id).length !== 1 ||
+          !contextShape(context)
+        )
+          throw new Error('OBSERVATION_CONTEXT:共通文脈・根拠の形式が不正です');
+        const { id, ...meaning } = context;
+        contexts.set(id, {
+          ...meaning,
+          sourceIds: normalizeRefs(context.sourceIds),
+        } as DisclosureContext);
+      } catch (error) {
+        issue(error instanceof Error ? error.message : String(error), candidateSources(context));
+      }
     }
     const contextOf = (id: unknown) => {
       const value = typeof id === 'string' ? contexts.get(id) : undefined;
       if (!value) throw new Error('OBSERVATION_CONTEXT:存在しない共通文脈IDです');
       return value;
     };
-    for (const input of draft.observations) {
-      if (
-        !record(input) ||
-        !exact(input, ['contextId', 'metric', 'measure', 'valueId', 'comparison', 'sourceIds']) ||
-        !refs(input.sourceIds, sourceIds) ||
-        (input.comparison !== null &&
-          (!record(input.comparison) ||
-            !exact(input.comparison, ['axis', 'contextId', 'valueId', 'rateId'])))
-      )
-        throw new Error('OBSERVATION_SCHEMA:指標・比較の形式が不正です');
-      contextOf(input.contextId);
-      if (input.comparison) contextOf(input.comparison.contextId);
-    }
-    for (const input of draft.claims) {
-      if (
-        !record(input) ||
-        !exact(input, ['contextId', 'text', 'sourceIds']) ||
-        typeof input.text !== 'string' ||
-        input.text.length > ORGANIZATION_LIMITS.text ||
-        !refs(input.sourceIds, sourceIds)
-      )
-        throw new Error('EXPLANATION_SCHEMA:説明の文脈・長さ・根拠が不正です');
-      contextOf(input.contextId);
-    }
     for (const [index, input] of draft.observations.entries()) {
-      const context = contextOf(input.contextId);
-      const before = input.comparison ? contextOf(input.comparison.contextId) : null;
-      const proofIds = [
-        ...new Set([...context.sourceIds, ...input.sourceIds, ...(before?.sourceIds ?? [])]),
-      ];
+      let proofIds = candidateSources(input);
       try {
+        if (
+          !record(input) ||
+          !exact(input, ['contextId', 'metric', 'measure', 'valueId', 'comparison', 'sourceIds']) ||
+          (input.comparison !== null &&
+            (!record(input.comparison) ||
+              !exact(input.comparison, ['axis', 'contextId', 'valueId', 'rateId'])))
+        )
+          throw new Error('OBSERVATION_SCHEMA:指標・比較の形式が不正です');
+        const inputSources = normalizeRefs(input.sourceIds);
+        const context = contextOf(input.contextId);
+        const before = input.comparison ? contextOf(input.comparison.contextId) : null;
+        proofIds = [
+          ...new Set([...context.sourceIds, ...inputSources, ...(before?.sourceIds ?? [])]),
+        ];
         if (
           before &&
           (!before.period ||
@@ -521,21 +540,22 @@ export async function generateSummaryOrganization(
           throw new Error(
             'OBSERVATION_CONTEXT:異なる対象・範囲・基準の比較、または比較期が未特定です'
           );
-        const observation: DisclosureObservation = {
+        const observation = {
           ...context,
           id: `observation-${index}`,
           metric: input.metric,
           measure: input.measure,
           valueId: input.valueId,
-          comparison: before
-            ? {
-                axis: input.comparison.axis,
-                period: before.period!,
-                state: before.state,
-                valueId: input.comparison.valueId,
-                rateId: input.comparison.rateId,
-              }
-            : null,
+          comparison:
+            before && input.comparison
+              ? {
+                  axis: input.comparison.axis,
+                  period: before.period!,
+                  state: before.state,
+                  valueId: input.comparison.valueId,
+                  rateId: input.comparison.rateId,
+                }
+              : null,
           conditions: [...new Set([...context.conditions, ...(before?.conditions ?? [])])],
           sourceIds: proofIds,
         };
@@ -551,9 +571,18 @@ export async function generateSummaryOrganization(
       }
     }
     for (const [index, input] of draft.claims.entries()) {
-      const context = contextOf(input.contextId);
-      const ids = [...new Set([...context.sourceIds, ...input.sourceIds])];
+      let ids = candidateSources(input);
       try {
+        if (
+          !record(input) ||
+          !exact(input, ['contextId', 'text', 'sourceIds']) ||
+          typeof input.text !== 'string' ||
+          input.text.length > ORGANIZATION_LIMITS.text
+        )
+          throw new Error('EXPLANATION_SCHEMA:説明の文脈・長さ・根拠が不正です');
+        const inputSources = normalizeRefs(input.sourceIds);
+        const context = contextOf(input.contextId);
+        ids = [...new Set([...context.sourceIds, ...inputSources])];
         const text = bindLiteralQuantities(input.text, ids, values, excerpts);
         const conditions = context.conditions.map((text) =>
           bindLiteralQuantities(text, ids, values, excerpts)

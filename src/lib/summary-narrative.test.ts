@@ -28,6 +28,7 @@ import {
   checkText,
   parseNarrativeResponse,
 } from './summary-narrative';
+import { buildAnalysisInput } from './analysis-input';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import type { SummaryAttempt } from './summary-trace';
 import { literalValue, quantityChange } from './summary-narrative-renderer';
@@ -265,7 +266,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(reading).toContain(statement);
     expect(result.facts.facts[0].semantics.conditions).toContain(condition);
     expect(reading).toContain('当局の承認を条件とします');
-    expect(reading).toContain('要約未作成');
+    expect(reading).toContain('補足要約の未整理部分');
     const savedFacts: unknown = JSON.parse(JSON.stringify(result.facts));
     validateSavedFacts(savedFacts);
     const restored = revalidatePresentation(
@@ -357,7 +358,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       '↑増加 約+50.0%',
       '↑増加（+10百万円）',
       '価格転嫁',
-      '要約未作成',
+      '補足要約の未整理部分',
     ])
       expect(reading).toContain(expected);
     expect(reading).not.toContain('来期の増収が確定');
@@ -412,7 +413,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(result.presentation.organization.claims).toEqual([]);
     expect(result.presentation.organization.observations).toEqual([]);
     expect(renderFacts(result.facts, result.presentation)).toContain('100百万円');
-    expect(renderFacts(result.facts, result.presentation)).toContain('要約未作成');
+    expect(renderFacts(result.facts, result.presentation)).toContain('補足要約の未整理部分');
     expect(attempts[attempts.length - 1]?.error).toBe('説明点検の期限');
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(3);
   });
@@ -531,13 +532,111 @@ describe('説明候補と独立点検の契約', () => {
     expect(() => validatePresentation(restored, facts)).toThrow('点検範囲');
   });
 
-  it.each<[string, (input: ReturnType<typeof wire>) => void, string]>([
+  it('生成時だけ既知の重複参照を正規化し、保存済みの重複は受け入れない', async () => {
+    const input = wire();
+    for (const item of [...input.contexts, ...input.observations, ...input.claims])
+      item.sourceIds = [...item.sourceIds, item.sourceIds[0]];
+    const result = await organize(JSON.stringify(input));
+    expect(result.observations).toHaveLength(input.observations.length);
+    expect(result.claims).toHaveLength(input.claims.length);
+    expect(result.issues).toEqual([]);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    const restored = revalidatePresentation(
+      JSON.parse(JSON.stringify({ ...draft, organization: result })),
+      facts,
+      [page]
+    );
+    expect(restored.organization).toEqual(result);
+    restored.organization.observations[0].sourceIds.push(
+      restored.organization.observations[0].sourceIds[0]
+    );
+    expect(() => validatePresentation(restored, facts)).toThrow('保存形式');
+  });
+
+  it('不正な未使用文脈で点検済みの説明範囲を未整理へ戻さない', async () => {
+    const baseline = await organize();
+    const input = wire();
+    input.contexts.push({ ...input.contexts[0], id: 'unused-invalid', sourceIds: [] });
+    const result = await organize(JSON.stringify(input));
+    expect(result.issues).toHaveLength(1);
+    expect(result.status).toBe('partial');
+    expect(supportedExplanations(result)).toEqual(supportedExplanations(baseline));
+    expect(unresolvedExplanationSources(result, draft.excerpts)).toEqual(
+      unresolvedExplanationSources(baseline, draft.excerpts)
+    );
+    expect(
+      buildAnalysisInput(facts, { ...draft, organization: result }).coverage.unresolvedSources
+    ).toBe(
+      buildAnalysisInput(facts, { ...draft, organization: baseline }).coverage.unresolvedSources
+    );
+  });
+
+  it.each<[string, (input: ReturnType<typeof wire>) => void, string[], string]>([
     [
       '存在しない文脈ID',
       (v) => (v.observations[0].contextId = 'absent-context'),
+      ['observation-0'],
       'OBSERVATION_CONTEXT',
     ],
-    ['重複する文脈ID', (v) => v.contexts.push({ ...v.contexts[0] }), 'OBSERVATION_CONTEXT'],
+    [
+      '重複する文脈ID',
+      (v) => v.contexts.push({ ...v.contexts[0] }),
+      ['observation-0', 'observation-1'],
+      'OBSERVATION_CONTEXT',
+    ],
+    [
+      '未知の根拠ID',
+      (v) => (v.observations[0].sourceIds = [...sources, 'unknown-source']),
+      ['observation-0'],
+      'EXPLANATION_SCHEMA',
+    ],
+    [
+      '空の根拠',
+      (v) => (v.observations[0].sourceIds = []),
+      ['observation-0'],
+      'EXPLANATION_SCHEMA',
+    ],
+    [
+      '文字列以外の根拠',
+      (v) => Object.assign(v.observations[0], { sourceIds: [null] }),
+      ['observation-0'],
+      'EXPLANATION_SCHEMA',
+    ],
+    [
+      '未知の数量',
+      (v) => (v.observations[0].valueId = 'unknown-quantity'),
+      ['observation-0'],
+      'REFERENCE',
+    ],
+    [
+      '壊れた説明',
+      (v) => Object.assign(v.claims[0], { text: null }),
+      ['explanation-0'],
+      'EXPLANATION_SCHEMA',
+    ],
+  ])('%sだけを除き、独立点検した残りを保存する', async (_, change, rejected, error) => {
+    const input = wire();
+    change(input);
+    const verdict = review();
+    verdict.claims = verdict.claims.filter((c) => !rejected.includes(c.id));
+    const result = await organize(JSON.stringify(input), verdict);
+    expect(result.status).toBe('partial');
+    expect(organizationClaims(result).map((c) => c.id)).toEqual(
+      expect.arrayContaining(verdict.claims.map((c) => c.id))
+    );
+    expect(organizationClaims(result)).toHaveLength(verdict.claims.length);
+    expect(result.issues.some((issue) => issue.reason.includes(error))).toBe(true);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
+    expect(
+      revalidatePresentation(
+        JSON.parse(JSON.stringify({ ...draft, organization: result })),
+        facts,
+        [page]
+      ).organization
+    ).toEqual(result);
+  });
+
+  it.each<[string, (input: ReturnType<typeof wire>) => void, string]>([
     [
       '指標数の上限超過',
       (v) => {
