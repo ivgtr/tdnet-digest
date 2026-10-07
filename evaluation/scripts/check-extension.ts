@@ -432,7 +432,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           });
           return;
         }
-        if (reviewFixture && !prompt.includes('"interpretation"')) {
+        if (reviewFixture && !prompt.includes('"evidenceIds"')) {
           await route.fulfill({
             contentType: 'application/json',
             body: JSON.stringify({
@@ -498,16 +498,8 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
           };
         } else if (prompt.includes('"claims"'))
           result = { version: 4, claims: [], unverified: ['固定試験:比較値なし'] };
-        else if (prompt.includes('"interpretation"')) {
-          const unknown = { text: '判断不能', factIds: [] };
-          result = {
-            version: 2,
-            interpretation: unknown,
-            shortTerm: unknown,
-            mediumTerm: unknown,
-            longTerm: unknown,
-            watchPoints: [],
-          };
+        else if (prompt.includes('"evidenceIds"')) {
+          result = { version: 3, issues: [] };
         } else
           result = JSON.parse(
             candidateResponse(fixedFacts as VerifiedFact[], sourcePages, item.documentType)
@@ -1541,7 +1533,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
             .querySelector<HTMLIFrameElement>('#main_list')
             ?.contentDocument?.querySelector('#analysis-result');
           return (
-            !!result?.textContent?.includes('解釈:') ||
+            !!result?.textContent?.includes('追加分析の生成情報') ||
             !!result?.textContent?.includes('追加分析失敗')
           );
         },
@@ -1550,11 +1542,11 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
       const analysis = await worker.evaluate(async () => {
         const entries = await chrome.storage.local.get();
-        return Object.entries(entries).find(([k]) => k.startsWith('analysisCacheV2:'))?.[1];
+        return Object.entries(entries).find(([k]) => k.startsWith('analysisCacheV3:'))?.[1];
       });
       evidence.analysis = analysis;
       assert.ok(analysis, '実API追加分析の現行キャッシュがありません');
-      assert.equal(analysis.version, 2);
+      assert.equal(analysis.version, 3);
       assert.ok((await summary.innerText()).includes('開示の要点'));
       evidence.stages.push(
         reviewFixture

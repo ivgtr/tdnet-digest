@@ -6,6 +6,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { crx } from '@crxjs/vite-plugin';
 import { resolve } from 'path';
 import manifest from './manifest.config';
+import { pdfCMapAssets } from './vite-plugins/pdf-cmaps';
 
 // Only public source files are hashed. Environment files are never enumerated/read.
 const buildHash = createHash('sha256');
@@ -17,7 +18,7 @@ for (const directory of ['src/lib', 'src/background', 'src/offscreen'])
 export default defineConfig({
   define: { __SUMMARY_BUILD_DIGEST__: JSON.stringify(buildHash.digest('hex')) },
   envDir: false,
-  plugins: [react(), tailwindcss(), crx({ manifest })],
+  plugins: [react(), tailwindcss(), crx({ manifest }), pdfCMapAssets()],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),

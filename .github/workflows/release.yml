@@ -104,7 +104,9 @@ jobs:
 
       - name: Build extension
         if: steps.check-label.outputs.release-type != 'none'
-        run: npm run build
+        run: |
+          npm run build
+          node evaluation/scripts/check-cmap-artifacts.mjs
 
       - name: Create distribution zip
         if: steps.check-label.outputs.release-type != 'none'

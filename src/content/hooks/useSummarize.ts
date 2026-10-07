@@ -6,7 +6,11 @@ import { FACT_SCHEMA_VERSION, renderFacts } from '@/lib/fact-summary';
 import { validateSavedFacts, validateSavedScore } from '@/lib/fact-cache';
 import type { FactSummary } from '@/lib/fact-summary';
 import { validatePresentation, type SummaryPresentation } from '@/lib/summary-presentation';
-import { parseAnalysis, type AdditionalAnalysis } from '@/lib/additional-analysis';
+import {
+  ANALYSIS_CACHE_PREFIX,
+  parseAnalysis,
+  type AdditionalAnalysis,
+} from '@/lib/additional-analysis';
 import type { ExperimentalScore } from '@/lib/scoring';
 import type { SummaryMetadata, ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 
@@ -34,7 +38,7 @@ export interface Stage<T> {
 const emptyStage = <T>(): Stage<T> => ({ loading: false, data: null, error: null });
 const SUMMARY_PREFIX = 'summaryCacheV2:';
 const SCORE_PREFIX = 'scoreCacheV4:';
-const ANALYSIS_PREFIX = 'analysisCacheV2:';
+const ANALYSIS_PREFIX = ANALYSIS_CACHE_PREFIX;
 function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is CachedSummary {
   if (!value || typeof value !== 'object') return false;
   const item = value as Partial<CachedSummary>;
@@ -77,6 +81,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const idRef = useRef<string | null>(null);
   const scoreStarted = useRef<string | null>(null);
   const runRef = useRef(0);
+  const stageRequestRef = useRef({ score: 0, analyze: 0 });
 
   useEffect(() => {
     let active = true;
@@ -138,39 +143,57 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   }, [cacheKey, pdfUrl]);
 
   const restoreStages = useCallback(
-    async (id: string, facts: FactSummary, documentHash: string) => {
+    async (
+      id: string,
+      facts: FactSummary,
+      documentHash: string,
+      presentation: SummaryPresentation
+    ) => {
+      const epoch = runRef.current;
+      const requests = { ...stageRequestRef.current };
+      const current = () => idRef.current === id && runRef.current === epoch;
+      const canRestore = (stage: 'score' | 'analyze') =>
+        current() && stageRequestRef.current[stage] === requests[stage];
       const data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
-      if (idRef.current !== id) return;
+      if (!current()) return;
       const cachedScore = data[SCORE_PREFIX + id] as ExperimentalScore | undefined;
-      if (cachedScore?.value === null) {
+      if (cachedScore?.value === null && canRestore('score')) {
         await chrome.storage.local.remove(SCORE_PREFIX + id);
-        if (idRef.current !== id) return;
+        if (!current()) return;
       }
-      try {
-        if (cachedScore && cachedScore.value !== null) {
-          validateSavedScore(cachedScore, facts, normalizeTdnetPdfUrl(pdfUrl), documentHash);
-          setScore({ loading: false, data: cachedScore, error: null });
-        } else setScore(emptyStage());
-      } catch {
-        setScore({
-          loading: false,
-          data: null,
-          error: '保存された採点の形式・確定事実との対応が不正です',
-        });
+      if (canRestore('score')) {
+        try {
+          if (cachedScore && cachedScore.value !== null) {
+            validateSavedScore(cachedScore, facts, normalizeTdnetPdfUrl(pdfUrl), documentHash);
+            setScore({ loading: false, data: cachedScore, error: null });
+          } else setScore(emptyStage());
+        } catch {
+          setScore({
+            loading: false,
+            data: null,
+            error: '保存された採点の形式・確定事実との対応が不正です',
+          });
+        }
       }
-      try {
-        const entry = data[ANALYSIS_PREFIX + id];
-        setAnalysis(
-          entry
-            ? { loading: false, data: parseAnalysis(JSON.stringify(entry), facts), error: null }
-            : emptyStage()
-        );
-      } catch {
-        setAnalysis({
-          loading: false,
-          data: null,
-          error: '保存された追加分析の形式・根拠が不正です',
-        });
+      if (canRestore('analyze')) {
+        try {
+          const entry = data[ANALYSIS_PREFIX + id];
+          setAnalysis(
+            entry
+              ? {
+                  loading: false,
+                  data: parseAnalysis(JSON.stringify(entry), facts, presentation),
+                  error: null,
+                }
+              : emptyStage()
+          );
+        } catch {
+          setAnalysis({
+            loading: false,
+            data: null,
+            error: '保存された追加分析の形式・根拠が不正です',
+          });
+        }
       }
       setStagesReady(true);
     },
@@ -178,11 +201,12 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   );
 
   const showCached = useCallback(async () => {
+    const run = ++runRef.current;
     const key = keyRef.current;
     if (!key) return;
     setStagesReady(false);
     const data = await chrome.storage.local.get(SUMMARY_PREFIX + key);
-    if (key !== keyRef.current) return;
+    if (key !== keyRef.current || run !== runRef.current) return;
     const entry = data[SUMMARY_PREFIX + key] as CachedSummary | undefined;
     const valid =
       isCachedSummary(entry, key, pdfUrl) &&
@@ -193,7 +217,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         entry.metadata.documentHash!,
         entry.presentation
       )) === entry.resultId;
-    if (key !== keyRef.current) return;
+    if (key !== keyRef.current || run !== runRef.current) return;
     if (!valid) {
       if (entry !== undefined)
         setResult({
@@ -207,7 +231,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         });
       return;
     }
-    if (key !== keyRef.current) return;
+    if (key !== keyRef.current || run !== runRef.current) return;
     if (!entry) return;
     idRef.current = entry.resultId;
     setResult({
@@ -219,7 +243,12 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       diagnosticRunId: null,
       error: null,
     });
-    await restoreStages(entry.resultId, entry.facts, entry.metadata.documentHash!);
+    await restoreStages(
+      entry.resultId,
+      entry.facts,
+      entry.metadata.documentHash!,
+      entry.presentation
+    );
   }, [restoreStages, pdfUrl]);
 
   const summarize = useCallback(
@@ -328,6 +357,12 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     async (action: 'score' | 'analyze', current: SummaryResult) => {
       if (!current.facts || !current.resultId || !current.metadata?.analysisFingerprint) return;
       const id = current.resultId;
+      const epoch = runRef.current;
+      const requestNumber = ++stageRequestRef.current[action];
+      const isCurrent = () =>
+        idRef.current === id &&
+        runRef.current === epoch &&
+        stageRequestRef.current[action] === requestNumber;
       const set = action === 'score' ? setScore : setAnalysis;
       const cache = (action === 'score' ? SCORE_PREFIX : ANALYSIS_PREFIX) + id;
       set({ loading: true, data: null, error: null });
@@ -343,16 +378,23 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           resultId: id,
           fingerprint: current.metadata.analysisFingerprint,
         });
-        if (idRef.current !== id) return;
+        if (!isCurrent()) return;
         if (response.error) throw new Error(response.error);
-        const data = action === 'score' ? response.score : response.analysis;
+        const data =
+          action === 'score'
+            ? response.score
+            : parseAnalysis(
+                JSON.stringify(response.analysis),
+                current.facts,
+                current.presentation!
+              );
         if (!data) throw new Error(`${action} の結果がありません`);
         if (action === 'score' && data.value === null)
           throw new Error(data.unverified?.join(' / ') || '採点の根拠を確認できません');
         set({ loading: false, data, error: null });
         await chrome.storage.local.set({ [cache]: data });
       } catch (error) {
-        if (idRef.current === id)
+        if (isCurrent())
           set({
             loading: false,
             data: null,
@@ -385,6 +427,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     if (result && !analysis.loading) void requestStage('analyze', result);
   }, [result, analysis.loading, requestStage]);
   const reset = useCallback(() => {
+    runRef.current++;
     idRef.current = null;
     scoreStarted.current = null;
     setResult(null);

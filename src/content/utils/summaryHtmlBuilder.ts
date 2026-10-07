@@ -8,7 +8,7 @@ import { SUMMARY_STYLES } from '../constants/styles';
 import type { SummaryMetadata } from '../types/summaryMetadata';
 import { parseMarkdown, parseSummaryMarkdown } from './markdownParser';
 import type { ExperimentalScore, ScoreValue } from '@/lib/scoring';
-import type { AdditionalAnalysis, AnalysisView } from '@/lib/additional-analysis';
+import type { AdditionalAnalysis } from '@/lib/additional-analysis';
 import type { Stage } from '../hooks/useSummarize';
 import type { VerifiedFact } from '@/lib/fact-contract';
 
@@ -120,7 +120,7 @@ export function buildSummaryHtml(
       <div id="score-result">${buildScoreStageHtml(score)}</div>
       <section data-additional-analysis style="${SUMMARY_STYLES.analysisSection}">
         <h5 style="${SUMMARY_STYLES.sectionTitle}">追加分析</h5>
-        <p style="${SUMMARY_STYLES.sectionDescription}">確認済みの事実をもとに、解釈・時間軸別の見方・確認点を整理します。</p>
+        <p style="${SUMMARY_STYLES.sectionDescription}">確認済みの数値・会社説明から重要な論点を絞り、根拠・条件付きの読み・次の確認点を整理します。</p>
         <div style="${SUMMARY_STYLES.buttonGroup}">
           <button type="button" id="analyze-btn" style="${SUMMARY_STYLES.analyzeButton}" ${analysis?.loading ? 'disabled' : ''}>${analysisButtonLabel(analysis)}</button>
           <span id="analysis-status" role="status" aria-live="polite" style="font-size: 12px; color: #6b7280;">${analysis?.loading ? '追加分析を作成しています…' : ''}</span>
@@ -177,21 +177,42 @@ export function buildAnalysisStageHtml(
 
 function buildAnalysisHtml(
   analysis: AdditionalAnalysis,
-  facts: VerifiedFact[],
+  _facts: VerifiedFact[],
   pdfUrl?: string
 ): string {
-  const reference = (id: string) => {
-    const fact = facts.find((f) => f.id === id);
-    if (!fact) throw new Error('追加分析の根拠事実が表示結果にありません');
-    const link = parseMarkdown(`[p.${fact.page}](tdnet-page:${fact.page})`, pdfUrl).replace(
-      /^<p[^>]*>|<\/p>$/g,
-      ''
-    );
-    return `${escapeMetadataText(fact.label)} ${link}`;
+  const labels = {
+    fact: '確認済み事実',
+    observation: '点検済み指標',
+    explanation: '点検済み会社説明',
+    calculation: '機械計算',
   };
-  const view = (label: string, item: AnalysisView) =>
-    `<p><strong>${label}:</strong> ${escapeMetadataText(item.text)}${item.factIds.length ? `（根拠: ${item.factIds.map(reference).join(', ')}）` : ''}</p>`;
-  return `<div>${view('解釈', analysis.interpretation)}${view('短期', analysis.shortTerm)}${view('中期', analysis.mediumTerm)}${view('長期', analysis.longTerm)}${analysis.watchPoints.map((item) => view('確認点', item)).join('')}</div>`;
+  const link = (page: number) =>
+    parseMarkdown(`[p.${page}](tdnet-page:${page})`, pdfUrl).replace(/^<p[^>]*>|<\/p>$/g, '');
+  const issues = analysis.issues
+    .map((issue) => {
+      const evidence = issue.evidenceIds.map((id) => {
+        const item = analysis.evidence.find((e) => e.id === id);
+        if (!item) throw new Error('追加分析の根拠が表示結果にありません');
+        return item;
+      });
+      const pages = [...new Set(evidence.flatMap((e) => e.pages))].sort((a, b) => a - b);
+      return `<article style="margin:12px 0;padding:12px;border:1px solid #d5dee8;border-radius:6px;background:#fff;">
+      <h6 style="font-size:14px;margin:0 0 8px;">${escapeMetadataText(issue.title)}</h6>
+      <p><strong>結論（推論）:</strong> ${escapeMetadataText(issue.conclusion)}</p>
+      <ul>${evidence.map((e) => `<li><strong>${labels[e.kind]}:</strong> ${escapeMetadataText(e.text)}${e.context ? ` <span style="color:#6b7280;">${escapeMetadataText(e.context)}</span>` : ''}</li>`).join('')}</ul>
+      <p><strong>読み（条件付き）:</strong> ${escapeMetadataText(issue.reading)}</p>
+      <p><strong>限界:</strong> ${escapeMetadataText(issue.caveat)}</p>
+      <p><strong>次の確認:</strong> ${escapeMetadataText(issue.nextCheck)}</p>
+      <p>根拠ページ: ${pages.map(link).join('・')}</p>
+      <details><summary>根拠IDを表示</summary><ul>${evidence.map((e) => `<li>${escapeMetadataText(e.id)}: ${escapeMetadataText(e.sourceIds.join(', '))}</li>`).join('')}</ul></details>
+    </article>`;
+    })
+    .join('');
+  const c = analysis.coverage;
+  return `<div><p style="font-size:12px;color:#6b7280;">結論と読みはAIの推論です。根拠との参照対応は確認していますが、推論の正しさを保証するものではありません。</p>
+    ${issues || '<p>確認済み入力から、要約に追加できる論点を生成できませんでした。</p>'}
+    ${c.organizationStatus !== 'ready' || c.unresolvedSources ? '<p style="color:#92400e;">説明・指標の一部が入力で未確認です。分析にない事項も原PDFを確認してください。</p>' : ''}
+    <details><summary>追加分析の生成情報</summary><p>入力: 事実${c.facts}・説明${c.explanations}・指標${c.observations}・計算${c.calculations} / 根拠ページ ${c.pages.join(', ')} / 未整理原文${c.unresolvedSources}件・未確認事実${c.unverifiedFacts}件</p><p>入力識別子: ${escapeMetadataText(analysis.inputHash)}${analysis.usage ? ` / 出力${analysis.usage.outputTokens ?? '不明'}token / ${Math.round(analysis.usage.elapsedMs)}ms / ${escapeMetadataText(analysis.usage.finishReason ?? '終了理由不明')}` : ' / API使用量は未取得'}</p></details></div>`;
 }
 
 export function buildScoreHtml(score: ExperimentalScore): string {

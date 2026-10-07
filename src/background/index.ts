@@ -332,7 +332,8 @@ async function handleFollowup(
   )
     throw new Error('要約結果の識別子が一致しません');
   const config = configOf(settings);
-  if (request.action === 'analyze') return { analysis: await analyzeFacts(config, facts) };
+  if (request.action === 'analyze')
+    return { analysis: await analyzeFacts(config, facts, presentation) };
   if (!settings.experimentalScoring) throw new Error('実験的スコアがOFFです');
   const score = await attachScore(
     config,

@@ -245,6 +245,8 @@ async function extractTextFromPDF(
 
     const loadingTask = pdfjsLib.getDocument({
       data: pdfData,
+      cMapUrl: chrome.runtime.getURL('cmaps/'),
+      cMapPacked: true,
       useWorkerFetch: false,
       isEvalSupported: false,
       useSystemFonts: true,
