@@ -12,6 +12,8 @@
 - 保存したv3は入力識別子と表示根拠を再照合する。全体指紋v100と `analysisCacheV3:` により旧抽出/旧時間軸形式を再利用しない。同じ結果を閉じて開き直す場合も、古い応答や保存読込で新しい分析を上書きしない
 - インストール済みPDF.jsと同版のpacked CMap全体とそのLICENSEを `dist/cmaps/` へbuild/watch時に出力する。Offscreenは拡張内部URLと `cMapPacked: true` を指定する。CDN、追加ホスト権限、CSP緩和、CMapのweb-accessible公開は使わない
 
+CMapの通常テストは実パッケージを読む `buildStart` の出力・バイト一致・監視対象・再実行時の再出力を直接確認し、Vitest内ではViteを起動しない。実ビルドへの接続は通常の `npm run build` 後に `check-cmap-artifacts.mjs` で確認する（展開済みZIPやwatch出力も引数で指定可能）。既存releaseのビルド直後にも同じ検査を実行し、プラグイン接続漏れをZIP作成前に止める。タイムアウトの一律延長や二重ビルドはしない。
+
 今回の追加証明は部品の計算/参照/保存契約、代表的なBackground入力受渡し、実Reactの競合・閉じる/再表示、CMap資産の同梱、固定応答による指定実PDFの経路に分担する。同じ資料を全経路の語彙網羅へ複製しない。実モデル品質と実Chrome確認の境界は評価ガイドを参照する。
 
 
@@ -21,6 +23,7 @@
 
 ```bash
 npm run build
+node evaluation/scripts/check-cmap-artifacts.mjs
 node --import tsx evaluation/scripts/check-additional-analysis-sala.ts /path/to/140120261005546285.pdf
 ```
 

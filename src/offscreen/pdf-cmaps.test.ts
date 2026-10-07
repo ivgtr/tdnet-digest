@@ -2,41 +2,44 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
-import { build } from 'vite';
+import type { EmittedFile, NormalizedInputOptions, PluginContext } from 'rollup';
 import { expect, it } from 'vitest';
 import { pdfCMapAssets } from '../../vite-plugins/pdf-cmaps';
 
-it('bundles every installed packed CMap and its license byte-for-byte', async () => {
+it('emits every installed packed CMap and license on each build and watches their sources', async () => {
   const require = createRequire(import.meta.url);
   const directory = resolve(dirname(require.resolve('pdfjs-dist/package.json')), 'cmaps');
-  const result = await build({
-    configFile: false,
-    envDir: false,
-    publicDir: false,
-    logLevel: 'silent',
-    plugins: [
-      pdfCMapAssets(),
-      {
-        name: 'empty-cmap-test-entry',
-        resolveId: (id) => (id === 'cmap-test' ? '\0cmap-test' : null),
-        load: (id) => (id === '\0cmap-test' ? 'export {}' : null),
-      },
-    ],
-    build: { write: false, rollupOptions: { input: 'cmap-test' } },
-  });
-  if ('on' in result || Array.isArray(result)) throw new Error('Expected a single build output');
-  const assets = result.output.filter((asset) => asset.type === 'asset');
   const expectedNames = readdirSync(directory)
     .filter((name) => name.endsWith('.bcmap') || name === 'LICENSE')
     .sort();
   expect(expectedNames).toContain('LICENSE');
   expect(expectedNames).toContain('90ms-RKSJ-H.bcmap');
-  expect(assets.map((asset) => asset.fileName).sort()).toEqual(
-    expectedNames.map((name) => `cmaps/${name}`)
-  );
-  for (const asset of assets) {
-    expect(Buffer.from(asset.source)).toEqual(
-      readFileSync(resolve(directory, asset.fileName.slice(6)))
+  const plugin = pdfCMapAssets();
+  const hook = plugin.buildStart;
+  if (typeof hook !== 'function') throw new Error('Expected a buildStart function');
+  // Exercise the real hook twice: Rollup needs fresh emissions on watch rebuilds.
+  // Only the host context is replaced; all asset names and bytes come from PDF.js.
+  for (let build = 0; build < 2; build++) {
+    const assets: EmittedFile[] = [];
+    const watched: string[] = [];
+    const context = {
+      addWatchFile: (path: string) => watched.push(path),
+      emitFile: (asset: EmittedFile) => String(assets.push(asset)),
+    };
+    await hook.call(context as unknown as PluginContext, {} as NormalizedInputOptions);
+    expect(watched.sort()).toEqual(
+      [directory, ...expectedNames.map((name) => resolve(directory, name))].sort()
     );
+    expect(assets.map((asset) => asset.fileName).sort()).toEqual(
+      expectedNames.map((name) => `cmaps/${name}`)
+    );
+    for (const asset of assets) {
+      if (asset.type !== 'asset' || !asset.fileName || asset.source === undefined)
+        throw new Error('Expected a named asset with source bytes');
+      expect(
+        Buffer.from(asset.source).equals(readFileSync(resolve(directory, asset.fileName.slice(6)))),
+        asset.fileName
+      ).toBe(true);
+    }
   }
 });
