@@ -48,7 +48,7 @@ export interface QuantityCell {
 }
 export const normalized = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
 /** Explicit company fields and standalone legal names share one source vocabulary. */
-export function declaredSubjectsIn(block: TextBlock): string[] {
+export function declaredSubjectsIn(block: Pick<TextBlock, 'text'>): string[] {
   return [
     ...new Set(
       reportingFieldSegments(block.text).flatMap((line) => {

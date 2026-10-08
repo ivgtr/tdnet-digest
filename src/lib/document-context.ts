@@ -1,8 +1,10 @@
 import {
   reportingBasis,
   reportingFieldSegments,
+  reportingFieldProjection,
   bracketedReportingBases,
   reportingAttributeKey,
+  isAdministrativeBlock,
 } from './reporting-attributes';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
@@ -28,6 +30,7 @@ import {
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
 import { splitNotes, splitNoteApplies } from './source-provenance';
+import { isUncaptionedUnit, parseExactNumeric, proseQuantities } from './quantity';
 
 export type DeclarationRole = 'subject' | 'scope' | 'basis';
 export interface ContextDeclaration {
@@ -55,18 +58,18 @@ export interface DocumentContext {
 }
 const unique = <T>(items: T[]) => [...new Set(items)];
 export { declaredSubjectsIn, headingLevel } from './document-structure';
-function captionText(block: TextBlock): string {
+function captionText(block: Pick<TextBlock, 'text'>): string {
   return reportingPeriodText(block.text)
     .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
     .replace(/^20\d{2}年\d{1,2}月期(?:の)?/, '')
     .replace(new RegExp(`^(?:${REPORTING_PERIOD_SHAPE_PATTERN})+(?:の)?`), '');
 }
-function isReportingCover(block: TextBlock): boolean {
+function isReportingCover(block: Pick<TextBlock, 'text'>): boolean {
   return /^(?:四半期|中間)?決算短信/.test(captionText(block));
 }
 /** A role field supplies its entire value; a caption needs an explicit reporting object. */
 function reportingAttributes(
-  block: TextBlock,
+  block: Pick<TextBlock, 'id' | 'text'> & Partial<Pick<TextBlock, 'kind'>>,
   tableCaption = false
 ): { role: 'scope' | 'basis'; value: string }[] {
   const attributes: { role: 'scope' | 'basis'; value: string }[] = [];
@@ -104,6 +107,127 @@ function reportingAttributes(
   }
   return attributes;
 }
+const monetaryUnit = '(?:十|百|千|万|百万|千万|億|兆)?(?:円|%)';
+const reportingAmount = new RegExp(
+  `[0-9][0-9,.]*${monetaryUnit}|${monetaryUnit}(?:[):]|\\]|】)*[△▲−-]?[0-9]`
+);
+function reportingValueText(text: string): boolean {
+  const raw = text.normalize('NFKC').trim();
+  // Complete URL/code fields are literal metadata: encoded paths are not percentages
+  // and the letter in a four-character securities code is not a quantity unit.
+  if (
+    /^(?:U\s*R\s*L(?:\s+|:)\s*)?https?:\/\/\S+$/i.test(raw) ||
+    /^(?:コ\s*ー\s*ド\s*番\s*号|証\s*券\s*コ\s*ー\s*ド)(?:\s+|:)\s*[0-9A-Z]{4}(?:\s+U\s*R\s*L(?:\s+|:)\s*https?:\/\/\S+)?$/i.test(
+      raw
+    )
+  )
+    return false;
+  return (
+    /[。；;]/.test(raw) ||
+    reportingAmount.test(normalized(raw)) ||
+    proseQuantities({ id: 'metadata', text: raw }).some((quantity) =>
+      parseExactNumeric(quantity.raw)
+    ) ||
+    [...raw.matchAll(/[([]\s*([^()[\]]+)\s*[)\]]\s*[△▲−-]?\d/g)].some((match) =>
+      isUncaptionedUnit(normalized(match[1]))
+    )
+  );
+}
+
+/** Spacing between label glyphs is layout, but a field still needs a value delimiter. */
+const reportingAdministrativeField = new RegExp(
+  `^(?:${[
+    '上場取引所',
+    'コード番号',
+    '証券コード',
+    '代表者名',
+    '代表者',
+    '問合せ先責任者',
+    '問い合わせ先責任者',
+    '問合せ先',
+    '問い合わせ先',
+    '電話番号',
+    'TEL',
+    'URL',
+  ]
+    .map((label) => [...label].join('\\s*'))
+    .join('|')})(?:\\s+|:)\\s*\\S`,
+  'i'
+);
+
+/** Complete cover administration can share a physical block with the issuer. */
+function reportingAdministrativeSegment(text: string): boolean {
+  const compact = normalized(text);
+  return (
+    isAdministrativeBlock(text) ||
+    reportingAdministrativeField.test(text.normalize('NFKC').trim()) ||
+    /^20\d{2}年\d{1,2}月\d{1,2}日$/.test(compact) ||
+    /^\(?百万円未満切捨て\)?$/.test(compact) ||
+    // PDF line grouping can split this label from its date and from 開催予定日.
+    // These are literal metadata fragments, never a date/value binding.
+    /^(?:定時株主総会(?:\(継続会\))?|開催予定日)$/.test(compact) ||
+    /^(?:20\d{2}年\d{1,2}月\d{1,2}日)?(?:(?:定時株主総会(?:\(継続会\))?開催予定日|配当(?:金)?支払開始予定日|有価証券報告書提出予定日):?(?:20\d{2}年\d{1,2}月\d{1,2}日|[-―]|未定))+$/.test(
+      compact
+    ) ||
+    /^決算(?:補足説明資料作成|説明会開催)の有無:(?:有|無)(?:\([^()]*\))?$/.test(compact)
+  );
+}
+
+/** Every original cell/line must be metadata; a partial projection cannot hide body content. */
+export function isReportingMetadata(
+  block: Pick<TextBlock, 'id' | 'text'> & Partial<Pick<TextBlock, 'kind'>>
+): boolean {
+  if (isReportingCover(block)) return false;
+  const projection = reportingFieldProjection(block.text);
+  return (
+    projection.complete &&
+    projection.segments.length > 0 &&
+    projection.segments.every((text) => {
+      const segment = { ...block, text };
+      if (reportingValueText(text)) return false;
+      if (reportingAdministrativeSegment(text)) return true;
+      if (headingLevel(block) !== null) return false;
+      if (declaredSubjectsIn(segment).length > 0) return true;
+      const attributes = reportingAttributes(segment);
+      return (
+        attributes.length > 0 &&
+        attributes.every((attribute) =>
+          new RegExp(
+            `^(?:${attribute.role === 'scope' ? reportingScope : reportingBasis})$`,
+            'i'
+          ).test(attribute.value)
+        )
+      );
+    })
+  );
+}
+
+/** Cover ownership is a contiguous prefix, never later values or appendix metadata. */
+export function reportingCoverBlocks<
+  T extends { id: string; text: string; kind?: 'paragraph' | 'row' | 'heading' },
+>(blocks: T[]): T[] {
+  const cover: T[] = [];
+  for (const block of blocks) {
+    const source = {
+      ...block,
+      kind: block.kind === 'heading' ? ('paragraph' as const) : block.kind,
+    };
+    if (!block.text.trim()) continue;
+    const projection = reportingFieldProjection(block.text);
+    if (
+      !projection.complete ||
+      !projection.segments.length ||
+      !projection.segments.every((text) => {
+        const segment = { ...source, text };
+        return isReportingCover(segment) ? !reportingValueText(text) : isReportingMetadata(segment);
+      })
+    )
+      break;
+    cover.push(block);
+  }
+  return cover;
+}
+
 function declarations(
   block: TextBlock,
   origin: ContextDeclaration['origin'],
@@ -169,17 +293,20 @@ function replaceFields(
 export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   const first = pages.find((p) => p.pageNumber === 1);
   const cover: TextBlock[] = [];
-  let issuerSeen = false;
-  for (const block of first?.blocks ?? []) {
-    // A document title may precede its company field. A numbered section or
-    // a heading after the company declaration ends the cover ownership.
-    if (
-      headingLevel(block) !== null &&
-      (issuerSeen || /^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/.test(normalized(block.text)))
-    )
-      break;
-    cover.push(block);
-    if (declaredSubjectsIn(block).length) issuerSeen = true;
+  const firstBlocks = first?.blocks ?? [];
+  if (firstBlocks.some(isReportingCover)) cover.push(...reportingCoverBlocks(firstBlocks));
+  else {
+    // Non-earnings disclosures retain their supported title/issuer ordering.
+    let issuerSeen = false;
+    for (const block of firstBlocks) {
+      if (
+        headingLevel(block) !== null &&
+        (issuerSeen || /^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/.test(normalized(block.text)))
+      )
+        break;
+      cover.push(block);
+      if (declaredSubjectsIn(block).length) issuerSeen = true;
+    }
   }
   const issuer = cover.filter(
     (b) => /^(?:会社名|上場会社名)/.test(normalized(b.text)) || declaredSubjectsIn(b).length > 0
@@ -525,6 +652,11 @@ function inReportingCover(
 ): boolean {
   if (binding.page !== 1 || binding.sectionIds.length) return false;
   const blocks = pages.find((p) => p.pageNumber === 1)?.blocks ?? [];
+  if (!requireValue) {
+    const cover = reportingCoverBlocks(blocks);
+    const target = cover.findIndex((block) => block.id === binding.blockId);
+    return target >= 0 && cover.slice(0, target).some(isReportingCover);
+  }
   const target = blocks.findIndex((b) => b.id === binding.blockId);
   let cover = -1;
   for (let i = 0; i < target; i++)

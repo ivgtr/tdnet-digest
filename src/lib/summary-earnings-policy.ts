@@ -1,9 +1,12 @@
+import { reportingCoverBlocks } from './document-context';
+import { declaredSubjectsIn, normalized } from './document-structure';
 import {
   reportingScope,
   reportingFieldSegments,
   reportingBasis,
   bracketedReportingBases,
   reportingAttributeKey,
+  hasCompleteReportingAttributes,
 } from './reporting-attributes';
 import type { FactPeriodKind, FactSummary, VerifiedFact } from './fact-contract';
 import type { SourceExcerpt } from './summary-source-inventory';
@@ -20,7 +23,7 @@ export interface EarningsTarget {
 }
 export interface EarningsTargetResolution {
   target: EarningsTarget | null;
-  issue: 'missing' | 'ambiguous' | 'scope' | null;
+  issue: 'missing' | 'ambiguous' | 'scope' | 'subject' | 'basis' | null;
 }
 
 function fiscalPeriod(text: string): string | null {
@@ -69,8 +72,8 @@ function sourceTarget(text: string): EarningsTarget | null {
 
 /** The document declares the headline period; surviving figures cannot redefine it. */
 export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolution {
-  const cover = excerpts
-    .filter((excerpt) => excerpt.page === 1)
+  const coverFields = reportingCoverBlocks(excerpts.filter((excerpt) => excerpt.page === 1));
+  const cover = coverFields
     .flatMap((excerpt) => excerpt.text.split('\n'))
     .filter((text) => /20\d{2}年\d{1,2}月期[^。]*決算短信/.test(reportingPeriodText(text)));
   const titles = cover.length
@@ -92,18 +95,10 @@ export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolut
     scope: new Set(),
     basis: new Set(),
   };
-  for (const excerpt of excerpts.filter((value) => value.page === 1)) {
-    if ((excerpt.kind === 'heading' && excerpt.role !== 'document') || excerpt.kind === 'row')
-      break;
-    if (
-      /[。；]/.test(excerpt.text) ||
-      /[0-9][0-9,.]*(?:千|百万|億)?円/.test(reportingPeriodText(excerpt.text))
-    )
-      break;
+  for (const excerpt of coverFields) {
+    for (const subject of declaredSubjectsIn(excerpt)) fields.subject.add(subject);
     for (const line of reportingFieldSegments(excerpt.text)) {
-      const text = reportingPeriodText(line);
-      const subject = text.match(/^(?:上場会社名|会社名):?(.+)$/)?.[1];
-      if (subject) fields.subject.add(subject.split(/上場取引所|コード番号|URL|代表者名/)[0]);
+      const text = normalized(line);
       const field = line
         .normalize('NFKC')
         .trim()
@@ -111,12 +106,11 @@ export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolut
       const scopeAtom = text.match(
         new RegExp(`^(?:範囲:?)?(?:\\((${reportingScope})\\)|(${reportingScope}))$`)
       );
-      const scope =
-        field?.[1] === '範囲' ? reportingPeriodText(field[2]) : (scopeAtom?.[1] ?? scopeAtom?.[2]);
+      const scope = field?.[1] === '範囲' ? field[2] : (scopeAtom?.[1] ?? scopeAtom?.[2]);
       if (scope) fields.scope.add(reportingAttributeKey('scope', scope));
       const basis =
         field?.[1] === '会計基準'
-          ? reportingPeriodText(field[2])
+          ? field[2]
           : text.match(new RegExp(`^(?:会計基準:?)?(${reportingBasis})$`, 'i'))?.[1];
       if (basis) fields.basis.add(reportingAttributeKey('basis', basis));
     }
@@ -143,7 +137,9 @@ export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolut
   if (targets.some((target) => target === null) || distinct.size !== 1)
     return { target: null, issue: 'ambiguous' };
   const target = [...distinct.values()][0];
-  return { target, issue: target.scope === null ? 'scope' : null };
+  const issue =
+    (['scope', 'subject', 'basis'] as const).find((role) => !target[role]?.trim()) ?? null;
+  return { target, issue };
 }
 
 export function matchesEarningsTarget(
@@ -152,14 +148,12 @@ export function matchesEarningsTarget(
 ): boolean {
   return (
     target !== null &&
+    hasCompleteReportingAttributes(target) &&
     fiscalPeriod(fact.period ?? '') === target.fiscal &&
     fact.semantics.periodKind === target.periodKind &&
-    target.scope !== null &&
     reportingAttributeKey('scope', fact.semantics.scope ?? '') === target.scope &&
-    (target.basis === null ||
-      reportingAttributeKey('basis', fact.semantics.basis ?? '') === target.basis) &&
-    (target.subject === null ||
-      reportingPeriodText(fact.semantics.subject ?? '') === target.subject)
+    reportingAttributeKey('basis', fact.semantics.basis ?? '') === target.basis &&
+    reportingAttributeKey('subject', fact.semantics.subject ?? '') === target.subject
   );
 }
 

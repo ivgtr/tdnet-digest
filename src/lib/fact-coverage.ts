@@ -1,4 +1,4 @@
-import { reportingAttributeKey } from './reporting-attributes';
+import { reportingAttributeKey, hasCompleteReportingAttributes } from './reporting-attributes';
 import {
   numericValueKind,
   matchesReportingPeriod,
@@ -46,6 +46,7 @@ import {
   reportingUnitTitle,
   isReportingCoverUnit,
   isReportingCoverField,
+  isReportingMetadata,
   headingLevel,
   verifyScopeEvidence,
   applicableDeclarations,
@@ -749,11 +750,7 @@ function forecastReportingTarget(
     if (b.sectionIds[b.sectionIds.length - 1] !== declaration.blockId || b.anchorId !== b.blockId)
       return false;
     const block = blocks.find((block) => block.id === b.blockId)!;
-    return (
-      block.kind === 'row' ||
-      (!/^(?:会社名|上場会社名|名称|範囲|会計基準)/.test(normalized(block.text)) &&
-        headingLevel(block) === null)
-    );
+    return !isReportingMetadata(block) && (block.kind === 'row' || headingLevel(block) === null);
   });
   const binding = source ?? bindingFor(context, declaration.blockId);
   return {
@@ -773,8 +770,7 @@ export function declaredForecastFactIds(
   const context = buildDocumentContext(pages);
   // The forecast declaration is independent of missing/ambiguous actual-period headings.
   const target = forecastReportingTarget(pages, context);
-  if (!target?.attributes || Object.values(target.attributes).some((value) => value === null))
-    return new Set();
+  if (!target || !hasCompleteReportingAttributes(target.attributes)) return new Set();
   return new Set(
     facts
       .filter(

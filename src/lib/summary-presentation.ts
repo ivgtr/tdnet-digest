@@ -443,7 +443,9 @@ export function revalidatePresentation(
   )
     throw new Error('原文引用とPDFが一致しません');
   // Storage-only validation permits headline adjustments. Rechecking the PDF must
-  // still reject a stale or adjusted forecast from outside the declared unit.
+  // still reject a stale or adjusted numeric headline from outside its declared unit.
+  const actualTarget =
+    facts.documentType === 'earnings' ? earningsTarget(expected.excerpts).target : null;
   if (
     facts.documentType === 'earnings' &&
     value.overview.some((id) => {
@@ -451,11 +453,11 @@ export function revalidatePresentation(
       return (
         fact &&
         numeric(fact) &&
-        fact.semantics.state === 'forecastAfter' &&
-        !expected.overview.includes(id)
+        ((fact.semantics.state === 'actual' && !matchesEarningsTarget(fact, actualTarget)) ||
+          (fact.semantics.state === 'forecastAfter' && !expected.overview.includes(id)))
       );
     })
   )
-    throw new Error('冒頭の修正後予想と原文の報告対象が一致しません');
+    throw new Error('冒頭の数値と原文の報告対象が一致しません');
   return value;
 }

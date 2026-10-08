@@ -256,22 +256,4 @@ export function dividendPaymentExcerpt(text: string): string | null {
   return fields.length === 1 ? fields[0] : null;
 }
 
-/** Only complete administrative blocks are excluded, never a substantive continuation. */
-export function isAdministrativeBlock(text: string): boolean {
-  const lines = text
-    .normalize('NFKC')
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return (
-    lines.length > 0 &&
-    lines.every(
-      (line) =>
-        !/[。;；|│]/.test(line) &&
-        (/^(?:上場会社名|会社名|コード番号|証券コード|代表者名?|問合せ先|問い合わせ先|電話番号|TEL|URL)(?:\s|[:：])/i.test(
-          line
-        ) ||
-          /^(?:https?:\/\/\S+|各位|以上)$/i.test(line))
-    )
-  );
-}
+export { isAdministrativeBlock } from './reporting-attributes';

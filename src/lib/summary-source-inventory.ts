@@ -1,5 +1,9 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
-import { buildDocumentContext, type DocumentContext } from './document-context';
+import {
+  buildDocumentContext,
+  isReportingMetadata,
+  type DocumentContext,
+} from './document-context';
 import { headingLevel } from './document-structure';
 import {
   isAdministrativeBlock,
@@ -63,10 +67,20 @@ export function sourceInventory(
   let inlineRole: ContentRole | null = null;
   return pages.flatMap((p) =>
     p.blocks.flatMap((block): SourceExcerpt[] => {
-      if (!block.text.trim() || isAdministrativeBlock(block.text)) return [];
+      if (!block.text.trim()) return [];
       const binding = context.bindings.find(
         (b) => b.anchorId === block.id || b.blockId === block.id
       );
+      // Issuer/owner declarations remain evidence even when their own block is
+      // otherwise administrative. Phone/contact-only blocks can still be omitted.
+      // Filtering must not erase a substantive boundary before later issuer fields.
+      const administrative = isAdministrativeBlock(block.text) && isReportingMetadata(block);
+      const subjectMetadata =
+        administrative &&
+        !!binding?.declarations.some(
+          (declaration) => declaration.role === 'subject' && declaration.id === block.id
+        );
+      if (administrative && !subjectMetadata) return [];
       const section = binding?.sectionIds[binding.sectionIds.length - 1];
       const parent = section ? blocks.find((b) => b.id === section)! : null;
       const level = headingLevel(block);
@@ -95,6 +109,7 @@ export function sourceInventory(
               'unclassified')
             : (headings[headings.length - 1]?.role ?? 'unclassified');
       const documentOnly =
+        subjectMetadata ||
         isSourceMetadata(block.text) ||
         (/目次|決算短信/.test(block.text) && !/。|単位|資産の部|負債の部/.test(block.text)) ||
         /上場会社名.*代表者/.test(block.text.normalize('NFKC').replace(/\s/g, '')) ||

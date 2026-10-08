@@ -376,11 +376,16 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   if (earnings) {
     const missing = earningsMissingMajorLabels(facts, earnings.target);
     const additional = earningsAdditionalMajorWarnings(facts);
+    const missingAttributes = earnings.target
+      ? (['subject', 'scope', 'basis'] as const)
+          .filter((role) => !earnings.target![role]?.trim())
+          .map((role) => ({ subject: '会社', scope: '範囲', basis: '会計基準' })[role])
+      : [];
     if (earnings.issue)
       lines.push(
         '',
-        earnings.issue === 'scope'
-          ? '**要確認：報告対象の範囲が未特定です。**'
+        missingAttributes.length
+          ? `**要確認：報告対象の${missingAttributes.join('・')}が未特定です。**`
           : '**要確認：報告対象期が未特定です。**',
         '原文の報告対象を一意に確認できないため、数値を当期の要点として選んでいません。確認済みの数値は対象期とともに本文に表示しています。'
       );

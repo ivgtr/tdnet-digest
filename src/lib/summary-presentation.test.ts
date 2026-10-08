@@ -96,7 +96,9 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
   ] as const)(
     '原文で対応済みの表題属性を冒頭まで保持する: %s',
     (title, periodKind, scope, basis, factBasis) => {
-      const resolution = earningsTarget(sourceInventory([textPage(title)], undefined, 'earnings'));
+      const resolution = earningsTarget(
+        sourceInventory([textPage(title + '\n会社名 株式会社テスト')], undefined, 'earnings')
+      );
       expect(resolution.issue).toBeNull();
       expect(resolution.target).toMatchObject({ fiscal: '2026年3月期', periodKind, scope, basis });
       const fact = {
@@ -125,7 +127,9 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     const cover =
       '2026年3月期 中間決算短信〔IFRS会計基準〕（単体）\n会計基準 国際会計基準 | 範囲 個別';
     const target = (text: string) =>
-      earningsTarget(sourceInventory([textPage(text)], undefined, 'earnings'));
+      earningsTarget(
+        sourceInventory([textPage(text + '\n会社名 株式会社テスト')], undefined, 'earnings')
+      );
     expect(target(cover)).toMatchObject({
       issue: null,
       target: { periodKind: 'cumulativeQ2', scope: '非連結', basis: 'IFRS' },
@@ -144,7 +148,9 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
   });
 
   it('表題の中間・四半期・単独と連結範囲を保持し、同じ決算年だけでは当期としない', () => {
-    const source = textPage('2026年３月期 第２四半期（中間期）決算短信〔IFRS〕（連結）');
+    const source = textPage(
+      '2026年３月期 第２四半期（中間期）決算短信〔IFRS〕（連結）\n会社名 株式会社テスト'
+    );
     const target = earningsTarget(sourceInventory([source], undefined, 'earnings')).target;
     expect(target).toMatchObject({
       fiscal: '2026年3月期',
@@ -1215,6 +1221,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       '会社名 株式会社テスト\n１．実施時期\n2026年10月15日\n会社名は変更します。承認が条件です。\n会社名変更の理由\n会社名 株式会社対象 | 条件 承認後'
     );
     expect(sourceInventory([source]).map((e) => e.text)).toEqual([
+      '会社名 株式会社テスト',
       '１．実施時期',
       '2026年10月15日',
       '会社名は変更します。承認が条件です。',
