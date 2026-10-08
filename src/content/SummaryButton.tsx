@@ -167,7 +167,12 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
       }
     } catch (e) {
       if (request !== diagnosticRequest.current) return;
-      setDiagnosticError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setDiagnosticError(
+        /extension context invalidated/i.test(message)
+          ? '拡張機能との接続が切れています。TDnetのページを再読み込みしてから、診断JSONのコピーをやり直してください。'
+          : message
+      );
     }
   };
   const handleClick = () => {

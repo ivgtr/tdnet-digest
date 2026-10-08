@@ -3,6 +3,7 @@ import type { Diagnostic } from './fact-candidates';
 import type { LLMConfig } from './llm-client';
 import { record } from './fact-contract';
 import { normalizeTdnetPdfUrl } from './tdnet-url';
+import type { PdfExtractionErrorDetails } from './pdf-extraction-error';
 export const SUMMARY_TRACE_KEY = 'summaryLastRunV1';
 export type Usage = Parameters<NonNullable<LLMConfig['onUsage']>>[0];
 export interface SummaryAttempt {
@@ -34,6 +35,7 @@ export interface SummaryTrace {
   elapsedMs: number;
   outcome: 'running' | 'firstSuccess' | 'repairSuccess' | 'partialSuccess' | 'failure';
   error: string | null;
+  pdfExtractionError?: PdfExtractionErrorDetails;
 }
 /** A fresh attempt must match its run; cached success must match its exact result. */
 export function matchingSummaryTrace(

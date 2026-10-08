@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import type { PdfExtractionErrorDetails } from '../lib/pdf-extraction-error';
 
 const pdfjs = vi.hoisted(() => ({ getDocument: vi.fn(), GlobalWorkerOptions: { workerSrc: '' } }));
 vi.mock('pdfjs-dist', () => ({ ...pdfjs, OPS: {} }));
@@ -54,4 +55,104 @@ it('loads packed CMaps from the extension for an Offscreen extraction request', 
   expect(pdfjs.GlobalWorkerOptions.workerSrc).toBe(
     'chrome-extension://test-extension/assets/pdf.worker.test.mjs'
   );
+});
+
+// The real page extractor owns stage tagging; only PDF.js input and Chrome transport are replaced.
+it.each(['page-load', 'text-content', 'operator-list', 'page-layout'] as const)(
+  'preserves the first failed page and %s cause without returning partial text',
+  async (stage) => {
+    const addListener = vi.fn();
+    vi.stubGlobal('chrome', {
+      runtime: { onMessage: { addListener }, getURL: (path: string) => path },
+    });
+    const original = Object.assign(new Error('PDF.js page operation failed'), {
+      name: 'InvalidPDFException',
+      code: 17,
+    });
+    const page = {
+      getTextContent: vi.fn(async () => ({
+        items: [
+          {
+            str: '部分抽出だけでは要約しない',
+            transform: [12, 0, 0, 12, 20, 700],
+            width: 120,
+            height: 12,
+            dir: 'ltr',
+            hasEOL: true,
+          },
+        ],
+      })),
+      getOperatorList: vi.fn(async () => ({ fnArray: [] as number[], argsArray: [] })),
+      cleanup: vi.fn(),
+    };
+    const getPage = vi.fn(async (pageNumber: number) => {
+      if (pageNumber === 2) {
+        if (stage === 'page-load') throw original;
+        if (stage === 'text-content') page.getTextContent.mockRejectedValueOnce(original);
+        if (stage === 'operator-list') page.getOperatorList.mockRejectedValueOnce(original);
+        if (stage === 'page-layout')
+          page.getOperatorList.mockResolvedValueOnce({ fnArray: [999999], argsArray: [] });
+      }
+      return page;
+    });
+    const destroy = vi.fn().mockRejectedValue(new Error('later cleanup failure'));
+    pdfjs.getDocument.mockReturnValue({
+      promise: Promise.resolve({ numPages: 3, getPage, destroy }),
+    });
+    await import('./index');
+    const response = await new Promise<{
+      success: boolean;
+      error: string;
+      pdfExtractionError: PdfExtractionErrorDetails;
+    }>((resolve) =>
+      addListener.mock.calls[0][0]({ action: 'extractPdfText', pdfData: [] }, {}, resolve)
+    );
+
+    expect(response.success).toBe(false);
+    expect(response).not.toHaveProperty('text');
+    expect(response).not.toHaveProperty('pages');
+    const originalDetails =
+      stage === 'page-layout'
+        ? {
+            name: 'Error',
+            code: 'SOURCE_DRAWING',
+            message: 'SOURCE_DRAWING:PDF.jsの未知の描画演算',
+          }
+        : { name: original.name, code: original.code, message: original.message };
+    expect(JSON.parse(JSON.stringify(response)).pdfExtractionError).toEqual({
+      pageNumber: 2,
+      stage,
+      ...originalDetails,
+    });
+    expect(response.error).toBe(`PDF抽出エラー: PDF p.2: ${originalDetails.message}`);
+    expect(getPage.mock.calls.map(([pageNumber]) => pageNumber)).toEqual([1, 2]);
+    expect(destroy).toHaveBeenCalledTimes(1);
+  }
+);
+
+it('preserves a document-load failure before any page is available', async () => {
+  const addListener = vi.fn();
+  vi.stubGlobal('chrome', {
+    runtime: { onMessage: { addListener }, getURL: (path: string) => path },
+  });
+  pdfjs.getDocument.mockImplementation(() => ({
+    promise: Promise.reject(
+      Object.assign(new Error('Invalid PDF structure'), { name: 'InvalidPDFException' })
+    ),
+  }));
+  await import('./index');
+  const response = await new Promise((resolve) =>
+    addListener.mock.calls[0][0]({ action: 'extractPdfText', pdfData: [] }, {}, resolve)
+  );
+  expect(response).toEqual({
+    success: false,
+    error: 'PDF抽出エラー: Invalid PDF structure',
+    pdfExtractionError: {
+      pageNumber: null,
+      stage: 'document-load',
+      name: 'InvalidPDFException',
+      code: null,
+      message: 'Invalid PDF structure',
+    },
+  });
 });

@@ -779,6 +779,35 @@ describe('実Reactの要約行アクション配置', () => {
     expect(writeText).toHaveBeenCalledTimes(3);
   });
 
+  it.each(['throw', 'reject'] as const)(
+    '診断読込の無効化エラー（%s）はページ再読み込みを案内し、コピー成功にしない',
+    async (failure) => {
+      settings.experimentalScoring = false;
+      sendMessage.mockResolvedValueOnce(await responseFor());
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('navigator', { clipboard: { writeText } });
+      const { row, button } = await mountButton();
+      await click(button);
+      const summaryRow = await summaryRowFor(row);
+      const host = summaryRow.querySelector('[data-diagnostic-root]')!;
+      const error = new Error('Extension context invalidated.');
+      if (failure === 'throw')
+        vi.mocked(chrome.storage.local.get).mockImplementationOnce(() => {
+          throw error;
+        });
+      else vi.mocked(chrome.storage.local.get).mockRejectedValueOnce(error);
+      await click(host.querySelector('button')!);
+      expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+        '拡張機能との接続が切れています。TDnetのページを再読み込みしてから、診断JSONのコピーをやり直してください。'
+      );
+      expect(host.querySelector('[role="status"]')?.textContent).toBe('');
+      expect(host.querySelector('textarea')).toBeNull();
+      expect(writeText).not.toHaveBeenCalled();
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(summaryRow.textContent).toContain('100百万円');
+    }
+  );
+
   it('エラー行でも閉じると診断を用意し、エラーの隣の全文再要約で回復する', async () => {
     settings.extractionMode = 'smart';
     settings.experimentalScoring = false;

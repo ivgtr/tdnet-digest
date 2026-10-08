@@ -10,6 +10,7 @@ import type { ExtractedPage, ExtractionMode } from '../types/summaryMetadata';
 import { serializePagesForAnalysis } from '../lib/page-text';
 import { fixedOrganization } from '../lib/fixtures/summary-narrative-source';
 import type { SummaryAttempt } from '../lib/summary-trace';
+import type { PdfExtractionErrorDetails } from '../lib/pdf-extraction-error';
 
 const mocked = vi.hoisted(() => ({
   generateText: vi.fn(),
@@ -285,6 +286,56 @@ describe('要約・採点・追加分析の分離', () => {
         matchingSummaryTrace({ ...saved, runId: undefined }, 'test.pdf', null, success.resultId)
       ).toThrow();
       expect(mocked.generateText).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('Offscreenの元例外を診断JSONへ保持し、失敗ページから生成しない', async () => {
+    const request = await setup(false);
+    const details: PdfExtractionErrorDetails = {
+      pageNumber: 2,
+      stage: 'page-layout',
+      name: 'Error',
+      code: 'SOURCE_DRAWING',
+      message: 'SOURCE_DRAWING:表のセル解析の処理上限',
+    };
+    const response = JSON.parse(
+      JSON.stringify({
+        success: false,
+        error: `PDF抽出エラー: PDF p.2: ${details.message}`,
+        pdfExtractionError: details,
+      })
+    );
+    vi.mocked(chrome.runtime.sendMessage).mockResolvedValueOnce(response);
+    const result = await request({ action: 'summarize' });
+    const writes = vi.mocked(chrome.storage.local.set).mock.calls;
+    const lastWrite = writes[writes.length - 1][0] as Record<string, unknown>;
+    const trace = JSON.parse(JSON.stringify(lastWrite.summaryLastRunV1));
+    expect(result.error).toBe(response.error);
+    expect(trace).toMatchObject({
+      runId: result.diagnosticRunId,
+      outcome: 'failure',
+      error: response.error,
+      pdfExtractionError: details,
+      attempts: [],
+      usage: [],
+      resultId: null,
+    });
+    expect(matchingSummaryTrace(trace, 'test.pdf', result.diagnosticRunId, null)).toEqual(trace);
+    expect(mocked.generateText).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, { pageNumber: 0, stage: 'page-layout', message: 'invalid details' }])(
+    '旧形式または不正な抽出エラー詳細%sでも元メッセージを失わず接頭辞を重複させない',
+    async (details) => {
+      const request = await setup(false);
+      vi.mocked(chrome.runtime.sendMessage).mockResolvedValueOnce({
+        success: false,
+        error: 'PDF抽出エラー: PDF抽出エラー: SOURCE:PDF p.1の抽出失敗',
+        pdfExtractionError: details,
+      });
+      const result = await request({ action: 'summarize' });
+      expect(result.error).toBe('PDF抽出エラー: SOURCE:PDF p.1の抽出失敗');
+      expect(mocked.generateText).not.toHaveBeenCalled();
     }
   );
 

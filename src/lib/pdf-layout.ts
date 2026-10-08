@@ -16,6 +16,7 @@ import {
   type DrawingOperation,
 } from './pdf-drawing';
 import { buildTableRegions, buildTableCells } from './table-layout';
+import { withPdfExtractionStage } from './pdf-extraction-error';
 
 export interface PdfSpan {
   id: string;
@@ -36,11 +37,12 @@ export async function extractPdfPageLayout(
   pageNumber: number,
   operatorRegistry: Record<string, number>
 ): Promise<ExtractedPage> {
-  const [text, operators] = await Promise.all([page.getTextContent(), page.getOperatorList()]);
-  return extractPageLayout(
-    text.items,
-    pageNumber,
-    captureDrawingOperations(operators, operatorRegistry)
+  const [text, operators] = await Promise.all([
+    withPdfExtractionStage('text-content', pageNumber, () => page.getTextContent()),
+    withPdfExtractionStage('operator-list', pageNumber, () => page.getOperatorList()),
+  ]);
+  return withPdfExtractionStage('page-layout', pageNumber, () =>
+    extractPageLayout(text.items, pageNumber, captureDrawingOperations(operators, operatorRegistry))
   );
 }
 
