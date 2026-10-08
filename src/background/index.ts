@@ -1,4 +1,10 @@
 import { SUMMARY_TRACE_KEY, summaryBuildDigest, type SummaryTrace } from '@/lib/summary-trace';
+import {
+  PdfExtractionError,
+  pdfExtractionError,
+  readPdfExtractionError,
+  type PdfExtractionStage,
+} from '@/lib/pdf-extraction-error';
 import { serializeCandidateSource } from '@/lib/fact-candidates';
 import type { LLMConfig } from '@/lib/llm-client';
 import { configuredApiUrl } from '@/lib/llm-endpoint';
@@ -303,6 +309,7 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
   } catch (error) {
     trace.outcome = 'failure';
     trace.error = error instanceof Error ? error.message : String(error);
+    if (error instanceof PdfExtractionError) trace.pdfExtractionError = error.details;
     await saveTrace();
     throw error;
   }
@@ -540,6 +547,7 @@ async function extractTextFromPDF(
   documentType: DocumentType,
   extractionMode: ExtractionMode
 ): Promise<PdfExtractionResult> {
+  let stage: PdfExtractionStage = 'transport';
   try {
     // ArrayBufferを配列に変換して送信
     const uint8Array = new Uint8Array(pdfData);
@@ -553,9 +561,13 @@ async function extractTextFromPDF(
     });
 
     if (!response.success) {
-      throw new Error(response.error || 'PDF抽出に失敗しました');
+      throw (
+        readPdfExtractionError(response.pdfExtractionError) ??
+        new Error(response.error || 'PDF抽出に失敗しました')
+      );
     }
 
+    stage = 'validation';
     validatePages(response.pages);
     if (
       typeof response.text !== 'string' ||
@@ -582,9 +594,6 @@ async function extractTextFromPDF(
     };
   } catch (error) {
     console.error('[Background] PDF抽出エラー:', error);
-    if (error instanceof Error) {
-      throw new Error(`PDF抽出エラー: ${error.message}`);
-    }
-    throw new Error('PDFからテキストを抽出できませんでした。');
+    throw pdfExtractionError(error, stage);
   }
 }

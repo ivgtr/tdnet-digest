@@ -114,44 +114,65 @@ export function buildTableCells(
     ys = snap(horizontal.map((l) => l.y1));
   const covers = (segments: Array<[number, number]>, a: number, b: number) => {
     let end = a;
-    for (const [start, stop] of segments.sort((x, y) => x[0] - y[0])) {
+    for (const [start, stop] of segments) {
       if (start > end + 0.8) break;
       end = Math.max(end, stop);
     }
     return end >= b - 0.8;
   };
-  const h = (y: number, a: number, b: number) =>
-    covers(
-      horizontal.filter((l) => Math.abs(l.y1 - y) < 0.8).map((l) => [l.x1, l.x2]),
-      a,
-      b
-    );
-  const v = (x: number, a: number, b: number) =>
-    covers(
-      vertical.filter((l) => Math.abs(l.x1 - x) < 0.8).map((l) => [l.y1, l.y2]),
-      a,
-      b
-    );
+  // Keep the same edge tolerance and coverage test, but sort each axis only once.
+  const horizontalSegments = new Map(
+    ys.map((y) => [
+      y,
+      horizontal
+        .filter((l) => Math.abs(l.y1 - y) < 0.8)
+        .map((l): [number, number] => [l.x1, l.x2])
+        .sort((a, b) => a[0] - b[0]),
+    ])
+  );
+  const verticalSegments = new Map(
+    xs.map((x) => [
+      x,
+      vertical
+        .filter((l) => Math.abs(l.x1 - x) < 0.8)
+        .map((l): [number, number] => [l.y1, l.y2])
+        .sort((a, b) => a[0] - b[0]),
+    ])
+  );
+  const h = (y: number, a: number, b: number) => covers(horizontalSegments.get(y)!, a, b);
+  const v = (x: number, a: number, b: number) => covers(verticalSegments.get(x)!, a, b);
   const cells: TableCell[] = [];
-  let attempts = 0;
+  let starts = 0,
+    leftEdges = 0,
+    attempts = 0;
+  const checkBudget = (count: number) => {
+    if (count > 100000) throw new Error('SOURCE_DRAWING:表のセル解析の処理上限');
+  };
   // A merged cell spans absent internal edges. Its smallest closed rectangle owns its text.
   for (let yi = 0; yi < ys.length - 1; yi++)
     for (let xi = 0; xi < xs.length - 1; xi++) {
+      checkBudget(++starts);
       const left = xs[xi],
         top = ys[yi];
+      // A closed cell must have a continuous top and left edge of minimum size.
+      // Axes belonging to independent tables must not create rectangle candidates.
+      if (!h(top, left, left + 8) || !v(left, top, top + 4)) continue;
       for (let yj = yi + 1; yj < ys.length; yj++) {
+        // Bound the pruning work too. Each count is no greater than the old
+        // rectangle count for an input that previously stayed within its budget.
+        checkBudget(++leftEdges);
+        const bottom = ys[yj];
+        if (bottom - top < 4) continue;
+        if (!v(left, top, bottom)) break;
         let found = false;
         for (let xj = xi + 1; xj < xs.length; xj++) {
-          if (++attempts > 100000) throw new Error('SOURCE_DRAWING:表のセル解析の処理上限');
-          const right = xs[xj],
-            bottom = ys[yj];
-          if (right - left < 8 || bottom - top < 4) continue;
-          if (
-            h(top, left, right) &&
-            h(bottom, left, right) &&
-            v(left, top, bottom) &&
-            v(right, top, bottom)
-          ) {
+          checkBudget(++attempts);
+          const right = xs[xj];
+          if (right - left < 8) continue;
+          // Coverage is monotone in the endpoint; a missing edge cannot return
+          // at a farther axis, even when another independent table starts there.
+          if (!h(top, left, right)) break;
+          if (h(bottom, left, right) && v(right, top, bottom)) {
             cells.push({
               id: `p${pageNumber}cell${cells.length + 1}`,
               left,

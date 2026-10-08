@@ -18,6 +18,11 @@ import {
   type QualityCheckResult,
 } from '@/lib/section-detector';
 import { extractPdfPageLayout } from '@/lib/pdf-layout';
+import {
+  pdfExtractionError,
+  withPdfExtractionStage,
+  type PdfExtractionStage,
+} from '@/lib/pdf-extraction-error';
 import { validatePages } from '@/lib/fact-validation';
 import { buildDocumentContext } from '@/lib/document-context';
 import { tableContinuations, noteLinks } from '@/lib/document-links';
@@ -50,7 +55,12 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       })
       .catch((error) => {
         console.error('[Offscreen] PDF抽出エラー:', error);
-        sendResponse({ success: false, error: error.message });
+        const failure = pdfExtractionError(error, 'document-load');
+        sendResponse({
+          success: false,
+          error: failure.message,
+          pdfExtractionError: failure.details,
+        });
       });
     return true; // 非同期レスポンスを示す
   }
@@ -229,6 +239,7 @@ async function extractTextFromPDF(
   extractionMode: ExtractionMode,
   documentType: DocumentType
 ): Promise<ExtractionResult> {
+  let stage: PdfExtractionStage = 'document-load';
   try {
     // pdf.jsを動的インポート
     const pdfjsLib = await import('pdfjs-dist');
@@ -258,38 +269,31 @@ async function extractTextFromPDF(
 
     const pages: ExtractedPage[] = [];
 
-    // 全ページからテキストを抽出
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      try {
-        const page = await pdf.getPage(pageNum);
+    try {
+      // 未解析ページを空の成功として扱わず、元のページ・段階・原因で停止する。
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        const page = await withPdfExtractionStage('page-load', pageNum, () => pdf.getPage(pageNum));
         pages.push(await extractPdfPageLayout(page, pageNum, pdfjsLib.OPS));
-
-        // メモリ解放
-        page.cleanup();
-      } catch (pageError) {
-        console.error(`[Offscreen] ページ ${pageNum} の抽出エラー:`, pageError);
-        pages.push({
-          pageNumber: pageNum,
-          spans: [],
-          sourceItems: [],
-          blocks: [],
-          quantities: [],
-          drawingOperations: [],
-          drawingLines: [],
-          tableRegions: [],
-          status: 'failed',
-          selection: 'selected',
-          text: '',
-        });
+        await withPdfExtractionStage('cleanup', pageNum, () => page.cleanup());
       }
+    } catch (error) {
+      // Destroy failures must not replace the original page extraction failure.
+      try {
+        await pdf.destroy();
+      } catch (cleanupError) {
+        console.error('[Offscreen] PDF解放エラー:', cleanupError);
+      }
+      throw error;
     }
 
-    await pdf.destroy();
+    await withPdfExtractionStage('cleanup', null, () => pdf.destroy());
+    stage = 'validation';
     validatePages(pages);
     if (!pages.some(({ text }) => text.trim())) {
       throw new Error('PDFからテキストを抽出できませんでした。画像PDFの可能性があります。');
     }
 
+    stage = 'selection';
     // 抽出モード分岐
     if (extractionMode === 'full') {
       // fullモード: 全文返却
@@ -324,11 +328,7 @@ async function extractTextFromPDF(
       return await extractSmartMode(pages, numPages, documentType);
     }
   } catch (error) {
-    console.error('[Offscreen] PDF抽出エラー:', error);
-    if (error instanceof Error) {
-      throw new Error(`PDF抽出エラー: ${error.message}`);
-    }
-    throw new Error('PDFからテキストを抽出できませんでした。');
+    throw pdfExtractionError(error, stage);
   }
 }
 
