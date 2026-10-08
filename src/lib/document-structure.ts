@@ -325,6 +325,28 @@ export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): 
   const cells: QuantityCell[] = [];
   const owners = physicalCellOwners(sourceCells);
   const ordered = [...spans].sort((a, b) => a.y - b.y || a.x - b.x);
+  const complete = (text: string) => !!(parseExactQuantity(text) || parseExactRange(text));
+  const completeOwnedRun = (start: number) => {
+    const first = ordered[start];
+    let text = first.text;
+    if (complete(text)) return true;
+    if (!owners.get(first.id) || !isQuantityPrefix(text)) return false;
+    for (let end = start + 1; end < ordered.length; end++) {
+      const previous = ordered[end - 1],
+        next = ordered[end];
+      const gap = next.x - previous.x - previous.width;
+      if (
+        !sameLine(first, next) ||
+        gap < -0.5 ||
+        gap > Math.min(previous.height, next.height) * 0.6 ||
+        !canJoinWithinCells(owners, previous.id, next.id) ||
+        !isQuantityPrefix(text + next.text)
+      )
+        break;
+      text += next.text;
+    }
+    return complete(text);
+  };
   for (let i = 0; i < ordered.length; i++) {
     const first = ordered[i];
     if (
@@ -350,8 +372,13 @@ export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): 
           break;
         const previousOwner = owners.get(previous.id),
           nextOwner = owners.get(next.id);
-        if (previousOwner === null || nextOwner === null) ambiguous = true;
-        else if (!canJoinWithinCells(owners, previous.id, next.id)) {
+        if (previousOwner === null || nextOwner === null) {
+          // Complete quantities remain independent across unresolved ownership.
+          // Only a genuine continuation (decimal, sign, grouping or range)
+          // propagates the ambiguity to the neighboring numeric fragment.
+          if ((previousOwner || nextOwner) && complete(text) && completeOwnedRun(end + 1)) break;
+          ambiguous = true;
+        } else if (!canJoinWithinCells(owners, previous.id, next.id)) {
           // One closed side alone does not prove that an incomplete fragment
           // belongs to a separate quantity. Do not expose its valid prefix.
           if (

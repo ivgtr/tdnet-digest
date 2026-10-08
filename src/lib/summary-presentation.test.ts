@@ -256,6 +256,268 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     }
   });
 
+  const forecastPage = (
+    unit: {
+      period: string;
+      subject: string | null;
+      scope: string | null;
+      basis: string | null;
+      heading?: string;
+      fields?: string;
+      ownPeriod?: boolean;
+    },
+    pageNumber: number,
+    offset = 0
+  ) =>
+    cells(
+      [
+        ...(unit.subject
+          ? [[`会社名 ${unit.subject}`, 0, 0, 220] as [string, number, number, number]]
+          : []),
+        [unit.heading ?? `1. ${unit.period}${unit.scope ?? ''}業績予想の修正`, 0, 30, 460],
+        ...(unit.basis
+          ? [[`会計基準 ${unit.basis}`, 0, 60, 180] as [string, number, number, number]]
+          : []),
+        ...(unit.fields ? [[unit.fields, 0, 70, 300] as [string, number, number, number]] : []),
+        ['売上高', 400, 90, 80],
+        ['営業利益', 600, 90, 80],
+        ['百万円', 410, 120, 60],
+        ['百万円', 610, 120, 60],
+        [(unit.ownPeriod ? unit.period : '') + '前回予想', 0, 150, 320],
+        [String(100 + offset), 410, 150, 30],
+        ['10', 610, 150, 30],
+        [(unit.ownPeriod ? unit.period : '') + '修正後予想', 0, 180, 320],
+        [String(200 + offset), 410, 180, 30],
+        ['20', 610, 180, 30],
+      ],
+      pageNumber
+    );
+
+  // The headline owns reporting-unit selection; source verification still retains other units.
+  it('宣言した予想期・主体・範囲・基準だけを冒頭へ載せ、別単位の修正後予想は本文に残す', () => {
+    const target = '2027年3月期';
+    const units = [
+      { period: target, scope: '連結', basis: '日本基準', subject: '株式会社テスト' },
+      { period: target, scope: '個別', basis: '日本基準', subject: '株式会社テスト' },
+      { period: target, scope: '連結', basis: 'IFRS', subject: '株式会社テスト' },
+      { period: '2028年3月期', scope: '連結', basis: '日本基準', subject: '株式会社テスト' },
+      { period: target, scope: '連結', basis: '日本基準', subject: '株式会社子会社' },
+      { period: target + '第1四半期', scope: '連結', basis: '日本基準', subject: '株式会社テスト' },
+    ];
+    const pages = [
+      textPage('2026年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト'),
+      ...units.map((unit, i) => forecastPage(unit, i + 2, i * 10)),
+    ];
+    const inputs = buildDocumentContext(pages)
+      .tableMappings.filter((mapping) =>
+        mapping.metricIds.some(
+          (id) => pages.flatMap((page) => page.spans).find((s) => s.id === id)?.text === '売上高'
+        )
+      )
+      .map((mapping) => {
+        const source = pages.find((page) => page.quantities.some((q) => q.id === mapping.valueId))!;
+        const unit = units[source.pageNumber - 2];
+        const axis = mapping.periodIds
+          .map((id) => source.spans.find((s) => s.id === id)!.text)
+          .join('');
+        const fact = tableAmount(pages, mapping, {
+          ...unit,
+          state: axis === '前回予想' ? 'forecastBefore' : 'forecastAfter',
+        });
+        if (source.pageNumber === 7) fact.semantics.periodKind = 'cumulativeQ1';
+        return fact;
+      });
+    const reviewed = reviewCandidates(
+      candidateResponse(inputs, pages, 'earnings'),
+      'earnings',
+      pages
+    );
+    expect(reviewed.unverified).toEqual([]);
+    expect(reviewed.facts).toHaveLength(12);
+    const summary: FactSummary = {
+      version: 6,
+      documentType: 'earnings',
+      facts: reviewed.facts,
+      unverified: [],
+    };
+    const selected = reviewed.facts.find(
+      (fact) => fact.page === 2 && fact.valueKind === 'forecastAfter'
+    )!;
+    const display = nativePresentation(summary, pages);
+    expect(display.overview).toEqual([selected.id]);
+    expect(
+      nativePresentation({ ...summary, facts: [...summary.facts].reverse() }, pages).overview
+    ).toEqual([selected.id]);
+    expect(
+      nativePresentation(
+        { ...summary, facts: summary.facts.filter((fact) => fact.page !== 2) },
+        pages
+      ).overview
+    ).toEqual([]);
+    expect(display.sections.flatMap((section) => section.factIds)).toHaveLength(12);
+    const markdown = renderFacts(summary, display);
+    const overview = markdown.split('## 通期見通し・前提')[0];
+    expect(overview).toContain('100百万円 → 200百万円');
+    for (const value of [210, 220, 230, 240, 250]) {
+      expect(overview).not.toContain(`${value}百万円`);
+      expect(markdown).toContain(`${value}百万円`);
+    }
+    const savedFacts = JSON.parse(JSON.stringify(summary));
+    validateSavedFacts(savedFacts);
+    const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), savedFacts, pages);
+    expect(renderFacts(savedFacts, restored)).toBe(markdown);
+    const reading = buildSummaryHtml(markdown, null, { companyName: 'テスト', title: '決算' });
+    expect(reading.split('通期見通し・前提')[0]).not.toContain('210百万円');
+    expect(reading).toContain('210百万円');
+    const altered = structuredClone(restored);
+    altered.overview.push(
+      reviewed.facts.find((fact) => fact.page === 3 && fact.valueKind === 'forecastAfter')!.id
+    );
+    // Source-free storage integrity is separate from reporting-unit proof.
+    expect(() => validatePresentation(altered, savedFacts)).not.toThrow();
+    expect(() => revalidatePresentation(altered, savedFacts, pages)).toThrow('報告対象');
+  });
+
+  it('当期見出しが競合しても予想のない本文保持を妨げない', () => {
+    const source = textPage('2026年3月期 第1四半期第2四半期決算短信〔日本基準〕（連結）');
+    const summary: FactSummary = {
+      version: 6,
+      documentType: 'earnings',
+      facts: [],
+      unverified: ['原文照合待ち'],
+    };
+    expect(nativePresentation(summary, [source]).overview).toEqual([]);
+  });
+
+  it.each([
+    [
+      '当期形状が競合・予想独立',
+      '2026年3月期 第1四半期第2四半期決算短信〔日本基準〕（連結）',
+      { period: '2027年3月期' },
+      true,
+    ],
+    ['同年度の通期', '2026年3月期 中間決算短信〔日本基準〕（連結）', {}, true],
+    [
+      '宣言した個別IFRS',
+      '2026年3月期 決算短信〔日本基準〕（連結）',
+      { scope: '個別', basis: 'IFRS', period: '2027年3月期' },
+      true,
+    ],
+    ['範囲不明', '2026年3月期 決算短信〔日本基準〕', { scope: null }, false],
+    ['会計基準不明', '2026年3月期 決算短信（連結）', { basis: null }, false],
+    ['主体不明', '2026年3月期 決算短信〔日本基準〕（連結）', { subject: null }, false],
+    [
+      '予想期未宣言',
+      '2026年3月期 決算短信〔日本基準〕（連結）',
+      { heading: '1. 連結業績予想の修正', ownPeriod: true },
+      false,
+    ],
+  ] as const)(
+    '予想の報告単位は数値の存否や当期形状から補わない: %s',
+    (_, cover, overrides, admitted) => {
+      const unit = {
+        period: '2026年3月期',
+        subject: '株式会社テスト',
+        scope: '連結',
+        basis: '日本基準',
+        ...overrides,
+      };
+      const pages = [
+        textPage(cover + (unit.subject ? '\n会社名 株式会社テスト' : '')),
+        forecastPage(unit, 2),
+      ];
+      const mapping = buildDocumentContext(pages).tableMappings.find(
+        (mapping) => pages[1].quantities.find((q) => q.id === mapping.valueId)?.text === '200'
+      )!;
+      expect(mapping).toBeDefined();
+      const input = tableAmount(pages, mapping, {
+        ...unit,
+        subject: unit.subject ?? '',
+        state: 'forecastAfter',
+      });
+      input.semantics.subject = unit.subject;
+      const reviewed = reviewCandidates(
+        candidateResponse([input], pages, 'earnings'),
+        'earnings',
+        pages
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(1);
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: reviewed.facts,
+        unverified: [],
+      };
+      const display = nativePresentation(summary, pages);
+      expect(display.overview).toEqual(admitted ? [reviewed.facts[0].id] : []);
+      expect(display.sections.flatMap((section) => section.factIds)).toEqual([
+        reviewed.facts[0].id,
+      ]);
+    }
+  );
+
+  it.each(['1. 経営計画', '1. 2026年3月期・2027年3月期 連結業績予想の修正'])(
+    '未宣言・競合する予想欄は本文の確定期間から補わない: %s',
+    (heading) => {
+      const source = textPage(
+        '2026年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n' +
+          heading +
+          '\n範囲 連結\n会計基準 日本基準\n2026年3月期 修正後予想：売上高は200百万円です。'
+      );
+      const input = numberCandidate(source, '売上高', 200);
+      input.valueKind = input.semantics.state = 'forecastAfter';
+      const reviewed = reviewCandidates(
+        candidateResponse([input], [source], 'earnings'),
+        'earnings',
+        [source]
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(1);
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: reviewed.facts,
+        unverified: [],
+      };
+      expect(nativePresentation(summary, [source]).overview).toEqual([]);
+    }
+  );
+
+  it.each(['範囲 連結 | 範囲 個別', '会計基準 日本基準 | 会計基準 IFRS'])(
+    '予想欄の属性が競合しても後の別年度の生存値で置き換えない: %s',
+    (fields) => {
+      const issuer = { subject: '株式会社テスト', scope: '連結', basis: '日本基準' };
+      const pages = [
+        textPage('2026年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト'),
+        forecastPage({ ...issuer, period: '2027年3月期', fields }, 2),
+        forecastPage({ ...issuer, period: '2028年3月期' }, 3),
+      ];
+      const mapping = buildDocumentContext(pages).tableMappings.find(
+        (mapping) => pages[2].quantities.find((q) => q.id === mapping.valueId)?.text === '200'
+      )!;
+      const input = tableAmount(pages, mapping, {
+        ...issuer,
+        period: '2028年3月期',
+        state: 'forecastAfter',
+      });
+      const reviewed = reviewCandidates(
+        candidateResponse([input], pages, 'earnings'),
+        'earnings',
+        pages
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(1);
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: reviewed.facts,
+        unverified: [],
+      };
+      expect(nativePresentation(summary, pages).overview).toEqual([]);
+    }
+  );
+
   it('当期の詳細値を前年の重要値より優先し、当期主要値の欠落を別期・別範囲・率・EPS・予想で埋めない', () => {
     const current = { ...facts.facts[0], id: 'current-detail', importance: 'detail' as const };
     const prior = {

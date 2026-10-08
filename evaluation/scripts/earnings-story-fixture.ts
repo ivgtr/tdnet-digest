@@ -15,7 +15,7 @@ import {
 } from '../../src/lib/fact-candidates';
 import { buildDocumentContext } from '../../src/lib/document-context';
 import { sourceTableId } from '../../src/lib/source-provenance';
-import { coverageReport } from '../../src/lib/fact-coverage';
+import { coverageReport, type CoverageSlot } from '../../src/lib/fact-coverage';
 import { inspectCandidateSource } from '../../src/lib/source-preflight';
 import {
   generateVerifiedFactSummary,
@@ -136,6 +136,40 @@ export const earningsExpectations: Expected[] = [
   },
 ];
 
+// Independently fixed obligations for this cover; never derive expected slots from coverageReport.
+const expectedCoverageRequirements = [
+  'COVERAGE:当年決算実績の重要指標 revenue',
+  'COVERAGE:当年決算実績の重要指標 operatingProfit',
+  'COVERAGE:当年決算実績の重要指標 netProfit',
+  'COVERAGE:当年決算実績の重要指標 1株当たり利益',
+  'COVERAGE:前年決算実績の重要指標 revenue',
+  'COVERAGE:前年決算実績の重要指標 operatingProfit',
+  'COVERAGE:前年決算実績の重要指標 netProfit',
+  'COVERAGE:前年決算実績の重要指標 1株当たり利益',
+  'COVERAGE:通期予想の重要指標 revenue',
+  'COVERAGE:通期予想の重要指標 operatingProfit',
+  'COVERAGE:通期予想の重要指標 netProfit',
+  'COVERAGE:通期予想の1株当たり利益',
+  'COVERAGE:配当の重要事実 対象期=2027年8月期 区分=forecast',
+];
+
+export function assertEarningsStoryCoverage(slots: CoverageSlot[], expectSatisfied: boolean): void {
+  assert.deepEqual(
+    slots.map((slot) => slot.requirement).sort(),
+    [...expectedCoverageRequirements].sort(),
+    'The current/prior/forecast/dividend obligation set must contain exactly the 13 fixed slots'
+  );
+  assert.ok(
+    slots.every((slot) => slot.sourceIds.length > 0),
+    'Every required slot needs source IDs'
+  );
+  if (expectSatisfied)
+    assert.ok(
+      slots.every((slot) => slot.status === 'satisfied'),
+      'Every required slot must be satisfied'
+    );
+}
+
 export function earningsCoverPage(): ExtractedPage {
   return extractPageLayout(
     source.page.items as TextItem[],
@@ -198,11 +232,7 @@ export async function replayEarningsStory(pages: ExtractedPage[]) {
   const sourceIssues = inspectCandidateSource('earnings', pages, context, input);
   assert.deepEqual(sourceIssues, []);
   const slots = coverageReport('earnings', pages, [], [], context);
-  assert.ok(
-    slots
-      .filter((slot) => slot.requirement.startsWith('COVERAGE:当年決算実績'))
-      .every((slot) => slot.sourceIds.length > 0)
-  );
+  assertEarningsStoryCoverage(slots, false);
   const previousFetch = globalThis.fetch;
   const attempts: SummaryAttempt[] = [];
   const phases: string[] = [];
@@ -238,6 +268,11 @@ export async function replayEarningsStory(pages: ExtractedPage[]) {
     assert.deepEqual(phases, ['first', 'summary']);
     assert.equal(result.repairAttempted, false);
     assert.deepEqual(result.facts.unverified, []);
+    assert.equal(
+      result.facts.facts.length,
+      earningsExpectations.length,
+      'All fixed candidate facts must survive'
+    );
     assert.deepEqual(earningsTarget(result.presentation.excerpts), {
       issue: null,
       target: {
@@ -315,11 +350,13 @@ export async function replayEarningsStory(pages: ExtractedPage[]) {
         result.presentation
       )
     );
+    const coverage = coverageReport('earnings', pages, result.facts.facts, [], context);
+    assertEarningsStoryCoverage(coverage, true);
     return {
       pages: pages.length,
-      quantities: earningsExpectations.length,
+      quantities: result.facts.facts.length,
       sourceIssues,
-      coverage: coverageReport('earnings', pages, result.facts.facts, [], context),
+      coverage,
       phases,
       inputSha256: createHash('sha256').update(input).digest('hex'),
       markdown,

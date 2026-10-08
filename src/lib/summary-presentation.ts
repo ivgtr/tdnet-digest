@@ -16,6 +16,7 @@ import {
   isRoutineExplanation,
 } from './summary-content-policy';
 import { reportingMetricKey } from './metric-semantics';
+import { declaredForecastFactIds } from './fact-coverage';
 import {
   earningsTarget,
   matchesEarningsTarget,
@@ -61,13 +62,19 @@ export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): S
     throw new SummarySourceSelectionError(
       '本文の根拠がスマート抽出の対象外です。全文で再要約してください。'
     );
-  return composePresentation(facts, excerpts, narrativeValues(facts, pages, excerpts));
+  return composePresentation(
+    facts,
+    excerpts,
+    narrativeValues(facts, pages, excerpts),
+    facts.documentType === 'earnings' ? declaredForecastFactIds(pages, facts.facts) : new Set()
+  );
 }
 
 function composePresentation(
   facts: FactSummary,
   excerpts: SourceExcerpt[],
-  values: NarrativeValue[]
+  values: NarrativeValue[],
+  forecastFactIds: ReadonlySet<string> = new Set()
 ): SummaryPresentation {
   const policies = sectionPolicies(facts.documentType);
   const sections: SummarySection[] = policies.map(([, title]) => ({
@@ -168,7 +175,10 @@ function composePresentation(
     );
     if (facts.documentType === 'earnings')
       for (const f of primary.filter(
-        (f) => f.semantics.state === 'forecastAfter' && f.semantics.metricKind === 'amount'
+        (f) =>
+          f.semantics.state === 'forecastAfter' &&
+          f.semantics.metricKind === 'amount' &&
+          forecastFactIds.has(f.id)
       ))
         take(f);
   } else {
@@ -432,5 +442,20 @@ export function revalidatePresentation(
     canonicalJSON(value.values) !== canonicalJSON(expected.values)
   )
     throw new Error('原文引用とPDFが一致しません');
+  // Storage-only validation permits headline adjustments. Rechecking the PDF must
+  // still reject a stale or adjusted forecast from outside the declared unit.
+  if (
+    facts.documentType === 'earnings' &&
+    value.overview.some((id) => {
+      const fact = facts.facts.find((fact) => fact.id === id);
+      return (
+        fact &&
+        numeric(fact) &&
+        fact.semantics.state === 'forecastAfter' &&
+        !expected.overview.includes(id)
+      );
+    })
+  )
+    throw new Error('冒頭の修正後予想と原文の報告対象が一致しません');
   return value;
 }

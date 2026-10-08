@@ -734,29 +734,60 @@ function earningsTargets(pages: ExtractedPage[], context: DocumentContext) {
         }
       : null;
   const declaration = declaredForecastUnit(pages, context);
-  let forecast: ReportingTarget | null = null;
-  if (declaration) {
-    // Fields between the declaration and its first source belong to that unit.
-    // A child unit or a later FY declaration cannot replace this reporting target.
-    const blocks = pages.flatMap((p) => p.blocks);
-    const source = context.bindings.find((b) => {
-      if (b.sectionIds[b.sectionIds.length - 1] !== declaration.blockId || b.anchorId !== b.blockId)
-        return false;
-      const block = blocks.find((block) => block.id === b.blockId)!;
-      return (
-        block.kind === 'row' ||
-        (!/^(?:会社名|上場会社名|名称|範囲|会計基準)/.test(normalized(block.text)) &&
-          headingLevel(block) === null)
-      );
-    });
-    const binding = source ?? bindingFor(context, declaration.blockId);
-    forecast = {
-      period: declaration.period,
-      quarter: declaration.quarter,
-      attributes: reportingAttributesAt(binding),
-    };
-  }
-  return { actual, forecast, declaration };
+  return { actual, forecast: forecastReportingTarget(pages, context, declaration), declaration };
+}
+function forecastReportingTarget(
+  pages: ExtractedPage[],
+  context: DocumentContext,
+  declaration = declaredForecastUnit(pages, context)
+): ReportingTarget | null {
+  if (!declaration) return null;
+  // Fields between the declaration and its first source belong to that unit.
+  // A child unit or a later FY declaration cannot replace this reporting target.
+  const blocks = pages.flatMap((p) => p.blocks);
+  const source = context.bindings.find((b) => {
+    if (b.sectionIds[b.sectionIds.length - 1] !== declaration.blockId || b.anchorId !== b.blockId)
+      return false;
+    const block = blocks.find((block) => block.id === b.blockId)!;
+    return (
+      block.kind === 'row' ||
+      (!/^(?:会社名|上場会社名|名称|範囲|会計基準)/.test(normalized(block.text)) &&
+        headingLevel(block) === null)
+    );
+  });
+  const binding = source ?? bindingFor(context, declaration.blockId);
+  return {
+    period: declaration.period,
+    quarter: declaration.quarter,
+    attributes: reportingAttributesAt(binding),
+  };
+}
+/** Headline eligibility shares coverage's declared forecast unit, never surviving facts.
+ * Unknown attributes are not wildcards; only PDF-backed consumers can establish this set.
+ */
+export function declaredForecastFactIds(
+  pages: ExtractedPage[],
+  facts: VerifiedFact[]
+): Set<string> {
+  if (!facts.some((fact) => fact.semantics.state === 'forecastAfter')) return new Set();
+  const context = buildDocumentContext(pages);
+  // The forecast declaration is independent of missing/ambiguous actual-period headings.
+  const target = forecastReportingTarget(pages, context);
+  if (!target?.attributes || Object.values(target.attributes).some((value) => value === null))
+    return new Set();
+  return new Set(
+    facts
+      .filter(
+        (fact) =>
+          fact.semantics.state === 'forecastAfter' &&
+          isIssuerFact(fact, context) &&
+          isReportingMetricSource(factAnchor(fact), 'forecast', pages, context) &&
+          matchesReportingPeriod(fact, target.period, target.quarter) &&
+          sameReportingAttributes(fact.semantics, target.attributes) &&
+          matchesTargetSource(factAnchor(fact), target, context)
+      )
+      .map((fact) => fact.id)
+  );
 }
 function sourceFiscalPeriod(axis: string, context: string): string | null {
   const years = [...new Set(axis.match(/20\d{2}年\d{1,2}月期/g) ?? [])];

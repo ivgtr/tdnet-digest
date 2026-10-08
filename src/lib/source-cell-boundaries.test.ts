@@ -343,6 +343,90 @@ it('曖昧なセルで分断された桁の接頭値を原文照合で確定し�
   }
 });
 
+// Ownership ambiguity belongs to that quantity, not every nearby numeric run.
+// Exercise the drawing producer and canonical validation in both text orders.
+it.each(
+  (['before', 'after'] as const).flatMap((position) =>
+    [
+      ['20', '.5'],
+      ['20.', '5'],
+      ['20～', '25'],
+    ].map((parts) => ({ position, parts }))
+  )
+)(
+  '重なったセルの数量の$positionでも、一意な隣接セルの全数量を保持する: $parts',
+  ({ position, parts }) => {
+    const items =
+      position === 'before'
+        ? [item('100', 65, 40, 64), item(parts[0], 133, 40), item(parts[1], 152, 40)]
+        : [item(parts[0], 50, 40), item(parts[1], 69, 40), item('100', 88, 40, 18)];
+    const operations = [...closedGrid([0, 100], 30, 50), ...closedGrid([95, 200], 25, 45)];
+    operations.forEach((operation, i) => {
+      operation.index = i;
+    });
+    const page = extractPageLayout(items, 1, operations);
+    const owners = physicalCellOwners(buildTableCells(page.drawingLines, page.spans, 1));
+    const ambiguous = page.spans.find((span) => span.text === '100')!;
+    const independent = page.spans.filter((span) => span !== ambiguous);
+    expect(owners.get(ambiguous.id)).toBeNull();
+    expect(independent.every((span) => !!owners.get(span.id))).toBe(true);
+    expect(page.quantities.map((quantity) => [quantity.text, quantity.spanIds])).toEqual([
+      [parts.join(''), independent.map((span) => span.id)],
+    ]);
+    expect(() => validatePages([page])).not.toThrow();
+  }
+);
+
+it.each([
+  ['20.', '5～'],
+  ['1,', '00'],
+])('隣接セル内の全断片が不完全なら短い数量を回復しない: %j', (...parts) => {
+  const operations = [...closedGrid([0, 100], 30, 50), ...closedGrid([95, 200], 25, 45)];
+  operations.forEach((operation, i) => {
+    operation.index = i;
+  });
+  const page = extractPageLayout(
+    [item('100', 65, 40, 64), item(parts[0], 133, 40), item(parts[1], 152, 40)],
+    1,
+    operations
+  );
+  const owners = physicalCellOwners(buildTableCells(page.drawingLines, page.spans, 1));
+  expect(owners.get('p1s1')).toBeNull();
+  expect(owners.get('p1s2')).toBeTruthy();
+  expect(owners.get('p1s2')).toBe(owners.get('p1s3'));
+  expect(page.quantities).toEqual([]);
+});
+
+it('重なったセルの隣でも未所属の数量は独立した閉じたセルとみなさない', () => {
+  const operations = [...closedGrid([0, 100], 30, 50), ...closedGrid([95, 110], 25, 45)];
+  operations.forEach((operation, i) => {
+    operation.index = i;
+  });
+  const page = extractPageLayout([item('100', 65, 40, 64), item('20', 133, 40)], 1, operations);
+  const owners = physicalCellOwners(buildTableCells(page.drawingLines, page.spans, 1));
+  expect(owners.get('p1s1')).toBeNull();
+  expect(owners.has('p1s2')).toBe(false);
+  expect(page.quantities).toEqual([]);
+});
+
+it.each([
+  ['100.', '20'],
+  ['100', '～200'],
+  ['100～', '200'],
+])('重なったセルを含む小数・範囲断片は隣接する独立数量とみなさない: %j', (...texts) => {
+  const operations = [...closedGrid([0, 100], 30, 50), ...closedGrid([95, 200], 25, 45)];
+  operations.forEach((operation, i) => {
+    operation.index = i;
+  });
+  const page = extractPageLayout(
+    [item(texts[0], 65, 40, 64), item(texts[1], 133, 40)],
+    1,
+    operations
+  );
+  expect(page.quantities).toEqual([]);
+  expect(() => validatePages([page])).not.toThrow();
+});
+
 it('別セルを繋いだ行の数字・単位を本文数量として確定せず、同一セルの本文は保つ', () => {
   const items = [
     item('会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結', 0, 10, 440),

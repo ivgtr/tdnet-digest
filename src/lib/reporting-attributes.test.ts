@@ -14,6 +14,19 @@ it.each(['|', '｜', '│'])('明示フィールドだけを同じ行の隣接�
   expect(declaredSubjectsIn(textPage(text).blocks[0])).toEqual(['株式会社テスト']);
 });
 
+it.each(['|', '｜', '│'])('全区切りで裸の列見出しを属性へ昇格させない: %s', (separator) => {
+  for (const text of [
+    `第1四半期末 ${separator} 合計 ${separator}${separator} (連結)`,
+    `第1四半期末 ${separator} 合計\n${separator} (連結)`,
+    `参考会社 ${separator} 株式会社他社`,
+  ]) {
+    expect(reportingFieldSegments(text)).toEqual([]);
+    const page = textPage(`${text}\n配当金は10円です。`);
+    expect(buildDocumentContext([page]).bindings.flatMap((b) => b.declarations)).toEqual([]);
+  }
+  expect(reportingFieldSegments('(連結)')).toEqual(['(連結)']);
+});
+
 it('空欄・別ラベル・別行・任意数値をフィールド値として連結しない', () => {
   expect(reportingFieldSegments('範囲 │ │ 連結')).toEqual(['範囲']);
   expect(

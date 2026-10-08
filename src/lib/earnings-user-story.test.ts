@@ -4,6 +4,7 @@ import { textPage } from './fixtures/v4-test-source';
 import { coverageReport } from './fact-coverage';
 import {
   earningsCoverPage,
+  assertEarningsStoryCoverage,
   replayEarningsStory,
 } from '../../evaluation/scripts/earnings-story-fixture';
 
@@ -43,6 +44,20 @@ describe('決算短信を要約し、閉じて再表示する利用者のスト�
   it('隣接率のある原表紙→生成入力→当期優先表示→保存再検証で、当期・前年・次期の値を保つ', async () => {
     const result = await replayEarningsStory([earningsCoverPage()]);
     expect(result.quantities).toBe(23);
-    expect(result.coverage.every((slot) => slot.status === 'satisfied')).toBe(true);
+    expect(result.coverage).toHaveLength(13);
+    expect(() => assertEarningsStoryCoverage(result.coverage, true)).not.toThrow();
+    // Negative controls prove that empty/subset/duplicate reports cannot pass vacuously.
+    for (const invalid of [
+      [],
+      result.coverage.filter((slot) => !slot.requirement.startsWith('COVERAGE:当年決算実績')),
+      result.coverage.slice(1),
+      [...result.coverage.slice(1), result.coverage[1]],
+      result.coverage.map((slot, i) => (i === 0 ? { ...slot, sourceIds: [] } : slot)),
+    ])
+      expect(() => assertEarningsStoryCoverage(invalid, false)).toThrow();
+    const unconfirmed = result.coverage.map((slot, i) =>
+      i === 0 ? { ...slot, status: 'absent' as const } : slot
+    );
+    expect(() => assertEarningsStoryCoverage(unconfirmed, true)).toThrow();
   });
 });

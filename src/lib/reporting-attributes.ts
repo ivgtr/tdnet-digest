@@ -49,7 +49,7 @@ export function reportingFieldSegments(text: string): string[] {
           parts.push(`${cells[i]} ${cells[++i]}`);
         else {
           // Bare table-column atoms are not independent metadata declarations.
-          if (fieldStart(cells[i]) || !line.includes('│')) parts.push(cells[i]);
+          if (fieldStart(cells[i]) || !/[|│]/.test(line)) parts.push(cells[i]);
           // A blank or unproved cell relationship cannot lend a later bare value.
           if (fieldName(cells[i]) && next === '') blockedValue = true;
         }
