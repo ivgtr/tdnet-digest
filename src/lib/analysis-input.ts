@@ -2,7 +2,7 @@ import { canonicalJSON, hashText, type FactSummary } from './fact-contract';
 import type { SummaryPresentation } from './summary-presentation';
 import {
   supportedExplanations,
-  supportedObservations,
+  reconciledOrganizationObservations,
   unresolvedExplanationSources,
   unresolvedTableSources,
 } from './summary-organization';
@@ -105,20 +105,26 @@ export function buildAnalysisInput(
   });
 
   const explanations = supportedExplanations(presentation.organization);
-  const observations = supportedObservations(
+  const reconciled = reconciledOrganizationObservations(
     presentation.organization,
     facts,
     presentation.values,
     presentation.excerpts
   );
+  const observations = reconciled.accepted;
   for (const [kind, items] of [
     ['explanation', explanations],
     ['observation', observations],
   ] as const) {
     for (const item of items) {
+      const mergedFactId = kind === 'observation' ? reconciled.merged.get(item.id) : undefined;
       const text =
         'metric' in item
-          ? `${item.metric}: ${literalValue(presentation.values.find((v) => v.id === item.valueId)!)}${item.comparison ? ` / ${comparisonAxisLabels[item.comparison.axis]} ${item.comparison.period}: ${literalValue(presentation.values.find((v) => v.id === item.comparison!.valueId)!)}` : ''}`
+          ? `${item.metric}: ${
+              mergedFactId
+                ? `確定事実 fact:${mergedFactId} の同じ原数量への補足（区分: ${item.measure}）`
+                : literalValue(presentation.values.find((v) => v.id === item.valueId)!)
+            }${item.comparison ? ` / ${comparisonAxisLabels[item.comparison.axis]} ${item.comparison.period} ${stateLabels[item.comparison.state]}: ${literalValue(presentation.values.find((v) => v.id === item.comparison!.valueId)!)}` : ''}`
           : renderNarrativeText(item.text, presentation.values);
       evidence.push({
         id: `${kind}:${item.id}`,
@@ -134,8 +140,8 @@ export function buildAnalysisInput(
         ]
           .filter(Boolean)
           .join(' / '),
-        sourceIds: unique(item.sourceIds),
-        pages: pagesOf(item.sourceIds),
+        sourceIds: unique([...item.sourceIds, ...(mergedFactId ? [mergedFactId] : [])]),
+        pages: pagesOf([...item.sourceIds, ...(mergedFactId ? [mergedFactId] : [])]),
       });
     }
   }

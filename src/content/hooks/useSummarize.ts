@@ -263,6 +263,20 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
             .filter(Boolean)
             .join(' / ')
         );
+        // An unread cache is not a cache miss. Require an explicit retry, and
+        // do not replace a follow-up the user started while this read was pending.
+        if (canRestore('score'))
+          setScore({
+            loading: false,
+            data: null,
+            error: '保存された採点を読み込めませんでした',
+          });
+        if (canRestore('analyze'))
+          setAnalysis({
+            loading: false,
+            data: null,
+            error: '保存された追加分析を読み込めませんでした',
+          });
         setStagesReady(true);
         return;
       }
@@ -585,6 +599,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       !result?.resultId ||
       score.loading ||
       score.data ||
+      score.error ||
       scoreStarted.current === result.resultId
     )
       return;

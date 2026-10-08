@@ -32,37 +32,45 @@ function reviewable(value: ConfirmedObservation): DisclosureObservation {
   return copy as DisclosureObservation;
 }
 
-function reviewedTable(label = '事業損失', previous = '10') {
+function reviewedTable(label = '事業損失', previous = '10', includeRate = false) {
+  const columns = [
+    { label: '売上高', current: '100', previous: '90', x: 280, rate: includeRate },
+    { label, current: '20', previous, x: includeRate ? 740 : 480, rate: false },
+    { label: '当期純利益', current: '10', previous: '8', x: includeRate ? 940 : 680, rate: false },
+  ];
   const page = cells(
     [
       ['上場会社名 株式会社テスト', 0, 0, 240],
       ['1. 連結経営成績', 0, 30, 280],
-      ['売上高', 280, 60, 140],
-      [label, 480, 60, 140],
-      ['当期純利益', 680, 60, 140],
-      ['百万円', 340, 90, 80],
-      ['百万円', 540, 90, 80],
-      ['百万円', 740, 90, 80],
       ['2026年3月期', 0, 120, 140],
-      ['100', 340, 120, 80],
-      ['20', 540, 120, 80],
-      ['10', 740, 120, 80],
       ['2025年3月期', 0, 150, 140],
-      ['90', 340, 150, 80],
-      [previous, 540, 150, 80],
-      ['8', 740, 150, 80],
+      ...columns.flatMap((column): [string, number, number, number][] => [
+        [column.label, column.x, 60, column.rate ? 360 : 140],
+        ['百万円', column.x + 60, 90, 80],
+        [column.current, column.x + 60, 120, 80],
+        [column.previous, column.x + 60, 150, 80],
+        ...(column.rate
+          ? ([
+              ['%', column.x + 180, 90, 80],
+              ['11.1', column.x + 180, 120, 80],
+              ['5.0', column.x + 180, 150, 80],
+            ] as [string, number, number, number][])
+          : []),
+      ]),
     ],
     1
   );
-  const inputs = buildDocumentContext([page]).tableMappings.map((mapping) =>
-    tableAmount([page], mapping, {
+  const inputs = buildDocumentContext([page]).tableMappings.map((mapping) => {
+    const amount = tableAmount([page], mapping, {
       period: page.spans.find((s) => s.id === mapping.periodIds[0])!.text,
       subject: '株式会社テスト',
       scope: '連結',
       basis: null,
       state: 'actual',
-    })
-  );
+    });
+    if (amount.unit === '%') amount.semantics.metricKind = 'rate';
+    return amount;
+  });
   const reviewed = reviewCandidates(candidateResponse(inputs, [page], 'other'), 'other', [page]);
   expect(reviewed.unverified).toEqual([]);
   const facts: FactSummary = {
@@ -304,10 +312,13 @@ it('原数量を先に照合し、明確な文脈矛盾だけを除き、別名�
       f.id === fact.id ? { ...f, period, semantics: { ...f.semantics, scope, basis, state } } : f
     ),
   });
-  expect(
-    classify({ ...selected, scope: '非連結', basis: '国際会計基準' }, withMeaning('個別', 'IFRS'))
-      .conflicts
-  ).toEqual([]);
+  const aliases = classify(
+    { ...selected, scope: '非連結', basis: '国際会計基準' },
+    withMeaning('個別', 'IFRS')
+  );
+  expect(aliases.conflicts).toEqual([]);
+  expect(aliases.supplement).toEqual([]);
+  expect(aliases.primary.get(fact.id)?.valueId).toBe(fact.id);
   expect(
     classify({ ...selected, basis: '日本基準' }, withMeaning('連結', 'IFRS')).conflicts
   ).toHaveLength(1);
@@ -418,4 +429,149 @@ it('意味点検が同一実績セルを予想として誤承認しても、保�
     buildAnalysisCalculations(facts, restored).every((c) => c.sourceObservationIds.length === 0)
   ).toBe(true);
   expect(restored.organization!.observations).toEqual([misapproved]);
+});
+
+it('増減率も原数量の所有者と比較軸を照合し、無関係な比率を表示・保存・分析へ通さない', () => {
+  const { facts, fact, display, page, observation, review } = reviewedTable('営業利益', '10', true);
+  const rate = facts.facts.find(
+    (f) => f.label === '売上高' && f.unit === '%' && f.period === fact.period
+  )!;
+  const revenue = facts.facts.find(
+    (f) => f.label === '売上高' && f.unit === '百万円' && f.period === fact.period
+  )!;
+  expect(observation.comparison?.rateId).toBeNull();
+  const nativeRate = rate.evidence.kind === 'table' ? rate.evidence.valueId : rate.id;
+  const classify = (claim: DisclosureObservation, input = facts) =>
+    reconcileObservations(input, [claim], display.excerpts, display.values);
+  for (const rateId of [rate.id, nativeRate]) {
+    const claim = { ...observation, comparison: { ...observation.comparison!, rateId } };
+    expect(classify(claim).conflicts).toEqual([claim]);
+    // The same guard applies when only the current amount is supplemental.
+    expect(
+      classify(claim, { ...facts, facts: facts.facts.filter((f) => f.id !== fact.id) }).conflicts
+    ).toEqual([claim]);
+  }
+  const valid = {
+    ...reviewable(factObservation(revenue, facts, display.excerpts, display.values)),
+    id: 'observation-1',
+  };
+  expect(valid.comparison?.rateId).toBe(rate.id);
+  expect(classify(valid).conflicts).toEqual([]);
+  // An unknown entity alias deliberately bypasses the primary merge. The known
+  // physical rate still belongs to this amount's year-on-year comparison.
+  const wrongAxis = {
+    ...valid,
+    entity: '当社',
+    comparison: { ...valid.comparison!, axis: 'sequential' as const },
+  };
+  expect(classify(wrongAxis).conflicts).toEqual([wrongAxis]);
+  const ambiguousReference = {
+    ...valid,
+    entity: '当社',
+    comparison: {
+      ...valid.comparison!,
+      period: '前期',
+      state: 'unspecified' as const,
+    },
+  };
+  expect(classify(ambiguousReference).conflicts).toEqual([]);
+  expect(classify(ambiguousReference).supplement).toEqual([ambiguousReference]);
+
+  const onlyRateOwner = {
+    ...facts,
+    facts: facts.facts.filter(
+      (f) => f.label !== '営業利益' && !(f.label === '売上高' && f.period !== fact.period)
+    ),
+  };
+  const borrowed = {
+    ...valid,
+    valueId: observation.valueId,
+    comparison: { ...valid.comparison!, valueId: observation.comparison!.valueId },
+  };
+  expect(classify(borrowed, onlyRateOwner).conflicts).toEqual([borrowed]);
+  const unowned = { ...facts, facts: facts.facts.filter((f) => f.id !== rate.id) };
+  expect(
+    classify({ ...valid, comparison: { ...valid.comparison!, rateId: nativeRate } }, unowned)
+      .conflicts
+  ).toEqual([]);
+
+  const unrelated = {
+    ...observation,
+    comparison: { ...observation.comparison!, rateId: nativeRate },
+  };
+  review([unrelated]);
+  const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), facts, [page]);
+  expect(
+    supportedObservations(restored.organization!, facts, restored.values, restored.excerpts)
+  ).toEqual([]);
+  const profitRow = renderFacts(facts, restored)
+    .split('\n')
+    .find((line) => line.startsWith('| ') && line.includes('営業利益'))!;
+  expect(profitRow).toContain('約');
+  expect(profitRow).not.toContain('原文');
+  expect(buildAnalysisInput(facts, restored).coverage.observations).toBe(0);
+});
+
+it('既知の指標別名は同じ数量へ統合し、比較値の別名も重複表示しない', () => {
+  const { facts, display, review } = reviewedTable();
+  const current = facts.facts.find((f) => f.label === '売上高' && f.value === 100)!;
+  const base = reviewable(factObservation(current, facts, display.excerpts, display.values));
+  const alias = { ...base, id: 'observation-0', metric: '営業収益' };
+  const before = {
+    ...alias,
+    id: 'observation-1',
+    valueId: base.comparison!.valueId,
+    period: base.comparison!.period,
+    state: base.comparison!.state,
+    comparison: null,
+  };
+  const result = reconcileObservations(facts, [alias, before], display.excerpts, display.values);
+  expect(result.conflicts).toEqual([]);
+  expect(result.supplement).toEqual([]);
+  expect(result.primary.get(current.id)?.comparison).toEqual(base.comparison);
+  const aliasContext = { ...alias, scope: '非連結', basis: '国際会計基準' };
+  const aliasedFacts = {
+    ...facts,
+    facts: facts.facts.map((f) => ({
+      ...f,
+      semantics: {
+        ...f.semantics,
+        scope: f.id === current.id ? '個別' : '単体',
+        basis: f.id === current.id ? 'IFRS' : '国際会計基準',
+      },
+    })),
+  };
+  const aligned = reconcileObservations(
+    aliasedFacts,
+    [aliasContext],
+    display.excerpts,
+    display.values
+  );
+  expect(aligned.conflicts).toEqual([]);
+  expect(aligned.supplement).toEqual([]);
+  expect(aligned.primary.get(current.id)?.comparison).toEqual(base.comparison);
+  const noFacts = { ...facts, facts: [] };
+  const priorAlias = { ...before, metric: '売上収益' };
+  expect(
+    reconcileObservations(noFacts, [alias, priorAlias], display.excerpts, display.values).supplement
+  ).toEqual([alias]);
+  const unknownPeriod = { ...priorAlias, period: '比較期間不明' };
+  expect(
+    reconcileObservations(noFacts, [alias, unknownPeriod], display.excerpts, display.values)
+      .supplement
+  ).toEqual([alias, unknownPeriod]);
+  const unknownName = { ...alias, metric: 'revenue' };
+  expect(
+    reconcileObservations(facts, [unknownName], display.excerpts, display.values).supplement
+  ).toEqual([unknownName]);
+  expect(result.merged.get(alias.id)).toBe(current.id);
+  review([alias]);
+  const analysis = buildAnalysisInput(facts, display);
+  const note = analysis.evidence.find((e) => e.id === `observation:${alias.id}`)!;
+  expect(note.text).toContain(`fact:${current.id} の同じ原数量への補足`);
+  expect(note.text).toContain('区分: revenue');
+  expect(note.text).toContain('前年同期 2025年3月期 実績: 90百万円');
+  expect(note.text).not.toContain('100百万円');
+  expect(note.sourceIds).toContain(current.id);
+  expect(analysis.evidence.find((e) => e.id === `fact:${current.id}`)?.text).toContain('100百万円');
 });

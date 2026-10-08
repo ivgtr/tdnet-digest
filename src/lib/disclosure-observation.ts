@@ -473,29 +473,43 @@ export function factObservation(
   };
 }
 
+const compactContext = (value: string | null) =>
+  value?.normalize('NFKC').replace(/\s/g, '') ?? null;
+const scopeKey = (value: string | null) => {
+  const text = compactContext(value);
+  return text === '連結'
+    ? 'consolidated'
+    : /^(個別|単体|非連結)$/.test(text ?? '')
+      ? 'separate'
+      : null;
+};
+const basisKey = (value: string | null) => {
+  const text = compactContext(value)?.toUpperCase();
+  return text === 'IFRS' || text === '国際会計基準'
+    ? 'IFRS'
+    : text === '日本基準' || text === '米国基準'
+      ? text
+      : null;
+};
+// Unknown names retain their own identity; two unknown canonical keys are not aliases.
+const contextIdentity = (value: string | null, key: (value: string) => string | null) => {
+  if (value === null) return null;
+  const known = key(value);
+  return known === null ? `named:${compactContext(value)}` : `known:${known}`;
+};
+const sameMetric = (a: string, b: string) =>
+  contextIdentity(a, reportingMetricKey) === contextIdentity(b, reportingMetricKey);
+const sameScope = (a: string | null, b: string | null) =>
+  contextIdentity(a, scopeKey) === contextIdentity(b, scopeKey);
+const sameBasis = (a: string | null, b: string | null) =>
+  contextIdentity(a, basisKey) === contextIdentity(b, basisKey);
+
 /** Only disjoint, explicitly understood meanings are contradictions. Free-form labels,
  * aliases and missing metadata still belong to the independent semantic review. */
 function contradictsConfirmedContext(
   confirmed: DisclosureObservation,
   claimed: DisclosureObservation
 ): boolean {
-  const compact = (value: string | null) => value?.normalize('NFKC').replace(/\s/g, '') ?? null;
-  const scope = (value: string | null) => {
-    const text = compact(value);
-    return text === '連結'
-      ? 'consolidated'
-      : /^(個別|単体|非連結)$/.test(text ?? '')
-        ? 'separate'
-        : null;
-  };
-  const basis = (value: string | null) => {
-    const text = compact(value)?.toUpperCase();
-    return text === 'IFRS' || text === '国際会計基準'
-      ? 'IFRS'
-      : text === '日本基準' || text === '米国基準'
-        ? text
-        : null;
-  };
   const period = (value: string | null) => {
     if (!value) return null;
     const text = reportingPeriodText(value);
@@ -538,8 +552,8 @@ function contradictsConfirmedContext(
       claimed.measure !== 'other' &&
       confirmed.measure !== claimed.measure) ||
     different(reportingMetricKey(confirmed.metric), reportingMetricKey(claimed.metric)) ||
-    different(scope(confirmed.scope), scope(claimed.scope)) ||
-    different(basis(confirmed.basis), basis(claimed.basis)) ||
+    different(scopeKey(confirmed.scope), scopeKey(claimed.scope)) ||
+    different(basisKey(confirmed.basis), basisKey(claimed.basis)) ||
     !!periodConflict
   );
 }
@@ -552,6 +566,7 @@ export function reconcileObservations(
   values: NarrativeValue[]
 ): {
   primary: Map<string, ConfirmedObservation>;
+  merged: Map<string, string>;
   supplement: DisclosureObservation[];
   conflicts: DisclosureObservation[];
 } {
@@ -568,6 +583,7 @@ export function reconcileObservations(
       .filter((f) => f.quantity)
       .map((f) => [f.id, factObservation(f, facts, excerpts, values)])
   );
+  const merged = new Map<string, string>();
   const supplement: DisclosureObservation[] = [];
   const conflicts: DisclosureObservation[] = [];
   const periodKey = (period: string | null) =>
@@ -578,6 +594,13 @@ export function reconcileObservations(
       .replace(/中間期(?:累計)?(?:期間)?$/, '第2四半期累計')
       .replace(/\((累計|単独)\)(?:期間)?$/, '$1')
       .replace(/(累計|単独)期間$/, '$1');
+  const comparisonKey = (comparison: ObservationComparison) =>
+    canonicalJSON([
+      native(comparison.valueId),
+      comparison.axis,
+      periodKey(comparison.period),
+      comparison.state,
+    ]);
   const grouped = new Map<string, DisclosureObservation[]>();
   const owners = new Map<string, ConfirmedObservation[]>();
   for (const confirmed of primary.values()) {
@@ -592,13 +615,44 @@ export function reconcileObservations(
       confirmed.length > 0 && confirmed.every((value) => contradictsConfirmedContext(value, claim))
     );
   };
+  const contradictedRate = (observation: DisclosureObservation) => {
+    const comparison = observation.comparison;
+    if (!comparison?.rateId) return false;
+    const rateId = native(comparison.rateId);
+    const rateOwners = owners.get(rateId) ?? [];
+    const claimedRate = { ...observation, valueId: comparison.rateId, measure: 'rate' as const };
+    return (
+      rateOwners.length > 0 &&
+      rateOwners.every((owner) => {
+        const rate = facts.facts.find((f) => f.id === owner.id)!;
+        if (rate.semantics.metricKind !== 'rate' || contradictsConfirmedContext(owner, claimedRate))
+          return true;
+        // A known amount/rate pairing owns the current physical amount, even
+        // without an extracted comparison. A known comparison also owns its axis.
+        const paired = facts.facts.filter((amount) => amount.quantity && canPair(amount, rate));
+        return (
+          paired.length > 0 &&
+          paired.every((amount) => {
+            const expected = primary.get(amount.id)!.comparison;
+            return (
+              native(amount.id) !== native(observation.valueId) ||
+              (expected !== null &&
+                (expected.axis !== comparison.axis ||
+                  native(expected.valueId) !== native(comparison.valueId)))
+            );
+          })
+        );
+      })
+    );
+  };
   for (const observation of observations) {
     // Resolve physical identity before semantic matching: a changed state/metric
     // must not escape reconciliation as a supposedly new quantity. Apply the same
     // rule to comparison operands, even when the current quantity is supplemental.
     if (
       contradicted(observation) ||
-      (observation.comparison && contradicted({ ...observation, ...observation.comparison }))
+      (observation.comparison && contradicted({ ...observation, ...observation.comparison })) ||
+      contradictedRate(observation)
     ) {
       conflicts.push(observation);
       continue;
@@ -607,11 +661,11 @@ export function reconcileObservations(
       (p) =>
         native(p.valueId) === native(observation.valueId) &&
         (observation.entity === null || observation.entity === p.entity) &&
-        observation.metric === p.metric &&
+        sameMetric(observation.metric, p.metric) &&
         observation.state === p.state &&
         (observation.period === null || periodKey(observation.period) === periodKey(p.period)) &&
-        (observation.scope === null || observation.scope === p.scope) &&
-        (observation.basis === null || observation.basis === p.basis)
+        (observation.scope === null || sameScope(observation.scope, p.scope)) &&
+        (observation.basis === null || sameBasis(observation.basis, p.basis))
     );
     if (matches.length !== 1) {
       supplement.push(observation);
@@ -620,13 +674,6 @@ export function reconcileObservations(
     const current = matches[0];
     grouped.set(current.id, [...(grouped.get(current.id) ?? []), observation]);
   }
-  const comparisonKey = (comparison: ObservationComparison) =>
-    canonicalJSON([
-      native(comparison.valueId),
-      comparison.axis,
-      periodKey(comparison.period),
-      comparison.state,
-    ]);
   for (const [id, reviewed] of grouped) {
     const current = primary.get(id)!;
     const measures = new Set(
@@ -637,8 +684,8 @@ export function reconcileObservations(
     const comparisonBasis = (fact: VerifiedFact) =>
       canonicalJSON([
         fact.semantics.subject,
-        fact.semantics.scope,
-        fact.semantics.basis,
+        contextIdentity(fact.semantics.scope, scopeKey),
+        contextIdentity(fact.semantics.basis, basisKey),
         fact.semantics.metricKind,
         fact.semantics.qualifiers,
         fact.semantics.conditions,
@@ -670,6 +717,7 @@ export function reconcileObservations(
       primary.set(id, { ...current, unresolved: true });
       continue;
     }
+    for (const observation of reviewed) merged.set(observation.id, id);
     const comparison = comparisons[0] ?? null;
     const reference = comparison && facts.facts.find((f) => compatibleReference(comparison, f));
     primary.set(current.id, {
@@ -693,6 +741,7 @@ export function reconcileObservations(
   const displayed = [...primary.values(), ...supplement];
   return {
     primary,
+    merged,
     conflicts,
     supplement: supplement.filter(
       (p) =>
@@ -702,10 +751,11 @@ export function reconcileObservations(
             owner.comparison &&
             native(owner.comparison.valueId) === native(p.valueId) &&
             owner.entity === p.entity &&
-            owner.metric === p.metric &&
-            owner.scope === p.scope &&
-            owner.basis === p.basis &&
-            owner.comparison.state === p.state
+            sameMetric(owner.metric, p.metric) &&
+            sameScope(owner.scope, p.scope) &&
+            sameBasis(owner.basis, p.basis) &&
+            owner.comparison.state === p.state &&
+            periodKey(owner.comparison.period) === periodKey(p.period)
         )
     ),
   };

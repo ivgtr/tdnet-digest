@@ -310,39 +310,43 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(fresh);
   });
 
-  it('遅い保存読込が開始済みの追加分析を解除・置換しない', async () => {
-    const response = await responseFor();
-    const read = deferred<Record<string, unknown>>(),
-      analysis = deferred<unknown>();
-    sendMessage.mockResolvedValueOnce(response).mockReturnValueOnce(analysis.promise);
-    const hook = await mount();
-    await act(async () => hook().summarize());
-    await act(async () => hook().reset());
-    const originalGet = chrome.storage.local.get;
-    chrome.storage.local.get = ((keys: string | string[], callback?: (data: unknown) => void) =>
-      Array.isArray(keys)
-        ? read.promise
-        : originalGet(keys, callback!)) as typeof chrome.storage.local.get;
-    let restoring: Promise<boolean>;
-    await act(async () => {
-      restoring = hook().showCached();
-    });
-    // Source/result-ID verification must finish before analysis can be started;
-    // only the independent stage-cache read is deliberately left pending.
-    await vi.waitFor(async () => {
-      await act(async () => {});
-      expect(hook().result?.resultId).toBe(response.resultId);
-    });
-    await act(async () => hook().analyze());
-    expect(hook().analysis.loading).toBe(true);
-    await act(async () => {
-      read.resolve({});
-      await restoring;
-    });
-    expect(hook().analysis.loading).toBe(true);
-    await act(async () => analysis.resolve({ analysis: additionalAnalysis }));
-    expect(hook().analysis.data).toEqual(additionalAnalysis);
-  });
+  it.each(['success', 'failure'])(
+    '遅い保存読込の%sが開始済みの追加分析を解除・置換しない',
+    async (outcome) => {
+      const response = await responseFor();
+      const read = deferred<Record<string, unknown>>(),
+        analysis = deferred<unknown>();
+      sendMessage.mockResolvedValueOnce(response).mockReturnValueOnce(analysis.promise);
+      const hook = await mount();
+      await act(async () => hook().summarize());
+      await act(async () => hook().reset());
+      const originalGet = chrome.storage.local.get;
+      chrome.storage.local.get = ((keys: string | string[], callback?: (data: unknown) => void) =>
+        Array.isArray(keys)
+          ? read.promise
+          : originalGet(keys, callback!)) as typeof chrome.storage.local.get;
+      let restoring: Promise<boolean>;
+      await act(async () => {
+        restoring = hook().showCached();
+      });
+      // Source/result-ID verification must finish before analysis can be started;
+      // only the independent stage-cache read is deliberately left pending.
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(hook().result?.resultId).toBe(response.resultId);
+      });
+      await act(async () => hook().analyze());
+      expect(hook().analysis.loading).toBe(true);
+      await act(async () => {
+        if (outcome === 'success') read.resolve({});
+        else read.reject(new Error('storage read failed'));
+        await restoring;
+      });
+      expect(hook().analysis.loading).toBe(true);
+      await act(async () => analysis.resolve({ analysis: additionalAnalysis }));
+      expect(hook().analysis.data).toEqual(additionalAnalysis);
+    }
+  );
 
   it('smart→全文→通常へ切り替え、保存後は通信せず復元する', async () => {
     settings.extractionMode = 'smart';
@@ -552,7 +556,14 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
         ? { loading: false, data: score, error: null }
         : { loading: false, data: null, error: '保存された採点の形式・確定事実との対応が不正です' }
     );
+    await act(async () => hook().startScore());
     expect(sendMessage).not.toHaveBeenCalled();
+    if (!valid) {
+      sendMessage.mockResolvedValue({ error: '明示的な再採点' });
+      await act(async () => hook().retryScore());
+      expect(sendMessage).toHaveBeenCalledOnce();
+      expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'score' }));
+    }
   });
 });
 
@@ -824,6 +835,55 @@ describe('実Reactの要約行アクション配置', () => {
 // Storage failures and lifecycle races belong here: real state/effects/DOM,
 // with only Chrome messaging and storage substituted at the boundary.
 describe('保存失敗と一覧ライフサイクルの回復', () => {
+  it('後続キャッシュの読込失敗では開き直しても自動課金せず、本文を保って明示再試行できる', async () => {
+    const response = await responseFor();
+    stored[await keyFor('full')] = response;
+    const get = vi.mocked(chrome.storage.local.get).getMockImplementation()!;
+    vi.mocked(chrome.storage.local.get).mockImplementation((keys, callback) =>
+      Array.isArray(keys) ? Promise.reject(new Error('storage read failed')) : get(keys, callback)
+    );
+    sendMessage.mockImplementation(async ({ action }) =>
+      action === 'score' ? { error: '固定応答の採点失敗' } : { analysis: additionalAnalysis }
+    );
+    const { row, button } = await mountButton();
+    await vi.waitFor(() => expect(button.textContent).toBe('表示'));
+    await click(button);
+    const summaryRow = await summaryRowFor(row);
+    await vi.waitFor(() =>
+      expect(summaryRow.querySelector('[data-persistence-warning]')?.textContent).toContain(
+        '保存された採点・追加分析を読み込めませんでした'
+      )
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+    await click(button);
+    await click(button);
+    const reopened = await summaryRowFor(row);
+    await vi.waitFor(() =>
+      expect(reopened.querySelector('#score-result')?.textContent).toContain(
+        '保存された採点を読み込めませんでした'
+      )
+    );
+    await changeSettings({ experimentalScoring: false });
+    await changeSettings({ experimentalScoring: true });
+    expect(sendMessage).not.toHaveBeenCalled();
+    const body = reopened.querySelector('#score-result')!.previousElementSibling!;
+    const bodyHtml = body.innerHTML;
+    await click(reopened.querySelector<HTMLButtonElement>('#retry-score-btn')!);
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'score' }));
+    const analyze = reopened.querySelector<HTMLButtonElement>('#analyze-btn')!;
+    expect(analyze.textContent).toBe('再試行');
+    await click(analyze);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'analyze' }));
+    expect(reopened.querySelector('#analysis-result')?.textContent).toContain(
+      additionalAnalysis.issues[0].conclusion
+    );
+    expect(reopened.querySelector('#score-result')!.previousElementSibling).toBe(body);
+    expect(body.innerHTML).toBe(bodyHtml);
+    expect(button.textContent).toBe('閉じる');
+  });
+
   it('保存失敗を生成失敗にせず、要約・追加分析を表示して保存警告を分ける', async () => {
     settings.experimentalScoring = false;
     const response = await responseFor();
@@ -975,6 +1035,13 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
       messages.forEach((listener) => listener({ action: 'toggleExtension', enabled }))
     );
   }
+  async function waitForSubscriptions(expected: number) {
+    // Root insertion precedes the asynchronous settings/cache effects.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(listeners.size).toBe(expected);
+    });
+  }
   async function mountLifecycle() {
     container = document.createElement('div');
     document.body.append(container);
@@ -1018,18 +1085,12 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     await toggle(true);
     await toggle(true);
     expect(doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
-    await vi.waitFor(async () => {
-      await act(async () => {});
-      expect(listeners.size).toBe(subscriptions);
-    });
+    await waitForSubscriptions(subscriptions);
     await click(row.querySelector('button')!);
     await summaryRowFor(row);
     await toggle(false);
     await toggle(true);
-    await vi.waitFor(async () => {
-      await act(async () => {});
-      expect(listeners.size).toBe(subscriptions);
-    });
+    await waitForSubscriptions(subscriptions);
     expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
   });
 
@@ -1042,6 +1103,7 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     const oldButton = row.querySelector('button')!;
     await click(oldButton);
     await act(async () => row.querySelector('a')!.setAttribute('href', 'replacement.pdf'));
+    await waitForSubscriptions(subscriptions);
     expect(row.querySelector('button')).not.toBe(oldButton);
     expect(row.querySelector('button')?.textContent).toBe('要約');
     await act(async () => stale.resolve(await responseFor()));
@@ -1049,9 +1111,10 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     expect(save).not.toHaveBeenCalled();
     const reloadButton = row.querySelector('button');
     await act(async () => frame.dispatchEvent(new Event('load')));
+    await waitForSubscriptions(subscriptions);
     expect(row.querySelector('button')).not.toBe(reloadButton);
-    expect(listeners.size).toBe(subscriptions);
     await act(async () => row.querySelector('a')!.setAttribute('href', pdfUrl));
+    await waitForSubscriptions(subscriptions);
     sendMessage.mockResolvedValue(await responseFor());
     await click(row.querySelector('button')!);
     const displayed = await summaryRowFor(row);
@@ -1065,9 +1128,9 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
       frame.remove();
       replacement = frameFixture();
     });
+    await waitForSubscriptions(subscriptions);
     expect(doc.querySelector('.tdnet-digest-header')).toBeNull();
     expect(replacement.doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
-    expect(listeners.size).toBe(subscriptions);
     await act(async () => frame.dispatchEvent(new Event('load')));
     expect(doc.querySelector('.tdnet-digest-header')).toBeNull();
     expect(replacement.doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
