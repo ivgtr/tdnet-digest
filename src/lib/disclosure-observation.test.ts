@@ -6,6 +6,7 @@ import { reviewCandidates } from './fact-candidates';
 import type { FactSummary } from './fact-contract';
 import {
   factObservation,
+  canPair,
   reconcileObservations,
   observationChange,
   type DisclosureObservation,
@@ -314,13 +315,13 @@ it('原数量を先に照合し、明確な文脈矛盾だけを除き、別名�
   });
   const aliases = classify(
     { ...selected, scope: '非連結', basis: '国際会計基準' },
-    withMeaning('個別', 'IFRS')
+    withMeaning('個別', 'IFRS会計基準')
   );
   expect(aliases.conflicts).toEqual([]);
   expect(aliases.supplement).toEqual([]);
   expect(aliases.primary.get(fact.id)?.valueId).toBe(fact.id);
   expect(
-    classify({ ...selected, basis: '日本基準' }, withMeaning('連結', 'IFRS')).conflicts
+    classify({ ...selected, basis: '日本基準' }, withMeaning('連結', 'IFRS会計基準')).conflicts
   ).toHaveLength(1);
   expect(
     classify(
@@ -440,6 +441,19 @@ it('増減率も原数量の所有者と比較軸を照合し、無関係な比�
     (f) => f.label === '売上高' && f.unit === '百万円' && f.period === fact.period
   )!;
   expect(observation.comparison?.rateId).toBeNull();
+  const aliasAmount = {
+    ...revenue,
+    semantics: { ...revenue.semantics, scope: '個別', basis: 'IFRS会計基準' },
+  };
+  for (const [scope, basis, paired] of [
+    ['単体', 'IFRS', true],
+    ['非連結', '国際会計基準', true],
+    ['連結', 'IFRS', false],
+    ['個別', '日本基準', false],
+  ] as const)
+    expect(canPair(aliasAmount, { ...rate, semantics: { ...rate.semantics, scope, basis } })).toBe(
+      paired
+    );
   const nativeRate = rate.evidence.kind === 'table' ? rate.evidence.valueId : rate.id;
   const classify = (claim: DisclosureObservation, input = facts) =>
     reconcileObservations(input, [claim], display.excerpts, display.values);
@@ -537,7 +551,7 @@ it('既知の指標別名は同じ数量へ統合し、比較値の別名も重�
       semantics: {
         ...f.semantics,
         scope: f.id === current.id ? '個別' : '単体',
-        basis: f.id === current.id ? 'IFRS' : '国際会計基準',
+        basis: f.id === current.id ? 'IFRS会計基準' : '国際会計基準',
       },
     })),
   };

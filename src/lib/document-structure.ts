@@ -1,3 +1,5 @@
+import { reportingScope } from './reporting-attributes';
+export { reportingScope } from './reporting-attributes';
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { isQuantityPrefix, parseExactQuantity, parseExactRange, proseQuantities } from './quantity';
@@ -102,7 +104,6 @@ export function headingLevel(
     return 3;
   return null;
 }
-export const reportingScope = '非連結|個別|単体|連結';
 export const reportingScopeHeading = `(${reportingScope})(?:累計期間)?(?:の)?`;
 /** Whole supported reporting titles, never a forecast used as a noun modifier. */
 export function forecastReportingTitle(text: string): { period: string | null } | null {

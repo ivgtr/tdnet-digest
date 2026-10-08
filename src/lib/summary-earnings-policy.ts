@@ -1,3 +1,9 @@
+import {
+  reportingScope,
+  reportingBasis,
+  bracketedReportingBases,
+  reportingAttributeKey,
+} from './reporting-attributes';
 import type { FactPeriodKind, FactSummary, VerifiedFact } from './fact-contract';
 import type { SourceExcerpt } from './summary-source-inventory';
 import { reportingMetricKey } from './metric-semantics';
@@ -31,8 +37,8 @@ function sourceTarget(text: string): EarningsTarget | null {
     return null;
   const scopes = [
     ...new Set(
-      (normalized.match(/非連結|個別|連結/g) ?? []).map((scope) =>
-        scope === '個別' ? '非連結' : scope
+      (normalized.match(new RegExp(reportingScope, 'g')) ?? []).map((scope) =>
+        reportingAttributeKey('scope', scope)
       )
     ),
   ];
@@ -40,11 +46,7 @@ function sourceTarget(text: string): EarningsTarget | null {
   const scope = scopes[0] ?? null;
   const bases = [
     ...new Set(
-      [
-        ...normalized.matchAll(
-          /〔(日本基準|IFRS|国際会計基準|米国基準)〕|\[(日本基準|IFRS|国際会計基準|米国基準)\]/gi
-        ),
-      ].map((match) => match[1].replace(/^ifrs$/i, 'IFRS'))
+      bracketedReportingBases(normalized).map((basis) => reportingAttributeKey('basis', basis))
     ),
   ];
   if (bases.length > 1) return null;
@@ -105,15 +107,17 @@ export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolut
         .normalize('NFKC')
         .trim()
         .match(/^(範囲|会計基準)(?:\s*:\s*|\s+)([^。；]+)$/);
-      const scopeAtom = text.match(/^(?:範囲:?)?(?:\((非連結|個別|連結)\)|(非連結|個別|連結))$/);
+      const scopeAtom = text.match(
+        new RegExp(`^(?:範囲:?)?(?:\\((${reportingScope})\\)|(${reportingScope}))$`)
+      );
       const scope =
         field?.[1] === '範囲' ? reportingPeriodText(field[2]) : (scopeAtom?.[1] ?? scopeAtom?.[2]);
-      if (scope) fields.scope.add(scope === '個別' ? '非連結' : scope);
+      if (scope) fields.scope.add(reportingAttributeKey('scope', scope));
       const basis =
         field?.[1] === '会計基準'
           ? reportingPeriodText(field[2])
-          : text.match(/^(?:会計基準:?)?(日本基準|IFRS|国際会計基準|米国基準)$/i)?.[1];
-      if (basis) fields.basis.add(basis.replace(/^ifrs$/i, 'IFRS'));
+          : text.match(new RegExp(`^(?:会計基準:?)?(${reportingBasis})$`, 'i'))?.[1];
+      if (basis) fields.basis.add(reportingAttributeKey('basis', basis));
     }
   }
   if (Object.values(fields).some((values) => values.size > 1))
@@ -150,10 +154,9 @@ export function matchesEarningsTarget(
     fiscalPeriod(fact.period ?? '') === target.fiscal &&
     fact.semantics.periodKind === target.periodKind &&
     target.scope !== null &&
-    reportingPeriodText(fact.semantics.scope ?? '').replace(/^個別$/, '非連結') === target.scope &&
+    reportingAttributeKey('scope', fact.semantics.scope ?? '') === target.scope &&
     (target.basis === null ||
-      reportingPeriodText(fact.semantics.basis ?? '').replace(/^ifrs$/i, 'IFRS') ===
-        target.basis) &&
+      reportingAttributeKey('basis', fact.semantics.basis ?? '') === target.basis) &&
     (target.subject === null ||
       reportingPeriodText(fact.semantics.subject ?? '') === target.subject)
   );

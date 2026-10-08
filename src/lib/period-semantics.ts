@@ -13,7 +13,9 @@ export const REPORTING_FISCAL_PERIOD_PATTERN = `20\\d{2}年\\d{1,2}月期(?:${RE
 
 /** Supported source aliases share one meaning; generated fact periods remain canonical. */
 export function reportingPeriodText(text: string): string {
-  return compact(text).replace(/([1-4])Q/gi, '第$1四半期');
+  return compact(text)
+    .replace(/([1-4])Q/gi, '第$1四半期')
+    .replace(/中間(?=決算短信)/g, '中間期');
 }
 export function reportingPeriodShapes(text: string): string[] {
   return [

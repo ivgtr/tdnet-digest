@@ -1,3 +1,4 @@
+import { reportingAttributeKey } from './reporting-attributes';
 import {
   exact,
   record,
@@ -373,8 +374,8 @@ export function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
       f.period,
       f.valueKind,
       f.semantics.subject,
-      f.semantics.scope,
-      f.semantics.basis,
+      f.semantics.scope === null ? null : reportingAttributeKey('scope', f.semantics.scope),
+      f.semantics.basis === null ? null : reportingAttributeKey('basis', f.semantics.basis),
       f.evidence.kind === 'table'
         ? [f.evidence.metricIds, f.evidence.periodIds, f.evidence.contextIds]
         : null,
@@ -484,12 +485,8 @@ const scopeKey = (value: string | null) => {
       : null;
 };
 const basisKey = (value: string | null) => {
-  const text = compactContext(value)?.toUpperCase();
-  return text === 'IFRS' || text === '国際会計基準'
-    ? 'IFRS'
-    : text === '日本基準' || text === '米国基準'
-      ? text
-      : null;
+  const text = value === null ? null : reportingAttributeKey('basis', value);
+  return text === 'IFRS' || text === '日本基準' || text === '米国基準' ? text : null;
 };
 // Unknown names retain their own identity; two unknown canonical keys are not aliases.
 const contextIdentity = (value: string | null, key: (value: string) => string | null) => {

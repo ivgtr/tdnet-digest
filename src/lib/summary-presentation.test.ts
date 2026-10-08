@@ -54,6 +54,87 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 
 describe('冒頭と本文の保持・復元・原文参照', () => {
+  // Vocabulary belongs here; candidate/coverage and real-PDF stories own the integration boundaries.
+  it.each([
+    ['2026年3月期 決算短信[IFRS]（連結）', 'fullYear', '連結', 'IFRS', 'IFRS'],
+    [
+      '2026年3月期 決算短信〔ＩＦＲＳ会計基準〕（連結）',
+      'fullYear',
+      '連結',
+      'IFRS',
+      'IFRS会計基準',
+    ],
+    [
+      '2026年3月期 中間決算短信〔日本基準〕（個別）',
+      'cumulativeQ2',
+      '非連結',
+      '日本基準',
+      '日本基準',
+    ],
+    [
+      '2026年3月期 第3四半期決算短信〔日本基準〕（単体）',
+      'cumulativeQ3',
+      '非連結',
+      '日本基準',
+      '日本基準',
+    ],
+    [
+      '2026年3月期 決算短信［国際会計基準］（非連結）',
+      'fullYear',
+      '非連結',
+      'IFRS',
+      '国際会計基準',
+    ],
+  ] as const)(
+    '原文で対応済みの表題属性を冒頭まで保持する: %s',
+    (title, periodKind, scope, basis, factBasis) => {
+      const resolution = earningsTarget(sourceInventory([textPage(title)], undefined, 'earnings'));
+      expect(resolution.issue).toBeNull();
+      expect(resolution.target).toMatchObject({ fiscal: '2026年3月期', periodKind, scope, basis });
+      const fact = {
+        period: '2026年3月期',
+        semantics: {
+          ...facts.facts[0].semantics,
+          periodKind,
+          scope: scope === '非連結' ? '単体' : scope,
+          basis: factBasis,
+        },
+      };
+      expect(matchesEarningsTarget(fact, resolution.target)).toBe(true);
+      for (const semantics of [
+        { ...fact.semantics, basis: basis === 'IFRS' ? '日本基準' : 'IFRS' },
+        { ...fact.semantics, scope: scope === '連結' ? '非連結' : '連結' },
+        {
+          ...fact.semantics,
+          periodKind: periodKind === 'fullYear' ? ('cumulativeQ2' as const) : ('fullYear' as const),
+        },
+      ])
+        expect(matchesEarningsTarget({ ...fact, semantics }, resolution.target)).toBe(false);
+    }
+  );
+
+  it('同じ意味の表題・表紙欄は統合し、異なる基準・範囲・期間の衝突は推測しない', () => {
+    const cover =
+      '2026年3月期 中間決算短信〔IFRS会計基準〕（単体）\n会計基準 国際会計基準 | 範囲 個別';
+    const target = (text: string) =>
+      earningsTarget(sourceInventory([textPage(text)], undefined, 'earnings'));
+    expect(target(cover)).toMatchObject({
+      issue: null,
+      target: { periodKind: 'cumulativeQ2', scope: '非連結', basis: 'IFRS' },
+    });
+    expect(target('2026年3月期 決算短信\n（単体）\nIFRS会計基準')).toMatchObject({
+      issue: null,
+      target: { scope: '非連結', basis: 'IFRS' },
+    });
+    for (const text of [
+      cover.replace('会計基準 国際会計基準', '会計基準 日本基準'),
+      cover.replace('範囲 個別', '範囲 連結'),
+      cover.replace('中間決算短信', '中間期単独決算短信'),
+      cover.replace('中間決算短信', '第3四半期中間決算短信'),
+    ])
+      expect(target(text)).toEqual({ target: null, issue: 'ambiguous' });
+  });
+
   it('表題の中間・四半期・単独と連結範囲を保持し、同じ決算年だけでは当期としない', () => {
     const source = textPage('2026年３月期 第２四半期（中間期）決算短信〔IFRS〕（連結）');
     const target = earningsTarget(sourceInventory([source], undefined, 'earnings')).target;
@@ -421,6 +502,19 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     const printed = { ...current, period: '２０２６年３月期' };
     expect(summaryComparison(printed, [printed, previous])?.reference.id).toBe(previous.id);
     expect(comparisonIssue(printed, [printed])).toBe('前年の値が要約に未抽出');
+    const aliasedCurrent = {
+      ...current,
+      semantics: { ...current.semantics, scope: '個別', basis: 'IFRS会計基準' },
+    };
+    for (const [scope, basis, comparable] of [
+      ['非連結', '国際会計基準', true],
+      ['単体', 'IFRS', true],
+      ['連結', 'IFRS', false],
+      ['個別', '日本基準', false],
+    ] as const) {
+      const other = { ...previous, semantics: { ...previous.semantics, scope, basis } };
+      expect(summaryComparison(aliasedCurrent, [aliasedCurrent, other]) !== null).toBe(comparable);
+    }
 
     expect(
       comparisonIssue(current, [

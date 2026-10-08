@@ -1,7 +1,17 @@
+import {
+  reportingBasis,
+  bracketedReportingBases,
+  reportingAttributeKey,
+} from './reporting-attributes';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
-import { reportingPeriodText, reportingPeriodOwner, numericValueKind } from './period-semantics';
+import {
+  reportingPeriodText,
+  reportingPeriodOwner,
+  numericValueKind,
+  REPORTING_PERIOD_SHAPE_PATTERN,
+} from './period-semantics';
 import {
   normalized,
   reportingScope,
@@ -43,13 +53,12 @@ export interface DocumentContext {
   tableMappings: TableMapping[];
 }
 const unique = <T>(items: T[]) => [...new Set(items)];
-const reportingBasis = '日本基準|IFRS|国際会計基準|米国基準';
 export { declaredSubjectsIn, headingLevel } from './document-structure';
 function captionText(block: TextBlock): string {
   return reportingPeriodText(block.text)
     .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
     .replace(/^20\d{2}年\d{1,2}月期(?:の)?/, '')
-    .replace(/^(?:第[1-4]四半期|中間期|通期|\((?:第[1-4]四半期|中間期|通期)\))+(?:の)?/, '');
+    .replace(new RegExp(`^(?:${REPORTING_PERIOD_SHAPE_PATTERN})+(?:の)?`), '');
 }
 function isReportingCover(block: TextBlock): boolean {
   return /^(?:四半期|中間)?決算短信/.test(captionText(block));
@@ -83,10 +92,7 @@ function reportingAttributes(
   if (isReportingCover(block)) {
     for (const match of caption.matchAll(new RegExp(`\\((${reportingScope})\\)`, 'g')))
       attributes.push({ role: 'scope', value: match[1] });
-    for (const match of caption.matchAll(
-      new RegExp(`〔(${reportingBasis})〕|\\[(${reportingBasis})\\]`, 'gi')
-    ))
-      attributes.push({ role: 'basis', value: match[1] ?? match[2] });
+    for (const value of bracketedReportingBases(caption)) attributes.push({ role: 'basis', value });
   } else if (headingLevel(block) !== null || (tableCaption && forecastReportingTitle(block.text))) {
     const scope = caption.match(
       new RegExp(
@@ -440,7 +446,7 @@ export function resolveScopeIds(
   const ids: string[] = [];
   for (const role of roles) {
     const ds = applicableDeclarations(binding, role, financial);
-    const values = unique(ds.map((d) => normalized(d.value)));
+    const values = unique(ds.map((d) => reportingAttributeKey(role, d.value)));
     if (values.length > 1) throw new Error(`SCOPE:適用する${role}が曖昧です: ${values.join('/')}`);
     const value = meaning[role];
     if (value === null) {
@@ -448,11 +454,15 @@ export function resolveScopeIds(
         throw new Error(`SCOPE:${role}の明示根拠があるのに意味属性が欠落しています`);
       continue;
     }
-    if (!values.includes(normalized(value)))
+    if (!values.includes(reportingAttributeKey(role, value)))
       throw new Error(`SCOPE:${role}の適用根拠が不一致です。適用候補=${values.join('/')}`);
     ids.push(
       ...binding.declarations
-        .filter((d) => d.role === role && normalized(d.value) === normalized(value))
+        .filter(
+          (d) =>
+            d.role === role &&
+            reportingAttributeKey(role, d.value) === reportingAttributeKey(role, value)
+        )
         .map((d) => d.id)
     );
   }
@@ -584,7 +594,7 @@ export function verifyScopeEvidence(
         !binding.declarations.some(
           (d) =>
             d.role === role &&
-            normalized(d.value) === normalized(meaning[role]!) &&
+            reportingAttributeKey(role, d.value) === reportingAttributeKey(role, meaning[role]!) &&
             scopeIds.includes(d.id)
         )
     )

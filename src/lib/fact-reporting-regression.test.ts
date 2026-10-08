@@ -31,6 +31,89 @@ import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { buildPresentation } from './fixtures/summary-narrative-source';
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const config = { provider: 'openai', model: 'fixture', apiKey: 'fixture' };
+it.each([
+  ['scope', '非連結', '個別', '連結'],
+  ['basis', 'IFRS会計基準', '国際会計基準', '米国基準'],
+] as const)(
+  '表紙と局所の%sは同じ意味の別名だけが決算実績の義務を満たし、原文属性は保持する',
+  (role, cover, alias, other) => {
+    for (const local of [alias, other]) {
+      const scope = role === 'scope' ? local : '連結';
+      const basis = role === 'basis' ? local : '日本基準';
+      const page = textPage(
+        [
+          `2026年3月期 決算短信〔${role === 'basis' ? cover : '日本基準'}〕（${role === 'scope' ? cover : '連結'}）`,
+          '会社名 株式会社テスト',
+          `1. 2026年3月期 ${scope}経営成績`,
+          `範囲 ${scope} | 会計基準 ${basis}`,
+          '2026年3月期の売上高は100百万円です。',
+        ].join('\n')
+      );
+      const fact = numberCandidate(page, '売上高', 100);
+      fact.semantics.scope = scope;
+      fact.semantics.basis = basis;
+      const result = reviewCandidates(candidateResponse([fact], [page], 'earnings'), 'earnings', [
+        page,
+      ]);
+      expect(result.unverified).toEqual([]);
+      expect(result.facts).toHaveLength(1);
+      expect(result.facts[0].semantics).toMatchObject({ scope, basis });
+      const slot = coverageReport('earnings', [page], result.facts).find(
+        (s) => s.requirement === 'COVERAGE:当年決算実績の重要指標 revenue'
+      );
+      expect(slot).toMatchObject({
+        status: local === alias ? 'satisfied' : 'unknown',
+        sourceIds: local === alias ? ['p1b5'] : [],
+        expected: { periodKind: 'fullYear', period: '2026年3月期' },
+      });
+    }
+  }
+);
+it.each([
+  ['第2四半期単独', 'standaloneQ2', '第2四半期累計', 'cumulativeQ2'],
+  ['第4四半期単独', 'standaloneQ4', '', 'fullYear'],
+] as const)(
+  '表紙の%sから範囲・会計基準と単独期間を保持し、累計・通期の代用を拒否する',
+  (shape, kind, substituteShape, substituteKind) => {
+    const target = `2026年3月期${shape}`;
+    const page = textPage(
+      [
+        `2026年3月期 ${shape}決算短信〔日本基準〕（連結）`,
+        '会社名 株式会社テスト',
+        `1. ${target} 連結経営成績`,
+        `${target}の売上高は100百万円です。`,
+      ].join('\n')
+    );
+    const fact = numberCandidate(page, '売上高', 100, target);
+    fact.semantics.periodKind = kind;
+    const result = reviewCandidates(candidateResponse([fact], [page], 'earnings'), 'earnings', [
+      page,
+    ]);
+    expect(result.unverified).toEqual([]);
+    expect(result.facts).toHaveLength(1);
+    expect(result.facts[0].semantics).toMatchObject({
+      scope: '連結',
+      basis: '日本基準',
+      periodKind: kind,
+    });
+    const revenueSlot = (facts: VerifiedFact[]) =>
+      coverageReport('earnings', [page], facts).find(
+        (s) => s.requirement === 'COVERAGE:当年決算実績の重要指標 revenue'
+      );
+    expect(revenueSlot(result.facts)).toMatchObject({
+      status: 'satisfied',
+      sourceIds: ['p1b4'],
+      expected: { period: target, periodKind: kind, scope: '連結', basis: '日本基準' },
+    });
+    const wrong = structuredClone(result.facts[0]);
+    wrong.period = `2026年3月期${substituteShape}`;
+    wrong.semantics.periodKind = substituteKind;
+    expect(
+      reviewCandidates(candidateResponse([wrong], [page], 'earnings'), 'earnings', [page]).facts
+    ).toEqual([]);
+    expect(revenueSlot([wrong])?.status).not.toBe('satisfied');
+  }
+);
 it('中間期の予想修正を実際の表範囲と分割された前回・今回の行で照合し、通期の代用を拒否する', () => {
   const target = '2027年3月期';
   const rows: [string, number, number, number][] = [

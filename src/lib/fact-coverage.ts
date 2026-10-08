@@ -1,9 +1,11 @@
+import { reportingAttributeKey } from './reporting-attributes';
 import {
   numericValueKind,
   matchesReportingPeriod,
   periodKind,
   reportingPeriodShape,
   reportingPeriodShapes,
+  reportingPeriodText,
 } from './period-semantics';
 import {
   NET_PROFIT_METRIC,
@@ -321,10 +323,6 @@ function declaredReportingMetrics(
   );
   // Another explicitly declared reporting scope cannot add a required headline metric.
   // Unresolved attributes are retained as obligations, not silently treated as a mismatch.
-  const comparableAttribute = (role: keyof ReportingAttributes, value: string) => {
-    const text = normalized(value);
-    return role === 'scope' && /^(?:個別|単体)$/.test(text) ? '非連結' : text;
-  };
   const belongsToOtherTarget = (anchor: string) => {
     const attributes = reportingAttributesAt(bindingFor(context, anchor));
     return (
@@ -334,8 +332,8 @@ function declaredReportingMetrics(
         (role) =>
           attributes[role] !== null &&
           targetAttributes[role] !== null &&
-          comparableAttribute(role, attributes[role]!) !==
-            comparableAttribute(role, targetAttributes[role]!)
+          reportingAttributeKey(role, attributes[role]!) !==
+            reportingAttributeKey(role, targetAttributes[role]!)
       )
     );
   };
@@ -687,7 +685,7 @@ function reportingAttributesAt(
     const ds = documentOnly
       ? binding.declarations.filter((d) => d.origin === 'document' && d.role === role)
       : applicableDeclarations(binding, role, true);
-    const values = [...new Set(ds.map((d) => normalized(d.value)))];
+    const values = [...new Set(ds.map((d) => reportingAttributeKey(role, d.value)))];
     if (values.length > 1) return null;
     result[role] = values[0] ?? null;
   }
@@ -703,8 +701,8 @@ function sameReportingAttributes(
     ['subject', 'scope', 'basis'].every((role) => {
       const key = role as keyof ReportingAttributes;
       return (
-        (a[key] === null ? null : normalized(a[key]!)) ===
-        (b[key] === null ? null : normalized(b[key]!))
+        (a[key] === null ? null : reportingAttributeKey(key, a[key]!)) ===
+        (b[key] === null ? null : reportingAttributeKey(key, b[key]!))
       );
     })
   );
@@ -768,8 +766,8 @@ function sourceFiscalPeriod(axis: string, context: string): string | null {
 }
 function targetPeriodKind(target: ReportingTarget): VerifiedFact['semantics']['periodKind'] | null {
   if (!target.quarter) return 'fullYear';
-  const q = target.quarter.match(/第([1-3])四半期/)?.[1];
-  return q
+  const q = target.quarter.match(/第([1-4])四半期/)?.[1];
+  return q && (q !== '4' || /単独/.test(target.quarter))
     ? (`${/単独/.test(target.quarter) ? 'standalone' : 'cumulative'}Q${q}` as VerifiedFact['semantics']['periodKind'])
     : null;
 }
@@ -935,9 +933,14 @@ function earningsReportingPeriod(pages: ExtractedPage[]) {
     .find((p) => p.pageNumber === 1)
     ?.text.normalize('NFKC')
     .match(/(20\d{2}年\s*\d{1,2}月期)[^\n]*決算短信[^\n]*/);
-  return title
-    ? { period: compact(title[1]), quarter: reportingPeriodShape(title[0]) ?? undefined }
-    : null;
+  if (!title) return null;
+  const text = reportingPeriodText(title[0]);
+  const shape = reportingPeriodShape(text);
+  if (/単独/.test(text) && /累計|中間期/.test(text)) return null;
+  return {
+    period: compact(title[1]),
+    quarter: shape ? `${shape}${/単独/.test(text) ? '単独' : ''}` : undefined,
+  };
 }
 function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);

@@ -128,6 +128,9 @@ describe('checked-source analysis calculations', () => {
   it('labels an over-100% progress residual as arithmetic, with stable operand and source identity', () => {
     const actual = fact('actual', '8168'),
       annual = forecast();
+    // Aliases retain one reporting context without rewriting either source operand.
+    actual.semantics = { ...actual.semantics, scope: '個別', basis: 'IFRS会計基準' };
+    annual.semantics = { ...annual.semantics, scope: '非連結', basis: '国際会計基準' };
     const result = calculate([actual, annual]);
     const remaining = result.find((c) => c.kind === 'remaining')!;
     expect(remaining).toMatchObject({
@@ -170,6 +173,8 @@ describe('checked-source analysis calculations', () => {
     (_name, label, now, before, expected) => {
       const current = fact('current', now, { label });
       const previous = fact('previous', before, { label, period: '2025年3月期第3四半期' });
+      current.semantics.basis = 'IFRS会計基準';
+      previous.semantics.basis = 'IFRS';
       const result = calculate([current, previous]);
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({ kind: 'difference', value: expected, unit: '百万円' });

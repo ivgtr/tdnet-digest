@@ -26,6 +26,7 @@ import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { validatePresentation, revalidatePresentation } from '../../src/lib/summary-presentation';
 import { buildSummaryHtml } from '../../src/content/utils/summaryHtmlBuilder';
 import { summaryResultId } from '../../src/lib/summary-result-id';
+import { earningsTarget } from '../../src/lib/summary-earnings-policy';
 import { buildAnalysisFingerprint } from '../../src/lib/analysis-version';
 import type { SummaryAttempt } from '../../src/lib/summary-trace';
 
@@ -169,7 +170,7 @@ export async function replayEarningsStory(pages: ExtractedPage[]) {
       meaning: {
         subject: '株式会社ファーストリテイリング',
         scope: expected.scope,
-        basis: null,
+        basis: expected.scope === '連結' ? 'IFRS会計基準' : null,
         period: `${expected.year}年8月期`,
         periodKind: 'fullYear',
         metricKind: expected.metricKind,
@@ -237,6 +238,17 @@ export async function replayEarningsStory(pages: ExtractedPage[]) {
     assert.deepEqual(phases, ['first', 'summary']);
     assert.equal(result.repairAttempted, false);
     assert.deepEqual(result.facts.unverified, []);
+    assert.deepEqual(earningsTarget(result.presentation.excerpts), {
+      issue: null,
+      target: {
+        fiscal: '2026年8月期',
+        periodKind: 'fullYear',
+        label: '2026年8月期',
+        scope: '連結',
+        subject: '株式会社ファーストリテイリング',
+        basis: 'IFRS',
+      },
+    });
     for (const [index, expected] of earningsExpectations.entries()) {
       const candidate = candidates[index];
       assert.equal(candidate.source.kind, 'table');
@@ -253,6 +265,8 @@ export async function replayEarningsStory(pages: ExtractedPage[]) {
       assert.equal(fact.unit, expected.metricKind === 'amount' ? '百万円' : '円');
       assert.equal(fact.period, `${expected.year}年8月期`);
       assert.equal(fact.semantics.state, expected.state);
+      assert.equal(fact.semantics.scope, expected.scope);
+      assert.equal(fact.semantics.basis, expected.scope === '連結' ? 'IFRS会計基準' : null);
       assert.equal(fact.page, 1);
     }
     const restored = JSON.parse(JSON.stringify(result));

@@ -1,3 +1,4 @@
+import { reportingAttributeKey } from './reporting-attributes';
 import {
   canonicalJSON,
   hashText,
@@ -141,8 +142,8 @@ const context = (operand: Operand, includeMetric = true) =>
   canonicalJSON([
     operand.entity,
     operand.documentCompany,
-    operand.scope,
-    operand.basis,
+    operand.scope === null ? null : reportingAttributeKey('scope', operand.scope),
+    operand.basis === null ? null : reportingAttributeKey('basis', operand.basis),
     operand.unit,
     includeMetric ? operand.metric : null,
     includeMetric ? operand.loss : null,
