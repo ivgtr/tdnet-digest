@@ -73,6 +73,7 @@ it.each(['separate', 'mixed', 'wrapped'] as const)(
             ['コード番号', '464A'],
             ['URL', 'https://example.com/report%20list'],
             ['上場取引所', '東'],
+            ['代表者', '代表取締役社長', '山田太郎'],
           ]
         : []),
       ['会社名', '株式会社テスト'],
@@ -92,7 +93,7 @@ it.each(['separate', 'mixed', 'wrapped'] as const)(
       items.push(...fields.flat().map((text, i) => item(text, i * 120 + 10, 40, 100)));
       operations.push(
         ...closedGrid(
-          Array.from({ length: fields.length * 2 + 1 }, (_, i) => i * 120),
+          Array.from({ length: fields.flat().length + 1 }, (_, i) => i * 120),
           30,
           50
         )

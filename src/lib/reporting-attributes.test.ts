@@ -52,6 +52,54 @@ it('分割管理欄の表記揺れを許し、本文・値の追加セルは完�
     expect(isReportingMetadata({ id: 'p1b2', text: mixed })).toBe(false);
 });
 
+// Personnel records have two bounded slots. Vocabulary and rejected continuations
+// live here; the mixed ruled cover owns the projection → headline integration.
+it.each([
+  ['代表者', '代表取締役社長', '山田太郎'],
+  ['問合せ先責任者', '経理部長', '鈴木 花子'],
+  ['代表者', '(役職名)', '代表取締役社長', '(氏名)', '山田太郎'],
+  ['代表者名', '役職名: 社長', '氏名', '山田太郎'],
+  ['代 表 者 (役職名) 社長', '(氏名) 山田 太郎'],
+  ['問い合わせ先', '役職名', '財務マネージャー', '氏名: 鈴木花子'],
+  ['問合せ先', '経理部長', '(担当)', '鈴木花子'],
+  ['問い合わせ先責任者', '担当', '鈴木花子'],
+])('同じ行の代表者・連絡先レコードを役職と氏名の範囲だけ投影する: %s', (...cells) => {
+  const text = cells.join(' │ ');
+  expect(reportingFieldProjection(text)).toEqual({
+    segments: [cells.join(' ')],
+    complete: true,
+  });
+  expect(isReportingMetadata({ id: 'p1b1', text })).toBe(true);
+});
+
+it('代表者・連絡先レコードの裸の追記・空欄・別行を管理欄へ取り込まない', () => {
+  for (const text of [
+    '代表者 │ 売上高 │ 1000',
+    '代表者 │ 参考情報 │ 山田太郎',
+    '代表者 │ 代表取締役社長 │ 山田太郎 │ 参考情報',
+    '代表者 │ 代表取締役社長 │ 山田太郎 │ 売上高100百万円',
+    '代表者 │ 代表取締役社長 │ 山田太郎。業績は好調です。',
+    '代表者 ││ 代表取締役社長 │ 山田太郎',
+    '代表者 │ 代表取締役社長 ││ 山田太郎',
+    '代表者 │ 役職名 ││ 社長 │ 氏名 │ 山田太郎',
+    '代表者 │ 代表取締役社長\n│ 山田太郎',
+    '問合せ先 │ 役職名 │ 経理部長 │ 氏名\n│ 鈴木花子',
+  ]) {
+    expect(reportingFieldProjection(text).complete).toBe(false);
+    expect(isReportingMetadata({ id: 'p1b1', text })).toBe(false);
+  }
+  expect(
+    reportingFieldProjection('代表者 │ 代表取締役社長 │ 山田太郎 │ 会計基準 │ 日本基準')
+  ).toEqual({
+    segments: ['代表者 代表取締役社長 山田太郎', '会計基準 日本基準'],
+    complete: true,
+  });
+  expect(reportingFieldProjection('代表者 │ 代表取締役社長 │ 会計基準 │ 日本基準')).toEqual({
+    segments: ['代表者 代表取締役社長', '会計基準 日本基準'],
+    complete: true,
+  });
+});
+
 it.each(['|', '｜', '│'])('明示フィールドだけを同じ行の隣接セルへ対応させる: %s', (separator) => {
   const text = `会社名 ${separator} 株式会社テスト ${separator} 会計基準： ${separator} 日本基準 ${separator} 範囲 連結`;
   expect(reportingFieldSegments(text)).toEqual([
