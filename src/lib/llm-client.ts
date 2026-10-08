@@ -1,3 +1,5 @@
+import { effectiveApiUrl } from './llm-endpoint';
+
 /**
  * 統一LLMクライアント
  * 各プロバイダーのAPIフォーマットの違いを吸収し、統一されたインターフェースを提供
@@ -83,8 +85,8 @@ export async function generateText(config: LLMConfig, messages: ChatMessage[]): 
  * OpenAI、Google (OpenAI互換モード)、OpenRouter、カスタムプロバイダーに対応
  */
 async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): Promise<string> {
-  // カスタムプロバイダーの場合はbaseUrlを使用、それ以外は既定のbaseUrlを使用
-  const baseUrl = config.baseUrl || getDefaultBaseUrl(config.provider);
+  // 明示したbaseUrlまたはプロバイダー既定のURLを指紋と同じ規則で正規化する
+  const baseUrl = effectiveApiUrl(config);
 
   const started = performance.now();
   const response = await fetch(baseUrl, {
@@ -163,7 +165,7 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
  * Anthropicは独自のAPIフォーマットを使用
  */
 async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[]): Promise<string> {
-  const baseUrl = config.baseUrl || 'https://api.anthropic.com/v1/messages';
+  const baseUrl = effectiveApiUrl(config);
 
   // systemメッセージを分離
   const systemMessage = messages.find((msg) => msg.role === 'system');
@@ -219,24 +221,6 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
     throw new Error('APIレスポンスの形式が不正です');
   }
   return data.content[0].text;
-}
-
-/**
- * プロバイダーのデフォルトbaseURLを取得
- */
-function getDefaultBaseUrl(provider: string): string {
-  switch (provider) {
-    case 'openai':
-      return 'https://api.openai.com/v1/chat/completions';
-    case 'google':
-      return 'https://generativelanguage.googleapis.com/v1beta/chat/completions';
-    case 'openrouter':
-      return 'https://openrouter.ai/api/v1/chat/completions';
-    case 'anthropic':
-      return 'https://api.anthropic.com/v1/messages';
-    default:
-      throw new Error(`プロバイダー ${provider} のデフォルトURLが見つかりません`);
-  }
 }
 
 function buildApiError(status: number, statusText: string, errorText: string): ApiError {

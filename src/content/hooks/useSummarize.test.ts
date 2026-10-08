@@ -20,6 +20,7 @@ import { buildAnalysisInput } from '@/lib/analysis-input';
 import { SUMMARY_TRACE_KEY, type SummaryTrace } from '@/lib/summary-trace';
 import SummaryButton from '../SummaryButton';
 import { useSummarize } from './useSummarize';
+import { startContentScript } from '../contentLifecycle';
 
 const pdfUrl = 'https://www.release.tdnet.info/inbs/example.pdf';
 const options = { pdfUrl, title: '開示', code: '1234', companyName: '株式会社テスト' };
@@ -47,17 +48,22 @@ const facts = parseFactSummary(
 );
 const presentation = buildPresentation(facts, pages);
 const documentHash = 'c'.repeat(64);
-const keyFor = (mode: 'smart' | 'full', url = pdfUrl) =>
+const keyFor = async (mode: 'smart' | 'full', url = pdfUrl) =>
   'summaryCacheV2:' +
   buildSummaryCacheKey(
     url,
-    buildAnalysisFingerprint({ provider: 'openai', model: 'fixture', extractionMode: mode })
+    await buildAnalysisFingerprint({ provider: 'openai', model: 'fixture', extractionMode: mode })
   );
-async function responseFor(mode: 'smart' | 'full' = 'full') {
-  const analysisFingerprint = buildAnalysisFingerprint({
+async function responseFor(
+  mode: 'smart' | 'full' = 'full',
+  endpoint: { provider: string; customUrl: string } | undefined = undefined
+) {
+  const analysisFingerprint = await buildAnalysisFingerprint({
     provider: 'openai',
     model: 'fixture',
     extractionMode: mode,
+    ...endpoint,
+    baseUrl: endpoint?.customUrl,
   });
   return {
     error: null,
@@ -71,6 +77,7 @@ async function responseFor(mode: 'smart' | 'full' = 'full') {
 }
 
 let root: Root;
+let stopContentScript: (() => void) | undefined;
 let container: HTMLDivElement;
 let settings: Record<string, unknown>;
 let stored: Record<string, unknown>;
@@ -78,6 +85,7 @@ const sendMessage = vi.fn();
 const save = vi.fn();
 const remove = vi.fn();
 const listeners = new Set<(changes: Record<string, unknown>, area: string) => void>();
+const messages = new Set<(request: { action: string; enabled: boolean }) => void>();
 
 // Only the Chrome transport/storage boundary is replaced. React owns state, effects and rerenders.
 async function mount(url = pdfUrl) {
@@ -90,6 +98,11 @@ async function mount(url = pdfUrl) {
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root.render(createElement(Probe)));
+  if (!vi.isMockFunction(chrome.storage.sync.get))
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(current.cacheKey).not.toBeNull();
+    });
   return () => current;
 }
 async function mountButton() {
@@ -110,14 +123,20 @@ async function mountButton() {
       })
     )
   );
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(chrome.storage.local.get).toHaveBeenCalled();
+  });
   return { row, cell, button: cell.querySelector('button')! };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 async function click(button: HTMLElement) {
   await act(async () => button.click());
@@ -146,7 +165,7 @@ const additionalAnalysis = parseAnalysisResponse(
   buildAnalysisInput(facts, presentation)
 );
 
-function traceFor(runId: string, resultId: string | null): SummaryTrace {
+async function traceFor(runId: string, resultId: string | null): Promise<SummaryTrace> {
   return {
     version: 1,
     runId,
@@ -157,7 +176,7 @@ function traceFor(runId: string, resultId: string | null): SummaryTrace {
     provider: 'openai',
     model: 'fixture',
     extractionMode: 'full',
-    fingerprint: buildAnalysisFingerprint({
+    fingerprint: await buildAnalysisFingerprint({
       provider: 'openai',
       model: 'fixture',
       extractionMode: 'full',
@@ -175,7 +194,10 @@ function traceFor(runId: string, resultId: string | null): SummaryTrace {
 }
 async function changeSettings(update: Record<string, unknown>) {
   Object.assign(settings, update);
-  await act(async () => listeners.forEach((listener) => listener(update, 'sync')));
+  const changes = Object.fromEntries(
+    Object.entries(update).map(([key, newValue]) => [key, { newValue }])
+  );
+  await act(async () => listeners.forEach((listener) => listener(changes, 'sync')));
 }
 
 beforeEach(() => {
@@ -187,6 +209,7 @@ beforeEach(() => {
   };
   stored = {};
   listeners.clear();
+  messages.clear();
   sendMessage.mockReset();
   save
     .mockReset()
@@ -200,9 +223,16 @@ beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);
   vi.stubGlobal('chrome', {
     storage: {
-      sync: { get: (_keys: string[], callback: (value: unknown) => void) => callback(settings) },
+      sync: {
+        get: (keys: string[], callback: (value: unknown) => void) =>
+          callback(
+            Object.fromEntries(
+              keys.filter((key) => key in settings).map((key) => [key, settings[key]])
+            )
+          ),
+      },
       local: {
-        get: async (keys: string | string[], callback?: (data: unknown) => void) => {
+        get: vi.fn(async (keys: string | string[], callback?: (data: unknown) => void) => {
           const data = Object.fromEntries(
             [keys]
               .flat()
@@ -211,7 +241,7 @@ beforeEach(() => {
           );
           callback?.(data);
           return data;
-        },
+        }),
         set: save,
         remove,
       },
@@ -222,13 +252,24 @@ beforeEach(() => {
           listeners.delete(listener),
       },
     },
-    runtime: { sendMessage },
+    runtime: {
+      sendMessage,
+      onMessage: {
+        addListener: (listener: (request: { action: string; enabled: boolean }) => void) =>
+          messages.add(listener),
+        removeListener: (listener: (request: { action: string; enabled: boolean }) => void) =>
+          messages.delete(listener),
+      },
+    },
   });
 });
 afterEach(async () => {
   await act(async () => root?.unmount());
+  await act(async () => stopContentScript?.());
+  stopContentScript = undefined;
   container?.remove();
   expect(listeners.size).toBe(0);
+  expect(messages.size).toBe(0);
   vi.unstubAllGlobals();
 });
 
@@ -269,33 +310,43 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(fresh);
   });
 
-  it('遅い保存読込が開始済みの追加分析を解除・置換しない', async () => {
-    const response = await responseFor();
-    const read = deferred<Record<string, unknown>>(),
-      analysis = deferred<unknown>();
-    sendMessage.mockResolvedValueOnce(response).mockReturnValueOnce(analysis.promise);
-    const hook = await mount();
-    await act(async () => hook().summarize());
-    await act(async () => hook().reset());
-    const originalGet = chrome.storage.local.get;
-    chrome.storage.local.get = ((keys: string | string[], callback?: (data: unknown) => void) =>
-      Array.isArray(keys)
-        ? read.promise
-        : originalGet(keys, callback!)) as typeof chrome.storage.local.get;
-    let restoring: Promise<void>;
-    await act(async () => {
-      restoring = hook().showCached();
-    });
-    await act(async () => hook().analyze());
-    expect(hook().analysis.loading).toBe(true);
-    await act(async () => {
-      read.resolve({});
-      await restoring;
-    });
-    expect(hook().analysis.loading).toBe(true);
-    await act(async () => analysis.resolve({ analysis: additionalAnalysis }));
-    expect(hook().analysis.data).toEqual(additionalAnalysis);
-  });
+  it.each(['success', 'failure'])(
+    '遅い保存読込の%sが開始済みの追加分析を解除・置換しない',
+    async (outcome) => {
+      const response = await responseFor();
+      const read = deferred<Record<string, unknown>>(),
+        analysis = deferred<unknown>();
+      sendMessage.mockResolvedValueOnce(response).mockReturnValueOnce(analysis.promise);
+      const hook = await mount();
+      await act(async () => hook().summarize());
+      await act(async () => hook().reset());
+      const originalGet = chrome.storage.local.get;
+      chrome.storage.local.get = ((keys: string | string[], callback?: (data: unknown) => void) =>
+        Array.isArray(keys)
+          ? read.promise
+          : originalGet(keys, callback!)) as typeof chrome.storage.local.get;
+      let restoring: Promise<boolean>;
+      await act(async () => {
+        restoring = hook().showCached();
+      });
+      // Source/result-ID verification must finish before analysis can be started;
+      // only the independent stage-cache read is deliberately left pending.
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(hook().result?.resultId).toBe(response.resultId);
+      });
+      await act(async () => hook().analyze());
+      expect(hook().analysis.loading).toBe(true);
+      await act(async () => {
+        if (outcome === 'success') read.resolve({});
+        else read.reject(new Error('storage read failed'));
+        await restoring;
+      });
+      expect(hook().analysis.loading).toBe(true);
+      await act(async () => analysis.resolve({ analysis: additionalAnalysis }));
+      expect(hook().analysis.data).toEqual(additionalAnalysis);
+    }
+  );
 
   it('smart→全文→通常へ切り替え、保存後は通信せず復元する', async () => {
     settings.extractionMode = 'smart';
@@ -305,13 +356,13 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     const hook = await mount();
     await act(async () => hook().summarize('full'));
     expect(hook().result).toMatchObject({ error: null, diagnosticRunId: 'full-run' });
-    expect(stored[keyFor('full')]).toBeDefined();
+    expect(stored[await keyFor('full')]).toBeDefined();
     const displayed = hook().result;
     await changeSettings({ experimentalScoring: false });
     expect(hook().result).toBe(displayed);
     await act(async () => hook().summarize());
     expect(hook().result).toMatchObject({ error: null, diagnosticRunId: 'smart-run' });
-    expect(stored[keyFor('smart')]).toBeDefined();
+    expect(stored[await keyFor('smart')]).toBeDefined();
     await act(async () => hook().reset());
     await act(async () => hook().showCached());
     expect(hook().result).toMatchObject({
@@ -368,6 +419,63 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('customUrlだけの変更で保存要約・分析を外し、遅い旧分析を保存しない', async () => {
+    const endpoint = { provider: 'custom', customUrl: 'https://api.example.com/v1/chat?route=a' };
+    Object.assign(settings, endpoint);
+    const response = await responseFor('full', endpoint);
+    const oldKey =
+      'summaryCacheV2:' + buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint);
+    stored[oldKey] = response;
+    stored[`analysisCacheV3:${response.resultId}`] = additionalAnalysis;
+    const hook = await mount();
+    await act(async () => hook().showCached());
+    expect(hook().result?.resultId).toBe(response.resultId);
+    expect(hook().analysis.data).toEqual(additionalAnalysis);
+    // The event is enough even when a follow-up storage read would remain pending.
+    const pendingSettingsRead = vi.fn();
+    chrome.storage.sync.get = pendingSettingsRead;
+    await changeSettings({ customUrl: 'HTTPS://API.EXAMPLE.COM:443/x/../v1/chat?route=a#ignored' });
+    expect(hook().result?.resultId).toBe(response.resultId);
+    expect(hook().analysis.data).toEqual(additionalAnalysis);
+    const oldAnalysis = deferred<unknown>();
+    sendMessage.mockReturnValueOnce(oldAnalysis.promise);
+    await act(async () => hook().analyze());
+    expect(hook().analysis.loading).toBe(true);
+    await changeSettings({ customUrl: 'https://api.example.com/v1/chat?route=b' });
+    expect(hook().result).toBeNull();
+    expect(hook().analysis).toEqual({ loading: false, data: null, error: null });
+    expect(hook().hasCached).toBe(false);
+    await act(async () =>
+      oldAnalysis.resolve({
+        analysis: {
+          ...additionalAnalysis,
+          issues: [{ ...additionalAnalysis.issues[0], title: '旧APIの遅い分析' }],
+        },
+      })
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(hook().analysis.data).toBeNull();
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(hook().cacheKey).not.toBeNull();
+    });
+    expect('summaryCacheV2:' + hook().cacheKey).not.toBe(oldKey);
+    await act(async () => hook().showCached());
+    expect(hook().result).toBeNull();
+    expect(hook().hasCached).toBe(false);
+    const fresh = await responseFor('full', {
+      ...endpoint,
+      customUrl: settings.customUrl as string,
+    });
+    expect(fresh.resultId).not.toBe(response.resultId);
+    sendMessage.mockResolvedValueOnce(fresh);
+    await act(async () => hook().summarize());
+    expect(hook().result?.resultId).toBe(fresh.resultId);
+    expect(hook().analysis.data).toBeNull();
+    expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(additionalAnalysis);
+    expect(pendingSettingsRead).not.toHaveBeenCalled();
+  });
+
   it('算出不能スコアを保存せず、要約を保ち、明示再試行を許す', async () => {
     sendMessage
       .mockResolvedValueOnce(await responseFor())
@@ -388,7 +496,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
 
   it('保存済み算出不能スコアを削除し、再採点可能な要約を復元する', async () => {
     const response = await responseFor();
-    stored[keyFor('full')] = response;
+    stored[await keyFor('full')] = response;
     stored[`scoreCacheV4:${response.resultId}`] = { value: null, unverified: ['過去の失敗'] };
     const hook = await mount();
     await act(async () => hook().showCached());
@@ -438,7 +546,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
         },
       ],
     };
-    stored[keyFor('full', url)] = response;
+    stored[await keyFor('full', url)] = response;
     stored[`scoreCacheV4:${response.resultId}`] = score;
     const hook = await mount(url);
     await act(async () => hook().showCached());
@@ -448,7 +556,14 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
         ? { loading: false, data: score, error: null }
         : { loading: false, data: null, error: '保存された採点の形式・確定事実との対応が不正です' }
     );
+    await act(async () => hook().startScore());
     expect(sendMessage).not.toHaveBeenCalled();
+    if (!valid) {
+      sendMessage.mockResolvedValue({ error: '明示的な再採点' });
+      await act(async () => hook().retryScore());
+      expect(sendMessage).toHaveBeenCalledOnce();
+      expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'score' }));
+    }
   });
 });
 
@@ -586,7 +701,7 @@ describe('実Reactの要約行アクション配置', () => {
 
   it('診断ポータルの手動コピーと状態を後続処理で保ち、別実行と閉じる前の遅い完了を表示しない', async () => {
     const response = await responseFor();
-    const trace = traceFor(response.diagnosticRunId, response.resultId);
+    const trace = await traceFor(response.diagnosticRunId, response.resultId);
     stored[SUMMARY_TRACE_KEY] = trace;
     const score = deferred<unknown>();
     const analysis = deferred<unknown>();
@@ -667,7 +782,7 @@ describe('実Reactの要約行アクション配置', () => {
   it('エラー行でも閉じると診断を用意し、エラーの隣の全文再要約で回復する', async () => {
     settings.extractionMode = 'smart';
     settings.experimentalScoring = false;
-    const trace = traceFor('failed-run', null);
+    const trace = await traceFor('failed-run', null);
     stored[SUMMARY_TRACE_KEY] = trace;
     const response = await responseFor('full');
     const retry = deferred<unknown>();
@@ -714,5 +829,310 @@ describe('実Reactの要約行アクション配置', () => {
     expect(success.querySelector('textarea')).toBeNull();
     expect(cell.textContent).toBe('閉じる');
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Storage failures and lifecycle races belong here: real state/effects/DOM,
+// with only Chrome messaging and storage substituted at the boundary.
+describe('保存失敗と一覧ライフサイクルの回復', () => {
+  it('後続キャッシュの読込失敗では開き直しても自動課金せず、本文を保って明示再試行できる', async () => {
+    const response = await responseFor();
+    stored[await keyFor('full')] = response;
+    const get = vi.mocked(chrome.storage.local.get).getMockImplementation()!;
+    vi.mocked(chrome.storage.local.get).mockImplementation((keys, callback) =>
+      Array.isArray(keys) ? Promise.reject(new Error('storage read failed')) : get(keys, callback)
+    );
+    sendMessage.mockImplementation(async ({ action }) =>
+      action === 'score' ? { error: '固定応答の採点失敗' } : { analysis: additionalAnalysis }
+    );
+    const { row, button } = await mountButton();
+    await vi.waitFor(() => expect(button.textContent).toBe('表示'));
+    await click(button);
+    const summaryRow = await summaryRowFor(row);
+    await vi.waitFor(() =>
+      expect(summaryRow.querySelector('[data-persistence-warning]')?.textContent).toContain(
+        '保存された採点・追加分析を読み込めませんでした'
+      )
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+    await click(button);
+    await click(button);
+    const reopened = await summaryRowFor(row);
+    await vi.waitFor(() =>
+      expect(reopened.querySelector('#score-result')?.textContent).toContain(
+        '保存された採点を読み込めませんでした'
+      )
+    );
+    await changeSettings({ experimentalScoring: false });
+    await changeSettings({ experimentalScoring: true });
+    expect(sendMessage).not.toHaveBeenCalled();
+    const body = reopened.querySelector('#score-result')!.previousElementSibling!;
+    const bodyHtml = body.innerHTML;
+    await click(reopened.querySelector<HTMLButtonElement>('#retry-score-btn')!);
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'score' }));
+    const analyze = reopened.querySelector<HTMLButtonElement>('#analyze-btn')!;
+    expect(analyze.textContent).toBe('再試行');
+    await click(analyze);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'analyze' }));
+    expect(reopened.querySelector('#analysis-result')?.textContent).toContain(
+      additionalAnalysis.issues[0].conclusion
+    );
+    expect(reopened.querySelector('#score-result')!.previousElementSibling).toBe(body);
+    expect(body.innerHTML).toBe(bodyHtml);
+    expect(button.textContent).toBe('閉じる');
+  });
+
+  it('保存失敗を生成失敗にせず、要約・追加分析を表示して保存警告を分ける', async () => {
+    settings.experimentalScoring = false;
+    const response = await responseFor();
+    const saveSummary = deferred<void>();
+    save.mockReturnValueOnce(saveSummary.promise).mockRejectedValue(new Error('QUOTA_BYTES'));
+    sendMessage
+      .mockResolvedValueOnce({
+        ...response,
+        metadata: { ...response.metadata, persistenceWarning: '診断を保存できませんでした' },
+      })
+      .mockResolvedValueOnce({ analysis: additionalAnalysis });
+    const { row, button } = await mountButton();
+    await click(button);
+    const summaryRow = await summaryRowFor(row);
+    const body = summaryRow.querySelector('#score-result')!.previousElementSibling!;
+    const analysisButton = summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!;
+    // A completed result is usable before its independent cache write finishes.
+    await click(analysisButton);
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain(
+      additionalAnalysis.issues[0].conclusion
+    );
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain(
+      '追加分析を保存できませんでした'
+    );
+    expect(summaryRow.querySelector('[role="alert"]')).toBeNull();
+    // The late cache rejection must not replace the completed body or analysis.
+    await act(async () => saveSummary.reject(new Error('QUOTA_BYTES')));
+    expect(summaryRow.querySelector('[data-persistence-warning]')?.textContent).toContain(
+      '診断を保存できませんでした'
+    );
+    expect(summaryRow.querySelector('[data-persistence-warning]')?.textContent).toContain(
+      '要約を保存できませんでした'
+    );
+    expect(summaryRow.querySelector('#score-result')!.previousElementSibling).toBe(body);
+    expect(button.textContent).toBe('閉じる');
+    await click(button);
+    expect(button.textContent).toBe('要約');
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('削除通知で表示を要約へ戻し、通知前のキャッシュミスも一度のクリックで回復する', async () => {
+    settings.experimentalScoring = false;
+    const response = await responseFor();
+    const key = await keyFor('full');
+    stored[key] = response;
+    sendMessage.mockResolvedValue(response);
+    const { row, button } = await mountButton();
+    await vi.waitFor(() => expect(button.textContent).toBe('表示'));
+    delete stored[key];
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { oldValue: response } }, 'local'))
+    );
+    expect(button.textContent).toBe('要約');
+    stored[key] = response;
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { newValue: response } }, 'local'))
+    );
+    await vi.waitFor(() => expect(button.textContent).toBe('表示'));
+    delete stored[key];
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    await summaryRowFor(row);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(button.textContent).toBe('閉じる');
+    await click(button);
+    const get = chrome.storage.local.get;
+    chrome.storage.local.get = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('storage read failed'))
+      .mockImplementation(get);
+    await click(button);
+    await summaryRowFor(row);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(button.textContent).toBe('閉じる');
+  });
+
+  it('削除前に開始した遅いキャッシュ読込を表示にも存在判定にも戻さない', async () => {
+    const response = await responseFor();
+    const key = await keyFor('full');
+    stored[key] = response;
+    const availability = deferred<Record<string, unknown>>();
+    const first = deferred<Record<string, unknown>>();
+    const originalGet = chrome.storage.local.get;
+    chrome.storage.local.get = vi
+      .fn()
+      .mockReturnValueOnce(availability.promise)
+      .mockReturnValueOnce(first.promise)
+      .mockImplementation(originalGet);
+    const hook = await mount();
+    let showing!: Promise<boolean>;
+    await act(async () => {
+      showing = hook().showCached();
+    });
+    delete stored[key];
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { oldValue: response } }, 'local'))
+    );
+    await act(async () => {
+      first.resolve({ [key]: response });
+      availability.resolve({ [key]: response });
+      await showing;
+    });
+    expect(await showing).toBe(false);
+    expect(hook().hasCached).toBe(false);
+    expect(hook().result).toBeNull();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // Commit notification, deletion, then write completion: deletion wins.
+    const write = deferred<void>();
+    save.mockImplementation((entries) => {
+      Object.assign(stored, entries);
+      listeners.forEach((listener) => listener({ [key]: { newValue: entries[key] } }, 'local'));
+      return write.promise;
+    });
+    sendMessage.mockResolvedValue(response);
+    let generating!: Promise<void>;
+    await act(async () => {
+      generating = hook().summarize();
+    });
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(save).toHaveBeenCalledOnce();
+    });
+    delete stored[key];
+    await act(async () =>
+      listeners.forEach((listener) => listener({ [key]: { oldValue: response } }, 'local'))
+    );
+    await act(async () => {
+      write.resolve();
+      await generating;
+    });
+    expect(hook().hasCached).toBe(false);
+    expect(hook().result?.error).toBeNull();
+  });
+
+  function frameFixture() {
+    const frame = document.createElement('iframe');
+    frame.id = 'main_list';
+    container.append(frame);
+    const doc = frame.contentDocument!;
+    doc.body.innerHTML = `<table id="list-head"><tbody><tr><td class="header-R" style="border-radius:4px">表題</td></tr></tbody></table>
+      <table id="main-list-table"><tbody><tr><td class="oddnew-L kjTime">15:00</td><td class="oddnew-M kjCode">1234</td><td class="oddnew-M kjName">株式会社テスト</td><td class="oddnew-R kjTitle"><a href="${pdfUrl}">開示</a></td></tr></tbody></table>`;
+    return { frame, doc, row: doc.querySelector<HTMLTableRowElement>('#main-list-table tr')! };
+  }
+  async function toggle(enabled: boolean) {
+    await act(async () =>
+      messages.forEach((listener) => listener({ action: 'toggleExtension', enabled }))
+    );
+  }
+  async function waitForSubscriptions(expected: number) {
+    // Root insertion precedes the asynchronous settings/cache effects.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(listeners.size).toBe(expected);
+    });
+  }
+  async function mountLifecycle() {
+    container = document.createElement('div');
+    document.body.append(container);
+    const fixture = frameFixture();
+    await act(async () => {
+      stopContentScript = startContentScript();
+    });
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(chrome.storage.local.get).toHaveBeenCalled();
+    });
+    return fixture;
+  }
+
+  it('OFFでReactと購読を破棄し、遅い応答を保存・再表示せず、ONで一組だけ作り直す', async () => {
+    settings.experimentalScoring = false;
+    const pending = deferred<unknown>();
+    sendMessage.mockReturnValueOnce(pending.promise).mockResolvedValue(await responseFor());
+    const { frame, doc, row } = await mountLifecycle();
+    const subscriptions = listeners.size;
+    await act(async () => {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    expect(listeners.size).toBe(subscriptions);
+    expect(messages.size).toBe(1);
+    await click(row.querySelector('button')!);
+    await toggle(false);
+    expect(
+      doc.querySelectorAll(
+        '.tdnet-digest-button-cell, .tdnet-digest-summary-row, .tdnet-digest-header'
+      )
+    ).toHaveLength(0);
+    expect(listeners.size).toBe(1); // Only the lifecycle's enable/disable control remains.
+    expect(row.lastElementChild?.className).toBe('oddnew-R kjTitle');
+    expect(doc.querySelector('#list-head td')?.className).toBe('header-R');
+    await act(async () => pending.resolve(await responseFor()));
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+    await toggle(true);
+    await toggle(true);
+    expect(doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
+    await waitForSubscriptions(subscriptions);
+    await click(row.querySelector('button')!);
+    await summaryRowFor(row);
+    await toggle(false);
+    await toggle(true);
+    await waitForSubscriptions(subscriptions);
+    expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
+  });
+
+  it('同じ行のPDF変更・行削除・iframe再読込と置換で旧rootを残さない', async () => {
+    settings.experimentalScoring = false;
+    const stale = deferred<unknown>();
+    sendMessage.mockReturnValueOnce(stale.promise);
+    const { frame, doc, row } = await mountLifecycle();
+    const subscriptions = listeners.size;
+    const oldButton = row.querySelector('button')!;
+    await click(oldButton);
+    await act(async () => row.querySelector('a')!.setAttribute('href', 'replacement.pdf'));
+    await waitForSubscriptions(subscriptions);
+    expect(row.querySelector('button')).not.toBe(oldButton);
+    expect(row.querySelector('button')?.textContent).toBe('要約');
+    await act(async () => stale.resolve(await responseFor()));
+    expect(row.nextElementSibling).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+    const reloadButton = row.querySelector('button');
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    await waitForSubscriptions(subscriptions);
+    expect(row.querySelector('button')).not.toBe(reloadButton);
+    await act(async () => row.querySelector('a')!.setAttribute('href', pdfUrl));
+    await waitForSubscriptions(subscriptions);
+    sendMessage.mockResolvedValue(await responseFor());
+    await click(row.querySelector('button')!);
+    const displayed = await summaryRowFor(row);
+    await act(async () => row.remove());
+    expect(displayed.isConnected).toBe(false);
+    expect(doc.querySelector('.tdnet-digest-summary-row')).toBeNull();
+    expect(listeners.size).toBe(1);
+    expect(row.querySelector('.tdnet-digest-button-cell')).toBeNull();
+    let replacement!: ReturnType<typeof frameFixture>;
+    await act(async () => {
+      frame.remove();
+      replacement = frameFixture();
+    });
+    await waitForSubscriptions(subscriptions);
+    expect(doc.querySelector('.tdnet-digest-header')).toBeNull();
+    expect(replacement.doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
+    await act(async () => frame.dispatchEvent(new Event('load')));
+    expect(doc.querySelector('.tdnet-digest-header')).toBeNull();
+    expect(replacement.doc.querySelectorAll('.tdnet-digest-button-cell')).toHaveLength(1);
   });
 });

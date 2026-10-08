@@ -293,7 +293,12 @@ export function buildAnalysisCalculations(
       sourceIds: unique([...known.sourceIds, ...operand.sourceIds]),
     };
   };
-  const observations = supportedObservations(presentation.organization);
+  const observations = supportedObservations(
+    presentation.organization,
+    facts,
+    presentation.values,
+    presentation.excerpts
+  );
   const observationOperands = observations.flatMap((o) => {
     const operand = fromObservation(o);
     return operand ? [operand] : [];

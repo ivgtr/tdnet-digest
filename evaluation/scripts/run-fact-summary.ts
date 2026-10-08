@@ -87,6 +87,8 @@ const implementationFiles = [
   'src/lib/summary-renderer.ts',
   'src/lib/summary-result-id.ts',
   'src/lib/llm-client.ts',
+  'src/lib/llm-endpoint.ts',
+  'src/lib/analysis-version.ts',
   'src/lib/llm-providers.ts',
   'src/lib/structured-output.ts',
 ];
@@ -179,7 +181,12 @@ for (const item of selected) {
   const output = {
     item,
     schemaVersion: FACT_SCHEMA_VERSION,
-    analysisFingerprint: buildAnalysisFingerprint({ provider, model, extractionMode: 'full' }),
+    analysisFingerprint: await buildAnalysisFingerprint({
+      provider,
+      model,
+      extractionMode: 'full',
+      baseUrl: process.env.TDNET_DIGEST_BASE_URL || undefined,
+    }),
     implementationDigest,
     requestLimits: factSummaryRequestLimits({ provider, model }),
     sourceHash,

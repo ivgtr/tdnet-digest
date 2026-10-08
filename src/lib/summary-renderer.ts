@@ -4,13 +4,12 @@ import type { SourceExcerpt } from './summary-source-inventory';
 import { renderNarrativeText } from './summary-narrative-renderer';
 import {
   supportedExplanations,
-  supportedObservations,
+  reconciledOrganizationObservations,
   unresolvedExplanationSources,
   unresolvedTableSources,
 } from './summary-organization';
 import {
   OBSERVATION_TOPICS,
-  reconcileObservations,
   factPeriodName as periodText,
   canPair,
   observationChange,
@@ -18,6 +17,9 @@ import {
   observationRole,
   observationTitles,
   comparisonAxisLabels,
+  observationBasis,
+  factObservation,
+  type ConfirmedObservation,
   type DisclosureObservation,
   type ObservationTopic,
 } from './disclosure-observation';
@@ -119,22 +121,35 @@ function overviewGrowth(f: VerifiedFact, comparison: SummaryComparison, facts: F
 function overviewNumber(
   f: VerifiedFact,
   facts: FactSummary,
-  _presentation: SummaryPresentation
+  presentation: SummaryPresentation,
+  observation: ConfirmedObservation
 ): string {
+  const basis = observationBasis(observation);
+  const metric = literalMarkdown(f.label);
+  const currentValue = numberText(f) + (basis.length ? `（${basis.join('、')}）` : '');
+  if (observation.unresolved) return `${metric}：${currentValue}（指標区分・比較は未確認）`;
   const comparison = summaryComparison(f, facts.facts);
   if (comparison) {
     const before = comparison.reference;
+    const previousBasis = observationBasis(observation, true);
+    const previousValue =
+      numberText(before) + (previousBasis.length ? `（${previousBasis.join('、')}）` : '');
     const values =
       comparison.axis === 'revision'
-        ? `${numberText(before)} → ${numberText(f)}`
-        : `${numberText(f)}（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${numberText(before)}）`;
+        ? `${previousValue} → ${currentValue}`
+        : `${currentValue}（${f.semantics.periodKind === 'fullYear' ? '前期' : '前年同期'} ${previousValue}）`;
     const percent = overviewGrowth(f, comparison, facts).text;
+    const interpretation =
+      observation.measure !==
+      factObservation(f, facts, presentation.excerpts, presentation.values).measure
+        ? observationChange(observation, presentation.values).text
+        : comparisonLabel(f, comparison) + percent;
     const rate = facts.facts.find((r) => canPair(f, r));
-    return `${literalMarkdown(f.label)}：**${comparisonLabel(f, comparison)}${literalMarkdown(percent)}** ${values}${comparison.axis === 'revision' && rate ? `（原文の増減率 ${numberText(rate)}）` : ''}`;
+    return `${metric}：**${comparison.axis === 'revision' ? comparisonLabel(f, comparison) + literalMarkdown(percent) : literalMarkdown(interpretation)}** ${values}${comparison.axis === 'revision' && rate ? `（原文の増減率 ${numberText(rate)}）` : ''}`;
   }
   const rate = facts.facts.find((r) => canPair(f, r));
-  if (rate) return `${literalMarkdown(f.label)}：${numberText(f)}（比率 ${numberText(rate)}）`;
-  return `${literalMarkdown(f.label)}：${numberText(f)}${f.semantics.state === 'actual' || f.semantics.state === 'forecastAfter' ? `（${comparisonIssue(f, facts.facts)}）` : ''}`;
+  if (rate) return `${metric}：${currentValue}（比率 ${numberText(rate)}）`;
+  return `${metric}：${currentValue}${f.semantics.state === 'actual' || f.semantics.state === 'forecastAfter' ? `（${comparisonIssue(f, facts.facts)}）` : ''}`;
 }
 function overviewStatement(f: VerifiedFact, facts: FactSummary): string {
   const text = statementText(f);
@@ -176,7 +191,7 @@ function renderExcerpts(excerpts: SourceExcerpt[]): string[] {
       paragraph.push(literalMarkdown(e.text));
     } else {
       flush();
-      if (e.kind === 'heading') lines.push('', `#### ${literalMarkdown(e.text)}`);
+      if (e.kind === 'heading') lines.push('', `##### ${literalMarkdown(e.text)}`);
       else {
         if (!same || previous?.kind !== 'row') lines.push('');
         lines.push(literalMarkdown(e.text));
@@ -190,13 +205,13 @@ function renderExcerpts(excerpts: SourceExcerpt[]): string[] {
 }
 /** Layout is a projection of semantic records; no caption/header parsing. */
 function renderObservationGroups(
-  records: DisclosureObservation[],
+  records: Array<DisclosureObservation | ConfirmedObservation>,
   presentation: SummaryPresentation,
   primarySubject: string | null,
   headings: boolean
 ): string[] {
   const lines: string[] = [];
-  const groups = new Map<string, DisclosureObservation[]>();
+  const groups = new Map<string, Array<DisclosureObservation | ConfirmedObservation>>();
   for (const observation of records) {
     const key = observationGroup(observation);
     groups.set(key, [...(groups.get(key) ?? []), observation]);
@@ -244,14 +259,18 @@ function renderObservationGroups(
       const previous = comparison
         ? presentation.values.find((q) => q.id === comparison.valueId)!
         : null;
+      const previousBasis = observationBasis(value, true);
       const cells = [
         ...(subject ? [literalMarkdown(value.entity ?? '全社')] : []),
         ...(periods.length > 1 ? [literalMarkdown(value.period ?? '対象期未特定')] : []),
         ...(states.length > 1 ? [stateLabels[value.state]] : []),
-        literalMarkdown(value.metric),
+        literalMarkdown(
+          value.metric +
+            (observationBasis(value).length ? `（${observationBasis(value).join('、')}）` : '')
+        ),
         literalMarkdown(literalValue(quantity)),
         comparison
-          ? `${comparisonAxisLabels[comparison.axis]} ${literalMarkdown(comparison.period)} ${literalMarkdown(literalValue(previous!))}`
+          ? `${comparisonAxisLabels[comparison.axis]} ${literalMarkdown(comparison.period)} ${literalMarkdown(literalValue(previous!))}${previousBasis.length ? `（${previousBasis.join('、')}）` : ''}`
           : '',
         literalMarkdown(
           observationChange(value, presentation.values).text ||
@@ -261,6 +280,22 @@ function renderObservationGroups(
       lines.push(`| ${cells.join(' | ')} |`);
     }
     for (const condition of first.conditions) lines.push(`- 比較条件：${text(condition)}`);
+    const notes = new Map(
+      group.flatMap((value) =>
+        'sourceBasis' in value
+          ? [
+              ...value.sourceBasis.adjustments,
+              ...(value.comparisonSourceBasis?.adjustments ?? []),
+            ].map((a) => [a.noteId, a] as const)
+          : []
+      )
+    );
+    for (const note of notes.values()) {
+      const source = presentation.excerpts.find((e) => e.blockId === note.noteId);
+      lines.push(
+        `- 比較条件（原文）：${literalMarkdown(note.text)}${source ? ` ${ref(source.page)}` : ''}`
+      );
+    }
     lines.push(
       '',
       `根拠：${references(group.flatMap((value) => value.sourceIds.map((id) => presentation.excerpts.find((e) => e.id === id)!.page)))}`
@@ -274,6 +309,15 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   validatePresentation(presentation, facts);
   const byId = new Map(facts.facts.map((f) => [f.id, f]));
   const sources = new Map(presentation.excerpts.map((e) => [e.id, e]));
+  const organization = presentation.organization;
+  const accepted = supportedExplanations(organization);
+  const reconciled = reconciledOrganizationObservations(
+    organization,
+    facts,
+    presentation.values,
+    presentation.excerpts
+  );
+  const observations = reconciled.accepted;
   const single = (field: 'subject' | 'scope' | 'basis') => {
     const values = [...new Set(facts.facts.map((f) => f.semantics[field]).filter(Boolean))];
     return values.length === 1 ? values[0] : null;
@@ -300,17 +344,8 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       lines.push('', current, '');
       previousContext = current;
     }
-    lines.push('- ' + overviewNumber(f, facts, presentation));
+    lines.push('- ' + overviewNumber(f, facts, presentation, reconciled.primary.get(f.id)!));
   }
-  const organization = presentation.organization;
-  const accepted = supportedExplanations(organization);
-  const observations = supportedObservations(organization);
-  const reconciled = reconcileObservations(
-    facts,
-    observations,
-    presentation.excerpts,
-    presentation.values
-  );
   const unresolved = new Set(
     unresolvedExplanationSources(organization, presentation.excerpts).map((e) => e.id)
   );
@@ -354,12 +389,10 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         `根拠：${references(claim.sourceIds.map((sourceId) => sources.get(sourceId)!.page))}`
       );
     }
-    if (!claims.length || unresolved.has(source.id)) {
+    if (fact && (!claims.length || unresolved.has(source.id))) {
       const section = presentation.sections.find((s) => s.excerptIds.includes(source.id))!;
       lines.push(
-        fact
-          ? `- 確認済み事項（原文）：「${literalMarkdown(section.title)}」に記載 ${ref(fact.page)}${unresolved.has(source.id) ? '（説明は未整理）' : ''}`
-          : `- ${claims.length ? '要点の説明に未整理部分' : '要点の説明未作成'}：${literalMarkdown(source.heading?.text ?? section.title)} ${ref(source.page)}（原文を見る）`
+        `- 確認済み事項（原文）：「${literalMarkdown(section.title)}」に記載 ${ref(fact.page)}`
       );
     }
   }
@@ -407,7 +440,6 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
   const primarySubject = single('subject');
   // Every accepted fact has a body location, independently of organization output.
   for (const section of sections) {
-    const excerpts = section.excerptIds.map((id) => sources.get(id)!);
     const members = section.factIds.map((id) => byId.get(id)!);
     const sectionClaims = accepted.filter(
       (value) => destination(value.topic, value.sourceIds) === section.title
@@ -415,6 +447,7 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     const sectionObservations = reconciled.supplement.filter(
       (value) => destination(value.topic, value.sourceIds) === section.title
     );
+    if (!members.length && !sectionClaims.length && !sectionObservations.length) continue;
     lines.push('', `## ${literalMarkdown(section.title)}`);
     const numericRows = members.filter(numeric).map((fact) => reconciled.primary.get(fact.id)!);
     const referencesInPairs = new Set(
@@ -498,25 +531,11 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         lines.push('- 条件：' + text(condition));
       }
     }
-    const residual = excerpts.filter((e) => unresolved.has(e.id));
-    const headings = new Map<string, number[]>();
-    for (const e of residual) {
-      const heading = e.heading?.text ?? section.title;
-      headings.set(heading, [...(headings.get(heading) ?? []), e.page]);
-    }
-    for (const [heading, pages] of headings)
-      lines.push(`- 要約未作成：${literalMarkdown(heading)} ${references(pages)}`);
-    const remainingRows = excerpts.filter((e) => unresolvedTables.has(e.id));
-    if (remainingRows.length)
-      lines.push(
-        `- 未整理の数値・表：${references(remainingRows.map((e) => e.page))}（原文を見る）`
-      );
     if (sectionClaims.length)
       lines.push(
         '',
         `根拠：${references(sectionClaims.flatMap((c) => c.sourceIds.map((id) => sources.get(id)!.page)))}`
       );
-    if (excerpts.length) lines.push('', '### 原文を見る', ...renderExcerpts(excerpts));
   }
   if (
     overviewFacts.some((f) => {
@@ -558,6 +577,41 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
         '### 確認の詳細（原文）',
         ...facts.unverified.map((s) => '- ' + literalMarkdown(s))
       );
+  }
+  // Disclose missing coverage once, without interleaving unorganized source material
+  // with confirmed facts. The same Markdown remains complete when copied or restored.
+  if (unresolved.size || unresolvedTables.size || reconciled.conflicts.length) {
+    lines.push(
+      '',
+      '## 補足要約の未整理部分',
+      '',
+      '以下には要約に反映できていない説明・数値があります。末尾の原文を確認してください。'
+    );
+    for (const metric of new Set(reconciled.conflicts.map((c) => c.metric)))
+      lines.push(
+        `- 補足指標の未整理：${literalMarkdown(metric)}の指標区分・期間・比較に不一致があります。確認済みの数値は本文に表示しています`
+      );
+    for (const section of sections) {
+      const excerpts = section.excerptIds.map((id) => sources.get(id)!);
+      const remaining = [
+        ['説明', unresolved],
+        ['数値・表', unresolvedTables],
+      ] as const;
+      const coverage = remaining.flatMap(([label, ids]) => {
+        const pages = excerpts.filter((e) => ids.has(e.id)).map((e) => e.page);
+        return pages.length ? [`${label} ${references(pages)}`] : [];
+      });
+      if (coverage.length)
+        lines.push(`- ${literalMarkdown(section.title)}：${coverage.join('／')}`);
+    }
+  }
+  if (presentation.excerpts.length) {
+    lines.push('', '## 原文', '', '### 原文を見る');
+    for (const section of sections) {
+      const excerpts = section.excerptIds.map((id) => sources.get(id)!);
+      if (excerpts.length)
+        lines.push('', `#### ${literalMarkdown(section.title)}`, ...renderExcerpts(excerpts));
+    }
   }
   return lines.join('\n');
 }

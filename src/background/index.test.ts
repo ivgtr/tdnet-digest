@@ -22,7 +22,7 @@ interface TestResponse {
   error?: string;
   diagnosticRunId: string;
   summary: string;
-  metadata: { analysisFingerprint: string; score?: unknown };
+  metadata: { analysisFingerprint: string; score?: unknown; persistenceWarning?: string };
   facts: FactSummary;
   presentation: import('../lib/summary-presentation').SummaryPresentation;
   resultId: string;
@@ -350,6 +350,70 @@ describe('要約・採点・追加分析の分離', () => {
     }
   );
 
+  it('診断保存の失敗は完成結果と生成元のエラーを覆わず、後続の保存も妨げない', async () => {
+    const request = await setup(false);
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
+    vi.mocked(chrome.storage.local.set).mockRejectedValue(new Error('storage quota exceeded'));
+    const success = await request({ action: 'summarize' });
+    expect(success.error).toBeUndefined();
+    expect(success.summary).toContain('1150百万円');
+    expect(success.metadata.persistenceWarning).toContain('診断を保存できませんでした');
+    mocked.generateText.mockRejectedValueOnce(new Error('generation failed'));
+    const failure = await request({ action: 'summarize' });
+    expect(failure.error).toBe('generation failed');
+    vi.mocked(chrome.storage.local.set).mockResolvedValue(undefined);
+    const next = await request({ action: 'summarize' });
+    expect(next.error).toBeUndefined();
+    expect(next.metadata.persistenceWarning).toBeUndefined();
+    expect(vi.mocked(chrome.storage.local.set).mock.calls.at(-1)?.[0]).toMatchObject({
+      summaryLastRunV1: { runId: next.diagnosticRunId, outcome: 'firstSuccess' },
+    });
+  });
+
+  it.each([false, true])(
+    '同時初回要求はOffscreen初期化を共有し、失敗=%sの後も再確認する',
+    async (fails) => {
+      const request = await setup(false);
+      mocked.generateText.mockResolvedValue(
+        candidateResponse(facts.facts, [nativePage], facts.documentType)
+      );
+      chrome.runtime.getContexts = vi.fn(async () => []);
+      let finish!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      vi.mocked(chrome.offscreen.createDocument)
+        .mockImplementationOnce(async () => {
+          entered();
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+          if (fails) throw new Error('offscreen creation failed');
+        })
+        .mockResolvedValue(undefined);
+      const first = request({ action: 'summarize', pdfUrl: 'first.pdf' });
+      await started;
+      const second = request({ action: 'summarize', pdfUrl: 'second.pdf' });
+      // Both requests have downloaded before the shared initialization completes.
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledTimes(1);
+      finish();
+      const results = await Promise.all([first, second]);
+      for (const result of results) {
+        if (fails) expect(result.error).toBe('offscreen creation failed');
+        else expect(result.summary).toContain('1150百万円');
+      }
+      expect(chrome.runtime.getContexts).toHaveBeenCalledTimes(1);
+      const next = await request({ action: 'summarize' });
+      expect(next.error).toBeUndefined();
+      expect(chrome.runtime.getContexts).toHaveBeenCalledTimes(2);
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledTimes(2);
+    }
+  );
+
   it('更新前から残る二段階要約設定を削除し、要約を続行する', async () => {
     mocked.generateText.mockResolvedValue(
       candidateResponse(facts.facts, [nativePage], facts.documentType)
@@ -428,6 +492,46 @@ describe('要約・採点・追加分析の分離', () => {
     expect(sent[1][1].content).toContain('開示された数値と条件を確認する');
     expect(sent[0].maxOutputTokens).toBe(8192);
     expect(sent[0].signal).toBeInstanceOf(AbortSignal);
+    expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+  });
+
+  it('customUrlだけの変更で旧要約の追加分析・採点を通信前に拒否する', async () => {
+    mocked.generateText.mockResolvedValue(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
+    const request = await setup(true);
+    const settings = {
+      provider: 'custom',
+      model: 'test',
+      apiKey: 'private-api-key',
+      customUrl: 'HTTPS://API.EXAMPLE.COM:443/v1/chat?deployment=a&token=private-token#ignored',
+      extractionMode: 'full',
+      experimentalScoring: true,
+    };
+    chrome.storage.sync.get = vi.fn(async () => settings) as typeof chrome.storage.sync.get;
+    const summary = await request({ action: 'summarize' });
+    expect(summary.error).toBeUndefined();
+    expect(mocked.generateText.mock.calls[0][0].baseUrl).toBe(
+      'https://api.example.com/v1/chat?deployment=a&token=private-token'
+    );
+    const persisted = JSON.stringify(vi.mocked(chrome.storage.local.set).mock.calls);
+    expect(persisted).not.toContain('private-api-key');
+    expect(persisted).not.toContain('private-token');
+    expect(summary.metadata.analysisFingerprint).not.toContain('api.example.com');
+    const fetches = vi.mocked(fetch).mock.calls.length;
+    settings.customUrl = settings.customUrl.replace('deployment=a', 'deployment=b');
+    for (const action of ['analyze', 'score']) {
+      const stale = await request({
+        action,
+        facts: summary.facts,
+        presentation: summary.presentation,
+        resultId: summary.resultId,
+        fingerprint: summary.metadata.analysisFingerprint,
+      });
+      expect(stale.error).toContain('設定が変更されています');
+    }
+    expect(fetch).toHaveBeenCalledTimes(fetches);
+    expect(mocked.generateText).toHaveBeenCalledTimes(1);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
 

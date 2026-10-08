@@ -14,7 +14,12 @@ import { stableFactId, FACT_SCHEMA_VERSION, type VerifiedFact } from '../../src/
 import expectations from '../../src/lib/fixtures/ir-semantic-expectations.json';
 import { parseFactSummary } from '../../src/lib/fact-summary';
 import { buildPresentation } from '../../src/lib/summary-presentation';
-import { ANALYSIS_SCHEMA_VERSION } from '../../src/lib/analysis-version';
+import {
+  ANALYSIS_SCHEMA_VERSION,
+  buildAnalysisFingerprint,
+  buildSummaryCacheKey,
+} from '../../src/lib/analysis-version';
+import { configuredApiUrl } from '../../src/lib/llm-endpoint';
 import { additionalReviewFixture } from './additional-review-fixture';
 import { seedOldExtensionProfile } from './extension-upgrade-fixture';
 import {
@@ -1440,15 +1445,26 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     assert.equal(apiCalls, callsBefore);
     const expectedRestored = stored.value.facts;
     assert.deepEqual(renderedFactErrors(expectedRestored.facts, await displayedFacts(summary)), []);
+    const restoredSettings = await worker.evaluate(async () =>
+      chrome.storage.sync.get(['provider', 'model', 'customUrl', 'extractionMode'])
+    );
+    const restoredKey =
+      'summaryCacheV2:' +
+      buildSummaryCacheKey(
+        pdfUrl,
+        await buildAnalysisFingerprint({
+          provider: restoredSettings.provider ?? 'openai',
+          model: restoredSettings.model ?? 'gpt-4o',
+          extractionMode: restoredSettings.extractionMode ?? 'full',
+          baseUrl: configuredApiUrl({
+            provider: restoredSettings.provider ?? 'openai',
+            customUrl: restoredSettings.customUrl,
+          }),
+        })
+      );
     const restoredValue = await worker.evaluate(
-      async (request: any) => {
-        const settings = await chrome.storage.sync.get(['provider', 'model', 'extractionMode']);
-        const fingerprint = `v${request.version}:${encodeURIComponent(settings.provider)}:${encodeURIComponent(settings.model)}:${settings.extractionMode}`;
-        return (await chrome.storage.local.get(`summaryCacheV2:${fingerprint}:${request.pdfUrl}`))[
-          `summaryCacheV2:${fingerprint}:${request.pdfUrl}`
-        ];
-      },
-      { version: ANALYSIS_SCHEMA_VERSION, pdfUrl }
+      async (key: string) => (await chrome.storage.local.get(key))[key],
+      restoredKey
     );
     assert.deepEqual(restoredValue.facts, expectedRestored);
     assert.equal(restoredValue.metadata.extractionMode, 'full');
@@ -1628,17 +1644,14 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: false }));
       await row.getByRole('button', { name: '閉じる', exact: true }).click();
       await worker.evaluate(
-        async (request: any) => {
-          const settings = await chrome.storage.sync.get(['provider', 'model', 'extractionMode']);
-          const fingerprint = `v${request.version}:${encodeURIComponent(settings.provider)}:${encodeURIComponent(settings.model)}:${settings.extractionMode}`;
-          const key = `summaryCacheV2:${fingerprint}:${request.pdfUrl}`;
+        async (key: string) => {
           const entry = { key, value: (await chrome.storage.local.get(key))[key] };
           if (!entry.value) throw new Error('現在の設定で復元したキャッシュがありません');
           await chrome.storage.local.set({
             [entry.key]: { ...entry.value, facts: { ...entry.value.facts, version: 3 } },
           });
         },
-        { version: ANALYSIS_SCHEMA_VERSION, pdfUrl }
+        restoredKey
       );
       const previousCalls = apiCalls;
       await row.getByRole('button', { name: '表示', exact: true }).click();

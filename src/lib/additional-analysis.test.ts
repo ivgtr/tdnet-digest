@@ -81,8 +81,8 @@ describe('追加分析の根拠と論点の契約', () => {
       pages: [5],
     });
     expect(built.evidence.find((e) => e.id === 'observation:observation')).toMatchObject({
-      text: '営業利益: 100百万円',
-      sourceIds: value.sourceIds,
+      text: `営業利益: 確定事実 fact:${facts.facts[0].id} の同じ原数量への補足（区分: profit）`,
+      sourceIds: [...value.sourceIds, facts.facts[0].id],
       pages: [5],
     });
     expect(JSON.stringify(built)).not.toContain('根拠なしの将来成長');
