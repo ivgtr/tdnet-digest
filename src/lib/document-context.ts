@@ -1,5 +1,6 @@
 import {
   reportingBasis,
+  reportingFieldSegments,
   bracketedReportingBases,
   reportingAttributeKey,
 } from './reporting-attributes';
@@ -69,7 +70,7 @@ function reportingAttributes(
   tableCaption = false
 ): { role: 'scope' | 'basis'; value: string }[] {
   const attributes: { role: 'scope' | 'basis'; value: string }[] = [];
-  for (const part of block.text.normalize('NFKC').split(/[\n|]/)) {
+  for (const part of reportingFieldSegments(block.text)) {
     const text = part.trim().replace(/^(?:\(\d+\)|\d+[.．])/, '');
     const field = text.match(/^(範囲|会計基準)(?:\s*:\s*|\s+)([^。；]+)$/);
     if (field) {
@@ -122,9 +123,13 @@ function declarations(
       origin,
       ...(tableCaption || forecastReportingTitle(block.text) ? { financialOnly: true } : {}),
     });
-  const fieldStock = text.match(/株式種類([^|｜]+)/)?.[1];
-  if (fieldStock) result.push({ role: 'scope', value: fieldStock, id: block.id, origin });
-  const stock = block.text.split('\n').find((line) => /取得対象株式.*種類/.test(normalized(line)));
+  for (const field of reportingFieldSegments(block.text)) {
+    const stock = normalized(field).match(/^株式種類:?(.+)$/)?.[1];
+    if (stock) result.push({ role: 'scope', value: stock, id: block.id, origin });
+  }
+  const stock = reportingFieldSegments(block.text).find((line) =>
+    /取得対象株式.*種類/.test(normalized(line))
+  );
   if (stock) {
     const value = normalized(stock).match(/種類(?:[:：])?(.+)$/)?.[1];
     if (value) result.push({ role: 'scope', value, id: block.id, origin: 'local' });

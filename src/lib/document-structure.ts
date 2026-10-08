@@ -1,4 +1,4 @@
-import { reportingScope } from './reporting-attributes';
+import { reportingScope, reportingFieldSegments } from './reporting-attributes';
 export { reportingScope } from './reporting-attributes';
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
@@ -51,7 +51,7 @@ export const normalized = (text: string) => text.normalize('NFKC').replace(/\s/g
 export function declaredSubjectsIn(block: TextBlock): string[] {
   return [
     ...new Set(
-      block.text.split('\n').flatMap((line) => {
+      reportingFieldSegments(block.text).flatMap((line) => {
         const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
         const field = text.match(/^(?:上場会社名|会社名|名称):?([^:].*)$/)?.[1];
         if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
@@ -302,6 +302,24 @@ export function canJoinWithinCells(
   return left !== null && right !== null && left?.id === right?.id;
 }
 
+/** Only touching, uniquely owned cells prove a same-row metadata field/value relation. */
+function adjacentHorizontalCells(
+  owners: ReadonlyMap<string, TableCell | null>,
+  leftId: string,
+  rightId: string
+): boolean {
+  const left = owners.get(leftId),
+    right = owners.get(rightId);
+  return (
+    !!left &&
+    !!right &&
+    left.id !== right.id &&
+    left.right === right.left &&
+    left.top === right.top &&
+    left.bottom === right.bottom
+  );
+}
+
 /** Numeric runs retain every source span, including an incomplete decimal or separated sign. */
 export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): QuantityCell[] {
   const cells: QuantityCell[] = [];
@@ -467,7 +485,9 @@ export function buildBlocks(
       .map(
         (s, i) =>
           (cellBoundaries.has(i)
-            ? ' │ '
+            ? adjacentHorizontalCells(owners, line[i - 1].id, s.id)
+              ? ' │ '
+              : ' ││ '
             : i && s.x - line[i - 1].x - line[i - 1].width > first.height * 0.6
               ? ' '
               : '') + s.text
@@ -496,7 +516,7 @@ export function buildBlocks(
       last.x + last.width <= previous.x + previous.width + first.height * 4
     ) {
       // A hard boundary survives whitespace normalization, including a split
-      // sign or unit across physical rows. It is not a metadata field delimiter.
+      // sign or unit across physical rows. Metadata must never pair across this newline.
       previous.text +=
         (canJoinWithinCells(owners, previous.spanIds[previous.spanIds.length - 1], first.id)
           ? '\n'

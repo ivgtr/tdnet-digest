@@ -1,5 +1,6 @@
 import {
   reportingScope,
+  reportingFieldSegments,
   reportingBasis,
   bracketedReportingBases,
   reportingAttributeKey,
@@ -99,7 +100,7 @@ export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolut
       /[0-9][0-9,.]*(?:千|百万|億)?円/.test(reportingPeriodText(excerpt.text))
     )
       break;
-    for (const line of excerpt.text.split(/[\n|｜]/)) {
+    for (const line of reportingFieldSegments(excerpt.text)) {
       const text = reportingPeriodText(line);
       const subject = text.match(/^(?:上場会社名|会社名):?(.+)$/)?.[1];
       if (subject) fields.subject.add(subject.split(/上場取引所|コード番号|URL|代表者名/)[0]);

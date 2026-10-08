@@ -32,7 +32,7 @@ import {
 } from './summary-comparison';
 import { companyExcerpt } from './summary-company-excerpt';
 import { paragraphGroups, sourceInventory } from './summary-source-inventory';
-import { isSourceMetadata } from './summary-content-policy';
+import { isSourceMetadata, dividendPaymentExcerpt } from './summary-content-policy';
 import {
   earningsTarget,
   matchesEarningsTarget,
@@ -54,6 +54,14 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 
 describe('冒頭と本文の保持・復元・原文参照', () => {
+  it('配当支払日の明示欄は隣接セル区切りを含む原文を保持し、空欄・別行は補完しない', () => {
+    for (const separator of [' ', '　', '\u00a0', ' │ ', ' ｜ ', ' | ']) {
+      const field = `配当金支払開始予定日${separator}２０２６年６月３０日`;
+      expect(dividendPaymentExcerpt(field)).toBe(field);
+    }
+    for (const gap of [' │ │ ', '\n│ ', ' │ 未定 │ '])
+      expect(dividendPaymentExcerpt(`配当金支払開始予定日${gap}2026年6月30日`)).toBeNull();
+  });
   // Vocabulary belongs here; candidate/coverage and real-PDF stories own the integration boundaries.
   it.each([
     ['2026年3月期 決算短信[IFRS]（連結）', 'fullYear', '連結', 'IFRS', 'IFRS'],

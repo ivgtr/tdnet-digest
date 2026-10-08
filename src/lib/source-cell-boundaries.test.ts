@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import { extractPageLayout } from './pdf-layout';
-import { buildBlocks, quantityCells } from './document-structure';
-import { buildTableRegions } from './table-layout';
+import { buildBlocks, quantityCells, physicalCellOwners } from './document-structure';
+import { buildTableCells, buildTableRegions } from './table-layout';
 import { validatePages } from './fact-validation';
 import { verifyTableEvidence } from './numeric-evidence';
 import type { DrawingOperation } from './pdf-drawing';
@@ -12,6 +12,9 @@ import { reviewCandidates } from './fact-candidates';
 import { parseFactSummary } from './fact-summary';
 import { narrativeValues } from './summary-narrative';
 import { sourceInventory } from './summary-source-inventory';
+import { buildDocumentContext, documentSubject } from './document-context';
+import { earningsTarget } from './summary-earnings-policy';
+import { buildPresentation, revalidatePresentation } from './summary-presentation';
 import type { FactSummary } from './fact-contract';
 
 function item(str: string, x: number, y: number, width = 15): TextItem {
@@ -57,6 +60,164 @@ function closedGrid(xs: number[], top: number, bottom: number): DrawingOperation
     },
   ];
 }
+
+// This integration owns the actual drawing → metadata → confirmed headline boundary.
+// Field vocabulary/ambiguity and cross-cell quantity rejection have separate tests.
+it.each(['separate', 'mixed', 'wrapped'] as const)(
+  '罫線で分かれた表紙欄を原文のまま保持し、正しい会社・範囲・基準で冒頭を復元する: %s',
+  (layout) => {
+    const fields = [
+      ['会社名', '株式会社テスト'],
+      ['会計基準', '日本基準'],
+      ['範囲', '連結'],
+    ];
+    const items = [
+      item(
+        layout === 'separate' ? '2026年3月期 決算短信〔日本基準〕（連結）' : '2026年3月期 決算短信',
+        0,
+        10,
+        400
+      ),
+    ];
+    const operations: DrawingOperation[] = [];
+    if (layout === 'mixed') {
+      items.push(...fields.flat().map((text, i) => item(text, i * 120 + 10, 40, 100)));
+      operations.push(...closedGrid([0, 120, 240, 360, 480, 600, 720], 30, 50));
+    } else if (layout === 'wrapped') {
+      fields.forEach(([label, value], i) => {
+        items.push(item(`${label} ${value}`, 10, 40 + i * 18, 200));
+        operations.push(...closedGrid([0, 250], 30 + i * 18, 48 + i * 18));
+      });
+    } else {
+      fields.forEach(([label, value], i) => {
+        items.push(item(label, 10, 40 + i * 30, 70), item(value, 110, 40 + i * 30, 130));
+        operations.push(...closedGrid([0, 100, 300], 30 + i * 30, 50 + i * 30));
+      });
+    }
+    operations.forEach((operation, i) => {
+      operation.index = i;
+    });
+    items.push(
+      item('2026年3月期 連結経営成績', 0, 140, 250),
+      item('売上高は1,000百万円です。', 0, 170, 280)
+    );
+    const page = extractPageLayout(items, 1, operations);
+    expect(() => validatePages([page])).not.toThrow();
+    const originalFields =
+      layout === 'separate'
+        ? fields.map(([label, value]) => `${label} │ ${value}`)
+        : layout === 'mixed'
+          ? [fields.flat().join(' │ ')]
+          : [fields.map(([label, value]) => `${label} ${value}`).join('\n│ ')];
+    expect(page.blocks.slice(1, 1 + originalFields.length).map((block) => block.text)).toEqual(
+      originalFields
+    );
+    const context = buildDocumentContext([page]);
+    expect(documentSubject(context)).toBe('株式会社テスト');
+    const excerpts = sourceInventory([page], context, 'earnings');
+    expect(excerpts.map((excerpt) => excerpt.text)).toEqual(expect.arrayContaining(originalFields));
+    expect(earningsTarget(excerpts)).toMatchObject({
+      issue: null,
+      target: {
+        label: '2026年3月期',
+        subject: '株式会社テスト',
+        scope: '連結',
+        basis: '日本基準',
+      },
+    });
+    const reviewed = reviewCandidates(
+      candidateResponse([numberCandidate(page, '売上高', 1000)], [page], 'earnings'),
+      'earnings',
+      [page]
+    );
+    expect(reviewed.unverified).toEqual([]);
+    expect(reviewed.facts).toHaveLength(1);
+    expect(reviewed.facts[0]).toMatchObject({
+      value: 1000,
+      semantics: { subject: '株式会社テスト', scope: '連結', basis: '日本基準' },
+    });
+    const summary: FactSummary = {
+      version: 6,
+      documentType: 'earnings',
+      facts: reviewed.facts,
+      unverified: [],
+    };
+    const display = buildPresentation(summary, [page]);
+    expect(display.overview).toEqual([reviewed.facts[0].id]);
+    // One representative restores confirmed facts against the original ruled source.
+    if (layout === 'mixed') {
+      const restored = parseFactSummary(JSON.stringify(summary), 'earnings', [page], false);
+      expect(restored).toEqual(summary);
+      expect(revalidatePresentation(JSON.parse(JSON.stringify(display)), restored, [page])).toEqual(
+        display
+      );
+    }
+  }
+);
+
+it.each(['empty-company-cell', 'unowned-value', 'ambiguous-owner'] as const)(
+  '会社名欄は隣接する一意なセル以外の会社名を借りない: %s',
+  (geometry) => {
+    const items = [item('2026年3月期 決算短信〔日本基準〕（連結）', 0, 10, 400)];
+    const operations: DrawingOperation[] = [];
+    if (geometry === 'empty-company-cell') {
+      items.push(
+        item('項目', 10, 40, 60),
+        item('当社', 110, 40, 60),
+        item('参考会社', 210, 40, 80),
+        item('会社名', 10, 70, 60),
+        item('株式会社他社', 210, 70, 80)
+      );
+      operations.push(
+        ...closedGrid([0, 100, 200, 300], 30, 50),
+        ...closedGrid([0, 100, 200, 300], 60, 80)
+      );
+    } else {
+      items.push(
+        item('会社名', 10, 40, 40),
+        item('株式会社他社', geometry === 'ambiguous-owner' ? 65 : 110, 40, 64)
+      );
+      operations.push(...closedGrid([0, 100], 30, 50));
+      // The value belongs to two intersecting rectangles with no innermost cell.
+      if (geometry === 'ambiguous-owner') operations.push(...closedGrid([95, 200], 25, 45));
+    }
+    operations.forEach((operation, i) => {
+      operation.index = i;
+    });
+    items.push(
+      item('2026年3月期 連結経営成績', 0, 100, 250),
+      item('売上高は1,000百万円です。', 0, 140, 280)
+    );
+    const page = extractPageLayout(items, 1, operations);
+    expect(() => validatePages([page])).not.toThrow();
+    expect(page.blocks.find((block) => block.text.startsWith('会社名'))!.text).toBe(
+      '会社名 ││ 株式会社他社'
+    );
+    const owners = physicalCellOwners(buildTableCells(page.drawingLines, page.spans, 1));
+    const value = page.spans.find((span) => span.text === '株式会社他社')!;
+    if (geometry === 'ambiguous-owner') expect(owners.get(value.id)).toBeNull();
+    else if (geometry === 'unowned-value') expect(owners.has(value.id)).toBe(false);
+    else expect(owners.get(value.id)).toMatchObject({ left: 200, right: 300 });
+    const context = buildDocumentContext([page]);
+    expect(documentSubject(context)).toBeNull();
+    expect(earningsTarget(sourceInventory([page], context, 'earnings')).target).toMatchObject({
+      subject: null,
+      scope: '連結',
+      basis: '日本基準',
+    });
+    const candidate = numberCandidate(page, '売上高', 1000);
+    candidate.semantics.subject = '株式会社他社';
+    const reviewed = reviewCandidates(
+      candidateResponse([candidate], [page], 'earnings'),
+      'earnings',
+      [page]
+    );
+    expect(reviewed.facts).toEqual([]);
+    expect(reviewed.unverified).toEqual([
+      expect.stringContaining('SCOPE:subjectの適用根拠が不一致'),
+    ]);
+  }
+);
 
 it.each([
   { texts: ['100', '20'], gap: 1 },
