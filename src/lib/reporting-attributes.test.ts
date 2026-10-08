@@ -1,8 +1,56 @@
 import { expect, it } from 'vitest';
-import { reportingFieldSegments } from './reporting-attributes';
+import { reportingFieldProjection, reportingFieldSegments } from './reporting-attributes';
 import { declaredSubjectsIn } from './document-structure';
 import { textPage } from './fixtures/v4-test-source';
-import { buildDocumentContext } from './document-context';
+import { buildDocumentContext, isReportingMetadata } from './document-context';
+
+// Vocabulary coverage belongs here; drawing-to-headline integration has one
+// representative mixed cover in source-cell-boundaries.test.ts.
+it.each([
+  ['上場取引所', '東'],
+  ['コード番号', '464A'],
+  ['証券コード', '123B'],
+  ['代表者名', '(氏名) 山田 太郎'],
+  ['代表者', '(役職名) 社長 (氏名) 山田 太郎'],
+  ['問合せ先責任者', '(役職名) 経理部長 (氏名) 鈴木 花子'],
+  ['問い合わせ先責任者', '(氏名) 鈴木 花子'],
+  ['問合せ先', '経理部'],
+  ['問い合わせ先', '経理部'],
+  ['電話番号', '03-0000-0000'],
+  ['TEL', '03-0000-0000'],
+  ['URL', 'https://example.com/report%20list'],
+])('管理欄も同じ構造語彙から直隣の値セルだけを投影する: %s', (label, value) => {
+  const text = `${label} | ${value}`;
+  expect(reportingFieldProjection(text)).toEqual({
+    segments: [`${label} ${value}`],
+    complete: true,
+  });
+  expect(isReportingMetadata({ id: 'p1b1', text })).toBe(true);
+  expect(reportingFieldProjection(`${label} ││ ${value}`)).toEqual({
+    segments: [label],
+    complete: false,
+  });
+  expect(reportingFieldSegments(`会社名 | ${label} | ${value}`)).toEqual([
+    '会社名',
+    `${label} ${value}`,
+  ]);
+});
+
+it('分割管理欄の表記揺れを許し、本文・値の追加セルは完全な管理欄にしない', () => {
+  const text = 'コ ー ド 番 号 ： │ 464A │ u r l │ https://example.com/report%20list';
+  expect(reportingFieldProjection(text)).toEqual({
+    segments: ['コ ー ド 番 号 : 464A', 'u r l https://example.com/report%20list'],
+    complete: true,
+  });
+  expect(isReportingMetadata({ id: 'p1b1', text })).toBe(true);
+  for (const mixed of [
+    'TEL | 03-0000-0000 売上高100百万円',
+    'URL | https://example.com/report%20list | 売上高100百万円',
+    'コード番号 | 464A | 参考情報',
+    'TEL\n| 03-0000-0000',
+  ])
+    expect(isReportingMetadata({ id: 'p1b2', text: mixed })).toBe(false);
+});
 
 it.each(['|', '｜', '│'])('明示フィールドだけを同じ行の隣接セルへ対応させる: %s', (separator) => {
   const text = `会社名 ${separator} 株式会社テスト ${separator} 会計基準： ${separator} 日本基準 ${separator} 範囲 連結`;

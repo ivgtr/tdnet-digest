@@ -384,9 +384,11 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     if (earnings.issue)
       lines.push(
         '',
-        missingAttributes.length
-          ? `**要確認：報告対象の${missingAttributes.join('・')}が未特定です。**`
-          : '**要確認：報告対象期が未特定です。**',
+        earnings.issue === 'ambiguous'
+          ? '**要確認：報告対象を一意に特定できません。**'
+          : missingAttributes.length
+            ? `**要確認：報告対象の${missingAttributes.join('・')}が未特定です。**`
+            : '**要確認：報告対象期が未特定です。**',
         '原文の報告対象を一意に確認できないため、数値を当期の要点として選んでいません。確認済みの数値は対象期とともに本文に表示しています。'
       );
     if (missing.length || additional.length)

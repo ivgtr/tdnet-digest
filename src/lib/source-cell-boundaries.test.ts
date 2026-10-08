@@ -10,7 +10,8 @@ import { numberCandidate } from './fixtures/v4-test-source';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { reviewCandidates } from './fact-candidates';
 import { parseFactSummary } from './fact-summary';
-import { narrativeValues } from './summary-narrative';
+import { bindLiteralQuantities, checkText, narrativeValues } from './summary-narrative';
+import { renderNarrativeText } from './summary-narrative-renderer';
 import { sourceInventory } from './summary-source-inventory';
 import { buildDocumentContext, documentSubject } from './document-context';
 import { earningsTarget } from './summary-earnings-policy';
@@ -67,6 +68,13 @@ it.each(['separate', 'mixed', 'wrapped'] as const)(
   '罫線で分かれた表紙欄を原文のまま保持し、正しい会社・範囲・基準で冒頭を復元する: %s',
   (layout) => {
     const fields = [
+      ...(layout === 'mixed'
+        ? [
+            ['コード番号', '464A'],
+            ['URL', 'https://example.com/report%20list'],
+            ['上場取引所', '東'],
+          ]
+        : []),
       ['会社名', '株式会社テスト'],
       ['会計基準', '日本基準'],
       ['範囲', '連結'],
@@ -82,7 +90,13 @@ it.each(['separate', 'mixed', 'wrapped'] as const)(
     const operations: DrawingOperation[] = [];
     if (layout === 'mixed') {
       items.push(...fields.flat().map((text, i) => item(text, i * 120 + 10, 40, 100)));
-      operations.push(...closedGrid([0, 120, 240, 360, 480, 600, 720], 30, 50));
+      operations.push(
+        ...closedGrid(
+          Array.from({ length: fields.length * 2 + 1 }, (_, i) => i * 120),
+          30,
+          50
+        )
+      );
     } else if (layout === 'wrapped') {
       fields.forEach(([label, value], i) => {
         items.push(item(`${label} ${value}`, 10, 40 + i * 18, 200));
@@ -284,6 +298,18 @@ it.each([1, 4])('抽出から原文照合まで、別セルの100と20を独立�
   };
   expect(verifyTableEvidence(page, evidence, claim).quote).toContain('\n100');
   expect(() => verifyTableEvidence(page, evidence, { ...claim, value: 10020 })).toThrow('値');
+  // Keep the physical values even when the unit row cannot align every column.
+  const empty: FactSummary = { version: 6, documentType: 'other', facts: [], unverified: [] };
+  const display = buildPresentation(empty, [page]);
+  expect(display.values.map((value) => [value.id, value.decimal, value.unit])).toEqual([
+    ['p1s6', '100', null],
+    ['p1s7', '20', null],
+  ]);
+  const sourceIds = display.excerpts.map((excerpt) => excerpt.id);
+  expect(renderNarrativeText('{{value:p1s6}}、{{value:p1s7}}', display.values)).toBe('100、20');
+  expect(() =>
+    bindLiteralQuantities('20百万円', sourceIds, display.values, display.excerpts)
+  ).toThrow('NARRATIVE_QUANTITY');
   const forged = structuredClone(page);
   forged.quantities = quantityCells(forged.spans);
   expect(forged.quantities.map((q) => q.text)).toEqual(['10020']);
@@ -458,7 +484,9 @@ it('別セルを繋いだ行の数字・単位を本文数量として確定せ�
     } else {
       expect(candidate.facts).toEqual([]);
       const empty: FactSummary = { version: 6, documentType: 'other', facts: [], unverified: [] };
-      expect(narrativeValues(empty, [page], sourceInventory([page]))).toEqual([]);
+      expect(narrativeValues(empty, [page], sourceInventory([page]))).toEqual([
+        expect.objectContaining({ raw: '20', decimal: '20', unit: null }),
+      ]);
       expect(page.blocks.find((block) => block.text.includes('売上高'))!.text).toBe(
         '売上高は100 │ 20 │ 百万円です。'
       );
@@ -521,14 +549,70 @@ it('表示数量も別セルの隣接単位を借りず、同一セルの分割�
 
 it('セル境界を含む行でも同一の表示数量を本文IDで重複登録しない', () => {
   const page = extractPageLayout(
-    [item('100百万円', 40, 95, 60), item('200百万円', 120, 95, 60)],
+    [item('100百万円', 40, 95, 60), item('20%', 104, 95, 30)],
     1,
-    closedGrid([0, 110, 210], 85, 105)
+    closedGrid([0, 102, 150], 85, 105)
   );
   const empty: FactSummary = { version: 6, documentType: 'other', facts: [], unverified: [] };
-  const values = narrativeValues(empty, [page], sourceInventory([page]));
-  expect(values.map((value) => [value.id, value.raw])).toEqual([
-    ['p1s1', '100百万円'],
-    ['p1s2', '200百万円'],
+  const display = buildPresentation(empty, [page]);
+  expect(display.values.map((value) => [value.id, value.raw, value.unit])).toEqual([
+    ['p1s1', '100百万円', '百万円'],
+    ['p1s2', '20%', '%'],
   ]);
+  const sourceIds = display.excerpts.map((excerpt) => excerpt.id);
+  const bound = bindLiteralQuantities(
+    '売上高100百万円、比率20%。',
+    sourceIds,
+    display.values,
+    display.excerpts
+  );
+  expect(bound).toBe('売上高{{value:p1s1}}、比率{{value:p1s2}}。');
+  expect(() => checkText(bound, sourceIds, display.values, display.excerpts, empty)).not.toThrow();
+  expect(renderNarrativeText(bound, display.values)).toBe('売上高100百万円、比率20%。');
+  for (const invalid of ['10020百万円', '20百万円']) {
+    expect(() =>
+      bindLiteralQuantities(invalid, sourceIds, display.values, display.excerpts)
+    ).toThrow('NARRATIVE_QUANTITY');
+  }
 });
+
+it.each(['same-cell', 'unruled', 'unowned-neighbor', 'ambiguous-neighbor'] as const)(
+  '独立したセルと証明できない本文断片の数量を短い表示値として公開しない: %s',
+  (geometry) => {
+    const operations =
+      geometry === 'unruled'
+        ? []
+        : geometry === 'same-cell'
+          ? closedGrid([0, 150], 30, 50)
+          : closedGrid([0, 100], 30, 50);
+    if (geometry === 'ambiguous-neighbor') operations.push(...closedGrid([95, 200], 25, 45));
+    operations.forEach((operation, i) => {
+      operation.index = i;
+    });
+    const page = extractPageLayout(
+      [
+        item('100', 75, 40),
+        item('億27百万円', 94, 40, geometry === 'ambiguous-neighbor' ? 10 : 24),
+      ],
+      1,
+      operations
+    );
+    const owners = physicalCellOwners(buildTableCells(page.drawingLines, page.spans, 1));
+    if (geometry === 'same-cell') expect(owners.get('p1s1')).toBe(owners.get('p1s2'));
+    else if (geometry === 'unruled') expect(owners.size).toBe(0);
+    else {
+      expect(owners.get('p1s1')).toBeTruthy();
+      if (geometry === 'ambiguous-neighbor') expect(owners.get('p1s2')).toBeNull();
+      else expect(owners.has('p1s2')).toBe(false);
+    }
+    // The producer's scalar is deliberately present: its consumer must still
+    // reject the partial expression, even across an unresolved cell boundary.
+    expect(page.quantities.map((quantity) => quantity.text)).toEqual(['100']);
+    const empty: FactSummary = { version: 6, documentType: 'other', facts: [], unverified: [] };
+    const values = buildPresentation(empty, [page]).values;
+    expect(values.some((value) => value.decimal === '100')).toBe(false);
+    expect(values.map((value) => value.raw)).toEqual(
+      geometry === 'same-cell' || geometry === 'unruled' ? ['100億27百万円'] : []
+    );
+  }
+);

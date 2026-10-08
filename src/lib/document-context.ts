@@ -5,6 +5,7 @@ import {
   bracketedReportingBases,
   reportingAttributeKey,
   isAdministrativeBlock,
+  isReportingAdministrativeField,
 } from './reporting-attributes';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
@@ -116,8 +117,8 @@ function reportingValueText(text: string): boolean {
   // Complete URL/code fields are literal metadata: encoded paths are not percentages
   // and the letter in a four-character securities code is not a quantity unit.
   if (
-    /^(?:U\s*R\s*L(?:\s+|:)\s*)?https?:\/\/\S+$/i.test(raw) ||
-    /^(?:コ\s*ー\s*ド\s*番\s*号|証\s*券\s*コ\s*ー\s*ド)(?:\s+|:)\s*[0-9A-Z]{4}(?:\s+U\s*R\s*L(?:\s+|:)\s*https?:\/\/\S+)?$/i.test(
+    /^(?:U\s*R\s*L(?:\s*:\s*|\s+))?https?:\/\/\S+$/i.test(raw) ||
+    /^(?:コ\s*ー\s*ド\s*番\s*号|証\s*券\s*コ\s*ー\s*ド)(?:\s*:\s*|\s+)[0-9A-Z]{4}(?:\s+U\s*R\s*L(?:\s*:\s*|\s+)https?:\/\/\S+)?$/i.test(
       raw
     )
   )
@@ -134,33 +135,12 @@ function reportingValueText(text: string): boolean {
   );
 }
 
-/** Spacing between label glyphs is layout, but a field still needs a value delimiter. */
-const reportingAdministrativeField = new RegExp(
-  `^(?:${[
-    '上場取引所',
-    'コード番号',
-    '証券コード',
-    '代表者名',
-    '代表者',
-    '問合せ先責任者',
-    '問い合わせ先責任者',
-    '問合せ先',
-    '問い合わせ先',
-    '電話番号',
-    'TEL',
-    'URL',
-  ]
-    .map((label) => [...label].join('\\s*'))
-    .join('|')})(?:\\s+|:)\\s*\\S`,
-  'i'
-);
-
 /** Complete cover administration can share a physical block with the issuer. */
 function reportingAdministrativeSegment(text: string): boolean {
   const compact = normalized(text);
   return (
     isAdministrativeBlock(text) ||
-    reportingAdministrativeField.test(text.normalize('NFKC').trim()) ||
+    isReportingAdministrativeField(text) ||
     /^20\d{2}年\d{1,2}月\d{1,2}日$/.test(compact) ||
     /^\(?百万円未満切捨て\)?$/.test(compact) ||
     // PDF line grouping can split this label from its date and from 開催予定日.

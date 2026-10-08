@@ -166,6 +166,7 @@ describe('報告対象の完全性を候補・冒頭・本文・保存復元で�
         expect(display.overview).toEqual([]);
         const { markdown } = assertBodyAndRestore(summary, pages, display, [1000]);
         expect(headline(markdown)).toMatch(new RegExp(`報告対象.*${label}.*未特定`));
+        expect(headline(markdown)).not.toContain('報告対象を一意に特定できません');
         expect(headline(markdown)).not.toContain(amount(1000));
         const altered = structuredClone(display);
         altered.overview = [summary.facts[0].id];
@@ -196,10 +197,10 @@ describe('報告対象の完全性を候補・冒頭・本文・保存復元で�
       expect(headlineValues(summary, display)).toEqual(conflict ? [] : [1200]);
       const { markdown } = assertBodyAndRestore(summary, pages, display, [1200]);
       if (conflict) {
-        expect(headline(markdown)).toContain('要確認');
-        expect(headline(markdown)).toContain('報告対象');
+        expect(headline(markdown)).toContain('報告対象を一意に特定できません');
+        expect(headline(markdown)).not.toContain('報告対象期が未特定');
         expect(headline(markdown)).not.toContain(amount(1200));
-      }
+      } else expect(headline(markdown)).not.toContain('報告対象を一意に特定できません');
     }
   });
 

@@ -176,9 +176,19 @@ export function narrativeValues(
         neighbors.some((s) => {
           const left = q.x - s.x - s.width;
           const right = s.x - q.x - q.width;
+          const edgeId =
+            left >= -0.5 && left <= q.height * 0.6
+              ? q.spanIds[0]
+              : right >= -0.5 && right <= q.height * 0.6
+                ? q.spanIds[q.spanIds.length - 1]
+                : null;
+          // Only two uniquely owned, distinct cells prove independence.
+          // Unowned or ambiguous neighbors can still be prose continuations.
           return (
-            ((left >= -0.5 && left <= q.height * 0.6) ||
-              (right >= -0.5 && right <= q.height * 0.6)) &&
+            edgeId !== null &&
+            (canJoinWithinCells(owners, edgeId, s.id) ||
+              !owners.get(edgeId) ||
+              !owners.get(s.id)) &&
             !isUncaptionedUnit(compact(s.text))
           );
         })
