@@ -17,7 +17,12 @@ import { toValue } from '@/lib/score-extraction';
 import type { ExperimentalScore } from '@/lib/scoring';
 import { parseAnalysisResponse } from '@/lib/additional-analysis';
 import { buildAnalysisInput } from '@/lib/analysis-input';
-import { SUMMARY_TRACE_KEY, type SummaryTrace } from '@/lib/summary-trace';
+import {
+  SUMMARY_TRACE_KEY,
+  SUMMARY_DIAGNOSTICS_KEY,
+  saveSummaryTrace,
+  type SummaryTrace,
+} from '@/lib/summary-trace';
 import SummaryButton from '../SummaryButton';
 import { useSummarize } from './useSummarize';
 import { startContentScript } from '../contentLifecycle';
@@ -368,7 +373,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     expect(hook().result).toMatchObject({
       summary: displayed!.summary,
       error: null,
-      diagnosticRunId: null,
+      diagnosticRunId: 'smart-run',
     });
     expect(hook().loading).toBe(false);
     expect(sendMessage).toHaveBeenCalledTimes(2);
@@ -756,7 +761,7 @@ describe('実Reactの要約行アクション配置', () => {
     await click(copy);
     expect(writeText).toHaveBeenCalledTimes(2);
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
-      'この要約結果に対応する診断がありません'
+      'この要約結果に対応する診断がありません。保存上限で削除されたか、保存されていません'
     );
     expect(host.querySelector('textarea')).toBeNull();
     stored[SUMMARY_TRACE_KEY] = trace;
@@ -776,6 +781,60 @@ describe('実Reactの要約行アクション配置', () => {
     expect(reopenedHost.querySelector('[role="status"]')?.textContent).toBe('');
     expect(reopenedHost.querySelector('[role="alert"]')).toBeNull();
     expect(reopened.querySelector<HTMLDetailsElement>('[data-generation-info]')?.open).toBe(false);
+    expect(writeText).toHaveBeenCalledTimes(3);
+  });
+
+  it('Aを保存→B開始・失敗→Aを再表示・再マウントしても元実行の診断JSONを出力する', async () => {
+    settings.experimentalScoring = false;
+    const response = { ...(await responseFor()), diagnosticPersistence: 'saved' as const };
+    const traceA = await traceFor(response.diagnosticRunId, response.resultId);
+    await saveSummaryTrace(traceA);
+    sendMessage.mockResolvedValueOnce(response);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    let mounted = await mountButton();
+    await click(mounted.button);
+    let summaryRow = await summaryRowFor(mounted.row);
+    expect(stored[await keyFor('full')]).toMatchObject({
+      diagnosticRunId: traceA.runId,
+      diagnosticPersistence: 'saved',
+    });
+    const traceB = {
+      ...(await traceFor('B-failed-run', null)),
+      outcome: 'running' as const,
+      error: null,
+    };
+    await saveSummaryTrace(traceB);
+    await click(summaryRow.querySelector<HTMLButtonElement>('[data-diagnostic-root] button')!);
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceA);
+    await saveSummaryTrace({ ...traceB, outcome: 'failure', error: '同じPDFの次の生成が失敗' });
+    await click(mounted.button);
+    await click(mounted.button);
+    summaryRow = await summaryRowFor(mounted.row);
+    await click(summaryRow.querySelector<HTMLButtonElement>('[data-diagnostic-root] button')!);
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceA);
+    await act(async () => root.unmount());
+    container.remove();
+    mounted = await mountButton();
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(mounted.button.textContent).toBe('表示');
+    });
+    await click(mounted.button);
+    summaryRow = await summaryRowFor(mounted.row);
+    await click(summaryRow.querySelector<HTMLButtonElement>('[data-diagnostic-root] button')!);
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceA);
+    // History eviction affects diagnostics only: no regenerated summary or substitution.
+    stored[SUMMARY_DIAGNOSTICS_KEY] = {
+      version: 1,
+      traces: [{ ...traceB, outcome: 'failure', error: '失敗' }],
+    };
+    await click(summaryRow.querySelector<HTMLButtonElement>('[data-diagnostic-root] button')!);
+    expect(
+      summaryRow.querySelector('[data-diagnostic-root] [role="alert"]')?.textContent
+    ).toContain('保存上限');
+    expect(summaryRow.textContent).toContain('100百万円');
+    expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledTimes(3);
   });
 

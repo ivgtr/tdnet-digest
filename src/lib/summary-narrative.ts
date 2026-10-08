@@ -8,8 +8,8 @@ import {
   isUnitToken,
 } from './quantity';
 import type { SourceExcerpt } from './summary-source-inventory';
-import { headingLevel } from './document-structure';
-import { physicalRows, tableUnitRuns } from './table-layout';
+import { headingLevel, physicalCellOwners, canJoinWithinCells } from './document-structure';
+import { physicalRows, tableUnitRuns, buildTableCells } from './table-layout';
 
 /** Literal quantities for presentation. They are not semantic facts used for scoring. */
 export interface NarrativeValue {
@@ -100,7 +100,8 @@ function displayUnitCaption(raw: string): string | null {
 /** Keep a split literal's complete unit, never a valid-looking prefix of it. */
 function completePhysicalQuantity(
   native: ExtractedPage['quantities'][number],
-  spans: ExtractedPage['spans']
+  spans: ExtractedPage['spans'],
+  owners: ReturnType<typeof physicalCellOwners>
 ) {
   const parsed = scalar(native.text);
   if (!parsed) return null;
@@ -118,6 +119,7 @@ function completePhysicalQuantity(
       )
       .sort((a, b) => a.x - b.x)[0];
     if (!next || next.x - last.x - last.width > Math.min(next.height, last.height) * 0.6) break;
+    if (!canJoinWithinCells(owners, last.id, next.id)) break;
     const continued = (unit ?? '') + compact(next.text);
     if (!isUnitToken(continued)) {
       if (unit !== null && isUncaptionedUnit(compact(next.text))) return null;
@@ -145,10 +147,13 @@ export function narrativeValues(
   const values = new Map<string, NarrativeValue>();
   const physicalQuantitySpans = new Map<string, string[]>();
   for (const page of pages.filter((p) => p.selection === 'selected')) {
+    const owners = physicalCellOwners(
+      buildTableCells(page.drawingLines, page.spans, page.pageNumber)
+    );
     const consumed = new Set<string>();
     for (const native of page.quantities) {
       if (consumed.has(native.id)) continue;
-      const q = completePhysicalQuantity(native, page.spans);
+      const q = completePhysicalQuantity(native, page.spans, owners);
       if (!q) continue;
       for (const id of q.spanIds.slice(1)) consumed.add(id);
       const sources = excerpts.filter(
@@ -188,7 +193,9 @@ export function narrativeValues(
         )
         .sort((a, b) => a.x - b.x)[0];
       const adjacentUnit =
-        adjacent && isUncaptionedUnit(adjacent.text.normalize('NFKC').replace(/\s/g, ''))
+        adjacent &&
+        canJoinWithinCells(owners, q.spanIds[q.spanIds.length - 1], adjacent.id) &&
+        isUncaptionedUnit(adjacent.text.normalize('NFKC').replace(/\s/g, ''))
           ? declaredQuantityUnit(adjacent.text)
           : null;
       // A unit row can be legible even when metric/period ownership is unresolved.
@@ -305,15 +312,21 @@ export function narrativeValues(
       // text offsets to prove ownership even when two columns have equal values.
       const spans = e.spanIds.map((id) => page.spans.find((span) => span.id === id)!);
       let offset = 0;
+      const rowText = compact(e.text);
+      let mappedRow = e.kind === 'row';
       const intervals = new Map(
         spans.map((span) => {
+          const raw = compact(span.text);
+          // The block's structural cell separator consumes text offset but is
+          // not an original glyph. Match every original span in order as well.
+          if (!rowText.startsWith(raw, offset) && rowText[offset] === '│') offset++;
           const start = offset;
-          offset += compact(span.text).length;
+          mappedRow &&= rowText.startsWith(raw, offset);
+          offset += raw.length;
           return [span.id, { start, end: offset }] as const;
         })
       );
-      const mappedRow =
-        e.kind === 'row' && compact(spans.map((span) => span.text).join('')) === compact(e.text);
+      mappedRow &&= offset === rowText.length;
       for (const q of displayQuantities({ id: e.blockId, text: e.text })) {
         const start = compact(e.text.normalize('NFKC').slice(0, q.start)).length;
         const end = start + compact(q.raw).length;

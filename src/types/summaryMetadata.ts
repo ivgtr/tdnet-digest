@@ -57,6 +57,8 @@ export interface PdfExtractionResult {
 }
 
 export interface CachedSummary {
+  diagnosticRunId?: string;
+  diagnosticPersistence?: import('../lib/summary-trace').DiagnosticPersistence;
   summary: string;
   facts: FactSummary;
   presentation: SummaryPresentation;

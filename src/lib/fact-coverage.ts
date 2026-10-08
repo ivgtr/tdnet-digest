@@ -313,15 +313,41 @@ function declaredReportingMetrics(
   context: DocumentContext,
   report: string,
   state: 'actual' | 'forecast',
-  revision = false
+  revision = false,
+  targetAttributes?: ReportingAttributes | null
 ): string[] {
   const declared = new Set(
     revision ? ['revenue', 'operatingProfit'] : ['revenue', 'operatingProfit', 'netProfit']
   );
+  // Another explicitly declared reporting scope cannot add a required headline metric.
+  // Unresolved attributes are retained as obligations, not silently treated as a mismatch.
+  const comparableAttribute = (role: keyof ReportingAttributes, value: string) => {
+    const text = normalized(value);
+    return role === 'scope' && /^(?:個別|単体)$/.test(text) ? '非連結' : text;
+  };
+  const belongsToOtherTarget = (anchor: string) => {
+    const attributes = reportingAttributesAt(bindingFor(context, anchor));
+    return (
+      !!targetAttributes &&
+      !!attributes &&
+      (['subject', 'scope', 'basis'] as const).some(
+        (role) =>
+          attributes[role] !== null &&
+          targetAttributes[role] !== null &&
+          comparableAttribute(role, attributes[role]!) !==
+            comparableAttribute(role, targetAttributes[role]!)
+      )
+    );
+  };
   for (const page of pages.filter((p) => p.selection === 'selected'))
     for (const region of page.tableRegions) {
       const anchor = region.valueIds[0];
-      if (!anchor || !isReportingMetricSource(anchor, state, pages, context)) continue;
+      if (
+        !anchor ||
+        !isReportingMetricSource(anchor, state, pages, context) ||
+        belongsToOtherTarget(anchor)
+      )
+        continue;
       const text = normalized(
         region.spanIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
       );
@@ -355,7 +381,8 @@ function declaredReportingMetrics(
     if (
       block.kind !== 'paragraph' ||
       !proseQuantities(block).length ||
-      !isReportingMetricSource(block.id, state, pages, context)
+      !isReportingMetricSource(block.id, state, pages, context) ||
+      belongsToOtherTarget(block.id)
     )
       continue;
     const text = normalized(block.text);
@@ -1035,7 +1062,14 @@ export function verifyCoverage(
           (metric !== 'netProfit' || ownsRequiredNetProfit(f.label, pages, context, kind)) &&
           matchesReport(f, kind, target)
       );
-    for (const metric of declaredReportingMetrics(pages, context, period, 'actual'))
+    for (const metric of declaredReportingMetrics(
+      pages,
+      context,
+      period,
+      'actual',
+      false,
+      targets.actual?.attributes
+    ))
       if (!has(metric, 'actual', period)) missing.push(`COVERAGE:当年決算実績の重要指標 ${metric}`);
     const comparisons = comparativeReportingSources(allPages, context);
     for (const metric of new Set(comparisons.map((s) => s.metric)))
@@ -1085,7 +1119,14 @@ export function verifyCoverage(
           })()
       )
     ) {
-      for (const metric of declaredReportingMetrics(pages, context, forecast, 'forecast'))
+      for (const metric of declaredReportingMetrics(
+        pages,
+        context,
+        forecast,
+        'forecast',
+        false,
+        targets.forecast?.attributes
+      ))
         if (!has(metric, 'forecast', forecast))
           missing.push(
             metric === '1株当たり利益'

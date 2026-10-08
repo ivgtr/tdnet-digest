@@ -16,6 +16,12 @@ import {
   isRoutineExplanation,
 } from './summary-content-policy';
 import { reportingMetricKey } from './metric-semantics';
+import {
+  earningsTarget,
+  matchesEarningsTarget,
+  compareEarningsFacts,
+  earningsMetricKey,
+} from './summary-earnings-policy';
 import { companyExcerpt } from './summary-company-excerpt';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
@@ -101,12 +107,20 @@ function composePresentation(
     if (f && !overview.includes(f.id)) overview.push(f.id);
   };
   const preferredState = facts.documentType === 'earningsRevision' ? 'forecastAfter' : 'actual';
+  const target = facts.documentType === 'earnings' ? earningsTarget(excerpts).target : null;
   const primary = facts.facts
-    .filter(numeric)
+    .filter(
+      (f) =>
+        numeric(f) &&
+        (facts.documentType !== 'earnings' ||
+          f.semantics.state !== 'actual' ||
+          matchesEarningsTarget(f, target))
+    )
     .sort(
       (a, b) =>
         Number(b.semantics.state === preferredState) -
           Number(a.semantics.state === preferredState) ||
+        (facts.documentType === 'earnings' ? compareEarningsFacts(a, b) : 0) ||
         Number(b.importance === 'key') - Number(a.importance === 'key') ||
         (b.period ?? '').localeCompare(a.period ?? '')
     );
@@ -114,8 +128,8 @@ function composePresentation(
     take(
       primary.find(
         (f) =>
-          f.semantics.metricKind !== 'rate' &&
-          /^(?:売上高|売上収益|営業収益)$/.test(f.label) &&
+          f.semantics.metricKind === 'amount' &&
+          reportingMetricKey(f.label) === 'revenue' &&
           f.semantics.state === preferredState
       )
     );
@@ -123,7 +137,7 @@ function composePresentation(
       primary.find(
         (f) =>
           f.semantics.metricKind === 'amount' &&
-          /^(?:営業利益|営業損失)$/.test(f.label) &&
+          reportingMetricKey(f.label) === 'operatingProfit' &&
           f.semantics.state === preferredState
       )
     );
@@ -131,10 +145,19 @@ function composePresentation(
       primary.find(
         (f) =>
           f.semantics.metricKind === 'amount' &&
-          /^(?:経常利益|経常損失)$/.test(f.label) &&
+          reportingMetricKey(f.label) === 'ordinaryProfit' &&
           f.semantics.state === preferredState
       )
     );
+    if (facts.documentType === 'earnings')
+      take(
+        primary.find(
+          (f) =>
+            f.semantics.metricKind === 'amount' &&
+            earningsMetricKey(f.label) === 'pretaxProfit' &&
+            f.semantics.state === preferredState
+        )
+      );
     take(
       primary.find(
         (f) =>
@@ -229,7 +252,8 @@ function composePresentation(
             /修正の有無|変更はありません|上方修正|下方修正/.test(f.statement!))
       )
     );
-  if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
+  if (!overview.length && facts.documentType !== 'earnings')
+    take(facts.facts.find((f) => f.importance === 'key'));
   return {
     version: 6,
     sourceHash: hashText(canonicalJSON({ excerpts, values })),

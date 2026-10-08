@@ -33,6 +33,17 @@ export interface TableRegion {
 }
 const cx = (s: { x: number; width: number }) => s.x + s.width / 2;
 const cy = (s: { y: number; height: number }) => s.y - s.height * 0.4;
+function cellSpanIds(cell: Omit<TableCell, 'id' | 'spanIds'>, spans: PdfSpan[]): string[] {
+  return spans
+    .filter(
+      (s) => cx(s) > cell.left && cx(s) < cell.right && cy(s) > cell.top && cy(s) < cell.bottom
+    )
+    .map((s) => s.id);
+}
+/** Reuse proved rectangle geometry for original items or their derived spans. */
+export function rebindTableCells(cells: TableCell[], spans: PdfSpan[]): TableCell[] {
+  return cells.map((cell) => ({ ...cell, spanIds: cellSpanIds(cell, spans) }));
+}
 const note = (text: string) => /^(?:\(?注\)?|※|\(参考\))/.test(normalized(text));
 export const tableUnit = (text: string) => {
   const unit = declaredQuantityUnit(text);
@@ -179,9 +190,7 @@ export function buildTableCells(
               top,
               right,
               bottom,
-              spanIds: spans
-                .filter((s) => cx(s) > left && cx(s) < right && cy(s) > top && cy(s) < bottom)
-                .map((s) => s.id),
+              spanIds: cellSpanIds({ left, top, right, bottom }, spans),
             });
             found = true;
             break;

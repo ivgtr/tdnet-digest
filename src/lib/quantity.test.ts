@@ -99,6 +99,77 @@ function wrappedSpans(lines: string[]): PdfSpan[] {
 function physicalCell(spans: PdfSpan[], id = 'cell'): TableCell {
   return { id, left: 0, top: 0, right: 50, bottom: 100, spanIds: spans.map((s) => s.id) };
 }
+function adjacentSpans(texts: string[]): PdfSpan[] {
+  return texts.map((text, i) => ({
+    id: `s${i}`,
+    text,
+    x: 10 + i * 19,
+    y: 10,
+    width: 15,
+    height: 10,
+  }));
+}
+it.each([
+  ['100', '20'],
+  ['△', '10'],
+  ['100', '.20'],
+  ['3', ',963,389'],
+  ['100', '～', '200'],
+])('同じ閉じたセルの数量断片は従来の間隔で全IDを結合する: %j', (...texts) => {
+  const spans = adjacentSpans(texts);
+  const cell = { ...physicalCell(spans), right: 100 };
+  const parent = { ...cell, id: 'parent', right: 150 };
+  for (const cells of [[cell], [parent, cell], [cell, structuredClone(cell)]]) {
+    expect(quantityCells(spans, cells)).toEqual([
+      expect.objectContaining({ text: texts.join(''), spanIds: spans.map((s) => s.id) }),
+    ]);
+  }
+});
+it('近い別セルの100と20を有効だが誤った10020へ結合しない', () => {
+  const spans = adjacentSpans(['100', '20']);
+  const left = { ...physicalCell([spans[0]], 'left'), right: 27 };
+  const right = { ...physicalCell([spans[1]], 'right'), left: 27 };
+  const parent = physicalCell(spans, 'parent');
+  for (const cells of [[left, right], [parent, left, right], [parent, left], [left], [right]]) {
+    expect(quantityCells(spans, cells).map((q) => [q.text, q.spanIds])).toEqual([
+      ['100', ['s0']],
+      ['20', ['s1']],
+    ]);
+  }
+  // No proved boundary: preserve the existing unruled split-digit rule.
+  expect(quantityCells(spans).map((q) => q.text)).toEqual(['10020']);
+});
+it('重なりが曖昧なセルを面積の小ささだけで所有者にしない', () => {
+  const spans = adjacentSpans(['100', '20']);
+  const cell = physicalCell(spans);
+  for (const other of [
+    { ...cell, id: 'same-area' },
+    { ...cell, id: 'overlap', left: 5, right: 55, bottom: 110 },
+  ])
+    expect(quantityCells(spans, [cell, other])).toEqual([]);
+});
+it.each([
+  ['3', ',963,389'],
+  ['△', '10'],
+  ['100', '.20'],
+])('曖昧な所属で分断した数量から短い値や符号なしの値を復活させない: %j', (...texts) => {
+  const spans = adjacentSpans(texts);
+  const cell = physicalCell(spans);
+  for (const ambiguous of [spans, [spans[0]], [spans[1]]]) {
+    const overlap = {
+      ...physicalCell(ambiguous, 'overlap'),
+      left: 5,
+      right: 55,
+      bottom: 110,
+    };
+    expect(quantityCells(spans, [cell, overlap])).toEqual([]);
+  }
+  for (const partial of [
+    { ...physicalCell([spans[0]]), right: 27 },
+    { ...physicalCell([spans[1]]), left: 27 },
+  ])
+    expect(quantityCells(spans, [partial])).toEqual([]);
+});
 it.each([
   ['670', '～800'],
   ['670～', '800'],
@@ -113,6 +184,20 @@ it.each([
   expect(quantities[0].text).toBe(lines.join('\n'));
   expect(parseExactNumeric(quantities[0].text)?.kind).toBe('range');
   expect(spans).toEqual(original);
+});
+it('改行範囲も一意な最小セルを使い、親セル・曖昧な重なりで別セルを跨がない', () => {
+  const spans = wrappedSpans(['670', '～800']);
+  const cell = physicalCell(spans);
+  const parent = { ...cell, id: 'parent', right: 100 };
+  expect(quantityCells(spans, [parent, cell, structuredClone(cell)])[0].spanIds).toEqual([
+    's0',
+    's1',
+  ]);
+  const child = { ...physicalCell([spans[0]], 'child'), bottom: 15 };
+  expect(quantityCells(spans, [cell, child]).map((q) => q.text)).toEqual(['670']);
+  expect(
+    quantityCells(spans, [cell, { ...cell, id: 'overlap', left: 5, right: 55, bottom: 110 }])
+  ).toEqual([]);
 });
 it('範囲記号のない複数行・介在文字・別セル・未証明セルを近さで結合しない', () => {
   for (const lines of [
