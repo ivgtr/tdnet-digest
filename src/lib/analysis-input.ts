@@ -115,18 +115,23 @@ export function buildAnalysisInput(
     presentation.excerpts
   );
   const observations = reconciled.accepted;
+  const factEvidence = new Map(evidence.map((item) => [item.id, item]));
   for (const [kind, items] of [
     ['explanation', explanations],
     ['observation', observations],
   ] as const) {
     for (const item of items) {
       const mergedFactId = kind === 'observation' ? reconciled.merged.get(item.id) : undefined;
+      // Each selectable reference must stand on its own. A model may cite this
+      // supplement without citing its parent fact (or put the parent in a rejected
+      // issue), so retain the parent's value and complete verified context here.
+      const mergedFact = mergedFactId ? factEvidence.get(`fact:${mergedFactId}`)! : undefined;
       const text =
         'metric' in item
-          ? `${item.metric}: ${
-              mergedFactId
-                ? `確定事実 fact:${mergedFactId} の同じ原数量への補足（区分: ${item.measure}）`
-                : literalValue(presentation.values.find((v) => v.id === item.valueId)!)
+          ? `${
+              mergedFact
+                ? `${mergedFact.text}（同じ原数量への補足・区分: ${item.measure}）`
+                : `${item.metric}: ${literalValue(presentation.values.find((v) => v.id === item.valueId)!)}`
             }${item.comparison ? ` / ${comparisonAxisLabels[item.comparison.axis]} ${item.comparison.period} ${stateLabels[item.comparison.state]}: ${literalValue(presentation.values.find((v) => v.id === item.comparison!.valueId)!)}` : ''}`
           : renderNarrativeText(item.text, presentation.values);
       evidence.push({
@@ -134,6 +139,7 @@ export function buildAnalysisInput(
         kind,
         text,
         context: [
+          mergedFact?.context,
           item.entity,
           item.scope,
           item.basis,
@@ -143,8 +149,10 @@ export function buildAnalysisInput(
         ]
           .filter(Boolean)
           .join(' / '),
-        sourceIds: unique([...item.sourceIds, ...(mergedFactId ? [mergedFactId] : [])]),
-        pages: pagesOf([...item.sourceIds, ...(mergedFactId ? [mergedFactId] : [])]),
+        sourceIds: unique([...item.sourceIds, ...(mergedFact?.sourceIds ?? [])]),
+        pages: unique([...pagesOf(item.sourceIds), ...(mergedFact?.pages ?? [])]).sort(
+          (a, b) => a - b
+        ),
       });
     }
   }

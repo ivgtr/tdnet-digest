@@ -41,7 +41,10 @@ interface TestResponse {
   analysis: import('../lib/additional-analysis').AdditionalAnalysis;
   score: { value: number };
 }
-vi.mock('@/lib/llm-client', () => ({ generateText: mocked.generateText }));
+vi.mock('@/lib/llm-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/llm-client')>()),
+  generateText: mocked.generateText,
+}));
 // Candidate transport/diagnostic races belong here; synthesis semantics are owned
 // by summary-narrative.test. Keep its current storage contract at this boundary.
 vi.mock('@/lib/summary-organization', async (original) => ({

@@ -1,4 +1,4 @@
-import { generateText, type LLMConfig } from './llm-client';
+import { generateText, isOutputLimitFinishReason, type LLMConfig } from './llm-client';
 import { getModel } from './llm-providers';
 import { getProviderCapabilities } from './structured-output';
 import { canonicalJSON, exact, record, type FactSummary } from './fact-contract';
@@ -34,6 +34,7 @@ export interface AdditionalAnalysis {
   inputHash: string;
   issues: AnalysisIssue[];
   candidates: unknown[];
+  rootExtras?: Record<string, unknown>;
   notices: AnalysisNotice[];
   evidence: AnalysisEvidence[];
   coverage: AnalysisCoverage;
@@ -90,7 +91,8 @@ function parseJSON(
         (byteLimit === ANALYSIS_RESOURCE_LIMITS.savedBytes
           ? ANALYSIS_RESOURCE_LIMITS.savedNodes
           : ANALYSIS_RESOURCE_LIMITS.nodes) ||
-      current.depth > ANALYSIS_RESOURCE_LIMITS.depth
+      current.depth >
+        ANALYSIS_RESOURCE_LIMITS.depth + (byteLimit === ANALYSIS_RESOURCE_LIMITS.savedBytes ? 1 : 0)
     )
       throw failure('response_budget', '$', '応答の構造が安全に処理できる範囲を超えています');
     if (current.value !== null && typeof current.value === 'object') {
@@ -112,6 +114,7 @@ function parseIssues(value: unknown, input: AnalysisInput) {
   const allowedIds = new Set(input.evidence.map((e) => e.id));
   value.forEach((item, index) => {
     const path = `$.issues[${index}]`;
+    const noticeStart = notices.length;
     const warn = (code: string, at: string, message: string) =>
       notices.push({ issueIndex: index, code, path: at, message, severity: 'warning' });
     try {
@@ -188,6 +191,9 @@ function parseIssues(value: unknown, input: AnalysisInput) {
       issues.push({ ...texts, evidenceIds: [...seen] });
     } catch (error) {
       if (!(error instanceof AnalysisValidationError)) throw error;
+      // Advisory messages describe the displayed projection, which does not exist
+      // when this candidate is quarantined. Keep only its actionable rejection.
+      notices.splice(noticeStart);
       notices.push({
         issueIndex: index,
         code: error.code,
@@ -200,7 +206,7 @@ function parseIssues(value: unknown, input: AnalysisInput) {
   return { candidates, issues, notices };
 }
 function withGenerationNotice(parsed: ReturnType<typeof parseIssues>, usage: Usage | null) {
-  if (usage && /length|max_tokens/.test(usage.finishReason ?? ''))
+  if (usage && isOutputLimitFinishReason(usage.finishReason))
     parsed.notices.push({
       issueIndex: -1,
       code: 'output_limit',
@@ -208,6 +214,21 @@ function withGenerationNotice(parsed: ReturnType<typeof parseIssues>, usage: Usa
       severity: 'warning',
       message:
         '出力上限で終了しました。表示できる論点のみ保持しており、内容が完結していない可能性があります',
+    });
+  return parsed;
+}
+function withRootExtrasNotice(
+  parsed: ReturnType<typeof parseIssues>,
+  rootExtras: Record<string, unknown> | undefined
+) {
+  if (rootExtras)
+    parsed.notices.push({
+      issueIndex: -1,
+      code: 'response_extra',
+      path: '$',
+      severity: 'warning',
+      message:
+        '論点以外の項目があります。その内容は表示していませんが、元の値は結果データに保持しています',
     });
   return parsed;
 }
@@ -225,11 +246,20 @@ export function parseAnalysisResponse(
     throw failure('response_shape', '$', '応答に論点の配列がありません');
   if (value.version !== ANALYSIS_VERSION)
     throw failure('response_version', '$.version', '応答の形式バージョンが一致しません');
-  const parsed = withGenerationNotice(parseIssues(value.issues, input), usage);
+  // Retain ignored envelope fields without interpreting them as prose or evidence.
+  const extras = Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== 'version' && key !== 'issues')
+  );
+  const rootExtras = Object.keys(extras).length ? extras : undefined;
+  const parsed = withRootExtrasNotice(
+    withGenerationNotice(parseIssues(value.issues, input), usage),
+    rootExtras
+  );
   return {
     version: ANALYSIS_VERSION,
     inputHash: input.inputHash,
     ...parsed,
+    ...(rootExtras ? { rootExtras } : {}),
     evidence: selectedEvidence(parsed.issues, input),
     coverage: input.coverage,
     usage,
@@ -256,11 +286,20 @@ export function parseAnalysis(
       'evidence',
       'coverage',
       'usage',
+      ...(Object.prototype.hasOwnProperty.call(value, 'rootExtras') ? ['rootExtras'] : []),
     ]) ||
     value.version !== ANALYSIS_VERSION ||
     value.inputHash !== input.inputHash
   )
     throw failure('saved_identity', '$', '保存結果の形式または入力識別子が一致しません');
+  const rootExtras = value.rootExtras;
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'rootExtras') &&
+    (!record(rootExtras) ||
+      !Object.keys(rootExtras).length ||
+      Object.keys(rootExtras).some((key) => key === 'version' || key === 'issues'))
+  )
+    throw failure('saved_identity', '$.rootExtras', '保存結果の追加項目が不正です');
   const usage = value.usage;
   if (
     usage !== null &&
@@ -275,9 +314,9 @@ export function parseAnalysis(
         typeof usage.finishReason !== 'string'))
   )
     throw failure('saved_usage', '$.usage', '保存結果の使用量が不正です');
-  const parsed = withGenerationNotice(
-    parseIssues(value.candidates, input),
-    value.usage as Usage | null
+  const parsed = withRootExtrasNotice(
+    withGenerationNotice(parseIssues(value.candidates, input), value.usage as Usage | null),
+    rootExtras as Record<string, unknown> | undefined
   );
   if (
     canonicalJSON(value.issues) !== canonicalJSON(parsed.issues) ||
@@ -419,6 +458,7 @@ export async function analyzeFacts(
     response = await generateText(
       {
         ...config,
+        outputLimitBehavior: 'return-response',
         temperature: 0,
         maxOutputTokens: Math.min(config.maxOutputTokens ?? 8192, 8192),
         ...(config.provider === 'openrouter' && model?.optionalReasoning
@@ -461,7 +501,7 @@ export async function analyzeFacts(
   } catch (error) {
     clearTimeout(timeout);
     const interrupted = controller.signal.aborted;
-    const limited = usage && /length|max_tokens/.test((usage as Usage).finishReason ?? '');
+    const limited = usage && isOutputLimitFinishReason((usage as Usage).finishReason);
     const detail = interrupted
       ? '中断または制限時間に到達しました'
       : error instanceof AnalysisValidationError

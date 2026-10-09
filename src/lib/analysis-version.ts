@@ -1,7 +1,7 @@
 import { effectiveApiUrl } from './llm-endpoint';
 import type { ExtractionMode } from '@/types/summaryMetadata';
 
-export const ANALYSIS_SCHEMA_VERSION = 120;
+export const ANALYSIS_SCHEMA_VERSION = 121;
 
 export interface AnalysisFingerprintSettings {
   provider: string;

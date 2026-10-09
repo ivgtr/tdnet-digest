@@ -7,6 +7,7 @@ import { generateText } from './llm-client';
 import { buildAnalysisInput } from './analysis-input';
 import { parseAnalysis, parseAnalysisResponse } from './additional-analysis';
 import { buildAnalysisStageHtml } from '../content/utils/summaryHtmlBuilder';
+import type { DisclosureObservation } from './disclosure-observation';
 
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const page = textPage(
@@ -83,6 +84,122 @@ async function fixture(correct: boolean) {
 }
 
 describe('追加分析の不採用説明と入力範囲', () => {
+  it('親事実を別途引用しない補足指標でも数量・限定条件・原文ページを保存と表示まで保持する', () => {
+    // This boundary receives already-verified facts. Source verification owns the
+    // validity of these attributes; this test owns their survival through selection.
+    const summary = structuredClone(facts);
+    const parent = summary.facts[0];
+    parent.label = '年間配当金合計';
+    parent.value = 37;
+    parent.valueKind = 'forecast';
+    parent.unit = '円';
+    parent.quantity = { raw: '37.00円', decimal: '37.00', sourceIds: ['dividend-value'] };
+    parent.semantics.metricKind = 'perShare';
+    parent.semantics.state = 'forecast';
+    parent.semantics.qualifiers = ['記念配当を含む'];
+    parent.semantics.conditions = ['株主総会の承認を条件とする'];
+    parent.provenance = {
+      ...parent.provenance!,
+      denominator: { value: 1, unit: '株', proof: 'explicit', sourceIds: ['denominator'] },
+      adjustments: [
+        {
+          kind: 'stockSplit',
+          noteId: 'split-note',
+          text: '株式分割調整済み',
+          basis: 'splitAdjusted',
+        },
+      ],
+    };
+    const display = buildPresentation(summary, [page]);
+    display.excerpts.push({
+      ...display.excerpts[0],
+      id: 'split-note',
+      blockId: 'split-note',
+      page: 7,
+    });
+    display.values.push({
+      id: 'previous-dividend',
+      raw: '35.00円',
+      decimal: '35.00',
+      unit: '円',
+      sourceIds: ['previous-source'],
+    });
+    const observation: DisclosureObservation = {
+      id: 'observation-0',
+      topic: 'dividend',
+      entity: null,
+      scope: null,
+      basis: null,
+      period: parent.period,
+      state: 'forecast',
+      conditions: [],
+      sourceIds: [display.excerpts[0].id],
+      metric: parent.label,
+      measure: 'other',
+      valueId: parent.id,
+      comparison: {
+        axis: 'yearOnYear',
+        period: '2025年3月期',
+        state: 'actual',
+        valueId: 'previous-dividend',
+        rateId: null,
+      },
+    };
+    display.organization.observations = [observation];
+    display.organization.review = {
+      contentHash: 'review',
+      claims: { 'observation-0': null },
+      sources: {},
+    };
+    const input = buildAnalysisInput(summary, display);
+    const evidence = input.evidence.find((e) => e.id === 'observation:observation-0')!;
+    const parentEvidence = input.evidence.find((e) => e.id === `fact:${parent.id}`)!;
+    expect(evidence.text).toContain('年間配当金合計: 37.00円');
+    expect(evidence.text).toContain('2025年3月期 実績: 35.00円');
+    expect(evidence.text).not.toContain(`fact:${parent.id}`);
+    for (const condition of [
+      '株式会社テスト',
+      '1株当たり',
+      '株式分割調整済み',
+      '記念配当を含む',
+      '株主総会の承認を条件とする',
+    ])
+      expect(evidence.context).toContain(condition);
+    expect(evidence.sourceIds).toEqual(expect.arrayContaining(parentEvidence.sourceIds));
+    expect(evidence.pages).toEqual([4, 7]);
+    const result = parseAnalysisResponse(
+      JSON.stringify({
+        version: 4,
+        issues: [
+          {
+            title: '配当の比較',
+            conclusion: '配当水準の変化を確認する。',
+            reading: '条件を踏まえて読む。',
+            caveat: '継続性は別途確認が必要。',
+            nextCheck: '次期の配当方針を確認する。',
+            evidenceIds: [evidence.id],
+          },
+        ],
+      }),
+      input
+    );
+    expect(result.evidence).toEqual([evidence]);
+    const restored = parseAnalysis(JSON.stringify(result), summary, display);
+    const html = buildAnalysisStageHtml({ loading: false, data: restored, error: null });
+    for (const text of [
+      '37.00円',
+      '35.00円',
+      '1株当たり',
+      '株式分割調整済み',
+      '株主総会の承認を条件とする',
+      'p.7',
+    ])
+      expect(html).toContain(text);
+    const tampered = structuredClone(result);
+    tampered.evidence[0].context = '';
+    expect(() => parseAnalysis(JSON.stringify(tampered), summary, display)).toThrow();
+  });
+
   it('同じ段落の別の説明が採用されても未確認・不採用項目の警告を入力・保存・表示へ残す', async () => {
     const { display } = await fixture(false);
     expect(display.organization.issues).toEqual([

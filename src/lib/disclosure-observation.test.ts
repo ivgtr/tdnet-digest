@@ -697,10 +697,10 @@ it('既知の指標別名は同じ数量へ統合し、比較値の別名も重�
   review([alias]);
   const analysis = buildAnalysisInput(facts, display);
   const note = analysis.evidence.find((e) => e.id === `observation:${alias.id}`)!;
-  expect(note.text).toContain(`fact:${current.id} の同じ原数量への補足`);
+  expect(note.text).toContain('売上高: 100百万円（同じ原数量への補足');
   expect(note.text).toContain('区分: revenue');
   expect(note.text).toContain('前年同期 2025年3月期 実績: 90百万円');
-  expect(note.text).not.toContain('100百万円');
+  expect(note.text.match(/100百万円/g)).toHaveLength(1);
   expect(note.sourceIds).toContain(current.id);
   expect(analysis.evidence.find((e) => e.id === `fact:${current.id}`)?.text).toContain('100百万円');
 });

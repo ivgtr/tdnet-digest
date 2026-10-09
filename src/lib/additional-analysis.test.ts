@@ -18,7 +18,10 @@ import { buildAnalysisStageHtml } from '../content/utils/summaryHtmlBuilder';
 import { generateText } from './llm-client';
 import type { AnalysisGenerationDiagnostic } from './analysis-trace';
 
-vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
+vi.mock('./llm-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./llm-client')>()),
+  generateText: vi.fn(),
+}));
 const page = textPage(
   '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。\n自社保有資産の売却が利益を押し上げました。',
   5
@@ -87,10 +90,13 @@ describe('追加分析の根拠と論点の契約', () => {
       pages: [5],
     });
     expect(built.evidence.find((e) => e.id === 'observation:observation')).toMatchObject({
-      text: `営業利益: 確定事実 fact:${facts.facts[0].id} の同じ原数量への補足（区分: profit）`,
-      sourceIds: [...value.sourceIds, facts.facts[0].id],
+      text: '営業利益: 100百万円（同じ原数量への補足・区分: profit）',
+      sourceIds: expect.arrayContaining([...value.sourceIds, facts.facts[0].id]),
       pages: [5],
     });
+    expect(built.evidence.find((e) => e.id === 'observation:observation')!.sourceIds).toEqual(
+      expect.arrayContaining(built.evidence.find((e) => e.kind === 'fact')!.sourceIds)
+    );
     expect(JSON.stringify(built)).not.toContain('根拠なしの将来成長');
     expect(analysisPrompt(built)[0].content).toContain('意味の検証になりません');
   });
@@ -394,6 +400,67 @@ describe('生成契約と診断の正負境界', () => {
       mutate(changed);
       expect(() => parseAnalysis(JSON.stringify(changed), facts, presentation)).toThrow();
     }
+  });
+
+  it('最上位の追加項目を本文へ混ぜず保存し、注意を再読込でも維持する', () => {
+    const extras = {
+      caveat: '<img src=x onerror=alert(1)>全論点に関する限定',
+      other: { notes: ['入力で確認していない条件'], value: 42 },
+      ['__proto__']: { injected: true },
+    };
+    const result = parseAnalysisResponse(
+      JSON.stringify({ version: 4, issues: [issue()], ...extras }),
+      input()
+    );
+    expect(result.rootExtras).toEqual(extras);
+    expect(result.issues).toEqual([issue()]);
+    expect(result.notices).toEqual([
+      expect.objectContaining({ code: 'response_extra', issueIndex: -1, severity: 'warning' }),
+    ]);
+    const restored = parseAnalysis(JSON.stringify(result), facts, presentation);
+    expect(restored).toEqual(result);
+    const html = buildAnalysisStageHtml({ loading: false, data: restored, error: null });
+    expect(html).toContain('response_extra');
+    expect(html).not.toContain(extras.caveat);
+    expect(html).not.toContain('onerror');
+    const changed = structuredClone(result);
+    changed.notices = [];
+    expect(() => parseAnalysis(JSON.stringify(changed), facts, presentation)).toThrow();
+    for (const rootExtras of [{}, null, { version: 4 }, { issues: [] }]) {
+      expect(() =>
+        parseAnalysis(JSON.stringify({ ...result, rootExtras }), facts, presentation)
+      ).toThrow();
+    }
+    const prior = parseAnalysisResponse(response(), input());
+    expect(prior).not.toHaveProperty('rootExtras');
+    expect(parseAnalysis(JSON.stringify(prior), facts, presentation)).toEqual(prior);
+  });
+
+  it('深さ上限の最上位追加項目は保存時の包み直しでも復元できる', () => {
+    const extra = JSON.parse('['.repeat(31) + '0' + ']'.repeat(31));
+    const result = parseAnalysisResponse(
+      JSON.stringify({ version: 4, issues: [issue()], extra }),
+      input()
+    );
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+  });
+
+  it('隔離した論点には本文を表示したという仮の注意を出さない', () => {
+    const candidate = {
+      ...issue(),
+      title: '長'.repeat(ANALYSIS_LIMITS.title + 1),
+      evidenceIds: ['invalid'],
+    };
+    const result = parseAnalysisResponse(response([candidate]), input());
+    expect(result.issues).toEqual([]);
+    expect(result.candidates).toEqual([candidate]);
+    expect(result.notices).toEqual([
+      expect.objectContaining({ code: 'evidence_unknown', severity: 'quarantined' }),
+    ]);
+    const html = buildAnalysisStageHtml({ loading: false, data: result, error: null });
+    expect(html).not.toContain('本文は省略せず表示しています');
+    expect(html).not.toContain(candidate.conclusion);
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
   });
 
   it('応答予算の近くまである候補も保存封筒の増分で復元不能にならない', () => {
