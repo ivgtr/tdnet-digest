@@ -8,6 +8,7 @@ export { periodKind } from './period-semantics';
 import {
   declaredSubjectsIn,
   buildDocumentContext,
+  reportingContextText,
   bindingFor,
   verifyScopeEvidence,
   isFinancialUnit,
@@ -24,7 +25,7 @@ import {
 } from './assertion-semantics';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { drawingLines } from './pdf-drawing';
-import { buildTableRegions, buildTableCells } from './table-layout';
+import { buildTableRegions, buildTableCells, rebindTableCells } from './table-layout';
 import { sourceProvenance } from './source-provenance';
 import { parseExactQuantity, parseExactRange, quantityNumber, proseQuantities } from './quantity';
 import {
@@ -34,7 +35,13 @@ import {
   compact,
   verifyPeriodAndKind,
 } from './numeric-evidence';
-import { normalized, quantityCells, buildBlocks } from './document-structure';
+import {
+  normalized,
+  quantityCells,
+  buildBlocks,
+  physicalCellOwners,
+  canJoinWithinCells,
+} from './document-structure';
 import { classifyMetric as metricKind } from './metric-semantics';
 export { classifyMetric as metricKind } from './metric-semantics';
 import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
@@ -170,12 +177,21 @@ export function validatePages(pages: ExtractedPage[]): void {
       fail('SOURCE:派生セルと原文字の座標が不一致です');
     if (
       canonicalJSON(drawingLines(p.drawingOperations, p.pageNumber)) !==
-        canonicalJSON(p.drawingLines) ||
+      canonicalJSON(p.drawingLines)
+    )
+      fail('SOURCE:派生構造の不一致');
+    const cells = buildTableCells(p.drawingLines, p.spans, p.pageNumber);
+    const owners = physicalCellOwners(rebindTableCells(cells, p.sourceItems));
+    if (
+      p.spans.some((s) =>
+        s.sourceIds!.slice(1).some((id) => !canJoinWithinCells(owners, s.sourceIds![0], id))
+      )
+    )
+      fail('SOURCE:派生セルが原文字の物理セル境界を跨いでいます');
+    if (
       canonicalJSON(buildTableRegions(p)) !== canonicalJSON(p.tableRegions) ||
-      canonicalJSON(
-        quantityCells(p.spans, buildTableCells(p.drawingLines, p.spans, p.pageNumber))
-      ) !== canonicalJSON(p.quantities) ||
-      canonicalJSON(buildBlocks(p)) !== canonicalJSON(p.blocks)
+      canonicalJSON(quantityCells(p.spans, cells)) !== canonicalJSON(p.quantities) ||
+      canonicalJSON(buildBlocks(p, cells)) !== canonicalJSON(p.blocks)
     )
       fail('SOURCE:派生構造の不一致');
   }
@@ -412,7 +428,8 @@ export function validateFact(
     scopes = ids(ev.scopeIds),
     qualifiers = ids(ev.qualifierIds);
   const continuation = ev.kind === 'table' ? continuationFor(pages, page, ev.valueId) : undefined;
-  const context = referenceText(pages, contexts),
+  referenceText(pages, contexts); // Validate original references before semantic projection.
+  const context = reportingContextText(pages, contexts),
     scope = referenceText(pages, scopes),
     notes = referenceText(pages, qualifiers);
   let source = '',

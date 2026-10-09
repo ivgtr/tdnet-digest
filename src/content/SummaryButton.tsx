@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
-import { SUMMARY_TRACE_KEY, matchingSummaryTrace } from '@/lib/summary-trace';
+import { loadSummaryTrace } from '@/lib/summary-trace';
 import { ACTION_BUTTON_STYLE, BUTTON_STYLES, FOCUS_STYLE } from './constants/styles';
 
 interface RowData {
@@ -147,14 +147,13 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     setDiagnosticText(null);
     setDiagnosticCopied(false);
     try {
-      const saved = await chrome.storage.local.get(SUMMARY_TRACE_KEY);
-      if (request !== diagnosticRequest.current) return;
-      const trace = matchingSummaryTrace(
-        saved[SUMMARY_TRACE_KEY],
+      const trace = await loadSummaryTrace(
         rowData.pdfUrl,
         result?.diagnosticRunId ?? null,
-        result?.resultId ?? null
+        result?.resultId ?? null,
+        result?.diagnosticPersistence
       );
+      if (request !== diagnosticRequest.current) return;
       const text = JSON.stringify(trace, null, 2);
       setDiagnosticText(text);
       try {

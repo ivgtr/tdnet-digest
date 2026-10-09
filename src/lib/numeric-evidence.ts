@@ -35,6 +35,7 @@ import {
   forecastReportingTitle,
 } from './document-structure';
 import { verifyQuantityAssertion } from './assertion-semantics';
+import { reportingContextText } from './document-context';
 import { unchangedDividendReference, quantityPeriodAxis } from './dividend-semantics';
 import {
   physicalRows,
@@ -109,7 +110,10 @@ function refs(value: unknown, spans: PdfSpan[], name: string, empty = false): Pd
 }
 
 export function verifyTableEvidence(
-  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'> & { tableRegions?: TableRegion[] },
+  page: Pick<ExtractedPage, 'pageNumber' | 'text' | 'spans'> & {
+    tableRegions?: TableRegion[];
+    blocks?: ExtractedPage['blocks'];
+  },
   raw: unknown,
   claim: NumericClaim,
   checkMeaning = true
@@ -660,7 +664,12 @@ export function verifyTableEvidence(
     verifyPeriodAndKind(
       claim,
       joined(periods),
-      joined(contexts),
+      page.blocks
+        ? reportingContextText(
+            [{ blocks: page.blocks, spans: page.spans }],
+            contexts.map((s) => s.id)
+          )
+        : joined(contexts),
       nearest?.text ?? '',
       table !== null
     );

@@ -1,3 +1,11 @@
+import {
+  reportingScope,
+  reportingFieldSegments,
+  reportingFieldProjection,
+  isReportingCoverTitle,
+  hasReportingCoverTitle,
+} from './reporting-attributes';
+export { reportingScope } from './reporting-attributes';
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { isQuantityPrefix, parseExactQuantity, parseExactRange, proseQuantities } from './quantity';
@@ -14,6 +22,7 @@ import {
   tableMetricColumnBand,
   tableUnitRuns,
   physicalRows,
+  buildTableCells,
   type TableCell,
   type TableRegion,
 } from './table-layout';
@@ -45,10 +54,10 @@ export interface QuantityCell {
 }
 export const normalized = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
 /** Explicit company fields and standalone legal names share one source vocabulary. */
-export function declaredSubjectsIn(block: TextBlock): string[] {
+export function declaredSubjectsIn(block: Pick<TextBlock, 'text'>): string[] {
   return [
     ...new Set(
-      block.text.split('\n').flatMap((line) => {
+      reportingFieldSegments(block.text).flatMap((line) => {
         const text = normalized(line).replace(/^(?:\(\d+\)|\d+[.．])/, '');
         const field = text.match(/^(?:上場会社名|会社名|名称):?([^:].*)$/)?.[1];
         if (field) return [field.split(/[|｜]|上場取引所|コード番号|URL|代表者名/)[0]];
@@ -65,6 +74,10 @@ export function declaredSubjectsIn(block: TextBlock): string[] {
 export function headingLevel(
   block: Pick<TextBlock, 'id' | 'text'> & Partial<Pick<TextBlock, 'kind'>>
 ): number | null {
+  if (hasReportingCoverTitle(block.text)) {
+    const records = reportingFieldProjection(block.text);
+    if (records.complete && records.segments.some(isReportingCoverTitle)) return null;
+  }
   const text = normalized(block.text);
   const raw = block.text.normalize('NFKC').trim();
   const numbered = /^■/.test(text)
@@ -101,7 +114,6 @@ export function headingLevel(
     return 3;
   return null;
 }
-export const reportingScope = '非連結|個別|単体|連結';
 export const reportingScopeHeading = `(${reportingScope})(?:累計期間)?(?:の)?`;
 /** Whole supported reporting titles, never a forecast used as a noun modifier. */
 export function forecastReportingTitle(text: string): { period: string | null } | null {
@@ -250,10 +262,101 @@ export function isPerformanceReportingTitle(text: string): boolean {
 export const sameLine = (a: Pick<PdfSpan, 'y' | 'height'>, b: Pick<PdfSpan, 'y' | 'height'>) =>
   Math.abs(a.y - b.y) <= Math.min(a.height, b.height) * 0.3;
 
+/** Only a unique innermost closed cell proves ownership; overlapping cells do not. */
+export function physicalCellOwners(sourceCells: TableCell[]): Map<string, TableCell | null> {
+  const candidates = new Map<string, TableCell[]>();
+  for (const cell of sourceCells)
+    for (const id of cell.spanIds) {
+      const owners = candidates.get(id) ?? [];
+      // A physical cell can be included in more than one table region.
+      if (
+        !owners.some(
+          (other) =>
+            other.id === cell.id &&
+            other.left === cell.left &&
+            other.top === cell.top &&
+            other.right === cell.right &&
+            other.bottom === cell.bottom
+        )
+      )
+        owners.push(cell);
+      candidates.set(id, owners);
+    }
+  const inside = (inner: TableCell, outer: TableCell) =>
+    inner.left >= outer.left &&
+    inner.top >= outer.top &&
+    inner.right <= outer.right &&
+    inner.bottom <= outer.bottom &&
+    (inner.left > outer.left ||
+      inner.top > outer.top ||
+      inner.right < outer.right ||
+      inner.bottom < outer.bottom);
+  return new Map(
+    [...candidates].map(([id, owners]) => {
+      const innermost = owners.filter((cell) =>
+        owners.every((other) => cell === other || inside(cell, other))
+      );
+      return [id, innermost.length === 1 ? innermost[0] : null];
+    })
+  );
+}
+
+/** Unruled text keeps its proximity rule; partial or ambiguous ownership cannot join. */
+export function canJoinWithinCells(
+  owners: ReadonlyMap<string, TableCell | null>,
+  leftId: string,
+  rightId: string
+): boolean {
+  const left = owners.get(leftId),
+    right = owners.get(rightId);
+  return left !== null && right !== null && left?.id === right?.id;
+}
+
+/** Only touching, uniquely owned cells prove a same-row metadata field/value relation. */
+function adjacentHorizontalCells(
+  owners: ReadonlyMap<string, TableCell | null>,
+  leftId: string,
+  rightId: string
+): boolean {
+  const left = owners.get(leftId),
+    right = owners.get(rightId);
+  return (
+    !!left &&
+    !!right &&
+    left.id !== right.id &&
+    left.right === right.left &&
+    left.top === right.top &&
+    left.bottom === right.bottom
+  );
+}
+
 /** Numeric runs retain every source span, including an incomplete decimal or separated sign. */
 export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): QuantityCell[] {
   const cells: QuantityCell[] = [];
+  const owners = physicalCellOwners(sourceCells);
   const ordered = [...spans].sort((a, b) => a.y - b.y || a.x - b.x);
+  const complete = (text: string) => !!(parseExactQuantity(text) || parseExactRange(text));
+  const completeOwnedRun = (start: number) => {
+    const first = ordered[start];
+    let text = first.text;
+    if (complete(text)) return true;
+    if (!owners.get(first.id) || !isQuantityPrefix(text)) return false;
+    for (let end = start + 1; end < ordered.length; end++) {
+      const previous = ordered[end - 1],
+        next = ordered[end];
+      const gap = next.x - previous.x - previous.width;
+      if (
+        !sameLine(first, next) ||
+        gap < -0.5 ||
+        gap > Math.min(previous.height, next.height) * 0.6 ||
+        !canJoinWithinCells(owners, previous.id, next.id) ||
+        !isQuantityPrefix(text + next.text)
+      )
+        break;
+      text += next.text;
+    }
+    return complete(text);
+  };
   for (let i = 0; i < ordered.length; i++) {
     const first = ordered[i];
     if (
@@ -263,7 +366,8 @@ export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): 
     )
       continue;
     let text = first.text,
-      end = i;
+      end = i,
+      ambiguous = owners.get(first.id) === null;
     if (isQuantityPrefix(text)) {
       while (end + 1 < ordered.length) {
         const previous = ordered[end],
@@ -276,9 +380,34 @@ export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): 
           !isQuantityPrefix(text + next.text)
         )
           break;
+        const previousOwner = owners.get(previous.id),
+          nextOwner = owners.get(next.id);
+        if (previousOwner === null || nextOwner === null) {
+          // Complete quantities remain independent across unresolved ownership.
+          // Only a genuine continuation (decimal, sign, grouping or range)
+          // propagates the ambiguity to the neighboring numeric fragment.
+          if ((previousOwner || nextOwner) && complete(text) && completeOwnedRun(end + 1)) break;
+          ambiguous = true;
+        } else if (!canJoinWithinCells(owners, previous.id, next.id)) {
+          // One closed side alone does not prove that an incomplete fragment
+          // belongs to a separate quantity. Do not expose its valid prefix.
+          if (
+            (!previousOwner || !nextOwner) &&
+            ((!parseExactQuantity(text) && !parseExactRange(text)) ||
+              (!parseExactQuantity(next.text) && !parseExactRange(next.text)))
+          )
+            ambiguous = true;
+          else break;
+        }
         text += next.text;
         end++;
       }
+    }
+    // An unresolved cell relationship cannot turn a split decimal, grouping
+    // separator or sign into a shorter, individually parseable quantity.
+    if (ambiguous) {
+      i = end;
+      continue;
     }
     if (parseExactQuantity(text) || parseExactRange(text)) {
       const last = ordered[end];
@@ -296,17 +425,10 @@ export function quantityCells(spans: PdfSpan[], sourceCells: TableCell[] = []): 
   }
   // A range may wrap inside a closed physical cell. Require the explicit
   // separator and uninterrupted numeric runs; proximity alone never joins rows.
-  const area = (c: TableCell) => (c.right - c.left) * (c.bottom - c.top);
-  const owners = new Map<string, TableCell[]>();
-  for (const cell of sourceCells)
-    for (const id of cell.spanIds) owners.set(id, [...(owners.get(id) ?? []), cell]);
   const members = new Map<string, PdfSpan[]>();
   for (const span of spans) {
-    const candidates = (owners.get(span.id) ?? []).sort((a, b) => area(a) - area(b));
-    if (!candidates.length || (candidates[1] && area(candidates[0]) === area(candidates[1])))
-      continue;
-    const id = candidates[0].id;
-    members.set(id, [...(members.get(id) ?? []), span]);
+    const owner = owners.get(span.id);
+    if (owner) members.set(owner.id, [...(members.get(owner.id) ?? []), span]);
   }
   for (const cell of sourceCells) {
     const rows = physicalRows(members.get(cell.id) ?? []);
@@ -373,8 +495,13 @@ export function lineRuns(spans: PdfSpan[], gapScale = 0.3): PdfSpan[][] {
 }
 
 export function buildBlocks(
-  page: Pick<ExtractedPage, 'pageNumber' | 'spans'> & { tableRegions?: TableRegion[] }
+  page: Pick<ExtractedPage, 'pageNumber' | 'spans'> &
+    Partial<Pick<ExtractedPage, 'tableRegions' | 'drawingLines'>>,
+  sourceCells = page.drawingLines
+    ? buildTableCells(page.drawingLines, page.spans, page.pageNumber)
+    : (page.tableRegions?.flatMap((t) => t.cells) ?? [])
 ): TextBlock[] {
+  const owners = physicalCellOwners(sourceCells);
   const lines: PdfSpan[][] = [];
   for (const span of [...page.spans].sort((a, b) => a.y - b.y || a.x - b.x)) {
     const line = lines[lines.length - 1];
@@ -386,14 +513,25 @@ export function buildBlocks(
     line.sort((a, b) => a.x - b.x);
     const first = line[0],
       last = line[line.length - 1];
+    const cellBoundaries = new Set(
+      line.flatMap((s, i) =>
+        i > 0 && !canJoinWithinCells(owners, line[i - 1].id, s.id) ? [i] : []
+      )
+    );
     const text = line
       .map(
         (s, i) =>
-          (i && s.x - line[i - 1].x - line[i - 1].width > first.height * 0.6 ? ' ' : '') + s.text
+          (cellBoundaries.has(i)
+            ? adjacentHorizontalCells(owners, line[i - 1].id, s.id)
+              ? ' │ '
+              : ' ││ '
+            : i && s.x - line[i - 1].x - line[i - 1].width > first.height * 0.6
+              ? ' '
+              : '') + s.text
       )
       .join('');
     const isRow =
-      (quantityCells(line).length >= 2 ||
+      (quantityCells(line, sourceCells).length >= 2 ||
         page.tableRegions?.some((t) => line.some((s) => t.valueIds.includes(s.id)))) &&
       !/[。；]|は、|で、|おいて|とおり|いたし|するこ/.test(text) &&
       !/^[(（]注[)）]|^※/.test(normalized(text)) &&
@@ -414,7 +552,12 @@ export function buildBlocks(
           first.x - previous.x <= first.height * 6)) &&
       last.x + last.width <= previous.x + previous.width + first.height * 4
     ) {
-      previous.text += '\n' + text;
+      // A hard boundary survives whitespace normalization, including a split
+      // sign or unit across physical rows. Metadata must never pair across this newline.
+      previous.text +=
+        (canJoinWithinCells(owners, previous.spanIds[previous.spanIds.length - 1], first.id)
+          ? '\n'
+          : '\n│ ') + text;
       previous.spanIds.push(...line.map((s) => s.id));
       previous.height = first.y - previous.y + first.height;
     } else

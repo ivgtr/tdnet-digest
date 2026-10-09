@@ -1,4 +1,9 @@
-import { SUMMARY_TRACE_KEY, summaryBuildDigest, type SummaryTrace } from '@/lib/summary-trace';
+import {
+  saveSummaryTrace,
+  summaryBuildDigest,
+  type SummaryTrace,
+  type DiagnosticPersistence,
+} from '@/lib/summary-trace';
 import {
   PdfExtractionError,
   pdfExtractionError,
@@ -80,13 +85,9 @@ chrome.runtime.onInstalled.addListener((details) => {
     })
     .catch((error) => console.error('旧ホスト権限の削除に失敗:', error));
 });
-// Request order, including extraction failures, owns the bounded last-run trace.
-let currentSummaryRunId: string | null = null;
-let traceWriteQueue: Promise<void> = Promise.resolve();
 chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
   if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
   const diagnosticRunId = request.action === 'summarize' ? crypto.randomUUID() : null;
-  if (diagnosticRunId) currentSummaryRunId = diagnosticRunId;
   const task =
     request.action === 'summarize'
       ? handleSummarize(request, diagnosticRunId!)
@@ -213,20 +214,17 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     outcome: 'running',
     error: null,
   };
-  let persistenceWarning: string | undefined;
+  let diagnosticPersistence: DiagnosticPersistence = 'failed';
+  let diagnosticWarning: string | undefined;
   const saveTrace = async () => {
     trace.elapsedMs = Math.round(performance.now() - started);
     try {
-      const snapshot = structuredClone(trace);
-      const write = traceWriteQueue.then(async () => {
-        if (currentSummaryRunId === runId)
-          await chrome.storage.local.set({ [SUMMARY_TRACE_KEY]: snapshot });
-      });
-      // Diagnostic persistence cannot fail generation or poison later writes.
-      traceWriteQueue = write.catch(() => {});
-      await write;
+      const saved = await saveSummaryTrace(structuredClone(trace));
+      diagnosticPersistence = 'saved';
+      diagnosticWarning = saved.cleanupWarning;
     } catch {
-      persistenceWarning = '診断を保存できませんでした。表示結果は利用できます';
+      diagnosticPersistence = 'failed';
+      diagnosticWarning = '診断を保存できませんでした';
     }
   };
 
@@ -297,13 +295,21 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
       summaryMode: 'sourced-summary',
       generationCalls: trace.attempts.length,
       analysisFingerprint: fingerprint,
-      ...(persistenceWarning ? { persistenceWarning } : {}),
+      ...(diagnosticWarning
+        ? {
+            persistenceWarning:
+              diagnosticPersistence === 'failed'
+                ? `${diagnosticWarning}。表示結果は利用できます`
+                : diagnosticWarning,
+          }
+        : {}),
     };
     return {
       summary: renderFacts(facts, generated.presentation),
       facts,
       presentation: generated.presentation,
       resultId: id,
+      diagnosticPersistence,
       metadata,
     };
   } catch (error) {
@@ -311,7 +317,12 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     trace.error = error instanceof Error ? error.message : String(error);
     if (error instanceof PdfExtractionError) trace.pdfExtractionError = error.details;
     await saveTrace();
-    throw error;
+    return {
+      error: trace.error,
+      diagnosticPersistence,
+      ...(diagnosticWarning ? { persistenceWarning: diagnosticWarning } : {}),
+      ...(error instanceof SummarySourceSelectionError ? { retryExtractionMode: 'full' } : {}),
+    };
   }
 }
 

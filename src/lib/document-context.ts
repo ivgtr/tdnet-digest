@@ -1,7 +1,23 @@
+import {
+  reportingBasis,
+  reportingFieldSegments,
+  reportingFieldProjection,
+  bracketedReportingBases,
+  reportingAttributeKey,
+  isReportingAdministrativeRecord,
+  isReportingCoverTitle,
+  hasReportingCoverTitle,
+  reportingValueText,
+} from './reporting-attributes';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import type { FactSemantics, VerifiedFact } from './fact-contract';
 import { NET_PROFIT_METRIC } from './metric-semantics';
-import { reportingPeriodText, reportingPeriodOwner, numericValueKind } from './period-semantics';
+import {
+  reportingPeriodText,
+  reportingPeriodOwner,
+  numericValueKind,
+  REPORTING_PERIOD_SHAPE_PATTERN,
+} from './period-semantics';
 import {
   normalized,
   reportingScope,
@@ -17,6 +33,7 @@ import {
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
 import { splitNotes, splitNoteApplies } from './source-provenance';
+import { isUncaptionedUnit, parseExactQuantity } from './quantity';
 
 export type DeclarationRole = 'subject' | 'scope' | 'basis';
 export interface ContextDeclaration {
@@ -43,24 +60,27 @@ export interface DocumentContext {
   tableMappings: TableMapping[];
 }
 const unique = <T>(items: T[]) => [...new Set(items)];
-const reportingBasis = '日本基準|IFRS|国際会計基準|米国基準';
 export { declaredSubjectsIn, headingLevel } from './document-structure';
-function captionText(block: TextBlock): string {
+function captionText(block: Pick<TextBlock, 'text'>): string {
   return reportingPeriodText(block.text)
     .replace(/^(?:\(\d+\)|\d+[.．]|■)/, '')
     .replace(/^20\d{2}年\d{1,2}月期(?:の)?/, '')
-    .replace(/^(?:第[1-4]四半期|中間期|通期|\((?:第[1-4]四半期|中間期|通期)\))+(?:の)?/, '');
+    .replace(new RegExp(`^(?:${REPORTING_PERIOD_SHAPE_PATTERN})+(?:の)?`), '');
 }
-function isReportingCover(block: TextBlock): boolean {
-  return /^(?:四半期|中間)?決算短信/.test(captionText(block));
+function isReportingCover(block: Pick<TextBlock, 'text'>): boolean {
+  return (
+    hasReportingCoverTitle(block.text) &&
+    reportingFieldSegments(block.text).some(isReportingCoverTitle)
+  );
 }
 /** A role field supplies its entire value; a caption needs an explicit reporting object. */
 function reportingAttributes(
-  block: TextBlock,
+  block: Pick<TextBlock, 'id' | 'text'> & Partial<Pick<TextBlock, 'kind'>>,
   tableCaption = false
 ): { role: 'scope' | 'basis'; value: string }[] {
   const attributes: { role: 'scope' | 'basis'; value: string }[] = [];
-  for (const part of block.text.normalize('NFKC').split(/[\n|]/)) {
+  const segments = reportingFieldSegments(block.text);
+  for (const part of segments) {
     const text = part.trim().replace(/^(?:\(\d+\)|\d+[.．])/, '');
     const field = text.match(/^(範囲|会計基準)(?:\s*:\s*|\s+)([^。；]+)$/);
     if (field) {
@@ -79,14 +99,14 @@ function reportingAttributes(
     if (scope) attributes.push({ role: 'scope', value: scope });
     if (basis) attributes.push({ role: 'basis', value: basis });
   }
+  const titles = segments.filter(isReportingCoverTitle);
   const caption = captionText(block);
-  if (isReportingCover(block)) {
-    for (const match of caption.matchAll(new RegExp(`\\((${reportingScope})\\)`, 'g')))
-      attributes.push({ role: 'scope', value: match[1] });
-    for (const match of caption.matchAll(
-      new RegExp(`〔(${reportingBasis})〕|\\[(${reportingBasis})\\]`, 'gi')
-    ))
-      attributes.push({ role: 'basis', value: match[1] ?? match[2] });
+  if (titles.length) {
+    for (const title of titles) {
+      for (const match of normalized(title).matchAll(new RegExp(`\\((${reportingScope})\\)`, 'g')))
+        attributes.push({ role: 'scope', value: match[1] });
+      for (const value of bracketedReportingBases(title)) attributes.push({ role: 'basis', value });
+    }
   } else if (headingLevel(block) !== null || (tableCaption && forecastReportingTitle(block.text))) {
     const scope = caption.match(
       new RegExp(
@@ -97,6 +117,178 @@ function reportingAttributes(
   }
   return attributes;
 }
+/** Every original cell/line must be metadata; a partial projection cannot hide body content. */
+export function isReportingMetadata(
+  block: Pick<TextBlock, 'id' | 'text'> & Partial<Pick<TextBlock, 'kind'>>
+): boolean {
+  if (isReportingCover(block)) return false;
+  const projection = reportingFieldProjection(block.text);
+  return (
+    projection.complete &&
+    projection.segments.length > 0 &&
+    projection.segments.every((text) => {
+      const segment = { ...block, text };
+      if (isReportingAdministrativeRecord(text)) return true;
+      if (reportingValueText(text)) return false;
+      if (headingLevel(block) !== null) return false;
+      if (declaredSubjectsIn(segment).length > 0) return true;
+      const attributes = reportingAttributes(segment);
+      return (
+        attributes.length > 0 &&
+        attributes.every((attribute) =>
+          new RegExp(
+            `^(?:${attribute.role === 'scope' ? reportingScope : reportingBasis})$`,
+            'i'
+          ).test(attribute.value)
+        )
+      );
+    })
+  );
+}
+
+/** A title is leading only when every earlier original record is proved metadata. */
+function reportingTitleBoundary(
+  block: Pick<TextBlock, 'id' | 'text'>
+): { before: string; leading: boolean } | null {
+  const text = block.text.normalize('NFKC');
+  const title = [...text.matchAll(/[^\n|│]+/g)].find((record) => hasReportingCoverTitle(record[0]));
+  if (!title) return null;
+  const before = text.slice(0, title.index);
+  return {
+    before,
+    leading: !before.replace(/[\s|│]/g, '') || isReportingMetadata({ ...block, text: before }),
+  };
+}
+
+/** Cover ownership is a contiguous prefix, never later values or appendix metadata. */
+export function reportingCoverBlocks<
+  T extends { id: string; text: string; kind?: 'paragraph' | 'row' | 'heading' },
+>(blocks: T[]): T[] {
+  const cover: T[] = [];
+  for (const block of blocks) {
+    const source = {
+      ...block,
+      kind: block.kind === 'heading' ? ('paragraph' as const) : block.kind,
+    };
+    if (!block.text.trim()) continue;
+    const projection = reportingFieldProjection(block.text);
+    if (
+      !projection.complete ||
+      !projection.segments.length ||
+      !projection.segments.every((text) => {
+        const segment = { ...source, text };
+        return isReportingCover(segment) ? !reportingValueText(text) : isReportingMetadata(segment);
+      })
+    )
+      break;
+    cover.push(block);
+  }
+  return cover;
+}
+
+function isCompanyWordmarkToken(word: string): boolean {
+  if (!/[A-Z]/.test(word) || !/^(?:[A-Z0-9][A-Z0-9&'-]*\.?|(?:[A-Z]\.)+[A-Z]?)$/.test(word))
+    return false;
+  // Digits can belong to a name, but a complete quantity (100USD, 100A) is
+  // ambiguous. Match the whole token so the 2B inside B2B is not a byte count.
+  const quantity = parseExactQuantity(word.replace(/\.$/, ''));
+  return !quantity?.unit || !isUncaptionedUnit(quantity.unit);
+}
+
+/** One identity-shaped wordmark may precede the first complete reporting cover.
+ * It supplies no issuer or reporting attributes; arbitrary unknown text is a boundary.
+ */
+export function reportingDocumentCover<
+  T extends { id: string; text: string; kind?: 'paragraph' | 'row' | 'heading' },
+>(blocks: T[]): T[] {
+  const prefix = reportingCoverBlocks(blocks);
+  if (prefix.some(isReportingCover)) return prefix;
+  const administrative = (block: T) => {
+    const projection = reportingFieldProjection(block.text);
+    return (
+      projection.complete &&
+      projection.segments.length > 0 &&
+      projection.segments.every(isReportingAdministrativeRecord) &&
+      declaredSubjectsIn(block).length === 0 &&
+      reportingAttributes({ id: block.id, text: block.text }).length === 0
+    );
+  };
+  if (!prefix.every(administrative)) return prefix;
+  const start = blocks.findIndex((block) => block.text.trim() && !prefix.includes(block));
+  if (start < 0) return prefix;
+  const mark = blocks[start].text.normalize('NFKC').trim();
+  const words = mark.split(/[ \t]*,[ \t]*|[ \t]+/);
+  // Generic corporate identity syntax, never a list of supported companies.
+  // Commas separate words; each token has a letter and may contain digits,
+  // abbreviation punctuation, or dotted initials. Numeric-only tokens fail.
+  // Punctuation cannot erase a source record, quantity, or unknown trailing cell.
+  // Reference/navigation labels cannot become identity marks by adding a suffix.
+  if (
+    words.length < 2 ||
+    !/^(?:GROUP|HOLDINGS|CORPORATION|INC\.?|LTD\.?)$/.test(words[words.length - 1]) ||
+    !words.slice(0, -1).every(isCompanyWordmarkToken) ||
+    /(?:^|[^A-Z])(?:REFERENCES?|APPENDIX|APPENDICES|ATTACHMENTS?)(?=$|[^A-Z])/.test(
+      mark.replace(/\./g, '')
+    )
+  )
+    return prefix;
+  const before = [...prefix];
+  for (let index = start + 1; index < blocks.length; index++) {
+    const block = blocks[index];
+    if (!block.text.trim()) continue;
+    if (reportingTitleBoundary(block)?.leading) {
+      const cover = reportingCoverBlocks(blocks.slice(index));
+      const namedIssuer = cover.some((item) =>
+        reportingFieldSegments(item.text).some(
+          (text) =>
+            /^(?:上場会社名|会社名|名称)/.test(normalized(text)) &&
+            declaredSubjectsIn({ text }).length > 0
+        )
+      );
+      return cover.some(isReportingCover) && namedIssuer ? [...before, ...cover] : prefix;
+    }
+    if (!administrative(block)) break;
+    before.push(block);
+  }
+  return prefix;
+}
+
+/** Semantic context uses the proved title record; evidence IDs/text stay original. */
+export function reportingContextText(
+  pages: Pick<ExtractedPage, 'blocks' | 'spans'>[],
+  ids: string[]
+): string {
+  if (!ids.length) return '';
+  const blocks = pages.flatMap((page) => page.blocks);
+  let spans: ExtractedPage['spans'] | undefined;
+  const requested = new Set(ids);
+  const titles = new Map<string, { id: string; text: string }>();
+  for (const block of blocks) {
+    if (!requested.has(block.id) && !block.spanIds.every((id) => requested.has(id))) continue;
+    if (!hasReportingCoverTitle(block.text)) continue;
+    const records = reportingFieldSegments(block.text).filter(isReportingCoverTitle);
+    if (!records.length || reportingCoverBlocks([block]).length !== 1) continue;
+    const title = { id: block.id, text: records.join('\n') };
+    for (const id of [block.id, ...block.spanIds]) titles.set(id, title);
+  }
+  const seen = new Set<string>();
+  return ids
+    .flatMap((id) => {
+      const title = titles.get(id);
+      if (title) {
+        if (seen.has(title.id)) return [];
+        seen.add(title.id);
+        return [title.text];
+      }
+      const reference =
+        blocks.find((block) => block.id === id) ??
+        (spans ??= pages.flatMap((page) => page.spans)).find((span) => span.id === id);
+      if (!reference) throw new Error(`REFERENCE:原文の文脈 ${id} がありません`);
+      return [reference.text];
+    })
+    .join('\n');
+}
+
 function declarations(
   block: TextBlock,
   origin: ContextDeclaration['origin'],
@@ -116,9 +308,13 @@ function declarations(
       origin,
       ...(tableCaption || forecastReportingTitle(block.text) ? { financialOnly: true } : {}),
     });
-  const fieldStock = text.match(/株式種類([^|｜]+)/)?.[1];
-  if (fieldStock) result.push({ role: 'scope', value: fieldStock, id: block.id, origin });
-  const stock = block.text.split('\n').find((line) => /取得対象株式.*種類/.test(normalized(line)));
+  for (const field of reportingFieldSegments(block.text)) {
+    const stock = normalized(field).match(/^株式種類:?(.+)$/)?.[1];
+    if (stock) result.push({ role: 'scope', value: stock, id: block.id, origin });
+  }
+  const stock = reportingFieldSegments(block.text).find((line) =>
+    /取得対象株式.*種類/.test(normalized(line))
+  );
   if (stock) {
     const value = normalized(stock).match(/種類(?:[:：])?(.+)$/)?.[1];
     if (value) result.push({ role: 'scope', value, id: block.id, origin: 'local' });
@@ -158,27 +354,53 @@ function replaceFields(
 export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   const first = pages.find((p) => p.pageNumber === 1);
   const cover: TextBlock[] = [];
-  let issuerSeen = false;
-  for (const block of first?.blocks ?? []) {
-    // A document title may precede its company field. A numbered section or
-    // a heading after the company declaration ends the cover ownership.
-    if (
-      headingLevel(block) !== null &&
-      (issuerSeen || /^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/.test(normalized(block.text)))
-    )
-      break;
-    cover.push(block);
-    if (declaredSubjectsIn(block).length) issuerSeen = true;
+  const firstBlocks = first?.blocks ?? [];
+  const prefix = reportingDocumentCover(firstBlocks);
+  const boundary = firstBlocks.find((block) => block.text.trim() && !prefix.includes(block));
+  // Only a title in the contiguous leading records owns this document. A
+  // malformed title at that boundary remains strict; later references cannot
+  // retroactively replace an ordinary notice's issuer prefix with an empty one.
+  const earningsCover =
+    prefix.some(isReportingCover) || !!(boundary && reportingTitleBoundary(boundary)?.leading);
+  if (earningsCover) cover.push(...prefix);
+  else {
+    // Non-earnings disclosures retain their supported title/issuer ordering.
+    let issuerSeen = false;
+    for (const block of firstBlocks) {
+      const title = reportingTitleBoundary(block);
+      if (title?.leading) break;
+      if (
+        headingLevel(block) !== null &&
+        (issuerSeen || /^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/.test(normalized(block.text)))
+      )
+        break;
+      cover.push(block);
+      if (title) break;
+      if (declaredSubjectsIn(block).length) issuerSeen = true;
+    }
   }
+  const issuerSource = (block: TextBlock): TextBlock => {
+    const title = !earningsCover && reportingTitleBoundary(block);
+    if (!title) return block;
+    return {
+      ...block,
+      // An ordinary notice can share a physical block with its reference.
+      text: title.before,
+    };
+  };
   const issuer = cover.filter(
-    (b) => /^(?:会社名|上場会社名)/.test(normalized(b.text)) || declaredSubjectsIn(b).length > 0
+    (b) =>
+      /^(?:会社名|上場会社名)/.test(normalized(issuerSource(b).text)) ||
+      declaredSubjectsIn(issuerSource(b)).length > 0
   );
   // A cover consisting of one standalone company name is also a declaration.
-  const namedIssuer = issuer.filter((b) => /^(?:上場会社名|会社名|名称)/.test(normalized(b.text)));
+  const namedIssuer = issuer.filter((b) =>
+    /^(?:上場会社名|会社名|名称)/.test(normalized(issuerSource(b).text))
+  );
   const issuerBlocks = namedIssuer.length ? namedIssuer : issuer.length === 1 ? issuer : [];
-  const reporting = cover.filter((b) => isReportingCover(b) && b.text.length < 180);
+  const reporting = earningsCover ? cover.filter(isReportingCover) : [];
   const documentDeclarations = [...issuerBlocks, ...reporting].flatMap((b) =>
-    declarations(b, 'document')
+    declarations(issuerSource(b), 'document')
   );
   const links = noteLinks(pages),
     localNotes = paragraphNoteLinks(pages);
@@ -282,15 +504,7 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
                       .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
                       .join('')
                   );
-                  const inherited = normalized(
-                    contexts
-                      .map(
-                        (id) =>
-                          pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!
-                            .text
-                      )
-                      .join('')
-                  );
+                  const inherited = normalized(reportingContextText(pages, contexts));
                   const years = [
                     ...new Set(
                       axis.match(/20\d{2}年\d{1,2}月期/g) ??
@@ -440,7 +654,7 @@ export function resolveScopeIds(
   const ids: string[] = [];
   for (const role of roles) {
     const ds = applicableDeclarations(binding, role, financial);
-    const values = unique(ds.map((d) => normalized(d.value)));
+    const values = unique(ds.map((d) => reportingAttributeKey(role, d.value)));
     if (values.length > 1) throw new Error(`SCOPE:適用する${role}が曖昧です: ${values.join('/')}`);
     const value = meaning[role];
     if (value === null) {
@@ -448,11 +662,15 @@ export function resolveScopeIds(
         throw new Error(`SCOPE:${role}の明示根拠があるのに意味属性が欠落しています`);
       continue;
     }
-    if (!values.includes(normalized(value)))
+    if (!values.includes(reportingAttributeKey(role, value)))
       throw new Error(`SCOPE:${role}の適用根拠が不一致です。適用候補=${values.join('/')}`);
     ids.push(
       ...binding.declarations
-        .filter((d) => d.role === role && normalized(d.value) === normalized(value))
+        .filter(
+          (d) =>
+            d.role === role &&
+            reportingAttributeKey(role, d.value) === reportingAttributeKey(role, value)
+        )
         .map((d) => d.id)
     );
   }
@@ -461,7 +679,6 @@ export function resolveScopeIds(
 /** Reporting role ownership is separate from local scope/basis ownership. */
 export function reportingUnitTitle(binding: ContextBinding, pages: ExtractedPage[]): string {
   const blocks = pages.flatMap((p) => p.blocks);
-  const spans = pages.flatMap((p) => p.spans);
   const section = binding.sectionIds
     .slice(-1)
     .map((id) => blocks.find((b) => b.id === id)!.text)
@@ -486,15 +703,7 @@ export function reportingUnitTitle(binding: ContextBinding, pages: ExtractedPage
     )
       return normalized(caption.text);
   }
-  return normalized(
-    section ||
-      binding.contextIds
-        .map(
-          (id) =>
-            blocks.find((b) => b.id === id)?.text ?? spans.find((s) => s.id === id)?.text ?? ''
-        )
-        .join('')
-  );
+  return normalized(section || reportingContextText(pages, binding.contextIds));
 }
 export function isReportingCoverUnit(binding: ContextBinding, pages: ExtractedPage[]): boolean {
   return inReportingCover(binding, pages, true);
@@ -510,10 +719,15 @@ function inReportingCover(
 ): boolean {
   if (binding.page !== 1 || binding.sectionIds.length) return false;
   const blocks = pages.find((p) => p.pageNumber === 1)?.blocks ?? [];
+  if (!requireValue) {
+    const cover = reportingDocumentCover(blocks);
+    const target = cover.findIndex((block) => block.id === binding.blockId);
+    return target >= 0 && cover.slice(0, target).some(isReportingCover);
+  }
   const target = blocks.findIndex((b) => b.id === binding.blockId);
   let cover = -1;
-  for (let i = 0; i < target; i++)
-    if (blocks[i].text.length < 180 && isReportingCover(blocks[i])) cover = i;
+  for (const block of reportingDocumentCover(blocks.slice(0, target)))
+    if (isReportingCover(block)) cover = blocks.indexOf(block);
   if (cover < 0) return false;
   // Only a contiguous reporting-value area belongs to this cover. Unknown prose
   // or an unnumbered caption closes it; later values cannot reopen it.
@@ -524,19 +738,8 @@ function inReportingCover(
   let valuesStarted = false;
   for (let i = cover + 1; i <= target; i++) {
     const block = blocks[i];
-    const attributes = reportingAttributes(block);
     if (valueStart.test(normalized(block.text))) valuesStarted = true;
-    else if (
-      valuesStarted ||
-      !(
-        declaredSubjectsIn(block).length ||
-        (attributes.length &&
-          attributes.every((d) =>
-            new RegExp(`^(?:${reportingScope}|${reportingBasis})$`, 'i').test(d.value)
-          ))
-      )
-    )
-      return false;
+    else if (valuesStarted || !isReportingMetadata(block)) return false;
     if (i === target)
       return requireValue
         ? valuesStarted && valueStart.test(normalized(block.text))
@@ -584,7 +787,7 @@ export function verifyScopeEvidence(
         !binding.declarations.some(
           (d) =>
             d.role === role &&
-            normalized(d.value) === normalized(meaning[role]!) &&
+            reportingAttributeKey(role, d.value) === reportingAttributeKey(role, meaning[role]!) &&
             scopeIds.includes(d.id)
         )
     )

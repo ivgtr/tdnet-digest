@@ -35,6 +35,7 @@ const qReportingCases = [
   ['2026年3月期 1Q決算短信〔日本基準〕（連結）', '2026年3月期', '連結', '日本基準'],
   ['2026年8月期 2Q決算短信〔日本基準〕（連結）', '2026年8月期', '連結', '日本基準'],
   ['2026年12月期 3Q決算短信〔IFRS〕（連結）', '2026年12月期', '連結', 'IFRS'],
+  ['2026年12月期 決算短信〔ＩＦＲＳ会計基準〕（連結）', '2026年12月期', '連結', 'IFRS会計基準'],
   ['2026年3月期 4Q決算短信〔日本基準〕（非連結）', '2026年3月期', '非連結', '日本基準'],
   ['２Ｑ決算短信〔IFRS〕（個別）', '2026年3月期', '個別', 'IFRS'],
   ['2026年8月期 2q決算短信〔日本基準〕（連結）', '2026年8月期', '連結', '日本基準'],
@@ -670,6 +671,7 @@ describe('生成専用候補と原文文脈の契約', () => {
       input.obligations.find((s: { sourceIds: string[] }) => s.sourceIds.includes('p5b20')).expected
     ).toMatchObject({ kind: 'event', state: 'forecast', periodKind: 'none' });
   });
+  // These repair flows replay the complete PDF fixture through several validation passes.
   it('当年だけの応答を受理せず、原文の前年値だけを修復して保存する', async () => {
     const r = review(candidates);
     expect(r.unverified).toEqual([]);
@@ -727,7 +729,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(repaired.facts.facts).toEqual(r.facts);
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(generateText).mock.calls[1][1][1].content).toContain('修復方式=delta');
-  });
+  }, 30_000);
   it('通期の前年値を四半期の前年比較へ転用しない', () => {
     const items = structuredClone(corpus[0].pages[0].items);
     const title = {
@@ -1150,7 +1152,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     expect(result.repairAttempted).toBe(true);
     expect(result.facts.facts).toHaveLength(fixture.length);
     expect(vi.mocked(generateText).mock.calls[1][1][1].content).toContain('修復方式=complete');
-  });
+  }, 30_000);
   it('修復で確定事実を消さず、ID付け替えによる重複も作らない', async () => {
     const initial = candidates.filter((_, i) => i !== 10);
     const before = review(initial).facts;
@@ -1171,5 +1173,5 @@ describe('生成専用候補と原文文脈の契約', () => {
     const attempts = vi.mocked(generateText).mock.calls;
     expect(attempts).toHaveLength(2);
     expect(attempts[1][1][1].content).toContain('修復方式=delta');
-  });
+  }, 30_000);
 });

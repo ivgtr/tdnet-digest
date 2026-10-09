@@ -1,3 +1,5 @@
+import { reportingTargetAttributes, selectReportingPeriod } from './reporting-period-selection';
+import { reportingAttributeKey, hasCompleteReportingAttributes } from './reporting-attributes';
 import {
   numericValueKind,
   matchesReportingPeriod,
@@ -38,12 +40,13 @@ import { datedStates } from './fact-validation';
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import {
   buildDocumentContext,
+  reportingContextText,
   documentSubject,
   bindingFor,
   isFinancialUnit,
   reportingUnitTitle,
   isReportingCoverUnit,
-  isReportingCoverField,
+  isReportingMetadata,
   headingLevel,
   verifyScopeEvidence,
   applicableDeclarations,
@@ -108,13 +111,13 @@ function reportedDividends(
         (h) => page.quantities.some((q) => q.id === h.valueId) && isIssuerSource(h.valueId, context)
       )
       .flatMap((hint) => {
-        if (!/配当の状況/.test(compact(text(hint.contextIds)))) return [];
+        if (!/配当の状況/.test(compact(reportingContextText(pages, hint.contextIds)))) return [];
         const unitText = compact(text(hint.unitIds));
         const unit = unitText === '円銭' ? '円' : unitText;
         if (!isPerShareDividend(text(hint.metricIds), unit)) return [];
         const axis = compact(text(hint.periodIds));
         const period = axis.match(/20\d{2}年\d{1,2}月期/)?.[0];
-        const state = numericValueKind(axis, text(hint.contextIds));
+        const state = numericValueKind(axis, reportingContextText(pages, hint.contextIds));
         if (state !== 'actual' && state !== 'forecast') return [];
         return period &&
           provedMappedQuantity(pages, hint, {
@@ -159,7 +162,6 @@ function proseMetricsAt(text: string, binding: ContextBinding) {
  * Keep source roles even if their quantities cannot yet be verified. */
 function forecastPublicationSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);
-  const nodes = new Map(pages.flatMap((p) => [...p.spans, ...p.blocks]).map((s) => [s.id, s.text]));
   const text = (ids: string[]) =>
     normalized(ids.map((id) => spans.find((s) => s.id === id)!.text).join(''));
   const result: Array<{
@@ -178,7 +180,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
     )
       return [];
     const axis = text(h.periodIds),
-      inherited = text(h.contextIds);
+      inherited = reportingContextText(pages, h.contextIds);
     const metric = revisionMetricLabel(text(h.metricIds)),
       period = sourceFiscalPeriod(axis, inherited);
     const state = numericValueKind(axis, inherited);
@@ -206,11 +208,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
     )
       continue;
     const binding = bindingFor(context, block.id);
-    const inherited = normalized(
-      binding.contextIds
-        .map((id) => pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!.text)
-        .join('')
-    );
+    const inherited = normalized(reportingContextText(pages, binding.contextIds));
     const own = normalized(block.text);
     const period = sourceFiscalPeriod(own, inherited),
       state = numericValueKind(own, inherited);
@@ -259,12 +257,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
         )
           continue;
         const binding = bindingFor(context, anchor);
-        const inherited = binding.contextIds
-          .map((id) => {
-            if (!nodes.has(id)) throw new Error(`REFERENCE:原文の文脈 ${id} がありません`);
-            return nodes.get(id)!;
-          })
-          .join('');
+        const inherited = reportingContextText(pages, binding.contextIds);
         const state = numericValueKind(axis, inherited);
         if (state !== 'actual' && state !== 'forecast') continue;
         declaredGroups.push({
@@ -313,22 +306,42 @@ function declaredReportingMetrics(
   context: DocumentContext,
   report: string,
   state: 'actual' | 'forecast',
-  revision = false
+  revision = false,
+  targetAttributes?: ReportingAttributes | null
 ): string[] {
   const declared = new Set(
     revision ? ['revenue', 'operatingProfit'] : ['revenue', 'operatingProfit', 'netProfit']
   );
+  // Another explicitly declared reporting scope cannot add a required headline metric.
+  // Unresolved attributes are retained as obligations, not silently treated as a mismatch.
+  const belongsToOtherTarget = (anchor: string) => {
+    const attributes = reportingAttributesAt(bindingFor(context, anchor));
+    return (
+      !!targetAttributes &&
+      !!attributes &&
+      (['subject', 'scope', 'basis'] as const).some(
+        (role) =>
+          attributes[role] !== null &&
+          targetAttributes[role] !== null &&
+          reportingAttributeKey(role, attributes[role]!) !==
+            reportingAttributeKey(role, targetAttributes[role]!)
+      )
+    );
+  };
   for (const page of pages.filter((p) => p.selection === 'selected'))
     for (const region of page.tableRegions) {
       const anchor = region.valueIds[0];
-      if (!anchor || !isReportingMetricSource(anchor, state, pages, context)) continue;
+      if (
+        !anchor ||
+        !isReportingMetricSource(anchor, state, pages, context) ||
+        belongsToOtherTarget(anchor)
+      )
+        continue;
       const text = normalized(
         region.spanIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
       );
       const binding = bindingFor(context, anchor);
-      const inherited = binding.contextIds
-        .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
-        .join('');
+      const inherited = reportingContextText(pages, binding.contextIds);
       const titlePeriod = sourceFiscalPeriod('', normalized(inherited));
       if (
         (state === 'forecast' && !text.includes(report) && titlePeriod !== report) ||
@@ -355,16 +368,13 @@ function declaredReportingMetrics(
     if (
       block.kind !== 'paragraph' ||
       !proseQuantities(block).length ||
-      !isReportingMetricSource(block.id, state, pages, context)
+      !isReportingMetricSource(block.id, state, pages, context) ||
+      belongsToOtherTarget(block.id)
     )
       continue;
     const text = normalized(block.text);
     const inherited = normalized(
-      bindingFor(context, block.id)
-        .contextIds.map(
-          (id) => pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-        )
-        .join('')
+      reportingContextText(pages, bindingFor(context, block.id).contextIds)
     );
     if (sourceFiscalPeriod(text, inherited) !== report || /^\(?注\)?|^※/.test(text)) continue;
     for (const { label } of proseMetricsAt(text, bindingFor(context, block.id))) {
@@ -410,11 +420,7 @@ function unchangedDividendSources(
         )
           return [];
         const binding = bindingFor(context, block.id),
-          inherited = binding.contextIds
-            .map(
-              (id) => pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!.text
-            )
-            .join('');
+          inherited = reportingContextText(pages, binding.contextIds);
         if (sourceFiscalPeriod(normalized(block.text), normalized(inherited)) !== report) return [];
         return [
           ...['中間配当金', '期末配当金', '年間配当金'],
@@ -464,11 +470,7 @@ function unchangedForecastAlternatives(
   const binding = bindingFor(context, required.id);
   const attributes = reportingAttributesAt(binding);
   const sourcePeriod = (block: typeof required) => {
-    const inherited = bindingFor(context, block.id)
-      .contextIds.map(
-        (id) => pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-      )
-      .join('');
+    const inherited = reportingContextText(pages, bindingFor(context, block.id).contextIds);
     return sourceFiscalPeriod(normalized(block.text), normalized(inherited));
   };
   const period = sourcePeriod(required);
@@ -660,7 +662,7 @@ function reportingAttributesAt(
     const ds = documentOnly
       ? binding.declarations.filter((d) => d.origin === 'document' && d.role === role)
       : applicableDeclarations(binding, role, true);
-    const values = [...new Set(ds.map((d) => normalized(d.value)))];
+    const values = [...new Set(ds.map((d) => reportingAttributeKey(role, d.value)))];
     if (values.length > 1) return null;
     result[role] = values[0] ?? null;
   }
@@ -676,73 +678,85 @@ function sameReportingAttributes(
     ['subject', 'scope', 'basis'].every((role) => {
       const key = role as keyof ReportingAttributes;
       return (
-        (a[key] === null ? null : normalized(a[key]!)) ===
-        (b[key] === null ? null : normalized(b[key]!))
+        (a[key] === null ? null : reportingAttributeKey(key, a[key]!)) ===
+        (b[key] === null ? null : reportingAttributeKey(key, b[key]!))
       );
     })
   );
 }
 /** Required reporting units do not change the meaning of a locally valid fact. */
 function earningsTargets(pages: ExtractedPage[], context: DocumentContext) {
-  const report = earningsReportingPeriod(pages);
-  const cover = context.bindings.find((b) => b.page === 1);
-  // Read only the cover's contiguous explicit fields, before values or sections.
-  // Later local attributes cannot redefine its required reporting unit.
-  const coverFields = context.bindings.filter(
-    (b) =>
-      b.anchorId === b.blockId &&
-      isReportingCoverField(b, pages) &&
-      isIssuerSource(b.anchorId, context)
+  const { period, coverFields, titles } = selectReportingPeriod(
+    pages.flatMap((page) => page.blocks)
   );
-  const coverSource = coverFields[coverFields.length - 1];
-  const coverAttributes = cover ? reportingAttributesAt(cover, true) : null;
-  const fields = coverSource ? reportingAttributesAt(coverSource) : null;
-  const actual: ReportingTarget | null =
-    report && cover
-      ? {
-          ...report,
-          attributes: coverAttributes && {
-            subject: coverAttributes.subject ?? fields?.subject ?? null,
-            scope: coverAttributes.scope ?? fields?.scope ?? null,
-            basis: coverAttributes.basis ?? fields?.basis ?? null,
-          },
-        }
-      : null;
+  const actual: ReportingTarget | null = period
+    ? {
+        period: period.fiscal,
+        quarter: period.quarter,
+        attributes: reportingTargetAttributes(coverFields, titles),
+      }
+    : null;
   const declaration = declaredForecastUnit(pages, context);
-  let forecast: ReportingTarget | null = null;
-  if (declaration) {
-    // Fields between the declaration and its first source belong to that unit.
-    // A child unit or a later FY declaration cannot replace this reporting target.
-    const blocks = pages.flatMap((p) => p.blocks);
-    const source = context.bindings.find((b) => {
-      if (b.sectionIds[b.sectionIds.length - 1] !== declaration.blockId || b.anchorId !== b.blockId)
-        return false;
-      const block = blocks.find((block) => block.id === b.blockId)!;
-      return (
-        block.kind === 'row' ||
-        (!/^(?:会社名|上場会社名|名称|範囲|会計基準)/.test(normalized(block.text)) &&
-          headingLevel(block) === null)
-      );
-    });
-    const binding = source ?? bindingFor(context, declaration.blockId);
-    forecast = {
-      period: declaration.period,
-      quarter: declaration.quarter,
-      attributes: reportingAttributesAt(binding),
-    };
-  }
-  return { actual, forecast, declaration };
+  return { actual, forecast: forecastReportingTarget(pages, context, declaration), declaration };
+}
+function forecastReportingTarget(
+  pages: ExtractedPage[],
+  context: DocumentContext,
+  declaration = declaredForecastUnit(pages, context)
+): ReportingTarget | null {
+  if (!declaration) return null;
+  // Fields between the declaration and its first source belong to that unit.
+  // A child unit or a later FY declaration cannot replace this reporting target.
+  const blocks = pages.flatMap((p) => p.blocks);
+  const source = context.bindings.find((b) => {
+    if (b.sectionIds[b.sectionIds.length - 1] !== declaration.blockId || b.anchorId !== b.blockId)
+      return false;
+    const block = blocks.find((block) => block.id === b.blockId)!;
+    return !isReportingMetadata(block) && (block.kind === 'row' || headingLevel(block) === null);
+  });
+  const binding = source ?? bindingFor(context, declaration.blockId);
+  return {
+    period: declaration.period,
+    quarter: declaration.quarter,
+    attributes: reportingAttributesAt(binding),
+  };
+}
+/** Headline eligibility shares coverage's declared forecast unit, never surviving facts.
+ * Unknown attributes are not wildcards; only PDF-backed consumers can establish this set.
+ */
+export function declaredForecastFactIds(
+  pages: ExtractedPage[],
+  facts: VerifiedFact[]
+): Set<string> {
+  if (!facts.some((fact) => fact.semantics.state === 'forecastAfter')) return new Set();
+  const context = buildDocumentContext(pages);
+  // The forecast declaration is independent of missing/ambiguous actual-period headings.
+  const target = forecastReportingTarget(pages, context);
+  if (!target || !hasCompleteReportingAttributes(target.attributes)) return new Set();
+  return new Set(
+    facts
+      .filter(
+        (fact) =>
+          fact.semantics.state === 'forecastAfter' &&
+          isIssuerFact(fact, context) &&
+          isReportingMetricSource(factAnchor(fact), 'forecast', pages, context) &&
+          matchesReportingPeriod(fact, target.period, target.quarter) &&
+          sameReportingAttributes(fact.semantics, target.attributes) &&
+          matchesTargetSource(factAnchor(fact), target, context)
+      )
+      .map((fact) => fact.id)
+  );
 }
 function sourceFiscalPeriod(axis: string, context: string): string | null {
-  const years = [...new Set(axis.match(/20\d{2}年\d{1,2}月期/g) ?? [])];
-  const inherited = [...new Set(context.match(/20\d{2}年\d{1,2}月期/g) ?? [])];
+  const years = [...new Set(normalized(axis).match(/20\d{2}年\d{1,2}月期/g) ?? [])];
+  const inherited = [...new Set(normalized(context).match(/20\d{2}年\d{1,2}月期/g) ?? [])];
   const applicable = years.length ? years : inherited;
   return applicable.length === 1 ? applicable[0] : null;
 }
 function targetPeriodKind(target: ReportingTarget): VerifiedFact['semantics']['periodKind'] | null {
   if (!target.quarter) return 'fullYear';
-  const q = target.quarter.match(/第([1-3])四半期/)?.[1];
-  return q
+  const q = target.quarter.match(/第([1-4])四半期/)?.[1];
+  return q && (q !== '4' || /単独/.test(target.quarter))
     ? (`${/単独/.test(target.quarter) ? 'standalone' : 'cumulative'}Q${q}` as VerifiedFact['semantics']['periodKind'])
     : null;
 }
@@ -794,7 +808,7 @@ function comparativeReportingSources(pages: ExtractedPage[], context: DocumentCo
     )
       return [];
     const axis = text(h.periodIds),
-      inherited = text(h.contextIds);
+      inherited = reportingContextText(pages, h.contextIds);
     if (
       sourceFiscalPeriod(axis, inherited) !== target.period ||
       numericValueKind(axis, inherited) !== 'actual'
@@ -846,12 +860,7 @@ function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, 
       )
         return false;
       const binding = bindingFor(context, block.id);
-      const sourceContext = binding.contextIds
-        .map(
-          (id) =>
-            pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)?.text ?? ''
-        )
-        .join('\n');
+      const sourceContext = reportingContextText(pages, binding.contextIds);
       return proseQuantities(block).some((q) => {
         const quantity = parseExactQuantity(q.raw);
         const value = quantity && quantityNumber(quantity.decimal)?.value;
@@ -897,20 +906,19 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
     )
       return false;
     try {
-      return reportingPeriodSource(text(h.periodIds), text(h.contextIds), period);
+      return reportingPeriodSource(
+        text(h.periodIds),
+        reportingContextText(pages, h.contextIds),
+        period
+      );
     } catch {
       return false;
     }
   });
 }
 function earningsReportingPeriod(pages: ExtractedPage[]) {
-  const title = pages
-    .find((p) => p.pageNumber === 1)
-    ?.text.normalize('NFKC')
-    .match(/(20\d{2}年\s*\d{1,2}月期)[^\n]*決算短信[^\n]*/);
-  return title
-    ? { period: compact(title[1]), quarter: reportingPeriodShape(title[0]) ?? undefined }
-    : null;
+  const { period } = selectReportingPeriod(pages.flatMap((page) => page.blocks));
+  return period ? { period: period.fiscal, quarter: period.quarter } : null;
 }
 function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);
@@ -1015,17 +1023,20 @@ export function verifyCoverage(
       const scopeId = ds.find((d) => d.role === 'scope' && d.value === scope)?.id;
       return { scope, basis, scopeId };
     };
-    const matchesReport = (f: VerifiedFact, kind: string, target: string) =>
-      reportingMetric(f) &&
-      f.valueKind === kind &&
-      matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
-      applicableMeaning(f) &&
-      sameReportingAttributes(
-        f.semantics,
-        (kind === 'actual' ? targets.actual : targets.forecast)?.attributes ?? null
-      ) &&
-      !!f.semantics.subject &&
-      issuer === normalized(f.semantics.subject ?? '');
+    const matchesReport = (f: VerifiedFact, kind: string, target: string) => {
+      const attributes =
+        (kind === 'actual' ? targets.actual : targets.forecast)?.attributes ?? null;
+      return (
+        hasCompleteReportingAttributes(attributes) &&
+        reportingMetric(f) &&
+        f.valueKind === kind &&
+        matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
+        applicableMeaning(f) &&
+        sameReportingAttributes(f.semantics, attributes) &&
+        !!f.semantics.subject &&
+        issuer === normalized(f.semantics.subject ?? '')
+      );
+    };
     const has = (metric: string, kind: 'actual' | 'forecast', target: string) =>
       facts.some(
         (f) =>
@@ -1035,7 +1046,14 @@ export function verifyCoverage(
           (metric !== 'netProfit' || ownsRequiredNetProfit(f.label, pages, context, kind)) &&
           matchesReport(f, kind, target)
       );
-    for (const metric of declaredReportingMetrics(pages, context, period, 'actual'))
+    for (const metric of declaredReportingMetrics(
+      pages,
+      context,
+      period,
+      'actual',
+      false,
+      targets.actual?.attributes
+    ))
       if (!has(metric, 'actual', period)) missing.push(`COVERAGE:当年決算実績の重要指標 ${metric}`);
     const comparisons = comparativeReportingSources(allPages, context);
     for (const metric of new Set(comparisons.map((s) => s.metric)))
@@ -1071,6 +1089,7 @@ export function verifyCoverage(
           (() => {
             const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId;
             if (!isReportingMetricSource(anchor, 'forecast', allPages, context)) return false;
+            if (!hasCompleteReportingAttributes(targets.forecast?.attributes ?? null)) return false;
             if (!sameReportingAttributes(f.semantics, targets.forecast?.attributes ?? null))
               return false;
             const sourcePeriod = forecastReportingTitle(
@@ -1085,7 +1104,14 @@ export function verifyCoverage(
           })()
       )
     ) {
-      for (const metric of declaredReportingMetrics(pages, context, forecast, 'forecast'))
+      for (const metric of declaredReportingMetrics(
+        pages,
+        context,
+        forecast,
+        'forecast',
+        false,
+        targets.forecast?.attributes
+      ))
         if (!has(metric, 'forecast', forecast))
           missing.push(
             metric === '1株当たり利益'
@@ -1494,7 +1520,7 @@ export function coverageReport(
     anchor: h.valueId,
     label: normalized(h.metricIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
     axis: normalized(h.periodIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
-    context: normalized(h.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
+    context: normalized(reportingContextText(pages, h.contextIds)),
     metricKind: mappedMetricKind(pages, h) as VerifiedFact['semantics']['metricKind'] | null,
   }));
   for (const page of pages)
@@ -1505,15 +1531,7 @@ export function coverageReport(
       if (
         !isReportingMetricSource(
           block.id,
-          numericValueKind(
-            block.text,
-            binding.contextIds
-              .map(
-                (id) =>
-                  pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-              )
-              .join('')
-          ) ?? '',
+          numericValueKind(block.text, reportingContextText(pages, binding.contextIds)) ?? '',
           pages,
           context
         )
@@ -1524,20 +1542,19 @@ export function coverageReport(
           anchor: block.id,
           label,
           axis: normalized(block.text),
-          context: normalized(
-            binding.contextIds
-              .map(
-                (id) =>
-                  pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-              )
-              .join('')
-          ),
+          context: normalized(reportingContextText(pages, binding.contextIds)),
           metricKind: null,
         });
     }
   let publicationSources: ReturnType<typeof forecastPublicationSources> | undefined;
   let comparativeSources: ReturnType<typeof comparativeReportingSources> | undefined;
   const sourceIds = (requirement: string): string[] => {
+    const target = requirementTarget(requirement);
+    // Earnings headlines and their coverage need the same resolved reporting unit.
+    // A locally valid fact with a missing attribute is still kept in the body,
+    // but cannot become a repair source for an unresolved target.
+    if (type === 'earnings' && target && !hasCompleteReportingAttributes(target.attributes))
+      return [];
     if (/前年決算実績/.test(requirement))
       return (comparativeSources ??= comparativeReportingSources(
         pages.map((p) => ({ ...p, selection: 'selected' as const })),
@@ -1570,16 +1587,9 @@ export function coverageReport(
           const own = [...new Set(normalized(b.text).match(/20\d{2}年\d{1,2}月(?![\d期])/g) ?? [])];
           const inherited = [
             ...new Set(
-              normalized(
-                bindingFor(context, b.id)
-                  .contextIds.map(
-                    (id) =>
-                      captions.find((s) => s.id === id)?.text ??
-                      spans.find((s) => s.id === id)?.text ??
-                      ''
-                  )
-                  .join('')
-              ).match(/20\d{2}年\d{1,2}月(?![\d期])/g) ?? []
+              normalized(reportingContextText(pages, bindingFor(context, b.id).contextIds)).match(
+                /20\d{2}年\d{1,2}月(?![\d期])/g
+              ) ?? []
             ),
           ];
           const periods = own.length ? own : inherited;
@@ -1662,7 +1672,6 @@ export function coverageReport(
       KPI: /MRR|ARR|KPI/,
     }[metric ?? ''] as RegExp | undefined;
     if (marker) {
-      const target = requirementTarget(requirement);
       if (type === 'ma' && /対象会社の最近/.test(requirement))
         return maMetricSources(pages, context)
           .filter(

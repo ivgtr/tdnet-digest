@@ -8,8 +8,8 @@ import {
   isUnitToken,
 } from './quantity';
 import type { SourceExcerpt } from './summary-source-inventory';
-import { headingLevel } from './document-structure';
-import { physicalRows, tableUnitRuns } from './table-layout';
+import { headingLevel, physicalCellOwners, canJoinWithinCells } from './document-structure';
+import { physicalRows, tableUnitRuns, buildTableCells } from './table-layout';
 
 /** Literal quantities for presentation. They are not semantic facts used for scoring. */
 export interface NarrativeValue {
@@ -18,6 +18,8 @@ export interface NarrativeValue {
   decimal: string | null;
   unit: string | null;
   sourceIds: string[];
+  /** Required for a fact-backed value; points directly to its original literal. */
+  sourceQuantityId?: string;
 }
 export interface NarrativeLine {
   id: string;
@@ -67,7 +69,11 @@ function displayQuantities(block: { id: string; text: string }) {
         !added.some((m) => q.start < m.index! + m[0].length && q.start + q.raw.length > m.index!)
     ),
     ...added.map((m, i) => ({
-      id: `${block.id}:q${original.length + i + 1}`,
+      // Rendering may accept whitespace within a complete unit that the source
+      // parser already owns. Preserve that exact interval's original identity.
+      id:
+        original.find((q) => q.start === m.index && q.raw === m[0])?.id ??
+        `${block.id}:q${original.length + i + 1}`,
       raw: m[0],
       start: m.index!,
     })),
@@ -100,7 +106,8 @@ function displayUnitCaption(raw: string): string | null {
 /** Keep a split literal's complete unit, never a valid-looking prefix of it. */
 function completePhysicalQuantity(
   native: ExtractedPage['quantities'][number],
-  spans: ExtractedPage['spans']
+  spans: ExtractedPage['spans'],
+  owners: ReturnType<typeof physicalCellOwners>
 ) {
   const parsed = scalar(native.text);
   if (!parsed) return null;
@@ -118,6 +125,7 @@ function completePhysicalQuantity(
       )
       .sort((a, b) => a.x - b.x)[0];
     if (!next || next.x - last.x - last.width > Math.min(next.height, last.height) * 0.6) break;
+    if (!canJoinWithinCells(owners, last.id, next.id)) break;
     const continued = (unit ?? '') + compact(next.text);
     if (!isUnitToken(continued)) {
       if (unit !== null && isUncaptionedUnit(compact(next.text))) return null;
@@ -144,11 +152,15 @@ export function narrativeValues(
 ): NarrativeValue[] {
   const values = new Map<string, NarrativeValue>();
   const physicalQuantitySpans = new Map<string, string[]>();
+  const sourceAliases = new Map<string, string>();
   for (const page of pages.filter((p) => p.selection === 'selected')) {
+    const owners = physicalCellOwners(
+      buildTableCells(page.drawingLines, page.spans, page.pageNumber)
+    );
     const consumed = new Set<string>();
     for (const native of page.quantities) {
       if (consumed.has(native.id)) continue;
-      const q = completePhysicalQuantity(native, page.spans);
+      const q = completePhysicalQuantity(native, page.spans, owners);
       if (!q) continue;
       for (const id of q.spanIds.slice(1)) consumed.add(id);
       const sources = excerpts.filter(
@@ -171,9 +183,19 @@ export function narrativeValues(
         neighbors.some((s) => {
           const left = q.x - s.x - s.width;
           const right = s.x - q.x - q.width;
+          const edgeId =
+            left >= -0.5 && left <= q.height * 0.6
+              ? q.spanIds[0]
+              : right >= -0.5 && right <= q.height * 0.6
+                ? q.spanIds[q.spanIds.length - 1]
+                : null;
+          // Only two uniquely owned, distinct cells prove independence.
+          // Unowned or ambiguous neighbors can still be prose continuations.
           return (
-            ((left >= -0.5 && left <= q.height * 0.6) ||
-              (right >= -0.5 && right <= q.height * 0.6)) &&
+            edgeId !== null &&
+            (canJoinWithinCells(owners, edgeId, s.id) ||
+              !owners.get(edgeId) ||
+              !owners.get(s.id)) &&
             !isUncaptionedUnit(compact(s.text))
           );
         })
@@ -188,7 +210,9 @@ export function narrativeValues(
         )
         .sort((a, b) => a.x - b.x)[0];
       const adjacentUnit =
-        adjacent && isUncaptionedUnit(adjacent.text.normalize('NFKC').replace(/\s/g, ''))
+        adjacent &&
+        canJoinWithinCells(owners, q.spanIds[q.spanIds.length - 1], adjacent.id) &&
+        isUncaptionedUnit(adjacent.text.normalize('NFKC').replace(/\s/g, ''))
           ? declaredQuantityUnit(adjacent.text)
           : null;
       // A unit row can be legible even when metric/period ownership is unresolved.
@@ -301,36 +325,45 @@ export function narrativeValues(
       ]);
     }
     for (const e of excerpts.filter((e) => e.page === page.pageNumber && e.kind !== 'heading')) {
-      // A row can be read as prose too. Offer its physical quantity ID once, using
-      // text offsets to prove ownership even when two columns have equal values.
+      // A physical quantity can also be read as prose, regardless of the block's
+      // reading classification. Require its complete glyph interval, not its value.
       const spans = e.spanIds.map((id) => page.spans.find((span) => span.id === id)!);
       let offset = 0;
+      const blockText = compact(e.text);
+      let mappedBlock = true;
       const intervals = new Map(
         spans.map((span) => {
+          const raw = compact(span.text);
+          // The block's structural cell separator consumes text offset but is
+          // not an original glyph. Match every original span in order as well.
+          while (!blockText.startsWith(raw, offset) && blockText[offset] === '│') offset++;
           const start = offset;
-          offset += compact(span.text).length;
+          mappedBlock &&= blockText.startsWith(raw, offset);
+          offset += raw.length;
           return [span.id, { start, end: offset }] as const;
         })
       );
-      const mappedRow =
-        e.kind === 'row' && compact(spans.map((span) => span.text).join('')) === compact(e.text);
+      mappedBlock &&= offset === blockText.length;
       for (const q of displayQuantities({ id: e.blockId, text: e.text })) {
         const start = compact(e.text.normalize('NFKC').slice(0, q.start)).length;
         const end = start + compact(q.raw).length;
-        if (
-          mappedRow &&
-          page.quantities.filter((native) => {
-            const ids = physicalQuantitySpans.get(native.id);
-            return (
-              ids &&
-              intervals.get(ids[0])?.start === start &&
-              intervals.get(ids[ids.length - 1])?.end === end &&
-              compact(ids.map((id) => page.spans.find((span) => span.id === id)!.text).join('')) ===
-                compact(q.raw)
-            );
-          }).length === 1
-        )
+        const matching = mappedBlock
+          ? page.quantities.filter((native) => {
+              const ids = physicalQuantitySpans.get(native.id);
+              return (
+                ids &&
+                intervals.get(ids[0])?.start === start &&
+                intervals.get(ids[ids.length - 1])?.end === end &&
+                compact(
+                  ids.map((id) => page.spans.find((span) => span.id === id)!.text).join('')
+                ) === compact(q.raw)
+              );
+            })
+          : [];
+        if (matching.length === 1) {
+          sourceAliases.set(q.id, matching[0].id);
           continue;
+        }
         const parsed = scalar(q.raw);
         const text = e.text.normalize('NFKC');
         const before = text.slice(0, q.start);
@@ -361,12 +394,28 @@ export function narrativeValues(
       decimal: fact.quantity.decimal,
       unit: fact.unit,
       sourceIds: sources.map((e) => e.id),
+      sourceQuantityId:
+        fact.evidence.kind === 'table'
+          ? fact.evidence.valueId
+          : (sourceAliases.get(fact.evidence.quantityId!) ?? fact.evidence.quantityId!),
     });
   }
   return [...values.values()];
 }
 
 export const NARRATIVE_TOKEN = /\{\{(value|change|delta):([^{}]+)\}\}/g;
+
+/** A confirmed fact is an alias of its explicit source quantity, never of an equal amount. */
+export function sourceQuantityId(id: string, facts: FactSummary, values: NarrativeValue[]): string {
+  const original = values.find((value) => value.id === id)?.sourceQuantityId;
+  if (original) return original;
+  const fact = facts.facts.find((f) => f.id === id);
+  return fact?.evidence.kind === 'table'
+    ? fact.evidence.valueId
+    : fact?.evidence.kind === 'prose'
+      ? (fact.evidence.quantityId ?? id)
+      : id;
+}
 
 const NARRATIVE_LABEL =
   /1株当たり|20\d{2}年(?:\d{1,2}月(?:\d{1,2}日|期(?:第[1-4]四半期|中間期)?)?)?|過去\d+(?:ヶ|ヵ|か|カ)?月|\d{1,2}月(?:\d{1,2}日)?|(?:午前|午後)?\d{1,2}時(?:\d{1,2}分)?|\d{1,2}:\d{2}|第\d+条(?:第\d+項)?|第[1-4]四半期|第\d+(?:期|回)|IFRS(?:第)?\d+号|\d+(?:丁目|番地?|号|以外)|\b(?:[A-Za-z][A-Za-z0-9-]*|\d+[A-Za-z][A-Za-z0-9-]*)\b/g;
@@ -497,7 +546,7 @@ export function checkText(
   sourceIds: string[],
   values: NarrativeValue[],
   excerpts: SourceExcerpt[],
-  _facts: FactSummary,
+  facts: FactSummary,
   _tableContext = false
 ): asserts text is string {
   if (typeof text !== 'string' || !text.trim() || text.length > 1200 || /[\r\n]/.test(text))
@@ -536,7 +585,8 @@ export function checkText(
       );
     if (
       kind !== 'value' &&
-      (selected[0] === selected[1] ||
+      (sourceQuantityId(selected[0], facts, values) ===
+        sourceQuantityId(selected[1], facts, values) ||
         quantities.some((v) => v!.decimal === null) ||
         !quantities[0]!.unit ||
         quantities[0]!.unit !== quantities[1]!.unit)

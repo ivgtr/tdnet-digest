@@ -20,7 +20,7 @@ import { extractPageLayout } from './pdf-layout';
 import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import type { FactSummary, VerifiedFact } from './fact-contract';
 import { candidateResponse } from './fixtures/candidate-test-source';
-import { reviewCandidates } from './fact-candidates';
+import { reviewCandidates, CANDIDATE_VERSION } from './fact-candidates';
 import { cells, tableAmount } from './fixtures/fact-review-source';
 import { buildDocumentContext } from './document-context';
 import { validateSavedFacts } from './fact-cache';
@@ -32,7 +32,13 @@ import {
 } from './summary-comparison';
 import { companyExcerpt } from './summary-company-excerpt';
 import { paragraphGroups, sourceInventory } from './summary-source-inventory';
-import { isSourceMetadata } from './summary-content-policy';
+import { isSourceMetadata, dividendPaymentExcerpt } from './summary-content-policy';
+import {
+  earningsTarget,
+  matchesEarningsTarget,
+  earningsMetricOrder,
+  earningsMissingMajorLabels,
+} from './summary-earnings-policy';
 
 const page = textPage(expectation.text);
 const facts = parseFactSummary(
@@ -49,6 +55,698 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 
 describe('冒頭と本文の保持・復元・原文参照', () => {
+  it('配当支払日の明示欄は隣接セル区切りを含む原文を保持し、空欄・別行は補完しない', () => {
+    for (const separator of [' ', '　', '\u00a0', ' │ ', ' ｜ ', ' | ']) {
+      const field = `配当金支払開始予定日${separator}２０２６年６月３０日`;
+      expect(dividendPaymentExcerpt(field)).toBe(field);
+    }
+    for (const gap of [' │ │ ', '\n│ ', ' │ 未定 │ '])
+      expect(dividendPaymentExcerpt(`配当金支払開始予定日${gap}2026年6月30日`)).toBeNull();
+  });
+  // Vocabulary belongs here; candidate/coverage and real-PDF stories own the integration boundaries.
+  it.each([
+    ['2026年3月期 決算短信[IFRS]（連結）', 'fullYear', '連結', 'IFRS', 'IFRS'],
+    [
+      '2026年3月期 決算短信〔ＩＦＲＳ会計基準〕（連結）',
+      'fullYear',
+      '連結',
+      'IFRS',
+      'IFRS会計基準',
+    ],
+    [
+      '2026年3月期 中間決算短信〔日本基準〕（個別）',
+      'cumulativeQ2',
+      '非連結',
+      '日本基準',
+      '日本基準',
+    ],
+    [
+      '2026年3月期 第3四半期決算短信〔日本基準〕（単体）',
+      'cumulativeQ3',
+      '非連結',
+      '日本基準',
+      '日本基準',
+    ],
+    [
+      '2026年3月期 決算短信［国際会計基準］（非連結）',
+      'fullYear',
+      '非連結',
+      'IFRS',
+      '国際会計基準',
+    ],
+  ] as const)(
+    '原文で対応済みの表題属性を冒頭まで保持する: %s',
+    (title, periodKind, scope, basis, factBasis) => {
+      const resolution = earningsTarget(
+        sourceInventory([textPage(title + '\n会社名 株式会社テスト')], undefined, 'earnings')
+      );
+      expect(resolution.issue).toBeNull();
+      expect(resolution.target).toMatchObject({ fiscal: '2026年3月期', periodKind, scope, basis });
+      const fact = {
+        period: '2026年3月期',
+        semantics: {
+          ...facts.facts[0].semantics,
+          periodKind,
+          scope: scope === '非連結' ? '単体' : scope,
+          basis: factBasis,
+        },
+      };
+      expect(matchesEarningsTarget(fact, resolution.target)).toBe(true);
+      for (const semantics of [
+        { ...fact.semantics, basis: basis === 'IFRS' ? '日本基準' : 'IFRS' },
+        { ...fact.semantics, scope: scope === '連結' ? '非連結' : '連結' },
+        {
+          ...fact.semantics,
+          periodKind: periodKind === 'fullYear' ? ('cumulativeQ2' as const) : ('fullYear' as const),
+        },
+      ])
+        expect(matchesEarningsTarget({ ...fact, semantics }, resolution.target)).toBe(false);
+    }
+  );
+
+  it('同じ意味の表題・表紙欄は統合し、異なる基準・範囲・期間の衝突は推測しない', () => {
+    const cover =
+      '2026年3月期 中間決算短信〔IFRS会計基準〕（単体）\n会計基準 国際会計基準 | 範囲 個別';
+    const target = (text: string) =>
+      earningsTarget(
+        sourceInventory([textPage(text + '\n会社名 株式会社テスト')], undefined, 'earnings')
+      );
+    expect(target(cover)).toMatchObject({
+      issue: null,
+      target: { periodKind: 'cumulativeQ2', scope: '非連結', basis: 'IFRS' },
+    });
+    expect(target('2026年3月期 決算短信\n（単体）\nIFRS会計基準')).toMatchObject({
+      issue: null,
+      target: { scope: '非連結', basis: 'IFRS' },
+    });
+    for (const text of [
+      cover.replace('会計基準 国際会計基準', '会計基準 日本基準'),
+      cover.replace('範囲 個別', '範囲 連結'),
+      cover.replace('中間決算短信', '中間期単独決算短信'),
+      cover.replace('中間決算短信', '第3四半期中間決算短信'),
+    ])
+      expect(target(text)).toEqual({ target: null, issue: 'ambiguous' });
+  });
+
+  it('表題の中間・四半期・単独と連結範囲を保持し、同じ決算年だけでは当期としない', () => {
+    const source = textPage(
+      '2026年３月期 第２四半期（中間期）決算短信〔IFRS〕（連結）\n会社名 株式会社テスト'
+    );
+    const target = earningsTarget(sourceInventory([source], undefined, 'earnings')).target;
+    expect(target).toMatchObject({
+      fiscal: '2026年3月期',
+      periodKind: 'cumulativeQ2',
+      scope: '連結',
+    });
+    const current = facts.facts[0];
+    expect(matchesEarningsTarget(current, target)).toBe(false);
+    const quarter = {
+      ...current,
+      period: '2026年3月期中間期',
+      semantics: { ...current.semantics, basis: 'IFRS', periodKind: 'cumulativeQ2' as const },
+    };
+    expect(matchesEarningsTarget(quarter, target)).toBe(true);
+    expect(
+      matchesEarningsTarget(
+        { ...quarter, semantics: { ...quarter.semantics, periodKind: 'standaloneQ2' } },
+        target
+      )
+    ).toBe(false);
+    const standalone = textPage('2026年3月期 第2四半期単独 決算短信（個別）');
+    expect(
+      earningsTarget(sourceInventory([standalone], undefined, 'earnings')).target
+    ).toMatchObject({ periodKind: 'standaloneQ2', scope: '非連結' });
+    const labels = [
+      '基本的1株当たり中間利益',
+      '親会社の所有者に帰属する中間利益',
+      '税引前利益',
+      '営業損失',
+      '売上収益',
+    ];
+    expect([...labels].sort((a, b) => earningsMetricOrder(a) - earningsMetricOrder(b))).toEqual(
+      [...labels].reverse()
+    );
+  });
+
+  it('表題に省略された範囲・会計基準は表紙の明示欄から決め、後の個別・別基準の重要値に置き換えない', () => {
+    for (const axis of ['scope', 'basis', 'unknownScope'] as const) {
+      const basis = axis === 'basis' ? 'IFRS' : '日本基準';
+      const source = textPage(
+        [
+          axis === 'basis' ? '2026年3月期 決算短信〔IFRS〕（連結）' : '2026年3月期 決算短信',
+          `会社名 株式会社テスト | 会計基準 ${basis}${axis === 'unknownScope' ? '' : ' | 範囲 連結'}`,
+          '2026年3月期 連結経営成績',
+          '売上高は1,000百万円です。',
+          '営業利益は100百万円です。',
+          axis === 'basis' ? '１．日本基準での業績' : '１．個別経営成績',
+          axis === 'basis' ? '会計基準 日本基準' : '範囲 個別',
+          '2026年3月期の売上高は900百万円です。',
+        ].join('\n')
+      );
+      const candidate = (blockId: string, local: boolean) => ({
+        candidateId: local ? 'c2' : 'c1',
+        importance: local ? 'key' : 'detail',
+        kind: 'number',
+        source: {
+          kind: 'prose',
+          blockId,
+          assertionId: `${blockId}:a1`,
+          quantityId: `${blockId}:q1`,
+          metric: '売上高',
+          contextBindingId: `ctx:${blockId}`,
+        },
+        meaning: {
+          subject: '株式会社テスト',
+          scope: local && axis !== 'basis' ? '個別' : '連結',
+          basis: local ? '日本基準' : basis,
+          period: '2026年3月期',
+          periodKind: 'fullYear',
+          metricKind: 'amount',
+          state: 'actual',
+          polarity: 'affirmative',
+        },
+      });
+      const reviewed = reviewCandidates(
+        JSON.stringify({
+          candidateVersion: CANDIDATE_VERSION,
+          documentType: 'earnings',
+          candidates: [candidate('p1b4', false), candidate('p1b8', true)],
+          unverified: [],
+        }),
+        'earnings',
+        [source]
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(2);
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: reviewed.facts,
+        unverified: [],
+      };
+      const target = earningsTarget(sourceInventory([source], undefined, 'earnings'));
+      expect(target.target).toMatchObject({
+        basis,
+        scope: axis === 'unknownScope' ? null : '連結',
+        subject: '株式会社テスト',
+      });
+      const display = nativePresentation(summary, [source]);
+      expect(display.overview).toEqual(
+        axis === 'unknownScope' ? [] : [reviewed.facts.find((fact) => fact.value === 1000)!.id]
+      );
+      const markdown = renderFacts(summary, display);
+      const overview = markdown.split('## 業績と増減要因')[0];
+      expect(overview).not.toContain('900');
+      if (axis === 'unknownScope') expect(overview).toContain('報告対象の範囲が未特定');
+      else expect(overview).toContain('1,000百万円');
+      expect(markdown).toContain('900百万円');
+    }
+  });
+
+  const forecastPage = (
+    unit: {
+      period: string;
+      subject: string | null;
+      scope: string | null;
+      basis: string | null;
+      heading?: string;
+      fields?: string;
+      ownPeriod?: boolean;
+    },
+    pageNumber: number,
+    offset = 0
+  ) =>
+    cells(
+      [
+        ...(unit.subject
+          ? [[`会社名 ${unit.subject}`, 0, 0, 220] as [string, number, number, number]]
+          : []),
+        [unit.heading ?? `1. ${unit.period}${unit.scope ?? ''}業績予想の修正`, 0, 30, 460],
+        ...(unit.basis
+          ? [[`会計基準 ${unit.basis}`, 0, 60, 180] as [string, number, number, number]]
+          : []),
+        ...(unit.fields ? [[unit.fields, 0, 70, 300] as [string, number, number, number]] : []),
+        ['売上高', 400, 90, 80],
+        ['営業利益', 600, 90, 80],
+        ['百万円', 410, 120, 60],
+        ['百万円', 610, 120, 60],
+        [(unit.ownPeriod ? unit.period : '') + '前回予想', 0, 150, 320],
+        [String(100 + offset), 410, 150, 30],
+        ['10', 610, 150, 30],
+        [(unit.ownPeriod ? unit.period : '') + '修正後予想', 0, 180, 320],
+        [String(200 + offset), 410, 180, 30],
+        ['20', 610, 180, 30],
+      ],
+      pageNumber
+    );
+
+  // The headline owns reporting-unit selection; source verification still retains other units.
+  it('宣言した予想期・主体・範囲・基準だけを冒頭へ載せ、別単位の修正後予想は本文に残す', () => {
+    const target = '2027年3月期';
+    const units = [
+      { period: target, scope: '連結', basis: '日本基準', subject: '株式会社テスト' },
+      { period: target, scope: '個別', basis: '日本基準', subject: '株式会社テスト' },
+      { period: target, scope: '連結', basis: 'IFRS', subject: '株式会社テスト' },
+      { period: '2028年3月期', scope: '連結', basis: '日本基準', subject: '株式会社テスト' },
+      { period: target, scope: '連結', basis: '日本基準', subject: '株式会社子会社' },
+      { period: target + '第1四半期', scope: '連結', basis: '日本基準', subject: '株式会社テスト' },
+    ];
+    const pages = [
+      textPage('2026年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト'),
+      ...units.map((unit, i) => forecastPage(unit, i + 2, i * 10)),
+    ];
+    const inputs = buildDocumentContext(pages)
+      .tableMappings.filter((mapping) =>
+        mapping.metricIds.some(
+          (id) => pages.flatMap((page) => page.spans).find((s) => s.id === id)?.text === '売上高'
+        )
+      )
+      .map((mapping) => {
+        const source = pages.find((page) => page.quantities.some((q) => q.id === mapping.valueId))!;
+        const unit = units[source.pageNumber - 2];
+        const axis = mapping.periodIds
+          .map((id) => source.spans.find((s) => s.id === id)!.text)
+          .join('');
+        const fact = tableAmount(pages, mapping, {
+          ...unit,
+          state: axis === '前回予想' ? 'forecastBefore' : 'forecastAfter',
+        });
+        if (source.pageNumber === 7) fact.semantics.periodKind = 'cumulativeQ1';
+        return fact;
+      });
+    const reviewed = reviewCandidates(
+      candidateResponse(inputs, pages, 'earnings'),
+      'earnings',
+      pages
+    );
+    expect(reviewed.unverified).toEqual([]);
+    expect(reviewed.facts).toHaveLength(12);
+    const summary: FactSummary = {
+      version: 6,
+      documentType: 'earnings',
+      facts: reviewed.facts,
+      unverified: [],
+    };
+    const selected = reviewed.facts.find(
+      (fact) => fact.page === 2 && fact.valueKind === 'forecastAfter'
+    )!;
+    const display = nativePresentation(summary, pages);
+    expect(display.overview).toEqual([selected.id]);
+    expect(
+      nativePresentation({ ...summary, facts: [...summary.facts].reverse() }, pages).overview
+    ).toEqual([selected.id]);
+    expect(
+      nativePresentation(
+        { ...summary, facts: summary.facts.filter((fact) => fact.page !== 2) },
+        pages
+      ).overview
+    ).toEqual([]);
+    expect(display.sections.flatMap((section) => section.factIds)).toHaveLength(12);
+    const markdown = renderFacts(summary, display);
+    const overview = markdown.split('## 通期見通し・前提')[0];
+    expect(overview).toContain('100百万円 → 200百万円');
+    for (const value of [210, 220, 230, 240, 250]) {
+      expect(overview).not.toContain(`${value}百万円`);
+      expect(markdown).toContain(`${value}百万円`);
+    }
+    const savedFacts = JSON.parse(JSON.stringify(summary));
+    validateSavedFacts(savedFacts);
+    const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), savedFacts, pages);
+    expect(renderFacts(savedFacts, restored)).toBe(markdown);
+    const reading = buildSummaryHtml(markdown, null, { companyName: 'テスト', title: '決算' });
+    expect(reading.split('通期見通し・前提')[0]).not.toContain('210百万円');
+    expect(reading).toContain('210百万円');
+    const altered = structuredClone(restored);
+    altered.overview.push(
+      reviewed.facts.find((fact) => fact.page === 3 && fact.valueKind === 'forecastAfter')!.id
+    );
+    // Source-free storage integrity is separate from reporting-unit proof.
+    expect(() => validatePresentation(altered, savedFacts)).not.toThrow();
+    expect(() => revalidatePresentation(altered, savedFacts, pages)).toThrow('報告対象');
+  });
+
+  it('当期見出しが競合しても予想のない本文保持を妨げない', () => {
+    const source = textPage('2026年3月期 第1四半期第2四半期決算短信〔日本基準〕（連結）');
+    const summary: FactSummary = {
+      version: 6,
+      documentType: 'earnings',
+      facts: [],
+      unverified: ['原文照合待ち'],
+    };
+    expect(nativePresentation(summary, [source]).overview).toEqual([]);
+  });
+
+  it.each([
+    [
+      '当期形状が競合・予想独立',
+      '2026年3月期 第1四半期第2四半期決算短信〔日本基準〕（連結）',
+      { period: '2027年3月期' },
+      true,
+    ],
+    ['同年度の通期', '2026年3月期 中間決算短信〔日本基準〕（連結）', {}, true],
+    [
+      '宣言した個別IFRS',
+      '2026年3月期 決算短信〔日本基準〕（連結）',
+      { scope: '個別', basis: 'IFRS', period: '2027年3月期' },
+      true,
+    ],
+    ['範囲不明', '2026年3月期 決算短信〔日本基準〕', { scope: null }, false],
+    ['会計基準不明', '2026年3月期 決算短信（連結）', { basis: null }, false],
+    ['主体不明', '2026年3月期 決算短信〔日本基準〕（連結）', { subject: null }, false],
+    [
+      '予想期未宣言',
+      '2026年3月期 決算短信〔日本基準〕（連結）',
+      { heading: '1. 連結業績予想の修正', ownPeriod: true },
+      false,
+    ],
+  ] as const)(
+    '予想の報告単位は数値の存否や当期形状から補わない: %s',
+    (_, cover, overrides, admitted) => {
+      const unit = {
+        period: '2026年3月期',
+        subject: '株式会社テスト',
+        scope: '連結',
+        basis: '日本基準',
+        ...overrides,
+      };
+      const pages = [
+        textPage(cover + (unit.subject ? '\n会社名 株式会社テスト' : '')),
+        forecastPage(unit, 2),
+      ];
+      const mapping = buildDocumentContext(pages).tableMappings.find(
+        (mapping) => pages[1].quantities.find((q) => q.id === mapping.valueId)?.text === '200'
+      )!;
+      expect(mapping).toBeDefined();
+      const input = tableAmount(pages, mapping, {
+        ...unit,
+        subject: unit.subject ?? '',
+        state: 'forecastAfter',
+      });
+      input.semantics.subject = unit.subject;
+      const reviewed = reviewCandidates(
+        candidateResponse([input], pages, 'earnings'),
+        'earnings',
+        pages
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(1);
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: reviewed.facts,
+        unverified: [],
+      };
+      const display = nativePresentation(summary, pages);
+      expect(display.overview).toEqual(admitted ? [reviewed.facts[0].id] : []);
+      expect(display.sections.flatMap((section) => section.factIds)).toEqual([
+        reviewed.facts[0].id,
+      ]);
+    }
+  );
+
+  it.each(['1. 経営計画', '1. 2026年3月期・2027年3月期 連結業績予想の修正'])(
+    '未宣言・競合する予想欄は本文の確定期間から補わない: %s',
+    (heading) => {
+      const source = textPage(
+        '2026年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト\n' +
+          heading +
+          '\n範囲 連結\n会計基準 日本基準\n2026年3月期 修正後予想：売上高は200百万円です。'
+      );
+      const input = numberCandidate(source, '売上高', 200);
+      input.valueKind = input.semantics.state = 'forecastAfter';
+      const reviewed = reviewCandidates(
+        candidateResponse([input], [source], 'earnings'),
+        'earnings',
+        [source]
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(1);
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: reviewed.facts,
+        unverified: [],
+      };
+      expect(nativePresentation(summary, [source]).overview).toEqual([]);
+    }
+  );
+
+  it.each(['範囲 連結 | 範囲 個別', '会計基準 日本基準 | 会計基準 IFRS'])(
+    '予想欄の属性が競合しても後の別年度の生存値で置き換えない: %s',
+    (fields) => {
+      const issuer = { subject: '株式会社テスト', scope: '連結', basis: '日本基準' };
+      const pages = [
+        textPage('2026年3月期 決算短信〔日本基準〕（連結）\n会社名 株式会社テスト'),
+        forecastPage({ ...issuer, period: '2027年3月期', fields }, 2),
+        forecastPage({ ...issuer, period: '2028年3月期' }, 3),
+      ];
+      const mapping = buildDocumentContext(pages).tableMappings.find(
+        (mapping) => pages[2].quantities.find((q) => q.id === mapping.valueId)?.text === '200'
+      )!;
+      const input = tableAmount(pages, mapping, {
+        ...issuer,
+        period: '2028年3月期',
+        state: 'forecastAfter',
+      });
+      const reviewed = reviewCandidates(
+        candidateResponse([input], pages, 'earnings'),
+        'earnings',
+        pages
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(1);
+      const summary: FactSummary = {
+        version: 6,
+        documentType: 'earnings',
+        facts: reviewed.facts,
+        unverified: [],
+      };
+      expect(nativePresentation(summary, pages).overview).toEqual([]);
+    }
+  );
+
+  it('当期の詳細値を前年の重要値より優先し、当期主要値の欠落を別期・別範囲・率・EPS・予想で埋めない', () => {
+    const current = { ...facts.facts[0], id: 'current-detail', importance: 'detail' as const };
+    const prior = {
+      ...current,
+      id: 'prior-key',
+      period: '2025年3月期',
+      importance: 'key' as const,
+    };
+    const separate = {
+      ...current,
+      id: 'separate',
+      semantics: { ...current.semantics, scope: '非連結' },
+    };
+    const otherSubject = {
+      ...current,
+      id: 'other-subject',
+      semantics: { ...current.semantics, subject: '株式会社別会社' },
+    };
+    const rate = {
+      ...current,
+      id: 'rate',
+      semantics: { ...current.semantics, metricKind: 'rate' as const },
+    };
+    const eps = {
+      ...current,
+      id: 'eps',
+      label: '1株当たり当期純利益',
+      semantics: { ...current.semantics, metricKind: 'perShare' as const },
+    };
+    const forecast = {
+      ...current,
+      id: 'forecast',
+      valueKind: 'forecast' as const,
+      semantics: { ...current.semantics, state: 'forecast' as const },
+    };
+    const others = [prior, separate, otherSubject, rate, eps, forecast, facts.facts[1]];
+    for (const ordered of [[...others, current], [current, ...others].reverse()]) {
+      const summary = { ...facts, facts: ordered };
+      const display = nativePresentation(summary, [page]);
+      expect(display.overview).toContain(current.id);
+      for (const alternative of others.slice(0, -1))
+        expect(display.overview).not.toContain(alternative.id);
+    }
+    const incomplete = {
+      ...facts,
+      facts: others,
+      unverified: ['COVERAGE:当年決算実績の重要指標 revenue:原文対応を確認できません'],
+    };
+    const display = nativePresentation(incomplete, [page]);
+    expect(display.overview).toEqual([facts.facts[1].id]);
+    const markdown = renderFacts(incomplete, display);
+    const overview = markdown.split('## 業績と増減要因')[0];
+    expect(overview).toContain('主要数値に未確認項目');
+    expect(overview).toContain('2026年3月期 実績の未確認');
+    expect(overview).toContain('未確認：売上高・売上収益');
+    expect(overview).not.toContain('1,000');
+    expect(overview.indexOf('主要数値に未確認項目')).toBeLessThan(overview.indexOf('- 営業利益'));
+    expect(markdown).toContain('### 2025年3月期 実績');
+    expect(markdown).toContain('1,000百万円');
+    const reading = buildSummaryHtml(markdown, null, {
+      companyName: 'テスト',
+      title: '決算',
+    }).replace(/<details\b[\s\S]*?<\/details>/g, '');
+    expect(reading).toContain('未確認：売上高・売上収益');
+    expect(reading.indexOf('主要数値に未確認項目')).toBeLessThan(reading.indexOf('業績と増減要因'));
+  });
+
+  it('対象期が未記載・不明・競合する場合は残存値を当期へ昇格せず、全数値を対象期付きで保持する', () => {
+    for (const heading of [
+      '経営成績',
+      '対象期未定 決算短信',
+      '2026年3月期・2025年3月期 決算短信',
+    ]) {
+      const source = textPage(expectation.text.replace('2026年3月期 連結経営成績', heading));
+      const display = nativePresentation(facts, [source]);
+      expect(display.overview.some((id) => facts.facts.some((fact) => fact.id === id))).toBe(false);
+      const markdown = renderFacts(facts, display);
+      expect(markdown.split('## 業績と増減要因')[0]).toContain('報告対象期が未特定');
+      expect(markdown).toContain('### 2026年3月期 実績');
+      expect(markdown).toContain('1,000百万円');
+    }
+  });
+
+  it('直前の比較期の実績だけを当期主要値の未確認表示に使い、古い履歴は本文に保つ', () => {
+    const source = textPage(expectation.text.replace('日本基準', 'IFRS'));
+    const current = facts.facts.map((fact) => ({
+      ...fact,
+      semantics: { ...fact.semantics, basis: 'IFRS' },
+    }));
+    const target = earningsTarget(sourceInventory([source], undefined, 'earnings')).target!;
+    expect(target).toMatchObject({ fiscal: '2026年3月期', basis: 'IFRS' });
+    for (const [period, expected] of [
+      ['2020年3月期', []],
+      ['2025年3月期', ['税引前利益・損失']],
+      ['2025年6月期', []],
+      ['2026年3月期', []],
+      ['2027年3月期', []],
+    ] as const) {
+      const history = { ...current[1], id: `pretax-${period}`, label: '税引前利益', period };
+      const summary = { ...facts, facts: [...current, history] };
+      expect(earningsMissingMajorLabels(summary, target), period).toEqual(expected);
+      const markdown = renderFacts(summary, nativePresentation(summary, [source]));
+      expect(markdown).toContain(`### ${period} 実績`);
+      expect(markdown).toContain('税引前利益');
+      expect(markdown.split('## 業績と増減要因')[0].includes('未確認：税引前利益・損失')).toBe(
+        expected.length > 0
+      );
+    }
+    const comparative = {
+      ...current[1],
+      id: 'quarter-pretax',
+      label: '税引前利益',
+      period: '2025年3月期第3四半期累計',
+      semantics: { ...current[1].semantics, periodKind: 'cumulativeQ3' as const },
+    };
+    const summary = { ...facts, facts: [comparative] };
+    expect(earningsMissingMajorLabels(summary, target)).toEqual([]);
+    expect(earningsMissingMajorLabels(summary, { ...target, periodKind: 'cumulativeQ3' })).toEqual([
+      '税引前利益・損失',
+    ]);
+  });
+
+  it('同一期・状態の表を一つの見出しにまとめ、範囲・基準・条件と別期・状態を保持する', () => {
+    const base = facts.facts[1];
+    const variants = [
+      {},
+      { conditions: ['特別な費用を含む'] },
+      { scope: '非連結' },
+      { basis: 'IFRS' },
+      { subject: '株式会社別会社' },
+      { state: 'forecast' as const },
+    ].map((semantics, index) => ({
+      ...base,
+      id: `group-${index}`,
+      valueKind: semantics.state === 'forecast' ? ('forecast' as const) : base.valueKind,
+      semantics: { ...base.semantics, ...semantics },
+    }));
+    variants.push({
+      ...variants[0],
+      id: 'previous-period',
+      label: '履歴指標',
+      period: '2025年3月期',
+    });
+    for (const scope of ['連結', '非連結'])
+      variants.push({
+        ...variants[0],
+        id: `source-spelling-${scope}`,
+        period: '2026年３月期',
+        semantics: { ...base.semantics, scope },
+      });
+    let rendered: string | undefined;
+    for (const ordered of [variants, [...variants].reverse()]) {
+      const summary = { ...facts, facts: ordered };
+      const display = nativePresentation(summary, [page]);
+      const markdown = renderFacts(summary, display);
+      const body = markdown.slice(markdown.indexOf('## 業績と増減要因'));
+      expect(body.match(/^### 2026年3月期 実績／業績と増減要因$/gm)).toHaveLength(1);
+      expect(body.match(/^### 2025年3月期 実績／業績と増減要因$/gm)).toHaveLength(1);
+      expect(body.match(/^### 2026年３月期 実績／業績と増減要因$/gm)).toHaveLength(1);
+      expect(body.match(/^### 2026年3月期 予想／通期見通し・前提$/gm)).toHaveLength(1);
+      expect(body.match(/^\| .*100百万円.*\|$/gm)).toHaveLength(9);
+      for (const context of ['非連結', 'IFRS', '特別な費用を含む', '株式会社別会社'])
+        expect(body).toContain(context);
+      const headings = body.match(/^### .+$/gm)!;
+      expect(new Set(headings).size).toBe(headings.length);
+      const html = buildSummaryHtml(markdown, null, { companyName: 'テスト', title: '決算' });
+      expect(html.match(/>2026年3月期 実績／業績と増減要因<\/h3>/g)).toHaveLength(1);
+      if (rendered) expect(markdown).toBe(rendered);
+      rendered = markdown;
+      const saved = JSON.parse(JSON.stringify(display));
+      validatePresentation(saved, summary);
+      expect(renderFacts(summary, saved)).toBe(markdown);
+    }
+  });
+
+  it('IFRSの税引前利益を独立した名称で並べ、経常利益を欠落扱いしない', () => {
+    const source = textPage(expectation.text + '\n本決算短信に記載の予想は不確実性を含みます。');
+    const current = facts.facts[1];
+    const pretax = { ...current, id: 'pretax', label: '税引前利益' };
+    const profit = { ...current, id: 'profit', label: '親会社の所有者に帰属する当期利益' };
+    const separateOrdinary = {
+      ...current,
+      id: 'separate-ordinary',
+      label: '経常利益',
+      period: '2025年3月期',
+      semantics: { ...current.semantics, scope: '非連結' },
+    };
+    const summary = { ...facts, facts: [profit, pretax, ...facts.facts, separateOrdinary] };
+    const display = nativePresentation(summary, [source]);
+    expect(display.overview).toEqual([facts.facts[0].id, current.id, pretax.id, profit.id]);
+    const markdown = renderFacts(summary, display);
+    expect(markdown).not.toContain('主要数値に未確認項目');
+    const rows = markdown
+      .split('\n')
+      .filter((line) => line.startsWith('| ') && line.includes('百万円'));
+    expect(rows.slice(0, 4).map((row) => row.split(' | ')[0])).toEqual([
+      '| 売上高',
+      '| 営業利益',
+      '| 税引前利益',
+      '| 親会社の所有者に帰属する当期利益',
+    ]);
+    expect(rows[4]).toContain('経常利益');
+    const incomplete = {
+      ...facts,
+      unverified: [
+        'COVERAGE:通期予想の重要指標 revenue: 未確認',
+        'COVERAGE:通期予想の1株当たり利益',
+        'COVERAGE:配当の重要事実 対象期=2027年3月期 区分=forecast',
+      ],
+    };
+    expect(
+      renderFacts(incomplete, nativePresentation(incomplete, [source])).split(
+        '## 業績と増減要因'
+      )[0]
+    ).toContain('未確認の通期予想：売上高・売上収益、1株当たり利益');
+    const partial = renderFacts(incomplete, nativePresentation(incomplete, [source])).split(
+      '## 業績と増減要因'
+    )[0];
+    expect(partial).toContain('未確認の配当：2027年3月期 予想');
+    expect(partial).not.toContain('経常利益');
+  });
+
   it('中間利益の実績を通期予想と区別し、理由は一つ、引用中の句点とページをまたぐ文は保つ', () => {
     const current = {
       ...facts.facts[1],
@@ -173,6 +871,19 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     const printed = { ...current, period: '２０２６年３月期' };
     expect(summaryComparison(printed, [printed, previous])?.reference.id).toBe(previous.id);
     expect(comparisonIssue(printed, [printed])).toBe('前年の値が要約に未抽出');
+    const aliasedCurrent = {
+      ...current,
+      semantics: { ...current.semantics, scope: '個別', basis: 'IFRS会計基準' },
+    };
+    for (const [scope, basis, comparable] of [
+      ['非連結', '国際会計基準', true],
+      ['単体', 'IFRS', true],
+      ['連結', 'IFRS', false],
+      ['個別', '日本基準', false],
+    ] as const) {
+      const other = { ...previous, semantics: { ...previous.semantics, scope, basis } };
+      expect(summaryComparison(aliasedCurrent, [aliasedCurrent, other]) !== null).toBe(comparable);
+    }
 
     expect(
       comparisonIssue(current, [
@@ -223,6 +934,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
   it('3期の比較で中間期の所有行を残し、全確定値を順序によらず表示・保存復元する', () => {
     const source = cells(
       [
+        ['2026年3月期 決算短信（連結）', 0, -30, 480],
         ['上場会社名 株式会社テスト', 0, 0, 240],
         ['1. 連結経営成績', 0, 30, 280],
         ['売上高', 280, 60, 140],
@@ -260,6 +972,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     ]);
     expect(reviewed.unverified).toEqual([]);
     expect(reviewed.facts).toHaveLength(9);
+    let firstMarkdown: string | undefined;
     for (const ordered of [reviewed.facts, [...reviewed.facts].reverse()]) {
       const summary: FactSummary = {
         version: 6,
@@ -272,6 +985,18 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       const rows = markdown
         .split('\n')
         .filter((line) => line.startsWith('| ') && line.includes('百万円'));
+      if (firstMarkdown) expect(markdown).toBe(firstMarkdown);
+      firstMarkdown = markdown;
+      expect(markdown).toContain('### 2026年3月期 実績');
+      expect(markdown).toContain('### 2025年3月期 実績');
+      expect(rows.map((row) => row.split(' | ')[0])).toEqual([
+        '| 売上高',
+        '| 営業利益',
+        '| 当期純利益',
+        '| 売上高',
+        '| 営業利益',
+        '| 当期純利益',
+      ]);
       // A comparison-owning row must survive even when another row references it.
       expect(rows).toHaveLength(6);
       expect(
@@ -589,6 +1314,7 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       '会社名 株式会社テスト\n１．実施時期\n2026年10月15日\n会社名は変更します。承認が条件です。\n会社名変更の理由\n会社名 株式会社対象 | 条件 承認後'
     );
     expect(sourceInventory([source]).map((e) => e.text)).toEqual([
+      '会社名 株式会社テスト',
       '１．実施時期',
       '2026年10月15日',
       '会社名は変更します。承認が条件です。',

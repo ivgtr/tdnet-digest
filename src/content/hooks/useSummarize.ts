@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type { DiagnosticPersistence } from '@/lib/summary-trace';
 import { summaryResultId } from '@/lib/summary-result-id';
 import { normalizeTdnetPdfUrl } from '@/lib/tdnet-url';
 import {
@@ -33,6 +34,7 @@ export interface SummaryResult {
   presentation: SummaryPresentation | null;
   resultId: string | null;
   diagnosticRunId: string | null;
+  diagnosticPersistence?: DiagnosticPersistence;
   retryExtractionMode?: 'full';
 }
 export interface Stage<T> {
@@ -53,6 +55,10 @@ function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is 
     validatePresentation(item.presentation, item.facts);
     return (
       typeof item.summary === 'string' &&
+      (item.diagnosticRunId === undefined ||
+        (typeof item.diagnosticRunId === 'string' && item.diagnosticRunId.length > 0)) &&
+      (item.diagnosticPersistence === undefined ||
+        ['saved', 'failed'].includes(item.diagnosticPersistence)) &&
       typeof item.resultId === 'string' &&
       /^[a-f0-9]{64}$/.test(item.resultId) &&
       item.facts?.version === FACT_SCHEMA_VERSION &&
@@ -388,7 +394,8 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       facts: entry.facts,
       presentation: entry.presentation,
       resultId: entry.resultId,
-      diagnosticRunId: null,
+      diagnosticRunId: entry.diagnosticRunId ?? null,
+      diagnosticPersistence: entry.diagnosticPersistence,
       error: null,
     });
     await restoreStages(
@@ -413,6 +420,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       scoreStarted.current = null;
       idRef.current = null;
       let diagnosticRunId: string | null = null;
+      let diagnosticPersistence: DiagnosticPersistence | undefined;
       let retryExtractionMode: 'full' | undefined;
       try {
         const settings = settingsRef.current;
@@ -433,6 +441,11 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (typeof response.diagnosticRunId !== 'string' || !response.diagnosticRunId)
           throw new Error('要約結果の実行IDが不正です');
         diagnosticRunId = response.diagnosticRunId;
+        diagnosticPersistence =
+          response.diagnosticPersistence === 'saved' || response.diagnosticPersistence === 'failed'
+            ? response.diagnosticPersistence
+            : undefined;
+        if (response.persistenceWarning) setPersistenceWarning(response.persistenceWarning);
         if (response.retryExtractionMode !== undefined) {
           if (response.retryExtractionMode !== 'full')
             throw new Error('再要約の抽出方式が不正です');
@@ -466,6 +479,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           presentation: response.presentation,
           resultId: response.resultId,
           diagnosticRunId,
+          diagnosticPersistence,
           error: null,
         });
         setStagesReady(true);
@@ -476,6 +490,8 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           facts: response.facts,
           presentation: response.presentation,
           resultId: response.resultId,
+          diagnosticRunId: diagnosticRunId!,
+          diagnosticPersistence,
           metadata: response.metadata,
           companyName,
           title,
@@ -513,6 +529,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
             presentation: null,
             resultId: null,
             diagnosticRunId,
+            diagnosticPersistence,
             retryExtractionMode,
             error: error instanceof Error ? error.message : String(error),
           });

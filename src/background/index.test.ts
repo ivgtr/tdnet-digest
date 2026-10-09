@@ -1,5 +1,9 @@
 import type { SummaryTrace } from '../lib/summary-trace';
-import { matchingSummaryTrace } from '../lib/summary-trace';
+import {
+  matchingSummaryTrace,
+  loadSummaryTrace,
+  SUMMARY_DIAGNOSTICS_KEY,
+} from '../lib/summary-trace';
 import type { LLMConfig } from '../lib/llm-client';
 import { candidateResponse } from '../lib/fixtures/candidate-test-source';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,6 +26,8 @@ interface TestResponse {
   retryExtractionMode?: 'full';
   error?: string;
   diagnosticRunId: string;
+  diagnosticPersistence?: 'saved' | 'failed';
+  persistenceWarning?: string;
   summary: string;
   metadata: { analysisFingerprint: string; score?: unknown; persistenceWarning?: string };
   facts: FactSummary;
@@ -93,6 +99,10 @@ const facts: FactSummary = parseFactSummary(
   [nativePage]
 );
 
+let stored: Record<string, unknown>;
+function latestTrace(items: Record<string, unknown>): SummaryTrace {
+  return (items[SUMMARY_DIAGNOSTICS_KEY] as { traces: SummaryTrace[] }).traces.at(-1)!;
+}
 async function setup(
   scoring: boolean,
   allowPastPdf = true,
@@ -106,6 +116,7 @@ async function setup(
     sender: unknown,
     reply: (value: TestResponse) => void
   ) => boolean = () => false;
+  stored = {};
   vi.stubGlobal('chrome', {
     runtime: {
       onInstalled: { addListener: vi.fn() },
@@ -135,7 +146,19 @@ async function setup(
       }),
     },
     storage: {
-      local: { set: vi.fn(async () => {}) },
+      local: {
+        get: vi.fn(async (keys: string | string[]) =>
+          Object.fromEntries(
+            [keys]
+              .flat()
+              .filter((key) => key in stored)
+              .map((key) => [key, structuredClone(stored[key])])
+          )
+        ),
+        set: vi.fn(async (items: Record<string, unknown>) => {
+          Object.assign(stored, structuredClone(items));
+        }),
+      },
       sync: {
         get: async () => ({
           provider: 'openai',
@@ -196,7 +219,8 @@ describe('要約・採点・追加分析の分離', () => {
     const writes: SummaryTrace[] = [];
     vi.mocked(chrome.storage.local.set).mockImplementation(
       async (items: Record<string, unknown>) => {
-        writes.push(structuredClone(items.summaryLastRunV1) as SummaryTrace);
+        Object.assign(stored, structuredClone(items));
+        writes.push(structuredClone(latestTrace(items)));
       }
     );
     mocked.generateText
@@ -245,7 +269,8 @@ describe('要約・採点・追加分析の分離', () => {
       let saved: SummaryTrace | undefined;
       vi.mocked(chrome.storage.local.set).mockImplementation(
         async (items: Record<string, unknown>) => {
-          saved = structuredClone(items.summaryLastRunV1) as SummaryTrace;
+          Object.assign(stored, structuredClone(items));
+          saved = structuredClone(latestTrace(items));
         }
       );
       const success = await request({ action: 'summarize' });
@@ -254,6 +279,7 @@ describe('要約・採点・追加分析の分離', () => {
         matchingSummaryTrace(saved, 'test.pdf', success.diagnosticRunId, success.resultId)
       ).toEqual(saved);
       expect(matchingSummaryTrace(saved, 'test.pdf', null, success.resultId)).toEqual(saved);
+      const successTrace = structuredClone(saved);
       if (stage === 'settings')
         chrome.storage.sync.get = vi.fn(async () => ({
           provider: 'invalid',
@@ -274,6 +300,10 @@ describe('要約・採点・追加分析の分離', () => {
         documentHash: null,
         inputHash: null,
       });
+      expect(await loadSummaryTrace('test.pdf', success.diagnosticRunId, success.resultId)).toEqual(
+        successTrace
+      );
+      expect(await loadSummaryTrace('test.pdf', failure.diagnosticRunId, null)).toEqual(saved);
       expect(saved?.error).toBe(failure.error);
       expect(saved?.provider).toBe(stage === 'settings' ? null : 'openai');
       expect(() =>
@@ -309,7 +339,7 @@ describe('要約・採点・追加分析の分離', () => {
     const result = await request({ action: 'summarize' });
     const writes = vi.mocked(chrome.storage.local.set).mock.calls;
     const lastWrite = writes[writes.length - 1][0] as Record<string, unknown>;
-    const trace = JSON.parse(JSON.stringify(lastWrite.summaryLastRunV1));
+    const trace = JSON.parse(JSON.stringify(latestTrace(lastWrite)));
     expect(result.error).toBe(response.error);
     expect(trace).toMatchObject({
       runId: result.diagnosticRunId,
@@ -340,13 +370,14 @@ describe('要約・採点・追加分析の分離', () => {
   );
 
   it.each(['success', 'failure', 'earlyFailure', 'lateExtraction'] as const)(
-    '古い完了%sは新しい要求の診断を上書きしない',
+    '並列要求%sは逆順に完了しても両方の実行診断を残す',
     async (stage) => {
       const request = await setup(false);
       let saved: SummaryTrace | undefined;
       vi.mocked(chrome.storage.local.set).mockImplementation(
         async (items: Record<string, unknown>) => {
-          saved = structuredClone(items.summaryLastRunV1) as SummaryTrace;
+          Object.assign(stored, structuredClone(items));
+          saved = structuredClone(latestTrace(items));
         }
       );
       let release!: (value: string) => void;
@@ -393,35 +424,86 @@ describe('要約・採点・追加分析の分離', () => {
       const newerTrace = structuredClone(saved);
       if (stage === 'lateExtraction') releaseExtraction();
       else release(raw);
-      expect((await older).error).toBeUndefined();
-      expect(saved).toEqual(newerTrace);
+      const olderResult = await older;
+      expect(olderResult.error).toBeUndefined();
       expect(
-        matchingSummaryTrace(saved, 'test.pdf', newer.diagnosticRunId, newer.resultId ?? null)
-      ).toEqual(saved);
+        await loadSummaryTrace('test.pdf', newer.diagnosticRunId, newer.resultId ?? null)
+      ).toEqual(newerTrace);
+      expect(
+        await loadSummaryTrace('test.pdf', olderResult.diagnosticRunId, olderResult.resultId)
+      ).toMatchObject({
+        runId: olderResult.diagnosticRunId,
+        resultId: olderResult.resultId,
+        outcome: 'firstSuccess',
+      });
     }
   );
 
-  it('診断保存の失敗は完成結果と生成元のエラーを覆わず、後続の保存も妨げない', async () => {
+  it('A成功後にBを開始してもAの診断を保持し、同じresultIdの別runも分ける', async () => {
     const request = await setup(false);
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    const raw = candidateResponse(facts.facts, [nativePage], facts.documentType);
+    mocked.generateText.mockResolvedValueOnce(raw);
+    const a = await request({ action: 'summarize' });
+    const traceA = await loadSummaryTrace('test.pdf', a.diagnosticRunId, a.resultId);
+    let finish!: (value: string) => void;
+    mocked.generateText.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        })
     );
-    vi.mocked(chrome.storage.local.set).mockRejectedValue(new Error('storage quota exceeded'));
-    const success = await request({ action: 'summarize' });
-    expect(success.error).toBeUndefined();
-    expect(success.summary).toContain('1150百万円');
-    expect(success.metadata.persistenceWarning).toContain('診断を保存できませんでした');
-    mocked.generateText.mockRejectedValueOnce(new Error('generation failed'));
-    const failure = await request({ action: 'summarize' });
-    expect(failure.error).toBe('generation failed');
-    vi.mocked(chrome.storage.local.set).mockResolvedValue(undefined);
-    const next = await request({ action: 'summarize' });
-    expect(next.error).toBeUndefined();
-    expect(next.metadata.persistenceWarning).toBeUndefined();
-    expect(vi.mocked(chrome.storage.local.set).mock.calls.at(-1)?.[0]).toMatchObject({
-      summaryLastRunV1: { runId: next.diagnosticRunId, outcome: 'firstSuccess' },
+    const pendingB = request({ action: 'summarize' });
+    await vi.waitFor(() => expect(mocked.generateText).toHaveBeenCalledTimes(2));
+    expect(await loadSummaryTrace('test.pdf', a.diagnosticRunId, a.resultId)).toEqual(traceA);
+    finish(raw);
+    const b = await pendingB;
+    expect(b.resultId).toBe(a.resultId);
+    expect(b.diagnosticRunId).not.toBe(a.diagnosticRunId);
+    expect(await loadSummaryTrace('test.pdf', a.diagnosticRunId, a.resultId)).toEqual(traceA);
+    expect(await loadSummaryTrace('test.pdf', b.diagnosticRunId, b.resultId)).toMatchObject({
+      runId: b.diagnosticRunId,
+      resultId: b.resultId,
+      documentHash: traceA.documentHash,
     });
   });
+
+  it.each(['read', 'write'] as const)(
+    '診断保存の%s失敗は完成結果と生成元のエラーを覆わず、後続の保存も妨げない',
+    async (stage) => {
+      const request = await setup(false);
+      mocked.generateText.mockResolvedValue(
+        candidateResponse(facts.facts, [nativePage], facts.documentType)
+      );
+      const get = vi.mocked(chrome.storage.local.get).getMockImplementation()!;
+      const set = vi.mocked(chrome.storage.local.set).getMockImplementation()!;
+      if (stage === 'read')
+        vi.mocked(chrome.storage.local.get).mockRejectedValue(new Error('storage read failed'));
+      else
+        vi.mocked(chrome.storage.local.set).mockRejectedValue(new Error('storage quota exceeded'));
+      const success = await request({ action: 'summarize' });
+      expect(success.error).toBeUndefined();
+      expect(success.summary).toContain('1150百万円');
+      expect(success.diagnosticPersistence).toBe('failed');
+      expect(success.metadata.persistenceWarning).toContain('診断を保存できませんでした');
+      mocked.generateText.mockRejectedValueOnce(new Error('generation failed'));
+      const failure = await request({ action: 'summarize' });
+      expect(failure.error).toBe('generation failed');
+      expect(failure.diagnosticPersistence).toBe('failed');
+      expect(failure.persistenceWarning).toContain('診断を保存できませんでした');
+      vi.mocked(chrome.storage.local.get).mockImplementation(get);
+      vi.mocked(chrome.storage.local.set).mockImplementation(set);
+      const next = await request({ action: 'summarize' });
+      expect(next.error).toBeUndefined();
+      expect(next.diagnosticPersistence).toBe('saved');
+      expect(next.metadata.persistenceWarning).toBeUndefined();
+      expect(await loadSummaryTrace('test.pdf', next.diagnosticRunId, next.resultId)).toMatchObject(
+        {
+          runId: next.diagnosticRunId,
+          outcome: 'firstSuccess',
+        }
+      );
+    }
+  );
 
   it.each([false, true])(
     '同時初回要求はOffscreen初期化を共有し、失敗=%sの後も再確認する',
@@ -487,7 +569,7 @@ describe('要約・採点・追加分析の分離', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(mocked.generateText).not.toHaveBeenCalled();
     const calls = vi.mocked(chrome.storage.local.set).mock.calls;
-    const trace = (calls[calls.length - 1][0] as Record<string, SummaryTrace>).summaryLastRunV1;
+    const trace = latestTrace(calls[calls.length - 1][0]);
     expect(trace).toMatchObject({
       runId: result.diagnosticRunId,
       pdfUrl,

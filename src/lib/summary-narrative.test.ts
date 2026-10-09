@@ -1,4 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { extractPageLayout } from './pdf-layout';
+import { canonicalJSON, hashText } from './fact-contract';
 import { generateText } from './llm-client';
 import { textPage, layoutPage, numberCandidate } from './fixtures/v4-test-source';
 import { reviewCandidates } from './fact-candidates';
@@ -31,9 +33,10 @@ import {
 import { buildAnalysisInput } from './analysis-input';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 import type { SummaryAttempt } from './summary-trace';
-import { literalValue, quantityChange } from './summary-narrative-renderer';
+import { literalValue, quantityChange, renderNarrativeText } from './summary-narrative-renderer';
 import {
   checkObservation,
+  reconcileObservations,
   type DisclosureContext,
   type DisclosureObservation,
 } from './disclosure-observation';
@@ -215,6 +218,47 @@ function financialTable(current: string, previous: string, splitUnit = false) {
   ]);
 }
 
+function ruledQuantities(amounts: string[], label = '営業利益') {
+  return extractPageLayout(
+    [label, ...amounts].map((str, i) => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, i * 100, -124],
+      width: 60,
+      height: 10,
+      hasEOL: false,
+      fontName: 'test',
+    })),
+    1,
+    [label, ...amounts].map((_, i) => ({
+      index: i,
+      fn: 'constructPath',
+      // Closed cells have a real gap; buildBlocks must retain its hard separator.
+      args: [
+        'stroke',
+        [
+          [
+            0,
+            i * 100 - 5,
+            -114,
+            1,
+            i * 100 + 85,
+            -114,
+            1,
+            i * 100 + 85,
+            -134,
+            1,
+            i * 100 - 5,
+            -134,
+            4,
+          ],
+        ],
+        null,
+      ],
+    }))
+  );
+}
+
 describe('構造化を主とする表示と未整理部分の保持', () => {
   it('任意の補足生成に失敗しても確定済みの出来事と別注記の条件を通常表示・保存復元する', async () => {
     const statement = '株式を取得する予定です。';
@@ -279,10 +323,13 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     );
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
   });
-  it.each([false, true])(
-    '同額セルを別々に追跡し、位置で証明した別名だけをまとめる（単位分割=%s）',
-    (splitUnit) => {
-      const source = financialTable('100百万円', '100百万円', splitUnit);
+  it.each(['unruled', 'split-unit', 'closed-cells'])(
+    '同額セルを別々に追跡し、位置で証明した別名だけをまとめる: %s',
+    (layout) => {
+      const source =
+        layout === 'closed-cells'
+          ? ruledQuantities(['100百万円', '100百万円'])
+          : financialTable('100百万円', '100百万円', layout === 'split-unit');
       const display = buildPresentation({ ...facts, facts: [] }, [source]);
       const row = display.excerpts.find((e) => e.kind === 'row' && e.text.includes('営業利益'))!;
       const [current, previous] = display.values.filter((v) => row.spanIds.includes(v.id));
@@ -303,6 +350,24 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       };
       const summary = { ...facts, facts: [confirmed] };
       const values = [...display.values, { ...current, id: confirmed.id }];
+      expect(() =>
+        checkText(
+          `{{change:${confirmed.id}|${current.id}|profit}}`,
+          [row.id],
+          values,
+          display.excerpts,
+          summary
+        )
+      ).toThrow('NARRATIVE_COMPARISON');
+      expect(() =>
+        checkText(
+          `{{change:${confirmed.id}|${previous.id}|profit}}`,
+          [row.id],
+          values,
+          display.excerpts,
+          summary
+        )
+      ).not.toThrow();
       const organization = emptyOrganization();
       expect(unresolvedTableSources(organization, summary, values, display.excerpts)).toEqual([
         row,
@@ -335,6 +400,91 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       ).toEqual([]);
     }
   );
+  it('段落に分類されたセルも原文位置で同一性を保ち、独立した本文数量は残す', () => {
+    const source = ruledQuantities(['100百万円'], '営業利益は');
+    const prose = textPage('営業利益は100百万円です。', 2);
+    const summary = { ...facts, facts: [] };
+    const display = buildPresentation(summary, [source, prose]);
+    expect(source.blocks[0]).toMatchObject({
+      kind: 'paragraph',
+      text: '営業利益は ││ 100百万円',
+    });
+    expect(display.values.map((value) => value.id)).toEqual(['p1s2', 'p2b1:q1']);
+    expect(display.values.every((value) => value.decimal === '100')).toBe(true);
+  });
+
+  it('離れた同額セルの比較を保存復元し、旧行内別名による自己比較は復元しない', () => {
+    const source = ruledQuantities(['100百万円', '100百万円']);
+    const summary = { ...facts, facts: [] };
+    const display = buildPresentation(summary, [source]);
+    const [current, previous] = display.values;
+    const row = display.excerpts[0];
+    expect(row.text).toBe('営業利益 ││ 100百万円 ││ 100百万円');
+    const token = `{{change:${current.id}|${previous.id}|profit}}`;
+    expect(() =>
+      checkText(token, [row.id], display.values, display.excerpts, summary)
+    ).not.toThrow();
+    expect(renderNarrativeText(token, display.values)).toBe('→横ばい 約0.0%');
+    const observation: DisclosureObservation = {
+      id: 'observation-0',
+      topic: 'business',
+      entity: null,
+      scope: null,
+      basis: null,
+      metric: '営業利益',
+      measure: 'profit',
+      period: '当期',
+      state: 'actual',
+      conditions: [],
+      sourceIds: [row.id],
+      valueId: current.id,
+      comparison: {
+        axis: 'yearOnYear',
+        period: '前年同期',
+        state: 'actual',
+        valueId: previous.id,
+        rateId: null,
+      },
+    };
+    expect(() =>
+      checkObservation(observation, display.values, display.excerpts, summary)
+    ).not.toThrow();
+    display.organization = {
+      ...emptyOrganization(),
+      status: 'ready',
+      observations: [observation],
+    };
+    const review = () => {
+      display.organization.review = {
+        contentHash: organizationHash(
+          display.organization,
+          summary,
+          display.values,
+          display.excerpts
+        ),
+        claims: { 'observation-0': null },
+        sources: {},
+      };
+    };
+    review();
+    expect(revalidatePresentation(JSON.parse(JSON.stringify(display)), summary, [source])).toEqual(
+      display
+    );
+    // A cache produced before the alias fix could contain both IDs for one cell.
+    const alias = { ...current, id: `${row.blockId}:q1` };
+    display.values.push(alias);
+    observation.comparison!.valueId = alias.id;
+    display.sourceHash = hashText(
+      canonicalJSON({ excerpts: display.excerpts, values: display.values })
+    );
+    display.organization.status = 'partial';
+    review();
+    expect(() => validatePresentation(display, summary)).not.toThrow();
+    expect(() =>
+      revalidatePresentation(JSON.parse(JSON.stringify(display)), summary, [source])
+    ).toThrow('原文引用とPDF');
+  });
+
   it('事業別・受注・負のCFを表示し、説明を個別採否して同じ段落の未要約条件を残す', async () => {
     const input = wire();
     input.observations.reverse();
@@ -344,7 +494,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     verdict.claims.reverse();
     verdict.sources.reverse();
     const result = await generate(input, verdict);
-    expect(result.presentation.version).toBe(6);
+    expect(result.presentation.version).toBe(7);
     expect(result.presentation.organization.status).toBe('partial');
     expect(supportedExplanations(result.presentation.organization)).toHaveLength(1);
     const reading = visible(result);
@@ -695,7 +845,7 @@ describe('保存された説明・比較の検証', () => {
       (v) => (v.organization.observations[0].valueId = 'unknown-quantity'),
       'REFERENCE',
     ],
-    ['旧表示形式', (v) => Object.assign(v, { version: 3 }), '不正'],
+    ['旧表示形式', (v) => Object.assign(v, { version: 6 }), '不正'],
     ['余分な保存項目', (v) => Object.assign(v, { unknown: true }), '不正'],
     [
       '前年中間期末を前期末とする比較',
@@ -706,6 +856,23 @@ describe('保存された説明・比較の検証', () => {
         observation.comparison!.axis = 'periodEnd';
       },
       'OBSERVATION_PERIOD',
+    ],
+    [
+      '確定事実IDと同じ原文数量IDの自己比較',
+      (v) => {
+        const fact = facts.facts[0];
+        if (fact.evidence.kind !== 'prose') throw new Error('prose fixture expected');
+        const observation = v.organization.observations[0];
+        observation.valueId = fact.id;
+        observation.comparison!.valueId = fact.evidence.quantityId!;
+        v.organization.review!.contentHash = organizationHash(
+          v.organization,
+          facts,
+          v.values,
+          v.excerpts
+        );
+      },
+      'OBSERVATION_QUANTITY',
     ],
     ['判定IDの欠落', (v) => delete v.organization.review!.claims['observation-0'], '点検範囲'],
   ])('%sは復元しない', (_, change, error) => {
@@ -722,6 +889,148 @@ describe('保存された説明・比較の検証', () => {
 });
 
 describe('原文数量の符号・単位・所有セル', () => {
+  it.each(['100百万円', '100 百万円'])(
+    '本文数量%sも物理セルの同一性を保存し、比較と補足統合で共有する',
+    (raw) => {
+      const source = layoutPage([
+        {
+          id: 'p1s1',
+          text: '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結',
+          x: 0,
+          y: 20,
+          width: 400,
+          height: 10,
+        },
+        { id: 'p1s2', text: '2026年3月期 連結経営成績', x: 0, y: 50, width: 250, height: 10 },
+        { id: 'p1s3', text: '営業利益は', x: 0, y: 124, width: 60, height: 10 },
+        { id: 'p1s4', text: raw, x: 100, y: 124, width: 65, height: 10 },
+        { id: 'p1s5', text: 'です。', x: 190, y: 124, width: 30, height: 10 },
+      ]);
+      const reviewed = reviewCandidates(
+        candidateResponse([numberCandidate(source)], [source]),
+        'other',
+        [source]
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(1);
+      const summary = { ...facts, facts: reviewed.facts };
+      const fact = summary.facts[0];
+      expect(fact.evidence).toMatchObject({ kind: 'prose', quantityId: 'p1b3:q1' });
+      const display = buildPresentation(summary, [source]);
+      const native = display.values.find((value) => value.id === 'p1s4')!;
+      expect(display.values.find((value) => value.id === fact.id)?.sourceQuantityId).toBe(
+        native.id
+      );
+      expect(display.values.some((value) => value.id === 'p1b3:q1')).toBe(false);
+      const observation: DisclosureObservation = {
+        id: 'observation-0',
+        topic: 'performance',
+        entity: '株式会社テスト',
+        scope: '連結',
+        basis: '日本基準',
+        metric: '営業利益',
+        measure: 'profit',
+        period: '2026年3月期',
+        state: 'actual',
+        conditions: [],
+        sourceIds: display.excerpts.map((excerpt) => excerpt.id),
+        valueId: native.id,
+        comparison: null,
+      };
+      const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), summary, [
+        source,
+      ]);
+      expect(
+        reconcileObservations(
+          summary,
+          [observation],
+          restored.excerpts,
+          restored.values
+        ).merged.get(observation.id)
+      ).toBe(fact.id);
+      expect(() =>
+        checkText(
+          `{{change:${fact.id}|${native.id}|profit}}`,
+          observation.sourceIds,
+          restored.values,
+          restored.excerpts,
+          summary
+        )
+      ).toThrow('NARRATIVE_COMPARISON');
+      expect(() =>
+        checkObservation(
+          {
+            ...observation,
+            valueId: fact.id,
+            comparison: {
+              axis: 'yearOnYear',
+              period: '2025年3月期',
+              state: 'actual',
+              valueId: native.id,
+              rateId: null,
+            },
+          },
+          restored.values,
+          restored.excerpts,
+          summary
+        )
+      ).toThrow('OBSERVATION_QUANTITY');
+      for (const originalId of [undefined, fact.id, 'p1s999']) {
+        const altered = structuredClone(restored);
+        const value = altered.values.find((value) => value.id === fact.id)!;
+        if (originalId === undefined) delete value.sourceQuantityId;
+        else value.sourceQuantityId = originalId;
+        expect(() => validatePresentation(altered, summary)).toThrow('保存された表示数量が不正');
+      }
+      const stale = structuredClone(restored);
+      stale.values.find((value) => value.id === fact.id)!.sourceQuantityId = 'p1b3:q1';
+      stale.sourceHash = hashText(
+        canonicalJSON({ excerpts: stale.excerpts, values: stale.values })
+      );
+      expect(() => revalidatePresentation(stale, summary, [source])).toThrow('原文引用とPDF');
+    }
+  );
+
+  it('確定済み本文数量の別名を比較に使わず、同額の別原文は比較できる', () => {
+    const source = textPage(
+      '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100 百万円です。\n製品事業の利益は100百万円です。'
+    );
+    const reviewed = reviewCandidates(
+      candidateResponse([numberCandidate(source)], [source]),
+      'other',
+      [source]
+    );
+    expect(reviewed.unverified).toEqual([]);
+    const summary = { ...facts, facts: reviewed.facts };
+    const fact = summary.facts[0];
+    if (fact.evidence.kind !== 'prose') throw new Error('prose fixture expected');
+    const quantityId = fact.evidence.quantityId;
+    const display = buildPresentation(summary, [source]);
+    expect(
+      display.values.filter((value) => value.id.startsWith('p1b3:q')).map((value) => value.id)
+    ).toEqual([quantityId]);
+    const restored = revalidatePresentation(JSON.parse(JSON.stringify(display)), summary, [source]);
+    const sourceIds = restored.excerpts.map((excerpt) => excerpt.id);
+    expect(() =>
+      checkText(
+        `{{change:${fact.id}|${quantityId}|profit}}`,
+        sourceIds,
+        restored.values,
+        restored.excerpts,
+        summary
+      )
+    ).toThrow('NARRATIVE_COMPARISON');
+    expect(() =>
+      checkText(
+        `{{change:${fact.id}|p1b4:q1|profit}}`,
+        sourceIds,
+        restored.values,
+        restored.excerpts,
+        summary
+      )
+    ).not.toThrow();
+  });
+
   it('除外した管理欄の数値を表示値に混ぜず、有効な事実を表示・保存復元する', () => {
     const administrative = layoutPage(
       [

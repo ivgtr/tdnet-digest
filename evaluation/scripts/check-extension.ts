@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import type { LLMConfig } from '../../src/lib/llm-client';
+import { SUMMARY_DIAGNOSTICS_KEY, type SummaryTrace } from '../../src/lib/summary-trace';
 import type { CandidateFact } from '../../src/lib/fact-contract';
 import { candidateResponse } from '../../src/lib/fixtures/candidate-test-source';
 import { extractPageLayout } from '../../src/lib/pdf-layout';
@@ -27,6 +28,41 @@ import {
   renderedFactErrors,
   type Case as BrowserCase,
 } from './fact-summary-expectations';
+type TraceMatch = {
+  key: string;
+  pdfUrl: string;
+  runId?: string;
+  resultId?: string;
+  model?: string;
+};
+async function storedTrace(
+  worker: {
+    evaluate: (
+      fn: (match: TraceMatch) => Promise<SummaryTrace | undefined>,
+      match: TraceMatch
+    ) => Promise<SummaryTrace | undefined>;
+  },
+  pdfUrl: string,
+  expected: Omit<Partial<TraceMatch>, 'key' | 'pdfUrl'> = {}
+): Promise<SummaryTrace> {
+  const trace = await worker.evaluate(
+    async (match) => {
+      const data = await chrome.storage.local.get(match.key);
+      return (data[match.key]?.traces as SummaryTrace[] | undefined)
+        ?.filter(
+          (trace) =>
+            trace.pdfUrl === match.pdfUrl &&
+            (!match.runId || trace.runId === match.runId) &&
+            (!match.resultId || trace.resultId === match.resultId) &&
+            (!match.model || trace.model === match.model)
+        )
+        .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    },
+    { key: SUMMARY_DIAGNOSTICS_KEY, pdfUrl, ...expected }
+  );
+  assert.ok(trace, 'Expected result-linked diagnostic is unavailable');
+  return trace;
+}
 async function builtDigest(): Promise<string> {
   const digest = createHash('sha256');
   for (const directory of ['dist', 'dist/assets', 'dist/.vite']) {
@@ -180,7 +216,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
   if (args.includes('--fixed-api') && !manualReviewFlags.some((flag) => args.includes(flag)))
     throw new Error(
       '固定APIスモークは node --import tsx evaluation/scripts/check-extension-smoke.ts を使用してください。' +
-      ' --preflight-only はブラウザー不要、--smoke-outcome success|partial|failure で対象を選べます。'
+        ' --preflight-only はブラウザー不要、--smoke-outcome success|partial|failure で対象を選べます。'
     );
   const arg = (flag: string) => args[args.indexOf(flag) + 1];
   if (!args.includes('--browser-module') || !args.includes('--browser-executable'))
@@ -256,7 +292,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       !fixtureSource ||
       reviewCase ||
       !narrativeReplay.result ||
-      narrativeReplay.presentation?.version !== 6 ||
+      narrativeReplay.presentation?.version !== 7 ||
       !narrativeReplay.presentation?.organization ||
       narrativeReplay.item.id !== item.id)
   )
@@ -637,9 +673,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await summary
         .getByText('TDnetのPDF URLではありません', { exact: false })
         .waitFor({ timeout: 10000 });
-      const trace = await worker.evaluate(
-        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-      );
+      const trace = await storedTrace(worker, pdfUrl);
       assert.equal(trace.pdfUrl, pdfUrl);
       assert.equal(trace.outcome, 'failure');
       assert.equal(trace.resultId, null);
@@ -695,24 +729,21 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       { timeout: 330000 }
     );
     if (reviewSettingsChange) {
-      const currentTrace = await worker.evaluate(
-        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-      );
+      const currentTrace = await storedTrace(worker, pdfUrl, { model: 'fixture-next' });
       assert.equal(currentTrace.model, 'fixture-next');
       assert.ok(['firstSuccess', 'repairSuccess'].includes(currentTrace.outcome));
       releaseFirstResponse();
       // The bounded settle window supplements the deterministic deferred-request integration tests.
       await page.waitForTimeout(1000);
-      const afterOld = await worker.evaluate(
-        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-      );
+      const afterOld = await storedTrace(worker, pdfUrl, {
+        runId: currentTrace.runId,
+        resultId: currentTrace.resultId!,
+      });
       assert.deepEqual(afterOld, currentTrace);
       evidence.stages.push('new result finished before old response → current trace retained');
     }
     evidence.stages.push('button → result/error HTML');
-    const completedTrace = await worker.evaluate(
-      async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-    );
+    const completedTrace = await storedTrace(worker, pdfUrl);
     evidence.trace = completedTrace;
     assert.equal(
       completedTrace?.buildDigest,
@@ -728,12 +759,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       await summary
         .getByRole('heading', { name: '開示の要点', exact: true })
         .waitFor({ timeout: 330000 });
-      Object.assign(
-        completedTrace,
-        await worker.evaluate(
-          async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-        )
-      );
+      Object.assign(completedTrace, await storedTrace(worker, pdfUrl));
       evidence.stages.push('smart completeness failure without API → explicit full retry');
     }
     if (!fixedFailure && completedTrace.outcome === 'failure')
@@ -750,9 +776,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         )
       );
       if (reviewFixture) assert.ok(!evidence.rendered.includes('売上高: 100百万円'));
-      const trace = await worker.evaluate(
-        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-      );
+      const trace = await storedTrace(worker, pdfUrl);
       evidence.trace = trace;
       assert.equal(trace.outcome, 'failure');
       assert.deepEqual(
@@ -815,7 +839,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    assert.ok(stored.value.presentation?.version === 6);
+    assert.ok(stored.value.presentation?.version === 7);
     if (narrativeReplay) {
       // UI replay must preserve the model evaluation outcome, including warnings.
       // It is not a way to turn a failed model assessment into a success.
@@ -870,7 +894,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       assert.ok(
         await toggles.evaluateAll((nodes: HTMLDetailsElement[]) => nodes.every((n) => !n.open))
       );
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v${ANALYSIS_SCHEMA_VERSION}-summary-top.png` });
+      await page.screenshot({
+        path: `evaluation/results/local/${item.id}-v${ANALYSIS_SCHEMA_VERSION}-summary-top.png`,
+      });
       for (const [title, suffix] of [
         ['事業別業績', 'business'],
         ['キャッシュフロー', 'cash-flow'],
@@ -888,7 +914,9 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       }
       await summary.evaluate((node: HTMLElement) => node.ownerDocument.defaultView!.scrollTo(0, 0));
       await page.setViewportSize({ width: 600, height: 800 });
-      await page.screenshot({ path: `evaluation/results/local/${item.id}-v${ANALYSIS_SCHEMA_VERSION}-summary-narrow.png` });
+      await page.screenshot({
+        path: `evaluation/results/local/${item.id}-v${ANALYSIS_SCHEMA_VERSION}-summary-narrow.png`,
+      });
       await toggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
         nodes.forEach((n) => (n.open = true))
       );
@@ -913,9 +941,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       evidence.metadata = stored.value.metadata;
       evidence.reading = reading;
       evidence.pdfHash = pdfHash;
-      const trace = await worker.evaluate(
-        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-      );
+      const trace = await storedTrace(worker, pdfUrl, {
+        runId: stored.value.diagnosticRunId,
+        resultId: stored.value.resultId,
+      });
       assert.equal(
         trace.outcome,
         narrativeReplay.result.unverified.length ||
@@ -1206,9 +1235,10 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
     }
     assert.match(stored.value.metadata.documentHash, /^[a-f0-9]{64}$/);
     if (pdfHash) assert.equal(stored.value.metadata.documentHash, pdfHash);
-    const trace = await worker.evaluate(
-      async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-    );
+    const trace = await storedTrace(worker, pdfUrl, {
+      runId: stored.value.diagnosticRunId,
+      resultId: stored.value.resultId,
+    });
     evidence.trace = trace;
     assert.ok(trace?.attempts.length);
     assert.equal(trace.buildDigest, sourceDigest, '実行Workerと現在の製品ソースが一致しません');
@@ -1482,9 +1512,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         .waitFor({ timeout: 10000 });
       const failed = await copiedDiagnostic(summary, page);
       assert.equal(apiCalls, callsBefore);
-      const failure = await worker.evaluate(
-        async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
-      );
+      const failure = await storedTrace(worker, pdfUrl);
       assert.notEqual(failure.runId, trace.runId);
       assert.equal(failure.outcome, 'failure');
       assert.equal(failure.error, 'APIキーが設定されていません');
@@ -1643,16 +1671,13 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
       await worker.evaluate(async () => chrome.storage.sync.set({ experimentalScoring: false }));
       await row.getByRole('button', { name: '閉じる', exact: true }).click();
-      await worker.evaluate(
-        async (key: string) => {
-          const entry = { key, value: (await chrome.storage.local.get(key))[key] };
-          if (!entry.value) throw new Error('現在の設定で復元したキャッシュがありません');
-          await chrome.storage.local.set({
-            [entry.key]: { ...entry.value, facts: { ...entry.value.facts, version: 3 } },
-          });
-        },
-        restoredKey
-      );
+      await worker.evaluate(async (key: string) => {
+        const entry = { key, value: (await chrome.storage.local.get(key))[key] };
+        if (!entry.value) throw new Error('現在の設定で復元したキャッシュがありません');
+        await chrome.storage.local.set({
+          [entry.key]: { ...entry.value, facts: { ...entry.value.facts, version: 3 } },
+        });
+      }, restoredKey);
       const previousCalls = apiCalls;
       await row.getByRole('button', { name: '表示', exact: true }).click();
       await page.waitForFunction(
@@ -1677,7 +1702,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       const w = context.serviceWorkers()[0];
       if (w)
         evidence.trace = await w.evaluate(
-          async () => (await chrome.storage.local.get('summaryLastRunV1')).summaryLastRunV1
+          async () => (await chrome.storage.local.get('summaryDiagnosticsV1')).summaryDiagnosticsV1
         );
     }
     throw error;

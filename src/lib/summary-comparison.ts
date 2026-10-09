@@ -1,3 +1,4 @@
+import { reportingAttributeKey } from './reporting-attributes';
 import { canonicalJSON, type VerifiedFact } from './fact-contract';
 
 const periodIdentity = (period: string | null) =>
@@ -74,8 +75,8 @@ export function summaryComparison(
       f.label,
       f.unit,
       f.semantics.subject,
-      f.semantics.scope,
-      f.semantics.basis,
+      f.semantics.scope === null ? null : reportingAttributeKey('scope', f.semantics.scope),
+      f.semantics.basis === null ? null : reportingAttributeKey('basis', f.semantics.basis),
       f.semantics.periodKind,
       f.semantics.metricKind,
       f.semantics.qualifiers,

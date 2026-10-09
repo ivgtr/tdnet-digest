@@ -1,11 +1,13 @@
 import { expect, it } from 'vitest';
 import { cells, tableAmount } from './fixtures/fact-review-source';
+import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { buildDocumentContext } from './document-context';
 import { reviewCandidates } from './fact-candidates';
 import type { FactSummary } from './fact-contract';
 import {
   factObservation,
+  canPair,
   reconcileObservations,
   observationChange,
   type DisclosureObservation,
@@ -20,7 +22,7 @@ import {
   unresolvedTableSources,
   supportedObservations,
 } from './summary-organization';
-import { renderFacts } from './fact-summary';
+import { parseFactSummary, renderFacts } from './fact-summary';
 import { buildAnalysisInput } from './analysis-input';
 import { buildAnalysisCalculations } from './analysis-calculations';
 
@@ -314,13 +316,13 @@ it('原数量を先に照合し、明確な文脈矛盾だけを除き、別名�
   });
   const aliases = classify(
     { ...selected, scope: '非連結', basis: '国際会計基準' },
-    withMeaning('個別', 'IFRS')
+    withMeaning('個別', 'IFRS会計基準')
   );
   expect(aliases.conflicts).toEqual([]);
   expect(aliases.supplement).toEqual([]);
   expect(aliases.primary.get(fact.id)?.valueId).toBe(fact.id);
   expect(
-    classify({ ...selected, basis: '日本基準' }, withMeaning('連結', 'IFRS')).conflicts
+    classify({ ...selected, basis: '日本基準' }, withMeaning('連結', 'IFRS会計基準')).conflicts
   ).toHaveLength(1);
   expect(
     classify(
@@ -404,6 +406,120 @@ it('補足側だけの現在値でも比較原数量の文脈を照合し、複�
   expect(result.primary.get(fact.id)?.comparison).toEqual(observation.comparison);
 });
 
+it('決算の確定表と補足表を同じ期間見出しに置き、別の話題は名前で区別して保存する', () => {
+  const { facts, fact, page, observation } = reviewedTable('営業利益');
+  const summary: FactSummary = {
+    ...facts,
+    documentType: 'earnings',
+    facts: facts.facts.filter((value) => value.id !== fact.id),
+  };
+  const display = buildPresentation(summary, [page]);
+  const supplemental = {
+    ...observation,
+    valueId: fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.id,
+  };
+  for (const topic of ['performance', 'business'] as const) {
+    const organization = {
+      ...emptyOrganization(),
+      observations: [{ ...supplemental, topic }],
+    };
+    organization.review = {
+      contentHash: organizationHash(organization, summary, display.values, display.excerpts),
+      claims: { [supplemental.id]: null },
+      sources: Object.fromEntries(
+        explanationSources(display.excerpts).map((source) => [source.id, null])
+      ),
+    };
+    organization.status = 'partial';
+    const presentation = { ...display, organization };
+    expect(
+      supportedObservations(organization, summary, display.values, display.excerpts)
+    ).toHaveLength(1);
+    const markdown = renderFacts(summary, presentation);
+    expect(markdown.match(/^### 2026年3月期 実績／業績と増減要因$/gm)).toHaveLength(1);
+    expect(markdown.includes('### 2026年3月期 実績／事業別業績')).toBe(topic === 'business');
+    expect(markdown.match(/^\| .*営業利益.*20百万円.*$/gm)).toHaveLength(1);
+    const restored = revalidatePresentation(JSON.parse(JSON.stringify(presentation)), summary, [
+      page,
+    ]);
+    expect(renderFacts(summary, restored)).toBe(markdown);
+  }
+});
+
+it('配当の確定値と補足値が同じ表示話題なら、別期を挟まず一つの期間見出しにまとめる', () => {
+  const page = textPage(
+    '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 配当\n期末配当金は100円です。\n中間配当金は50円です。\n2027年3月期 配当予想\n年間配当金は200円です。'
+  );
+  const inputs = [
+    ['期末配当金', 100, '2026年3月期', 'actual', '2026年3月期 配当'],
+    ['年間配当金', 200, '2027年3月期', 'forecast', '2027年3月期 配当予想'],
+  ] as const;
+  const candidates = inputs.map(([label, value, period, state, heading], index) => {
+    const candidate = numberCandidate(page, label, value, period);
+    return {
+      ...candidate,
+      id: `f${index}`,
+      unit: '円',
+      valueKind: state,
+      evidence: {
+        ...candidate.evidence,
+        contextIds: [page.blocks.find((block) => block.text === heading)!.id],
+      },
+      semantics: { ...candidate.semantics, state, metricKind: 'perShare' as const },
+    };
+  });
+  const facts = parseFactSummary(
+    JSON.stringify({ version: 6, documentType: 'earnings', facts: candidates, unverified: [] }),
+    'earnings',
+    [page],
+    false
+  );
+  expect(facts.unverified).toEqual([]);
+  expect(facts.facts).toHaveLength(2);
+  const display = buildPresentation(facts, [page]);
+  const value = display.values.find((quantity) => quantity.decimal === '50')!;
+  const observation: DisclosureObservation = {
+    id: 'observation-0',
+    topic: 'dividend',
+    entity: '株式会社テスト',
+    scope: '連結',
+    basis: '日本基準',
+    metric: '中間配当金',
+    measure: 'other',
+    period: '2026年3月期',
+    state: 'actual',
+    valueId: value.id,
+    comparison: null,
+    conditions: [],
+    sourceIds: value.sourceIds,
+  };
+  const organization = { ...emptyOrganization(), observations: [observation] };
+  organization.review = {
+    contentHash: organizationHash(organization, facts, display.values, display.excerpts),
+    claims: { [observation.id]: null },
+    sources: Object.fromEntries(
+      explanationSources(display.excerpts).map((source) => [source.id, null])
+    ),
+  };
+  organization.status = 'partial';
+  const presentation = { ...display, organization };
+  expect(supportedObservations(organization, facts, display.values, display.excerpts)).toHaveLength(
+    1
+  );
+  const markdown = renderFacts(facts, presentation);
+  expect(markdown.match(/^### 2026年3月期 実績／配当$/gm)).toHaveLength(1);
+  expect(markdown.match(/^### 2027年3月期 予想／配当$/gm)).toHaveLength(1);
+  expect(markdown).not.toContain('／業績予想');
+  for (const [label, amount] of [
+    ['期末配当金', '100円'],
+    ['中間配当金', '50円'],
+    ['年間配当金', '200円'],
+  ])
+    expect(markdown.match(new RegExp(`^\\| .*${label}.*${amount}.*$`, 'gm'))).toHaveLength(1);
+  const restored = revalidatePresentation(JSON.parse(JSON.stringify(presentation)), facts, [page]);
+  expect(renderFacts(facts, restored)).toBe(markdown);
+});
+
 it('意味点検が同一実績セルを予想として誤承認しても、保存復元後の本文・分析・計算へ通さない', () => {
   const { facts, fact, page, display, observation, review } = reviewedTable('営業利益');
   const misapproved = {
@@ -440,6 +556,19 @@ it('増減率も原数量の所有者と比較軸を照合し、無関係な比�
     (f) => f.label === '売上高' && f.unit === '百万円' && f.period === fact.period
   )!;
   expect(observation.comparison?.rateId).toBeNull();
+  const aliasAmount = {
+    ...revenue,
+    semantics: { ...revenue.semantics, scope: '個別', basis: 'IFRS会計基準' },
+  };
+  for (const [scope, basis, paired] of [
+    ['単体', 'IFRS', true],
+    ['非連結', '国際会計基準', true],
+    ['連結', 'IFRS', false],
+    ['個別', '日本基準', false],
+  ] as const)
+    expect(canPair(aliasAmount, { ...rate, semantics: { ...rate.semantics, scope, basis } })).toBe(
+      paired
+    );
   const nativeRate = rate.evidence.kind === 'table' ? rate.evidence.valueId : rate.id;
   const classify = (claim: DisclosureObservation, input = facts) =>
     reconcileObservations(input, [claim], display.excerpts, display.values);
@@ -537,7 +666,7 @@ it('既知の指標別名は同じ数量へ統合し、比較値の別名も重�
       semantics: {
         ...f.semantics,
         scope: f.id === current.id ? '個別' : '単体',
-        basis: f.id === current.id ? 'IFRS' : '国際会計基準',
+        basis: f.id === current.id ? 'IFRS会計基準' : '国際会計基準',
       },
     })),
   };

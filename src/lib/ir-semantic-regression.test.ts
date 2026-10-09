@@ -30,7 +30,8 @@ function parse(index: number, facts: unknown[], coverage = false) {
 }
 const fact = (index: number, n = 0) =>
   structuredClone(expectations[index].facts[n]) as VerifiedFact;
-describe('実PDFの意味を保った利用経路', () => {
+// Each case replays the corpus through source validation, rendering or save restoration.
+describe('実PDFの意味を保った利用経路', { timeout: 30_000 }, () => {
   // 6資料の候補→確定→保存と原数量の全参照は fact-candidates.test.ts に集約する。
   it('BlueMemeの実績・損失予想・率・EPS・概算・翌期計上予定を表示する', () => {
     const text = renderFacts(parse(0, expectations[0].facts, true));

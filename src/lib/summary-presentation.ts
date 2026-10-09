@@ -16,6 +16,13 @@ import {
   isRoutineExplanation,
 } from './summary-content-policy';
 import { reportingMetricKey } from './metric-semantics';
+import { declaredForecastFactIds } from './fact-coverage';
+import {
+  earningsTarget,
+  matchesEarningsTarget,
+  compareEarningsFacts,
+  earningsMetricKey,
+} from './summary-earnings-policy';
 import { companyExcerpt } from './summary-company-excerpt';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import { sourceInventory, paragraphGroups, type SourceExcerpt } from './summary-source-inventory';
@@ -33,7 +40,7 @@ export interface SummarySection {
   highlights: string[];
 }
 export interface SummaryPresentation {
-  version: 6;
+  version: 7;
   sourceHash: string;
   overview: string[];
   sections: SummarySection[];
@@ -55,13 +62,19 @@ export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): S
     throw new SummarySourceSelectionError(
       '本文の根拠がスマート抽出の対象外です。全文で再要約してください。'
     );
-  return composePresentation(facts, excerpts, narrativeValues(facts, pages, excerpts));
+  return composePresentation(
+    facts,
+    excerpts,
+    narrativeValues(facts, pages, excerpts),
+    facts.documentType === 'earnings' ? declaredForecastFactIds(pages, facts.facts) : new Set()
+  );
 }
 
 function composePresentation(
   facts: FactSummary,
   excerpts: SourceExcerpt[],
-  values: NarrativeValue[]
+  values: NarrativeValue[],
+  forecastFactIds: ReadonlySet<string> = new Set()
 ): SummaryPresentation {
   const policies = sectionPolicies(facts.documentType);
   const sections: SummarySection[] = policies.map(([, title]) => ({
@@ -101,12 +114,20 @@ function composePresentation(
     if (f && !overview.includes(f.id)) overview.push(f.id);
   };
   const preferredState = facts.documentType === 'earningsRevision' ? 'forecastAfter' : 'actual';
+  const target = facts.documentType === 'earnings' ? earningsTarget(excerpts).target : null;
   const primary = facts.facts
-    .filter(numeric)
+    .filter(
+      (f) =>
+        numeric(f) &&
+        (facts.documentType !== 'earnings' ||
+          f.semantics.state !== 'actual' ||
+          matchesEarningsTarget(f, target))
+    )
     .sort(
       (a, b) =>
         Number(b.semantics.state === preferredState) -
           Number(a.semantics.state === preferredState) ||
+        (facts.documentType === 'earnings' ? compareEarningsFacts(a, b) : 0) ||
         Number(b.importance === 'key') - Number(a.importance === 'key') ||
         (b.period ?? '').localeCompare(a.period ?? '')
     );
@@ -114,8 +135,8 @@ function composePresentation(
     take(
       primary.find(
         (f) =>
-          f.semantics.metricKind !== 'rate' &&
-          /^(?:売上高|売上収益|営業収益)$/.test(f.label) &&
+          f.semantics.metricKind === 'amount' &&
+          reportingMetricKey(f.label) === 'revenue' &&
           f.semantics.state === preferredState
       )
     );
@@ -123,7 +144,7 @@ function composePresentation(
       primary.find(
         (f) =>
           f.semantics.metricKind === 'amount' &&
-          /^(?:営業利益|営業損失)$/.test(f.label) &&
+          reportingMetricKey(f.label) === 'operatingProfit' &&
           f.semantics.state === preferredState
       )
     );
@@ -131,10 +152,19 @@ function composePresentation(
       primary.find(
         (f) =>
           f.semantics.metricKind === 'amount' &&
-          /^(?:経常利益|経常損失)$/.test(f.label) &&
+          reportingMetricKey(f.label) === 'ordinaryProfit' &&
           f.semantics.state === preferredState
       )
     );
+    if (facts.documentType === 'earnings')
+      take(
+        primary.find(
+          (f) =>
+            f.semantics.metricKind === 'amount' &&
+            earningsMetricKey(f.label) === 'pretaxProfit' &&
+            f.semantics.state === preferredState
+        )
+      );
     take(
       primary.find(
         (f) =>
@@ -145,7 +175,10 @@ function composePresentation(
     );
     if (facts.documentType === 'earnings')
       for (const f of primary.filter(
-        (f) => f.semantics.state === 'forecastAfter' && f.semantics.metricKind === 'amount'
+        (f) =>
+          f.semantics.state === 'forecastAfter' &&
+          f.semantics.metricKind === 'amount' &&
+          forecastFactIds.has(f.id)
       ))
         take(f);
   } else {
@@ -229,9 +262,10 @@ function composePresentation(
             /修正の有無|変更はありません|上方修正|下方修正/.test(f.statement!))
       )
     );
-  if (!overview.length) take(facts.facts.find((f) => f.importance === 'key'));
+  if (!overview.length && facts.documentType !== 'earnings')
+    take(facts.facts.find((f) => f.importance === 'key'));
   return {
-    version: 6,
+    version: 7,
     sourceHash: hashText(canonicalJSON({ excerpts, values })),
     overview,
     sections: sections.filter((s) => s.factIds.length || s.excerptIds.length),
@@ -257,7 +291,7 @@ export function validatePresentation(
       'values',
       'organization',
     ]) ||
-    value.version !== 6 ||
+    value.version !== 7 ||
     !Array.isArray(value.overview) ||
     !Array.isArray(value.sections) ||
     !Array.isArray(value.excerpts) ||
@@ -300,9 +334,20 @@ export function validatePresentation(
     v.every((id) => typeof id === 'string' && allowed.has(id));
   const quantities = new Set<string>();
   for (const q of value.values) {
+    const fact = record(q) ? facts.facts.find((f) => f.id === q.id) : undefined;
+    const evidenceId =
+      fact && (fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.evidence.quantityId);
+    const proseBlockId = fact?.evidence.kind === 'prose' ? fact.evidence.blockId : null;
     if (
       !record(q) ||
-      !exact(q, ['id', 'raw', 'decimal', 'unit', 'sourceIds']) ||
+      !exact(q, [
+        'id',
+        'raw',
+        'decimal',
+        'unit',
+        'sourceIds',
+        ...(fact ? ['sourceQuantityId'] : []),
+      ]) ||
       typeof q.id !== 'string' ||
       !(ids.has(q.id) || /^p\d+(?:s\d+|b\d+:q\d+)$/.test(q.id)) ||
       quantities.has(q.id) ||
@@ -312,13 +357,30 @@ export function validatePresentation(
       !(q.unit === null || typeof q.unit === 'string') ||
       !Array.isArray(q.sourceIds) ||
       !refs(q.sourceIds, sourceIds) ||
-      !q.sourceIds.length
+      !q.sourceIds.length ||
+      (fact &&
+        (typeof q.sourceQuantityId !== 'string' ||
+          !/^p\d+(?:s\d+|b\d+:q\d+)$/.test(q.sourceQuantityId) ||
+          (q.sourceQuantityId !== evidenceId &&
+            !(
+              proseBlockId !== null &&
+              (value.excerpts as SourceExcerpt[]).some(
+                (excerpt) =>
+                  excerpt.blockId === proseBlockId &&
+                  excerpt.spanIds.includes(q.sourceQuantityId as string)
+              ) &&
+              value.values.some(
+                (native) =>
+                  record(native) &&
+                  native.id === q.sourceQuantityId &&
+                  !('sourceQuantityId' in native)
+              )
+            ))))
     )
       throw new Error('保存された表示数量が不正です');
     quantities.add(q.id);
     const rawQuantity = q.raw;
     const literal = parseNarrativeQuantity(rawQuantity);
-    const fact = facts.facts.find((f) => f.id === q.id);
     const quantityExcerpts = (value.excerpts as SourceExcerpt[]).filter((e) =>
       (q.sourceIds as string[]).includes(e.id)
     );
@@ -408,5 +470,22 @@ export function revalidatePresentation(
     canonicalJSON(value.values) !== canonicalJSON(expected.values)
   )
     throw new Error('原文引用とPDFが一致しません');
+  // Storage-only validation permits headline adjustments. Rechecking the PDF must
+  // still reject a stale or adjusted numeric headline from outside its declared unit.
+  const actualTarget =
+    facts.documentType === 'earnings' ? earningsTarget(expected.excerpts).target : null;
+  if (
+    facts.documentType === 'earnings' &&
+    value.overview.some((id) => {
+      const fact = facts.facts.find((fact) => fact.id === id);
+      return (
+        fact &&
+        numeric(fact) &&
+        ((fact.semantics.state === 'actual' && !matchesEarningsTarget(fact, actualTarget)) ||
+          (fact.semantics.state === 'forecastAfter' && !expected.overview.includes(id)))
+      );
+    })
+  )
+    throw new Error('冒頭の数値と原文の報告対象が一致しません');
   return value;
 }

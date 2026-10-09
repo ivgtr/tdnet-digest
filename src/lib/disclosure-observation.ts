@@ -1,3 +1,4 @@
+import { reportingAttributeKey } from './reporting-attributes';
 import {
   exact,
   record,
@@ -16,6 +17,7 @@ import {
 import {
   checkText,
   quantitySourceClosure,
+  sourceQuantityId,
   type NarrativeLine,
   type NarrativeValue,
 } from './summary-narrative';
@@ -247,7 +249,13 @@ export function checkObservation(
   const previous = value.comparison
     ? values.find((q) => q.id === value.comparison!.valueId)!
     : null;
-  if (!current.unit || (previous && (current.unit !== previous.unit || current.id === previous.id)))
+  if (
+    !current.unit ||
+    (previous &&
+      (current.unit !== previous.unit ||
+        sourceQuantityId(current.id, facts, values) ===
+          sourceQuantityId(previous.id, facts, values)))
+  )
     throw new Error('OBSERVATION_QUANTITY:数量の単位・比較対象を確認できません');
   if (
     value.comparison?.rateId &&
@@ -373,8 +381,8 @@ export function canPair(amount: VerifiedFact, rate: VerifiedFact): boolean {
       f.period,
       f.valueKind,
       f.semantics.subject,
-      f.semantics.scope,
-      f.semantics.basis,
+      f.semantics.scope === null ? null : reportingAttributeKey('scope', f.semantics.scope),
+      f.semantics.basis === null ? null : reportingAttributeKey('basis', f.semantics.basis),
       f.evidence.kind === 'table'
         ? [f.evidence.metricIds, f.evidence.periodIds, f.evidence.contextIds]
         : null,
@@ -484,12 +492,8 @@ const scopeKey = (value: string | null) => {
       : null;
 };
 const basisKey = (value: string | null) => {
-  const text = compactContext(value)?.toUpperCase();
-  return text === 'IFRS' || text === '国際会計基準'
-    ? 'IFRS'
-    : text === '日本基準' || text === '米国基準'
-      ? text
-      : null;
+  const text = value === null ? null : reportingAttributeKey('basis', value);
+  return text === 'IFRS' || text === '日本基準' || text === '米国基準' ? text : null;
 };
 // Unknown names retain their own identity; two unknown canonical keys are not aliases.
 const contextIdentity = (value: string | null, key: (value: string) => string | null) => {
@@ -570,14 +574,7 @@ export function reconcileObservations(
   supplement: DisclosureObservation[];
   conflicts: DisclosureObservation[];
 } {
-  const native = (id: string) => {
-    const fact = facts.facts.find((f) => f.id === id);
-    return fact?.evidence.kind === 'table'
-      ? fact.evidence.valueId
-      : fact?.evidence.kind === 'prose'
-        ? (fact.evidence.quantityId ?? id)
-        : id;
-  };
+  const native = (id: string) => sourceQuantityId(id, facts, values);
   const primary = new Map(
     facts.facts
       .filter((f) => f.quantity)

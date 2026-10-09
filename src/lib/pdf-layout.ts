@@ -6,6 +6,8 @@ import { parseQuantity } from './quantity';
 import {
   buildBlocks,
   quantityCells,
+  physicalCellOwners,
+  canJoinWithinCells,
   tableReferenceHints,
   type SourceItem,
 } from './document-structure';
@@ -15,7 +17,7 @@ import {
   drawingOperations as captureDrawingOperations,
   type DrawingOperation,
 } from './pdf-drawing';
-import { buildTableRegions, buildTableCells } from './table-layout';
+import { buildTableRegions, buildTableCells, rebindTableCells } from './table-layout';
 import { withPdfExtractionStage } from './pdf-extraction-error';
 
 export interface PdfSpan {
@@ -68,6 +70,11 @@ export function extractPageLayout(
       direction: item.dir,
       hasEOL: item.hasEOL,
     }));
+  const rules = drawingLines(drawingOperations, pageNumber);
+  // Keep original items on their own side of proved cell boundaries before
+  // constructing spans. A later quantity check cannot undo an earlier merge.
+  const sourceCells = buildTableCells(rules, sourceItems, pageNumber);
+  const owners = physicalCellOwners(sourceCells);
   const sorted = items
     .filter((item): item is TextItem => 'str' in item && !!item.str.trim())
     .sort((a, b) => b.transform[5] - a.transform[5] || a.transform[4] - b.transform[4]);
@@ -80,6 +87,7 @@ export function extractPageLayout(
     const previous = spans[spans.length - 1];
     if (
       previous &&
+      previous.sourceIds!.every((id) => canJoinWithinCells(owners, id, sourceId)) &&
       (!parseQuantity(previous.text) ||
         parseQuantity(previous.text + item.str)?.unit === null ||
         /^-?\d+円\d{2}銭$/.test(
@@ -119,6 +127,9 @@ export function extractPageLayout(
         next = spans[j];
       if (
         Math.abs(next.y - spans[i].y) > 1 ||
+        !previous.sourceIds!.every((id) =>
+          next.sourceIds!.every((nextId) => canJoinWithinCells(owners, id, nextId))
+        ) ||
         next.x - previous.x - previous.width < -0.5 ||
         next.x - previous.x - previous.width > next.height * 0.6
       )
@@ -148,8 +159,8 @@ export function extractPageLayout(
   spans.forEach((span, i) => {
     span.id = `p${pageNumber}s${i + 1}`;
   });
-  const rules = drawingLines(drawingOperations, pageNumber);
-  const quantities = quantityCells(spans, buildTableCells(rules, spans, pageNumber));
+  const cells = rebindTableCells(sourceCells, spans);
+  const quantities = quantityCells(spans, cells);
   const tableRegions = buildTableRegions({ pageNumber, spans, quantities, drawingLines: rules });
   return {
     pageNumber,
@@ -158,7 +169,7 @@ export function extractPageLayout(
     sourceItems,
     status: spans.length ? 'ok' : 'empty',
     selection: 'selected',
-    blocks: buildBlocks({ pageNumber, spans, tableRegions }),
+    blocks: buildBlocks({ pageNumber, spans, tableRegions }, cells),
     quantities,
     drawingOperations,
     drawingLines: rules,

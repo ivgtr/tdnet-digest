@@ -7,7 +7,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { validatePresentation } from '../../src/lib/summary-presentation';
-import { SUMMARY_TRACE_KEY } from '../../src/lib/summary-trace';
+import { SUMMARY_DIAGNOSTICS_KEY } from '../../src/lib/summary-trace';
 import {
   preflightExtensionSmoke,
   SMOKE_API,
@@ -162,10 +162,13 @@ export async function checkExtensionSmoke(args: string[]) {
         worker.evaluate(async (traceKey: string) => {
           const data = await chrome.storage.local.get();
           return {
-            trace: data[traceKey],
+            trace: data[traceKey]?.traces?.find(
+              (trace: { pdfUrl: string }) =>
+                trace.pdfUrl === 'https://www.release.tdnet.info/inbs/fixture-extension-smoke.pdf'
+            ),
             caches: Object.entries(data).filter(([key]) => key.startsWith('summaryCacheV2:')),
           };
-        }, SUMMARY_TRACE_KEY);
+        }, SUMMARY_DIAGNOSTICS_KEY);
       const stored = await readStored();
       assert.equal(
         stored.trace.buildDigest,
@@ -217,6 +220,7 @@ export async function checkExtensionSmoke(args: string[]) {
           outcome === 'success' ? 'ready' : 'unavailable'
         );
         assert.equal(saved.resultId, stored.trace.resultId);
+        assert.equal(saved.diagnosticRunId, stored.trace.runId);
         assert.equal(saved.metadata.generationCalls, preflight.requests);
         const visible = await summary.innerText();
         assert.match(visible, /100/);

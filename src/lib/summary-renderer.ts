@@ -25,6 +25,15 @@ import {
 } from './disclosure-observation';
 import { literalValue } from './summary-narrative-renderer';
 import { sectionPolicies } from './summary-content-policy';
+import {
+  earningsTarget,
+  earningsMissingMajorLabels,
+  earningsAdditionalMajorWarnings,
+  earningsMetricOrder,
+  earningsPeriodOrder,
+  matchesEarningsTarget,
+  type EarningsTarget,
+} from './summary-earnings-policy';
 import { unchangedForecastTopic } from './forecast-revision-semantics';
 import {
   summaryComparison,
@@ -208,21 +217,58 @@ function renderObservationGroups(
   records: Array<DisclosureObservation | ConfirmedObservation>,
   presentation: SummaryPresentation,
   primarySubject: string | null,
-  headings: boolean
+  headings: boolean,
+  earnings?: { target: EarningsTarget | null; sectionTitle: string }
 ): string[] {
   const lines: string[] = [];
   const groups = new Map<string, Array<DisclosureObservation | ConfirmedObservation>>();
   for (const observation of records) {
-    const key = observationGroup(observation);
+    const key =
+      observationGroup(observation) +
+      (earnings ? JSON.stringify([observation.period, observation.state]) : '');
     groups.set(key, [...(groups.get(key) ?? []), observation]);
   }
   const topics = new Set<ObservationTopic>();
+  let previousPeriodHeading: string | undefined;
   const text = (value: string) => literalMarkdown(renderNarrativeText(value, presentation.values));
+  const periodOrder = (a: DisclosureObservation, b: DisclosureObservation) => {
+    const left = earningsPeriodOrder(a.period, earnings?.target ?? null);
+    const right = earningsPeriodOrder(b.period, earnings?.target ?? null);
+    return (
+      left[0] - right[0] ||
+      left[1] - right[1] ||
+      left[2].localeCompare(right[2]) ||
+      // Equal normalized periods may retain different source spellings.
+      // Keep each displayed spelling contiguous before sorting table context.
+      ((a.period ?? '') < (b.period ?? '') ? -1 : a.period === b.period ? 0 : 1)
+    );
+  };
+  const metricOrder = (a: DisclosureObservation, b: DisclosureObservation) =>
+    earningsMetricOrder(a.metric) - earningsMetricOrder(b.metric) ||
+    a.metric.localeCompare(b.metric) ||
+    (a.entity ?? '').localeCompare(b.entity ?? '') ||
+    a.valueId.localeCompare(b.valueId);
+  const genericTopic = (topic: ObservationTopic) => topic === 'performance' || topic === 'forecast';
+  const headingTopic = (topic: ObservationTopic) =>
+    earnings && genericTopic(topic) ? earnings.sectionTitle : observationTitles[topic];
+  const topicOrder = (topic: ObservationTopic) =>
+    earnings && headingTopic(topic) === earnings.sectionTitle
+      ? 0
+      : OBSERVATION_TOPICS.indexOf(topic);
   for (const group of [...groups.values()].sort(
-    (a, b) => OBSERVATION_TOPICS.indexOf(a[0].topic) - OBSERVATION_TOPICS.indexOf(b[0].topic)
+    (a, b) =>
+      topicOrder(a[0].topic) - topicOrder(b[0].topic) ||
+      (earnings
+        ? periodOrder(a[0], b[0]) ||
+          a[0].state.localeCompare(b[0].state) ||
+          Number(b[0].scope === earnings.target?.scope) -
+            Number(a[0].scope === earnings.target?.scope) ||
+          observationGroup(a[0]).localeCompare(observationGroup(b[0]))
+        : 0)
   )) {
+    if (earnings) group.sort(metricOrder);
     const first = group[0];
-    if (headings && !topics.has(first.topic)) {
+    if (headings && !earnings && !topics.has(first.topic)) {
       topics.add(first.topic);
       lines.push('', `### ${observationTitles[first.topic]}`);
     }
@@ -238,11 +284,21 @@ function renderObservationGroups(
       '比較値',
       '増減',
     ];
+    if (earnings) {
+      // Period/state owns the heading; scope, basis and conditions still own
+      // separate tables underneath it. Topics remain named, never opaque IDs.
+      // Primary topics are generic (forecast includes dividends). The existing
+      // section owns their label; supplementary topics carry their own meaning.
+      const title = headingTopic(first.topic);
+      const heading = `${literalMarkdown(first.period ?? '対象期未特定')} ${stateLabels[first.state]}／${literalMarkdown(title)}`;
+      if (heading !== previousPeriodHeading) lines.push('', `### ${heading}`);
+      previousPeriodHeading = heading;
+    }
     lines.push(
       '',
       [
-        periods.length === 1 ? first.period : null,
-        states.length === 1 ? stateLabels[first.state] : null,
+        !earnings && periods.length === 1 ? first.period : null,
+        !earnings && states.length === 1 ? stateLabels[first.state] : null,
         first.scope,
         first.basis,
       ]
@@ -332,11 +388,49 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
     .map((s) => literalMarkdown(s!))
     .join('／');
   if (financial) lines.push(`財務情報：${financial}`, '');
+  const earnings = facts.documentType === 'earnings' ? earningsTarget(presentation.excerpts) : null;
   lines.push('## 開示の要点');
+  if (earnings) {
+    const missing = earningsMissingMajorLabels(facts, earnings.target);
+    const additional = earningsAdditionalMajorWarnings(facts);
+    const missingAttributes = earnings.target
+      ? (['subject', 'scope', 'basis'] as const)
+          .filter((role) => !earnings.target![role]?.trim())
+          .map((role) => ({ subject: '会社', scope: '範囲', basis: '会計基準' })[role])
+      : [];
+    if (earnings.issue)
+      lines.push(
+        '',
+        earnings.issue === 'ambiguous'
+          ? '**要確認：報告対象を一意に特定できません。**'
+          : missingAttributes.length
+            ? `**要確認：報告対象の${missingAttributes.join('・')}が未特定です。**`
+            : '**要確認：報告対象期が未特定です。**',
+        '原文の報告対象を一意に確認できないため、数値を当期の要点として選んでいません。確認済みの数値は対象期とともに本文に表示しています。'
+      );
+    if (missing.length || additional.length)
+      lines.push(
+        '',
+        '**要確認：主要数値に未確認項目があります。**',
+        ...(missing.length
+          ? [
+              `- ${earnings.target ? literalMarkdown(earnings.target.label) + ' 実績の' : ''}未確認：${missing.map(literalMarkdown).join('、')}`,
+            ]
+          : []),
+        ...additional.map((warning) => `- 未確認の${literalMarkdown(warning)}`),
+        '確認済みの項目だけを表示しています。'
+      );
+  }
   let previousContext = '';
   const overviewFacts = presentation.overview.flatMap((id) => {
     const fact = byId.get(id);
-    return fact && numeric(fact) ? [fact] : [];
+    return fact &&
+      numeric(fact) &&
+      (!earnings ||
+        fact.semantics.state !== 'actual' ||
+        matchesEarningsTarget(fact, earnings.target))
+      ? [fact]
+      : [];
   });
   for (const f of overviewFacts) {
     const current = context(f, shared, true, subjects);
@@ -459,8 +553,21 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       (row) => row.comparison !== null || !referencesInPairs.has(row.valueId)
     );
     const supplement = sectionObservations;
-    lines.push(...renderObservationGroups(primary, presentation, primarySubject, false));
-    lines.push(...renderObservationGroups(supplement, presentation, primarySubject, true));
+    if (earnings) {
+      // Confirmed and supplementary rows share one period hierarchy.
+      lines.push(
+        ...renderObservationGroups(
+          [...primary, ...supplement],
+          presentation,
+          primarySubject,
+          true,
+          { ...earnings, sectionTitle: section.title }
+        )
+      );
+    } else {
+      lines.push(...renderObservationGroups(primary, presentation, primarySubject, false));
+      lines.push(...renderObservationGroups(supplement, presentation, primarySubject, true));
+    }
     const structured = [...primary, ...supplement];
     const shownConditions = new Set(structured.flatMap((value) => value.conditions));
     const shownClaimContexts = new Set<string>();
