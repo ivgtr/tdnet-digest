@@ -8,6 +8,7 @@ export { periodKind } from './period-semantics';
 import {
   declaredSubjectsIn,
   buildDocumentContext,
+  reportingContextText,
   bindingFor,
   verifyScopeEvidence,
   isFinancialUnit,
@@ -427,7 +428,8 @@ export function validateFact(
     scopes = ids(ev.scopeIds),
     qualifiers = ids(ev.qualifierIds);
   const continuation = ev.kind === 'table' ? continuationFor(pages, page, ev.valueId) : undefined;
-  const context = referenceText(pages, contexts),
+  referenceText(pages, contexts); // Validate original references before semantic projection.
+  const context = reportingContextText(pages, contexts),
     scope = referenceText(pages, scopes),
     notes = referenceText(pages, qualifiers);
   let source = '',

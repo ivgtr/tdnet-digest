@@ -1,4 +1,10 @@
-import { reportingScope, reportingFieldSegments } from './reporting-attributes';
+import {
+  reportingScope,
+  reportingFieldSegments,
+  reportingFieldProjection,
+  isReportingCoverTitle,
+  hasReportingCoverTitle,
+} from './reporting-attributes';
 export { reportingScope } from './reporting-attributes';
 import type { PdfSpan } from './pdf-layout';
 import type { ExtractedPage } from '@/types/summaryMetadata';
@@ -68,6 +74,10 @@ export function declaredSubjectsIn(block: Pick<TextBlock, 'text'>): string[] {
 export function headingLevel(
   block: Pick<TextBlock, 'id' | 'text'> & Partial<Pick<TextBlock, 'kind'>>
 ): number | null {
+  if (hasReportingCoverTitle(block.text)) {
+    const records = reportingFieldProjection(block.text);
+    if (records.complete && records.segments.some(isReportingCoverTitle)) return null;
+  }
   const text = normalized(block.text);
   const raw = block.text.normalize('NFKC').trim();
   const numbered = /^■/.test(text)

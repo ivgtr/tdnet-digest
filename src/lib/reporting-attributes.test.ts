@@ -1,5 +1,9 @@
 import { expect, it } from 'vitest';
-import { reportingFieldProjection, reportingFieldSegments } from './reporting-attributes';
+import {
+  reportingFieldProjection,
+  reportingFieldSegments,
+  isReportingCoverTitle,
+} from './reporting-attributes';
 import { declaredSubjectsIn } from './document-structure';
 import { textPage } from './fixtures/v4-test-source';
 import { buildDocumentContext, isReportingMetadata } from './document-context';
@@ -27,7 +31,9 @@ it.each([
   });
   expect(isReportingMetadata({ id: 'p1b1', text })).toBe(true);
   expect(reportingFieldProjection(`${label} ││ ${value}`)).toEqual({
-    segments: [label],
+    // A URL remains its own complete record; the empty labelled field still
+    // makes the original block incomplete and never borrows that URL.
+    segments: label === 'URL' ? [label, value] : [label],
     complete: false,
   });
   expect(reportingFieldSegments(`会社名 | ${label} | ${value}`)).toEqual([
@@ -159,4 +165,92 @@ it('空欄・別ラベル・別行・任意数値をフィールド値として�
     expect.objectContaining({ role: 'scope', value: '普通株式' })
   );
   expect(page.blocks[0].text).toBe('取得対象株式の種類 │ 普通株式');
+});
+
+// Whole-record vocabulary is shared with projection, rather than permitting
+// arbitrary bare table atoms. One ruled cover below owns the full integration.
+it.each([
+  '2026年5月10日',
+  '定時株主総会開催予定日 2026年6月10日',
+  '定時株主総会（継続会）開催予定日 未定',
+  '配当金支払開始予定日 2026年6月10日',
+  '有価証券報告書提出予定日2026年6月10日',
+  '2026年5月10日 配当支払開始予定日 ―',
+  '決算補足説明資料作成の有無：無',
+  '決算説明会開催の有無：有（機関投資家向け）',
+  'https://example.com/report%20list',
+  '（百万円未満切捨て）',
+  '定時株主総会（継続会）',
+  '開催予定日',
+  '各位',
+  '以上',
+])('独立した完全な管理レコードを罫線セルでも保つ: %s', (record) => {
+  const normalized = record.normalize('NFKC');
+  const source = `${record} │ TEL │ 03-0000-0000`;
+  expect(reportingFieldProjection(source)).toEqual({
+    segments: [normalized, 'TEL 03-0000-0000'],
+    complete: true,
+  });
+  expect(isReportingMetadata({ id: 'p1b1', text: source })).toBe(true);
+});
+
+it.each([
+  ['配当支払開始予定日', '2026年5月10日'],
+  ['定時株主総会開催予定日', '2026年6月10日'],
+  ['定時株主総会（継続会）開催予定日', '未定'],
+  ['有価証券報告書提出予定日', '―'],
+  ['決算説明会開催の有無', '有'],
+  ['決算補足説明資料作成の有無', '無'],
+])('明示した日程・状態欄は直隣の値だけを使う: %s', (label, value) => {
+  const source = `${label} │ ${value}`;
+  expect(reportingFieldProjection(source)).toEqual({
+    segments: [`${label} ${value}`.normalize('NFKC')],
+    complete: true,
+  });
+  expect(isReportingMetadata({ id: 'p1b1', text: source })).toBe(true);
+  for (const gap of [' ││ ', '\n│ '])
+    expect(isReportingMetadata({ id: 'p1b2', text: `${label}${gap}${value}` })).toBe(false);
+});
+
+it('表題と日付は独立した完全なセルとして読み、不明な追記や裸の属性を取り込まない', () => {
+  const title = '2026年3月期 決算短信〔日本基準〕（連結）';
+  const date = '2026年5月10日';
+  for (const records of [
+    [title, date],
+    [date, title],
+  ]) {
+    expect(reportingFieldProjection(records.join(' │ '))).toEqual({
+      segments: records.map((record) => record.normalize('NFKC')),
+      complete: true,
+    });
+  }
+  for (const suffix of ['参考情報', '売上高100百万円', '(個別)', 'IFRS', '有']) {
+    expect(reportingFieldProjection(`${title} │ ${suffix}`)).toEqual({
+      segments: [title.normalize('NFKC')],
+      complete: false,
+    });
+    if (!suffix.startsWith('(')) expect(isReportingCoverTitle(title + suffix)).toBe(false);
+    expect(isReportingMetadata({ id: 'p1b1', text: `${date}${suffix}` })).toBe(false);
+  }
+  for (const record of [title, date]) {
+    expect(reportingFieldSegments(`会社名 │ ${record}`)).toEqual([
+      '会社名',
+      record.normalize('NFKC'),
+    ]);
+    expect(declaredSubjectsIn({ text: `会社名 │ ${record}` })).toEqual([]);
+  }
+});
+
+it('表題の既存の番号・期間別名と日付の併記を完全なレコードの範囲で保つ', () => {
+  for (const [prefix, shape] of [
+    ['1. ', '第2四半期の'],
+    ['(1) ', '中間'],
+    ['■', '2Q'],
+    ['', ''],
+  ]) {
+    const title = `${prefix}2026年3月期 ${shape}決算短信〔日本基準〕（連結）`;
+    expect(isReportingCoverTitle(title)).toBe(true);
+    expect(isReportingCoverTitle(`${title} 2026年5月10日`)).toBe(true);
+    expect(isReportingCoverTitle(`${title} 2026年5月10日 参考情報`)).toBe(false);
+  }
 });

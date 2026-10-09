@@ -9,11 +9,17 @@ import type { DrawingOperation } from './pdf-drawing';
 import { numberCandidate } from './fixtures/v4-test-source';
 import { candidateResponse } from './fixtures/candidate-test-source';
 import { reviewCandidates } from './fact-candidates';
+import { coverageReport } from './fact-coverage';
 import { parseFactSummary } from './fact-summary';
 import { bindLiteralQuantities, checkText, narrativeValues } from './summary-narrative';
 import { renderNarrativeText } from './summary-narrative-renderer';
 import { sourceInventory } from './summary-source-inventory';
-import { buildDocumentContext, documentSubject } from './document-context';
+import {
+  buildDocumentContext,
+  documentSubject,
+  reportingCoverBlocks,
+  reportingContextText,
+} from './document-context';
 import { earningsTarget } from './summary-earnings-policy';
 import { buildPresentation, revalidatePresentation } from './summary-presentation';
 import type { FactSummary } from './fact-contract';
@@ -62,42 +68,75 @@ function closedGrid(xs: number[], top: number, bottom: number): DrawingOperation
   ];
 }
 
+it('表題と本文が混じる元ブロックを意味文脈の投影で隠さない', () => {
+  const page = extractPageLayout(
+    [item('2026年3月期 決算短信〔日本基準〕（連結）', 10, 10, 310), item('参考情報', 335, 10, 70)],
+    1,
+    closedGrid([0, 325, 420], 0, 20)
+  );
+  expect(page.blocks).toHaveLength(1);
+  const block = page.blocks[0];
+  expect(block.text).toContain('│ 参考情報');
+  expect(reportingCoverBlocks([block])).toEqual([]);
+  expect(reportingContextText([page], [block.id])).toBe(block.text);
+});
+
 // This integration owns the actual drawing → metadata → confirmed headline boundary.
 // Field vocabulary/ambiguity and cross-cell quantity rejection have separate tests.
-it.each(['separate', 'mixed', 'wrapped'] as const)(
+it.each(['separate', 'mixed', 'date-first', 'wrapped'] as const)(
   '罫線で分かれた表紙欄を原文のまま保持し、正しい会社・範囲・基準で冒頭を復元する: %s',
   (layout) => {
+    const mixed = layout === 'mixed' || layout === 'date-first';
     const fields = [
-      ...(layout === 'mixed'
+      ...(mixed
         ? [
             ['コード番号', '464A'],
-            ['URL', 'https://example.com/report%20list'],
+            ['URL', 'https://example.com/report%20list/2Q'],
             ['上場取引所', '東'],
             ['代表者', '代表取締役社長', '山田太郎'],
+            ['問合せ先責任者', '(役職名)', '経理部長', '(氏名)', '鈴木花子'],
+            ['配当支払開始予定日', '2026年6月10日'],
+            ['決算説明会開催の有無', '有'],
           ]
         : []),
       ['会社名', '株式会社テスト'],
-      ['会計基準', '日本基準'],
-      ['範囲', '連結'],
+      ...(layout === 'date-first'
+        ? []
+        : [
+            ['会計基準', '日本基準'],
+            ['範囲', '連結'],
+          ]),
     ];
-    const items = [
-      item(
-        layout === 'separate' ? '2026年3月期 決算短信〔日本基準〕（連結）' : '2026年3月期 決算短信',
-        0,
-        10,
-        400
-      ),
-    ];
+    const title = '2026年3月期 決算短信〔日本基準〕（連結）';
+    const titleRecords =
+      layout === 'date-first' ? ['2026年5月10日', title] : [title, '2026年5月10日'];
+    const items = mixed ? [] : [item(title, 0, 10, 400)];
     const operations: DrawingOperation[] = [];
-    if (layout === 'mixed') {
-      items.push(...fields.flat().map((text, i) => item(text, i * 120 + 10, 40, 100)));
-      operations.push(
-        ...closedGrid(
-          Array.from({ length: fields.flat().length + 1 }, (_, i) => i * 120),
-          30,
-          50
-        )
-      );
+    if (mixed) {
+      // A normal-width ruled cover wraps its independent records into one
+      // source block. Its short title retains ownership beyond 180 characters.
+      const rows = [titleRecords, ...fields];
+      rows.forEach((row, rowIndex) => {
+        const xs =
+          rowIndex === 0
+            ? layout === 'date-first'
+              ? [0, 340, 600]
+              : [0, 460, 600]
+            : row.length === 2
+              ? [0, 180, 600]
+              : Array.from({ length: row.length + 1 }, (_, i) => (i * 600) / row.length);
+        items.push(
+          ...row.map((text, i) =>
+            item(
+              text,
+              xs[i] + 10,
+              10 + rowIndex * 18,
+              Math.min(text.length * 8, xs[i + 1] - xs[i] - 20)
+            )
+          )
+        );
+        operations.push(...closedGrid(xs, rowIndex * 18, 18 + rowIndex * 18));
+      });
     } else if (layout === 'wrapped') {
       fields.forEach(([label, value], i) => {
         items.push(item(`${label} ${value}`, 10, 40 + i * 18, 200));
@@ -112,21 +151,35 @@ it.each(['separate', 'mixed', 'wrapped'] as const)(
     operations.forEach((operation, i) => {
       operation.index = i;
     });
-    items.push(
-      item('2026年3月期 連結経営成績', 0, 140, 250),
-      item('売上高は1,000百万円です。', 0, 170, 280)
-    );
+    if (!mixed) items.push(item('2026年3月期 連結経営成績', 0, 140, 250));
+    items.push(item('売上高は1,000百万円です。', 0, mixed ? 270 : 170, 280));
     const page = extractPageLayout(items, 1, operations);
     expect(() => validatePages([page])).not.toThrow();
     const originalFields =
       layout === 'separate'
-        ? fields.map(([label, value]) => `${label} │ ${value}`)
-        : layout === 'mixed'
-          ? [fields.flat().join(' │ ')]
-          : [fields.map(([label, value]) => `${label} ${value}`).join('\n│ ')];
-    expect(page.blocks.slice(1, 1 + originalFields.length).map((block) => block.text)).toEqual(
+        ? [title, ...fields.map(([label, value]) => `${label} │ ${value}`)]
+        : mixed
+          ? [[titleRecords, ...fields].map((row) => row.join(' │ ')).join('\n│ ')]
+          : [title, fields.map(([label, value]) => `${label} ${value}`).join('\n│ ')];
+    expect(page.blocks.slice(0, originalFields.length).map((block) => block.text)).toEqual(
       originalFields
     );
+    expect(reportingCoverBlocks(page.blocks).map((block) => block.text)).toEqual(originalFields);
+    if (mixed) expect(page.blocks[0].text.length).toBeGreaterThan(180);
+    if (mixed) {
+      const cover = page.blocks[0];
+      const original = JSON.stringify(page);
+      expect(reportingContextText([page], [cover.id])).toBe(
+        '2026年3月期 決算短信〔日本基準〕(連結)'
+      );
+      expect(reportingContextText([page], cover.spanIds)).toBe(
+        '2026年3月期 決算短信〔日本基準〕(連結)'
+      );
+      const url = page.spans.find((span) => span.text.includes('/2Q'))!;
+      expect(url).toBeDefined();
+      expect(reportingContextText([page], [url.id])).toBe(url.text);
+      expect(JSON.stringify(page)).toBe(original);
+    }
     const context = buildDocumentContext([page]);
     expect(documentSubject(context)).toBe('株式会社テスト');
     const excerpts = sourceInventory([page], context, 'earnings');
@@ -140,6 +193,12 @@ it.each(['separate', 'mixed', 'wrapped'] as const)(
         basis: '日本基準',
       },
     });
+    // A quarter alias in another complete record cannot redefine actual coverage.
+    expect(
+      coverageReport('earnings', [page], []).find(
+        (slot) => slot.requirement === 'COVERAGE:当年決算実績の重要指標 revenue'
+      )?.expected
+    ).toMatchObject({ period: '2026年3月期', periodKind: 'fullYear' });
     const reviewed = reviewCandidates(
       candidateResponse([numberCandidate(page, '売上高', 1000)], [page], 'earnings'),
       'earnings',
@@ -149,7 +208,13 @@ it.each(['separate', 'mixed', 'wrapped'] as const)(
     expect(reviewed.facts).toHaveLength(1);
     expect(reviewed.facts[0]).toMatchObject({
       value: 1000,
-      semantics: { subject: '株式会社テスト', scope: '連結', basis: '日本基準' },
+      semantics: {
+        subject: '株式会社テスト',
+        scope: '連結',
+        basis: '日本基準',
+        periodKind: 'fullYear',
+        state: 'actual',
+      },
     });
     const summary: FactSummary = {
       version: 6,

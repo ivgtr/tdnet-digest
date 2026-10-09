@@ -2,6 +2,7 @@ import { reportingCoverBlocks } from './document-context';
 import { declaredSubjectsIn, normalized } from './document-structure';
 import {
   reportingScope,
+  isReportingCoverTitle,
   reportingFieldSegments,
   reportingBasis,
   bracketedReportingBases,
@@ -74,8 +75,11 @@ function sourceTarget(text: string): EarningsTarget | null {
 export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolution {
   const coverFields = reportingCoverBlocks(excerpts.filter((excerpt) => excerpt.page === 1));
   const cover = coverFields
-    .flatMap((excerpt) => excerpt.text.split('\n'))
-    .filter((text) => /20\d{2}年\d{1,2}月期[^。]*決算短信/.test(reportingPeriodText(text)));
+    .flatMap((excerpt) => reportingFieldSegments(excerpt.text))
+    .filter(
+      (text) =>
+        isReportingCoverTitle(text) && /20\d{2}年\d{1,2}月期/.test(reportingPeriodText(text))
+    );
   const titles = cover.length
     ? cover
     : excerpts

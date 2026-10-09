@@ -1,4 +1,9 @@
-import { reportingAttributeKey, hasCompleteReportingAttributes } from './reporting-attributes';
+import {
+  reportingAttributeKey,
+  hasCompleteReportingAttributes,
+  reportingFieldSegments,
+  isReportingCoverTitle,
+} from './reporting-attributes';
 import {
   numericValueKind,
   matchesReportingPeriod,
@@ -40,12 +45,14 @@ import { datedStates } from './fact-validation';
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import {
   buildDocumentContext,
+  reportingContextText,
   documentSubject,
   bindingFor,
   isFinancialUnit,
   reportingUnitTitle,
   isReportingCoverUnit,
   isReportingCoverField,
+  reportingCoverBlocks,
   isReportingMetadata,
   headingLevel,
   verifyScopeEvidence,
@@ -111,13 +118,13 @@ function reportedDividends(
         (h) => page.quantities.some((q) => q.id === h.valueId) && isIssuerSource(h.valueId, context)
       )
       .flatMap((hint) => {
-        if (!/配当の状況/.test(compact(text(hint.contextIds)))) return [];
+        if (!/配当の状況/.test(compact(reportingContextText(pages, hint.contextIds)))) return [];
         const unitText = compact(text(hint.unitIds));
         const unit = unitText === '円銭' ? '円' : unitText;
         if (!isPerShareDividend(text(hint.metricIds), unit)) return [];
         const axis = compact(text(hint.periodIds));
         const period = axis.match(/20\d{2}年\d{1,2}月期/)?.[0];
-        const state = numericValueKind(axis, text(hint.contextIds));
+        const state = numericValueKind(axis, reportingContextText(pages, hint.contextIds));
         if (state !== 'actual' && state !== 'forecast') return [];
         return period &&
           provedMappedQuantity(pages, hint, {
@@ -162,7 +169,6 @@ function proseMetricsAt(text: string, binding: ContextBinding) {
  * Keep source roles even if their quantities cannot yet be verified. */
 function forecastPublicationSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);
-  const nodes = new Map(pages.flatMap((p) => [...p.spans, ...p.blocks]).map((s) => [s.id, s.text]));
   const text = (ids: string[]) =>
     normalized(ids.map((id) => spans.find((s) => s.id === id)!.text).join(''));
   const result: Array<{
@@ -181,7 +187,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
     )
       return [];
     const axis = text(h.periodIds),
-      inherited = text(h.contextIds);
+      inherited = reportingContextText(pages, h.contextIds);
     const metric = revisionMetricLabel(text(h.metricIds)),
       period = sourceFiscalPeriod(axis, inherited);
     const state = numericValueKind(axis, inherited);
@@ -209,11 +215,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
     )
       continue;
     const binding = bindingFor(context, block.id);
-    const inherited = normalized(
-      binding.contextIds
-        .map((id) => pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!.text)
-        .join('')
-    );
+    const inherited = normalized(reportingContextText(pages, binding.contextIds));
     const own = normalized(block.text);
     const period = sourceFiscalPeriod(own, inherited),
       state = numericValueKind(own, inherited);
@@ -262,12 +264,7 @@ function forecastPublicationSources(pages: ExtractedPage[], context: DocumentCon
         )
           continue;
         const binding = bindingFor(context, anchor);
-        const inherited = binding.contextIds
-          .map((id) => {
-            if (!nodes.has(id)) throw new Error(`REFERENCE:原文の文脈 ${id} がありません`);
-            return nodes.get(id)!;
-          })
-          .join('');
+        const inherited = reportingContextText(pages, binding.contextIds);
         const state = numericValueKind(axis, inherited);
         if (state !== 'actual' && state !== 'forecast') continue;
         declaredGroups.push({
@@ -351,9 +348,7 @@ function declaredReportingMetrics(
         region.spanIds.map((id) => page.spans.find((s) => s.id === id)!.text).join('')
       );
       const binding = bindingFor(context, anchor);
-      const inherited = binding.contextIds
-        .map((id) => pages.flatMap((p) => p.spans).find((s) => s.id === id)!.text)
-        .join('');
+      const inherited = reportingContextText(pages, binding.contextIds);
       const titlePeriod = sourceFiscalPeriod('', normalized(inherited));
       if (
         (state === 'forecast' && !text.includes(report) && titlePeriod !== report) ||
@@ -386,11 +381,7 @@ function declaredReportingMetrics(
       continue;
     const text = normalized(block.text);
     const inherited = normalized(
-      bindingFor(context, block.id)
-        .contextIds.map(
-          (id) => pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-        )
-        .join('')
+      reportingContextText(pages, bindingFor(context, block.id).contextIds)
     );
     if (sourceFiscalPeriod(text, inherited) !== report || /^\(?注\)?|^※/.test(text)) continue;
     for (const { label } of proseMetricsAt(text, bindingFor(context, block.id))) {
@@ -436,11 +427,7 @@ function unchangedDividendSources(
         )
           return [];
         const binding = bindingFor(context, block.id),
-          inherited = binding.contextIds
-            .map(
-              (id) => pages.flatMap((p) => [...p.spans, ...p.blocks]).find((s) => s.id === id)!.text
-            )
-            .join('');
+          inherited = reportingContextText(pages, binding.contextIds);
         if (sourceFiscalPeriod(normalized(block.text), normalized(inherited)) !== report) return [];
         return [
           ...['中間配当金', '期末配当金', '年間配当金'],
@@ -490,11 +477,7 @@ function unchangedForecastAlternatives(
   const binding = bindingFor(context, required.id);
   const attributes = reportingAttributesAt(binding);
   const sourcePeriod = (block: typeof required) => {
-    const inherited = bindingFor(context, block.id)
-      .contextIds.map(
-        (id) => pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-      )
-      .join('');
+    const inherited = reportingContextText(pages, bindingFor(context, block.id).contextIds);
     return sourceFiscalPeriod(normalized(block.text), normalized(inherited));
   };
   const period = sourcePeriod(required);
@@ -786,8 +769,8 @@ export function declaredForecastFactIds(
   );
 }
 function sourceFiscalPeriod(axis: string, context: string): string | null {
-  const years = [...new Set(axis.match(/20\d{2}年\d{1,2}月期/g) ?? [])];
-  const inherited = [...new Set(context.match(/20\d{2}年\d{1,2}月期/g) ?? [])];
+  const years = [...new Set(normalized(axis).match(/20\d{2}年\d{1,2}月期/g) ?? [])];
+  const inherited = [...new Set(normalized(context).match(/20\d{2}年\d{1,2}月期/g) ?? [])];
   const applicable = years.length ? years : inherited;
   return applicable.length === 1 ? applicable[0] : null;
 }
@@ -846,7 +829,7 @@ function comparativeReportingSources(pages: ExtractedPage[], context: DocumentCo
     )
       return [];
     const axis = text(h.periodIds),
-      inherited = text(h.contextIds);
+      inherited = reportingContextText(pages, h.contextIds);
     if (
       sourceFiscalPeriod(axis, inherited) !== target.period ||
       numericValueKind(axis, inherited) !== 'actual'
@@ -898,12 +881,7 @@ function reportedProseMargins(pages: ExtractedPage[], context: DocumentContext, 
       )
         return false;
       const binding = bindingFor(context, block.id);
-      const sourceContext = binding.contextIds
-        .map(
-          (id) =>
-            pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)?.text ?? ''
-        )
-        .join('\n');
+      const sourceContext = reportingContextText(pages, binding.contextIds);
       return proseQuantities(block).some((q) => {
         const quantity = parseExactQuantity(q.raw);
         const value = quantity && quantityNumber(quantity.decimal)?.value;
@@ -949,23 +927,29 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
     )
       return false;
     try {
-      return reportingPeriodSource(text(h.periodIds), text(h.contextIds), period);
+      return reportingPeriodSource(
+        text(h.periodIds),
+        reportingContextText(pages, h.contextIds),
+        period
+      );
     } catch {
       return false;
     }
   });
 }
 function earningsReportingPeriod(pages: ExtractedPage[]) {
-  const title = pages
-    .find((p) => p.pageNumber === 1)
-    ?.text.normalize('NFKC')
-    .match(/(20\d{2}年\s*\d{1,2}月期)[^\n]*決算短信[^\n]*/);
+  const title = reportingCoverBlocks(pages.find((p) => p.pageNumber === 1)?.blocks ?? [])
+    .flatMap((block) => reportingFieldSegments(block.text))
+    .find(
+      (text) =>
+        isReportingCoverTitle(text) && /20\d{2}年\d{1,2}月期/.test(reportingPeriodText(text))
+    );
   if (!title) return null;
-  const text = reportingPeriodText(title[0]);
+  const text = reportingPeriodText(title);
   const shape = reportingPeriodShape(text);
   if (/単独/.test(text) && /累計|中間期/.test(text)) return null;
   return {
-    period: compact(title[1]),
+    period: text.match(/20\d{2}年\d{1,2}月期/)![0],
     quarter: shape ? `${shape}${/単独/.test(text) ? '単独' : ''}` : undefined,
   };
 }
@@ -1565,7 +1549,7 @@ export function coverageReport(
     anchor: h.valueId,
     label: normalized(h.metricIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
     axis: normalized(h.periodIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
-    context: normalized(h.contextIds.map((id) => spans.find((s) => s.id === id)!.text).join('')),
+    context: normalized(reportingContextText(pages, h.contextIds)),
     metricKind: mappedMetricKind(pages, h) as VerifiedFact['semantics']['metricKind'] | null,
   }));
   for (const page of pages)
@@ -1576,15 +1560,7 @@ export function coverageReport(
       if (
         !isReportingMetricSource(
           block.id,
-          numericValueKind(
-            block.text,
-            binding.contextIds
-              .map(
-                (id) =>
-                  pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-              )
-              .join('')
-          ) ?? '',
+          numericValueKind(block.text, reportingContextText(pages, binding.contextIds)) ?? '',
           pages,
           context
         )
@@ -1595,14 +1571,7 @@ export function coverageReport(
           anchor: block.id,
           label,
           axis: normalized(block.text),
-          context: normalized(
-            binding.contextIds
-              .map(
-                (id) =>
-                  pages.flatMap((p) => [...p.blocks, ...p.spans]).find((s) => s.id === id)!.text
-              )
-              .join('')
-          ),
+          context: normalized(reportingContextText(pages, binding.contextIds)),
           metricKind: null,
         });
     }
@@ -1641,16 +1610,9 @@ export function coverageReport(
           const own = [...new Set(normalized(b.text).match(/20\d{2}年\d{1,2}月(?![\d期])/g) ?? [])];
           const inherited = [
             ...new Set(
-              normalized(
-                bindingFor(context, b.id)
-                  .contextIds.map(
-                    (id) =>
-                      captions.find((s) => s.id === id)?.text ??
-                      spans.find((s) => s.id === id)?.text ??
-                      ''
-                  )
-                  .join('')
-              ).match(/20\d{2}年\d{1,2}月(?![\d期])/g) ?? []
+              normalized(reportingContextText(pages, bindingFor(context, b.id).contextIds)).match(
+                /20\d{2}年\d{1,2}月(?![\d期])/g
+              ) ?? []
             ),
           ];
           const periods = own.length ? own : inherited;

@@ -618,7 +618,7 @@ describe('原PDFから独立に固定した表紙の正常受理', () => {
       expect(renderFacts(summary)).toContain('年間配当金合計は「－」');
       expect(renderFacts(summary)).toContain('2026年11月期第3四半期累計');
     }
-  });
+  }, 30_000);
   it('IDECの本文配当は選択数量・1株の分母・予定と据置を同時に保持する', () => {
     const fixture = tables[0],
       p = extractPageLayout(

@@ -1,3 +1,10 @@
+import {
+  calendarDatePattern,
+  REPORTING_PERIOD_SHAPE_PATTERN,
+  reportingPeriodText,
+} from './period-semantics';
+import { isUncaptionedUnit, parseExactNumeric, proseQuantities } from './quantity';
+
 /** Source vocabulary shared by reporting declarations and their consumers. */
 export const reportingScope = '非連結|個別|単体|連結';
 export const reportingBasis = '日本基準|IFRS(?:会計基準)?|国際会計基準|米国基準';
@@ -39,7 +46,13 @@ const administrativeFieldLabels = [
   'TEL',
   'URL',
 ];
-const fieldLabels = `上場会社名|会社名|名称|範囲|会計基準|株式種類|取得対象株式(?:の)?種類|${administrativeFieldLabels.join('|')}`;
+const scheduleLabels = [
+  '定時株主総会(?:\\(継続会\\))?開催予定日',
+  '配当(?:金)?支払開始予定日',
+  '有価証券報告書提出予定日',
+];
+const statusLabel = '決算(?:補足説明資料作成|説明会開催)の有無';
+const fieldLabels = `上場会社名|会社名|名称|範囲|会計基準|株式種類|取得対象株式(?:の)?種類|${administrativeFieldLabels.join('|')}|${scheduleLabels.join('|')}|${statusLabel}`;
 const fieldName = new RegExp(`^(?:${fieldLabels}):?$`, 'i');
 const fieldStart = new RegExp(`^(?:${fieldLabels})`, 'i');
 const fieldLabelText = (part: string) =>
@@ -53,6 +66,91 @@ const administrativeField = new RegExp(
 );
 export function isReportingAdministrativeField(text: string): boolean {
   return administrativeField.test(text.normalize('NFKC').trim());
+}
+
+// Complete records are shared by ruled-cell projection and cover consumers.
+// Scope/basis/company atoms are deliberately absent: their ownership needs a
+// named field or an independently supported unruled declaration.
+const compactReportingText = (text: string) => text.normalize('NFKC').replace(/\s/g, '');
+const coverTitlePrefix = `(?:${calendarDatePattern})?(?:20\\d{2}年\\d{1,2}月期(?:の)?)?(?:(?:${REPORTING_PERIOD_SHAPE_PATTERN})+(?:の)?)?(?:四半期)?決算短信`;
+const coverTitleStart = new RegExp(`^${coverTitlePrefix}`, 'i');
+const coverTitle = new RegExp(
+  `^${coverTitlePrefix}(?:(?:〔(?:${reportingBasis})〕|\\[(?:${reportingBasis})\\])|\\((?:${reportingScope})\\))*(?:の(?:一部訂正について|補足説明資料))?(?:${calendarDatePattern})?$`,
+  'i'
+);
+const coverRecordText = (text: string) =>
+  reportingPeriodText(text).replace(/^(?:\(\d+\)|\d+[.．]|■)/, '');
+export function isReportingCoverTitle(text: string): boolean {
+  return coverTitle.test(coverRecordText(text));
+}
+/** A malformed cover must still use the strict earnings ownership boundary. */
+export function hasReportingCoverTitle(text: string): boolean {
+  return text
+    .normalize('NFKC')
+    .split(/[\n|│]/)
+    .some((cell) => coverTitleStart.test(coverRecordText(cell)));
+}
+
+const monetaryUnit = '(?:十|百|千|万|百万|千万|億|兆)?(?:円|%)';
+const reportingAmount = new RegExp(
+  `[0-9][0-9,.]*${monetaryUnit}|${monetaryUnit}(?:[):]|\\]|】)*[△▲−-]?[0-9]`
+);
+export function reportingValueText(text: string): boolean {
+  const raw = text.normalize('NFKC').trim();
+  // Complete URL/code fields are literal metadata: encoded paths are not percentages
+  // and the letter in a four-character securities code is not a quantity unit.
+  if (
+    /^(?:U\s*R\s*L(?:\s*:\s*|\s+))?https?:\/\/\S+$/i.test(raw) ||
+    /^(?:コ\s*ー\s*ド\s*番\s*号|証\s*券\s*コ\s*ー\s*ド)(?:\s*:\s*|\s+)[0-9A-Z]{4}(?:\s+U\s*R\s*L(?:\s*:\s*|\s+)https?:\/\/\S+)?$/i.test(
+      raw
+    )
+  )
+    return false;
+  return (
+    /[。；;]/.test(raw) ||
+    reportingAmount.test(compactReportingText(raw)) ||
+    proseQuantities({ id: 'metadata', text: raw }).some((quantity) =>
+      parseExactNumeric(quantity.raw)
+    ) ||
+    [...raw.matchAll(/[([]\s*([^()[\]]+)\s*[)\]]\s*[△▲−-]?\d/g)].some((match) =>
+      isUncaptionedUnit(compactReportingText(match[1]))
+    )
+  );
+}
+
+const reportingSchedule = new RegExp(
+  `^(?:${calendarDatePattern})?(?:(?:${scheduleLabels.join('|')}):?(?:${calendarDatePattern}|[-―]|未定))+$`
+);
+const reportingStatus = new RegExp(`^${statusLabel}:?(?:有|無)(?:\\([^()]*\\))?$`);
+const reportingDate = new RegExp(`^${calendarDatePattern}$`);
+
+/** Every character belongs to an independently supported administrative record. */
+export function isReportingAdministrativeRecord(text: string): boolean {
+  if (fieldName.test(fieldLabelText(text))) return false;
+  const compact = compactReportingText(text);
+  return (
+    (isAdministrativeBlock(text) ||
+      isReportingAdministrativeField(text) ||
+      reportingDate.test(compact) ||
+      /^\(?百万円未満切捨て\)?$/.test(compact) ||
+      // PDF grouping may split this label from the date and 開催予定日.
+      /^(?:定時株主総会(?:\(継続会\))?|開催予定日)$/.test(compact) ||
+      reportingSchedule.test(compact) ||
+      reportingStatus.test(compact)) &&
+    !reportingValueText(text)
+  );
+}
+/** Only typed field schemas may bind an otherwise independent next record. */
+function ownsIndependentRecord(label: string, value: string): boolean {
+  const combined = compactReportingText(label + value);
+  return (
+    reportingSchedule.test(combined) ||
+    reportingStatus.test(combined) ||
+    (/^URL:?$/i.test(fieldLabelText(label)) && /^https?:\/\/\S+$/i.test(value))
+  );
+}
+function isIndependentReportingRecord(text: string): boolean {
+  return isReportingCoverTitle(text) || isReportingAdministrativeRecord(text);
 }
 
 // A personnel record has a role and a name, or an explicitly labelled name.
@@ -103,7 +201,12 @@ function personnelRecordEnd(cells: string[], start: number): number | null {
   const values = field[1] ? [field[1]] : [];
   // Field label + role label/value + name label/value is the longest record.
   for (let end = start + 1; end < Math.min(cells.length, start + 5); end++) {
-    if (!cells[end] || fieldStart.test(fieldLabelText(cells[end]))) break;
+    if (
+      !cells[end] ||
+      fieldStart.test(fieldLabelText(cells[end])) ||
+      isIndependentReportingRecord(cells[end])
+    )
+      break;
     values.push(cells[end]);
     if (isPersonnelRecord(values)) return end;
   }
@@ -124,7 +227,8 @@ export function reportingFieldProjection(text: string): { segments: string[]; co
       let blockedValue = false;
       for (let i = 0; i < cells.length; i++) {
         if (!cells[i]) continue;
-        if (fieldStart.test(fieldLabelText(cells[i]))) blockedValue = false;
+        const independent = isIndependentReportingRecord(cells[i]);
+        if (fieldStart.test(fieldLabelText(cells[i])) || independent) blockedValue = false;
         if (blockedValue) {
           complete = false;
           continue;
@@ -135,11 +239,16 @@ export function reportingFieldProjection(text: string): { segments: string[]; co
           i = recordEnd;
           continue;
         }
+        if (independent) {
+          parts.push(cells[i]);
+          continue;
+        }
         const next = cells[i + 1];
         if (
           fieldName.test(fieldLabelText(cells[i])) &&
           next &&
-          !fieldStart.test(fieldLabelText(next))
+          !fieldStart.test(fieldLabelText(next)) &&
+          (!isIndependentReportingRecord(next) || ownsIndependentRecord(cells[i], next))
         )
           parts.push(`${cells[i]} ${cells[++i]}`);
         else {
@@ -147,7 +256,10 @@ export function reportingFieldProjection(text: string): { segments: string[]; co
           if (fieldStart.test(fieldLabelText(cells[i])) || !/[|│]/.test(line)) parts.push(cells[i]);
           else complete = false;
           // A blank or unproved cell relationship cannot lend a later bare value.
-          if (fieldName.test(fieldLabelText(cells[i])) && next === '') blockedValue = true;
+          if (fieldName.test(fieldLabelText(cells[i])) && next === '') {
+            blockedValue = true;
+            complete = false;
+          }
         }
       }
       return parts;

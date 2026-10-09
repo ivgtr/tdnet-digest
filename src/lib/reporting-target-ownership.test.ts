@@ -20,6 +20,39 @@ import { reportingFieldProjection, reportingFieldSegments } from './reporting-at
 const cover = '2026年3月期 決算短信（連結）';
 const issuer = '株式会社テスト';
 
+it('予想表題の年と月期が別spanでも同じ3指標の義務と2数量の根拠を保持する', () => {
+  const first = textPage(`会社名 ${issuer}\n範囲 連結\n会計基準 日本基準`);
+  const forms: [string, number, number, number][][] = [
+    [['1. 2027年3月期連結業績予想', 0, 0, 350]],
+    [
+      ['1. 2027', 0, 0, 65],
+      ['年3月期連結業績予想', 65, 0, 240],
+    ],
+  ];
+  for (const heading of forms) {
+    const page = cells(
+      [
+        ...heading,
+        ['売上高', 400, 80, 80],
+        ['営業利益', 600, 80, 80],
+        ['百万円', 410, 110, 60],
+        ['百万円', 610, 110, 60],
+        ['通期', 0, 140, 300],
+        ['200', 410, 140, 30],
+        ['20', 610, 140, 30],
+      ],
+      2
+    );
+    const slots = coverageReport('earningsRevision', [first, page], []);
+    expect(slots.map((slot) => slot.requirement)).toEqual([
+      'COVERAGE:業績予想公表の重要指標 revenue 対象期=2027年3月期 区分=forecast',
+      'COVERAGE:業績予想公表の重要指標 operatingProfit 対象期=2027年3月期 区分=forecast',
+      'COVERAGE:業績予想公表の重要指標 netProfit 対象期=2027年3月期 区分=forecast',
+    ]);
+    expect(slots.map((slot) => slot.sourceIds.length)).toEqual([1, 1, 0]);
+  }
+});
+
 it('連絡欄に混在した実績を原文一覧から消して表紙の所有境界を飛び越さない', () => {
   const title = '2026年3月期 決算短信〔日本基準〕（連結）';
   for (const value of [
@@ -151,7 +184,13 @@ it('予想の独立した会社・範囲宣言を最初の値とせず、本文�
   for (const text of [`会社名 ${issuer} 売上高100百万円`, `会社名 ${issuer} 売上高（百万円）1000`])
     expect(isReportingMetadata({ id: 'p1b1', text })).toBe(false);
   const first = textPage(`${cover}\n会社名 ${issuer}`);
-  for (const field of [`会社名 ${issuer}`, issuer, '(連結)', '参考情報']) {
+  for (const field of [
+    `会社名 ${issuer}`,
+    issuer,
+    '(連結)',
+    '2026年5月10日 │ 決算説明会開催の有無：有',
+    '参考情報',
+  ]) {
     const { pages, facts } = forecast(first, [field, '会計基準 日本基準']);
     expect([...declaredForecastFactIds(pages, facts)]).toEqual(
       field === '参考情報' ? [] : [facts[0].id]
@@ -267,5 +306,37 @@ it('会社欄と同じブロックに折返された総会日程ラベルで発�
   expect(earningsTarget(sourceInventory([page], undefined, 'earnings')).target).toMatchObject({
     subject: issuer,
     basis: '日本基準',
+  });
+});
+
+it('表題セルの外の不明な範囲・基準・本文を表紙属性へ昇格させない', () => {
+  const title = '2026年3月期 決算短信〔日本基準〕（連結）';
+  for (const suffix of ['参考情報', '売上高100百万円', '(個別)', '〔IFRS〕']) {
+    for (const separator of suffix.startsWith('(') || suffix.startsWith('〔')
+      ? [' │ ']
+      : [' │ ', ' ']) {
+      const source = `${title}${separator}${suffix}`;
+      const page = textPage(`${source}\n会社名 ${issuer}`);
+      expect(reportingCoverBlocks(page.blocks)).toEqual([]);
+      expect(documentSubject(buildDocumentContext([page]))).toBeNull();
+      expect(earningsTarget(sourceInventory([page], undefined, 'earnings')).target).toBeNull();
+    }
+  }
+  const compact = textPage(`${title} 2026年5月10日\n会社名 ${issuer}`);
+  expect(documentSubject(buildDocumentContext([compact]))).toBe(issuer);
+  expect(earningsTarget(sourceInventory([compact], undefined, 'earnings')).target).toMatchObject({
+    subject: issuer,
+    scope: '連結',
+    basis: '日本基準',
+  });
+});
+
+it('年のない完全な表題は経営成績の明示対象期への既存の照合を妨げない', () => {
+  const page = textPage(
+    `決算短信\n会社名 ${issuer}\n範囲 連結\n会計基準 日本基準\n1. 2026年3月期連結経営成績\n売上高は100百万円です。`
+  );
+  expect(earningsTarget(sourceInventory([page], undefined, 'earnings'))).toMatchObject({
+    issue: null,
+    target: { fiscal: '2026年3月期', subject: issuer, scope: '連結', basis: '日本基準' },
   });
 });

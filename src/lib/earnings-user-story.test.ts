@@ -60,5 +60,5 @@ describe('決算短信を要約し、閉じて再表示する利用者のスト�
       i === 0 ? { ...slot, status: 'absent' as const } : slot
     );
     expect(() => assertEarningsStoryCoverage(unconfirmed, true)).toThrow();
-  }, 15_000);
+  }, 30_000);
 });

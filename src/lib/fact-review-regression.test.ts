@@ -575,7 +575,7 @@ describe('表紙宣言の出典範囲', () => {
     const good = reviewCandidates(candidateResponse(facts, pages), 'other', pages);
     expect(good.unverified).toEqual([]);
     expect(good.facts).toHaveLength(3);
-    expect(() => verifyCoverage('earnings', pages, good.facts)).toThrow('revenue');
+    expect(() => verifyCoverage('earnings', pages, good.facts)).toThrow('報告対象の決算期');
   });
 });
 

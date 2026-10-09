@@ -12,6 +12,7 @@ import {
 import {
   bindingFor,
   buildDocumentContext,
+  reportingContextText,
   resolveScopeIds,
   isFinancialUnit,
   applicableDeclarations,
@@ -353,12 +354,7 @@ function compose(
       base.evidence.scopeIds.push(...resolveScopeIds(binding, meaning, financial, [role]));
     });
   base.evidence.scopeIds = [...new Set(base.evidence.scopeIds)];
-  const applicableText = binding.contextIds
-    .map((id) => {
-      const b = pages.flatMap((p) => p.blocks).find((b) => b.id === id);
-      return b?.text ?? pages.flatMap((p) => p.spans).find((s) => s.id === id)?.text ?? '';
-    })
-    .join('\n');
+  const applicableText = reportingContextText(pages, binding.contextIds);
   if (numeric) {
     attempt('metric', () => {
       if (meaning.metricKind !== classifyMetric(label, unit, s.kind === 'prose' ? block.text : ''))
