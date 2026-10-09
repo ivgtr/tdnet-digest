@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
+import { ANALYSIS_CACHE_DIAGNOSTIC_PREFIX } from '@/lib/analysis-trace';
 import { LLM_PROVIDERS, getProvider } from '@/lib/llm-providers';
 import { customApiPermission, SCORING_PDF_PERMISSIONS } from '@/lib/host-permissions';
 
@@ -139,6 +140,7 @@ const Options: React.FC = () => {
               `analysisCacheV1:${entry.resultId}`,
               `analysisCacheV2:${entry.resultId}`,
               `analysisCacheV3:${entry.resultId}`,
+              ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + entry.resultId,
             ]
           : []),
       ],
@@ -158,6 +160,7 @@ const Options: React.FC = () => {
           key.startsWith('analysisCacheV1:') ||
           key.startsWith('analysisCacheV2:') ||
           key.startsWith('analysisCacheV3:') ||
+          key.startsWith(ANALYSIS_CACHE_DIAGNOSTIC_PREFIX) ||
           key === 'summaryCache'
       );
       chrome.storage.local.remove(keys, loadCacheEntries);

@@ -18,6 +18,11 @@ import type { ExperimentalScore } from '@/lib/scoring';
 import { parseAnalysisResponse } from '@/lib/additional-analysis';
 import { buildAnalysisInput } from '@/lib/analysis-input';
 import {
+  ANALYSIS_CACHE_DIAGNOSTIC_PREFIX,
+  saveAnalysisTrace,
+  type AnalysisTrace,
+} from '@/lib/analysis-trace';
+import {
   SUMMARY_TRACE_KEY,
   SUMMARY_DIAGNOSTICS_KEY,
   saveSummaryTrace,
@@ -309,9 +314,25 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
       fresh = structuredClone(additionalAnalysis);
     old.issues[0].title = '閉じる前の論点';
     fresh.issues[0].title = '開き直した後の論点';
-    await act(async () => second.resolve({ analysis: fresh }));
-    await act(async () => first.resolve({ analysis: old }));
+    await act(async () =>
+      second.resolve({
+        analysis: fresh,
+        diagnosticRunId: 'new-analysis-run',
+        diagnosticPersistence: 'saved',
+      })
+    );
+    await act(async () =>
+      first.resolve({
+        analysis: old,
+        diagnosticRunId: 'old-analysis-run',
+        diagnosticPersistence: 'saved',
+      })
+    );
     expect(hook().analysis.data).toEqual(fresh);
+    expect(hook().analysis.diagnosticRunId).toBe('new-analysis-run');
+    expect(stored[ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + response.resultId]).toMatchObject({
+      runId: 'new-analysis-run',
+    });
     expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(fresh);
   });
 
@@ -836,6 +857,218 @@ describe('実Reactの要約行アクション配置', () => {
     expect(summaryRow.textContent).toContain('100百万円');
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledTimes(3);
+  });
+
+  it('追加分析の失敗JSONを別ボタンで出し、閉じて開くと保存済み成功の実行へ戻す', async () => {
+    settings.experimentalScoring = false;
+    const response = await responseFor();
+    const summaryTrace = await traceFor(response.diagnosticRunId, response.resultId);
+    await saveSummaryTrace(summaryTrace);
+    const input = buildAnalysisInput(facts, presentation);
+    const traceA: AnalysisTrace = {
+      version: 1,
+      stage: 'analysis',
+      runId: 'analysis-success',
+      summaryResultId: response.resultId,
+      startedAt: '2026-10-09T00:00:00Z',
+      intentAt: 1,
+      pdfUrl,
+      provider: 'openai',
+      model: 'fixture',
+      buildDigest: 'build',
+      fingerprint: response.metadata.analysisFingerprint,
+      inputHash: input.inputHash,
+      input,
+      contract: {
+        version: 3,
+        allowedEvidenceIds: input.evidence.map((e) => e.id),
+        limits: { issues: 4, references: 6, title: 80, text: 350 },
+      },
+      response: JSON.stringify({ version: 3, issues: additionalAnalysis.issues }),
+      usage: null,
+      outcome: 'success',
+      error: null,
+      elapsedMs: 2,
+    };
+    const traceB: AnalysisTrace = {
+      ...traceA,
+      runId: 'analysis-failed',
+      intentAt: 2,
+      outcome: 'failure',
+      response: '{broken',
+      error: { code: 'invalid_json', path: '$', message: 'JSON不正' },
+    };
+    await saveAnalysisTrace(traceA);
+    await saveAnalysisTrace(traceB);
+    sendMessage
+      .mockResolvedValueOnce(response)
+      .mockResolvedValueOnce({
+        analysis: additionalAnalysis,
+        diagnosticRunId: traceA.runId,
+        diagnosticPersistence: 'saved',
+        diagnosticInputHash: input.inputHash,
+      })
+      .mockResolvedValueOnce({
+        error: 'JSON不正 (invalid_json: $)',
+        diagnosticRunId: traceB.runId,
+        diagnosticPersistence: 'saved',
+        diagnosticInputHash: input.inputHash,
+      });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { row, button } = await mountButton();
+    await click(button);
+    let summaryRow = await summaryRowFor(row);
+    const analysisCopy = () =>
+      Array.from(
+        summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
+      ).find(
+        (b) =>
+          b.textContent === '成功した追加分析の診断JSONをコピー' ||
+          b.textContent === '直近の試行の診断JSONをコピー'
+      )!;
+    await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
+    expect(stored[ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + response.resultId]).toMatchObject({
+      runId: traceA.runId,
+      summaryResultId: response.resultId,
+      inputHash: input.inputHash,
+    });
+    await click(analysisCopy());
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceA);
+    expect(summaryRow.querySelector('textarea')?.getAttribute('aria-label')).toBe(
+      '成功した追加分析の診断JSON'
+    );
+    await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain('JSON不正');
+    expect(summaryRow.textContent).toContain('100百万円');
+    await click(analysisCopy());
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceB);
+    expect(stored[ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + response.resultId]).toMatchObject({
+      runId: traceA.runId,
+    });
+    await click(summaryRow.querySelector<HTMLButtonElement>('[data-diagnostic-root] button')!);
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(summaryTrace);
+    await click(button);
+    await click(button);
+    summaryRow = await summaryRowFor(row);
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain('増益の継続条件');
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).not.toContain('JSON不正');
+    await click(analysisCopy());
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceA);
+    expect(summaryRow.querySelector('[data-diagnostic-root]')?.textContent).toContain(
+      '以前の成功した分析を表示しています'
+    );
+    await click(
+      Array.from(
+        summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
+      ).find((b) => b.textContent === '直近の試行の診断JSONをコピー')!
+    );
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceB);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
+
+  it('最初の追加分析が失敗しても再マウント後に直近の失敗をコピーし、別入力へ混ぜない', async () => {
+    settings.experimentalScoring = false;
+    const response = await responseFor();
+    const input = buildAnalysisInput(facts, presentation);
+    const trace: AnalysisTrace = {
+      version: 1,
+      stage: 'analysis',
+      runId: 'first-failed-attempt',
+      summaryResultId: response.resultId,
+      startedAt: '2026-10-09T00:00:00Z',
+      intentAt: 1,
+      pdfUrl,
+      provider: 'openai',
+      model: 'fixture',
+      buildDigest: 'build',
+      fingerprint: response.metadata.analysisFingerprint,
+      inputHash: input.inputHash,
+      input,
+      contract: {
+        version: 3,
+        allowedEvidenceIds: input.evidence.map((e) => e.id),
+        limits: { issues: 4, references: 6, title: 80, text: 350 },
+      },
+      response: '{malformed',
+      usage: null,
+      outcome: 'failure',
+      error: { code: 'invalid_json', path: '$', message: 'JSON不正' },
+      elapsedMs: 2,
+    };
+    await saveAnalysisTrace(trace);
+    sendMessage.mockResolvedValueOnce(response).mockResolvedValueOnce({
+      error: 'JSON不正',
+      diagnosticRunId: trace.runId,
+      diagnosticPersistence: 'saved',
+      diagnosticInputHash: input.inputHash,
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    let mounted = await mountButton();
+    await click(mounted.button);
+    let summaryRow = await summaryRowFor(mounted.row);
+    await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
+    expect(stored[`analysisCacheV3:${response.resultId}`]).toBeUndefined();
+    await act(async () => root.unmount());
+    container.remove();
+    mounted = await mountButton();
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(mounted.button.textContent).toBe('表示');
+    });
+    await click(mounted.button);
+    summaryRow = await summaryRowFor(mounted.row);
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain(
+      '前回の追加分析: JSON不正'
+    );
+    const copy = Array.from(
+      summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
+    ).find((b) => b.textContent === '直近の試行の診断JSONをコピー')!;
+    expect(copy).toBeDefined();
+    await click(copy);
+    expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(trace);
+    expect(summaryRow.querySelector('textarea')?.getAttribute('aria-label')).toBe(
+      '直近の試行の診断JSON'
+    );
+    expect(summaryRow.textContent).toContain('100百万円');
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('追加分析の診断保存失敗でも要約と有効な分析を表示し、旧診断をコピーしない', async () => {
+    settings.experimentalScoring = false;
+    const response = await responseFor();
+    sendMessage.mockResolvedValueOnce(response).mockResolvedValueOnce({
+      analysis: additionalAnalysis,
+      diagnosticRunId: 'unsaved-analysis',
+      diagnosticPersistence: 'failed',
+      diagnosticInputHash: additionalAnalysis.inputHash,
+      persistenceWarning: '追加分析の診断を保存できませんでした',
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { row, button } = await mountButton();
+    await click(button);
+    const summaryRow = await summaryRowFor(row);
+    await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
+    expect(summaryRow.textContent).toContain('100百万円');
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain('増益の継続条件');
+    expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain(
+      '診断を保存できません'
+    );
+    const copy = Array.from(
+      summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
+    ).find(
+      (b) =>
+        b.textContent === '成功した追加分析の診断JSONをコピー' ||
+        b.textContent === '直近の試行の診断JSONをコピー'
+    )!;
+    await click(copy);
+    expect(
+      summaryRow.querySelector('[data-diagnostic-root] [role="alert"]')?.textContent
+    ).toContain('保存できません');
+    expect(writeText).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it.each(['throw', 'reject'] as const)(

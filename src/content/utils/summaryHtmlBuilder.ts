@@ -170,7 +170,7 @@ export function buildAnalysisStageHtml(
   return analysis?.loading
     ? ''
     : analysis?.error
-      ? `<p role="alert" style="${SUMMARY_STYLES.warningBox} margin-top: 12px;">追加分析失敗: ${escapeMetadataText(analysis.error)}</p>`
+      ? `<p role="alert" style="${SUMMARY_STYLES.warningBox} margin-top: 12px;">追加分析失敗: ${escapeMetadataText(analysis.error)}</p>` + buildPersistenceWarningHtml(analysis.persistenceWarning)
       : analysis?.data
         ? buildAnalysisHtml(analysis.data, facts, pdfUrl) +
           buildPersistenceWarningHtml(analysis.persistenceWarning)
@@ -220,6 +220,8 @@ function buildAnalysisHtml(
   return `<div><p style="font-size:12px;color:#6b7280;">結論と読みはAIの推論です。根拠との参照対応は確認していますが、推論の正しさを保証するものではありません。</p>
     ${issues || '<p>確認済み入力から、要約に追加できる論点を生成できませんでした。</p>'}
     ${c.organizationStatus !== 'ready' || c.unresolvedSources ? '<p style="color:#92400e;">説明・指標の一部が入力で未確認です。分析にない事項も原PDFを確認してください。</p>' : ''}
+    ${c.limitations.map((text) => `<p style="color:#92400e;">${escapeMetadataText(text)}</p>`).join('')}
+    ${c.unverifiedItems ? `<p style="color:#92400e;">未確認・不採用項目${c.unverifiedItems}件 / 関連する原文ページ ${c.unverifiedSourcePages.join(', ') || '未特定'}。原PDFで要因・条件を確認してください。</p>` : ''}
     <details><summary>追加分析の生成情報</summary><p>入力: 事実${c.facts}・説明${c.explanations}・指標${c.observations}・計算${c.calculations} / 根拠ページ ${c.pages.join(', ')} / 未整理原文${c.unresolvedSources}件・未確認事実${c.unverifiedFacts}件</p><p>入力識別子: ${escapeMetadataText(analysis.inputHash)}${analysis.usage ? ` / 出力${analysis.usage.outputTokens ?? '不明'}token / ${Math.round(analysis.usage.elapsedMs)}ms / ${escapeMetadataText(analysis.usage.finishReason ?? '終了理由不明')}` : ' / API使用量は未取得'}</p></details></div>`;
 }
 

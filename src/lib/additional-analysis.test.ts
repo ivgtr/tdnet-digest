@@ -5,12 +5,17 @@ import { buildPresentation } from './fixtures/summary-narrative-source';
 import { buildAnalysisInput } from './analysis-input';
 import {
   analyzeFacts,
+  ANALYSIS_LIMITS,
+  AnalysisValidationError,
+  analysisModelInput,
+  analysisResponseSchema,
   analysisPrompt,
   parseAnalysis,
   parseAnalysisResponse,
 } from './additional-analysis';
 import { buildAnalysisStageHtml } from '../content/utils/summaryHtmlBuilder';
 import { generateText } from './llm-client';
+import type { AnalysisGenerationDiagnostic } from './analysis-trace';
 
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 const page = textPage(
@@ -141,15 +146,6 @@ describe('追加分析の根拠と論点の契約', () => {
   });
 
   it.each([
-    ['unknown reference', () => ({ ...issue(), evidenceIds: ['unknown'] })],
-    ['empty reference', () => ({ ...issue(), evidenceIds: [] })],
-    [
-      'repeated reference',
-      () => ({
-        ...issue(),
-        evidenceIds: [`fact:${facts.facts[0].id}`, `fact:${facts.facts[0].id}`],
-      }),
-    ],
     ['generated arithmetic', () => ({ ...issue(), reading: '来期は200百万円になります' })],
     ['kanji arithmetic', () => ({ ...issue(), reading: '利益が二倍になる可能性があります' })],
     ['same reading', () => ({ ...issue(), reading: issue().conclusion })],
@@ -232,6 +228,247 @@ describe('追加分析の要求予算と診断', () => {
     const assertion = expect(analyzeFacts(config, facts, presentation)).rejects.toThrow('制限時間');
     await vi.advanceTimersByTimeAsync(60_000);
     await assertion;
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('生成契約と診断の正負境界', () => {
+  it.each([
+    ['title', ANALYSIS_LIMITS.title],
+    ['reading', ANALYSIS_LIMITS.text],
+  ] as const)('%sの文字数をスキーマと同じUnicode文字数で数える', (key, limit) => {
+    for (const character of ['続', '𠮷']) {
+      const accepted = { ...issue(), [key]: character.repeat(limit) };
+      expect(parseAnalysisResponse(response([accepted]), input()).issues).toHaveLength(1);
+      expect(() =>
+        parseAnalysisResponse(
+          response([{ ...accepted, [key]: character.repeat(limit + 1) }]),
+          input()
+        )
+      ).toThrow(expect.objectContaining({ code: 'text_length', path: `$.issues[0].${key}` }));
+    }
+  });
+
+  it.each([
+    ['invalid_json', '$', () => '{broken'],
+    ['response_shape', '$', () => JSON.stringify({ version: 3, issues: [], extra: true })],
+    ['response_version', '$.version', () => JSON.stringify({ version: 2, issues: [] })],
+    ['issues_type', '$.issues', () => JSON.stringify({ version: 3, issues: {} })],
+    ['issues_count', '$.issues', () => response(Array.from({ length: 5 }, issue))],
+    [
+      'issue_shape',
+      '$.issues[0]',
+      () => JSON.stringify({ version: 3, issues: [{ title: '欠損' }] }),
+    ],
+    [
+      'text_type',
+      '$.issues[0].reading',
+      () => JSON.stringify({ version: 3, issues: [{ ...issue(), reading: null }] }),
+    ],
+    ['text_empty', '$.issues[0].caveat', () => response([{ ...issue(), caveat: '  ' }])],
+    [
+      'text_placeholder',
+      '$.issues[0].reading',
+      () => response([{ ...issue(), reading: ' 判断不能 ' }]),
+    ],
+    [
+      'evidence_type',
+      '$.issues[0].evidenceIds',
+      () => JSON.stringify({ version: 3, issues: [{ ...issue(), evidenceIds: 'not-array' }] }),
+    ],
+    [
+      'evidence_count',
+      '$.issues[0].evidenceIds',
+      () => response([{ ...issue(), evidenceIds: [] }]),
+    ],
+    [
+      'evidence_id_type',
+      '$.issues[0].evidenceIds[0]',
+      () => JSON.stringify({ version: 3, issues: [{ ...issue(), evidenceIds: [null] }] }),
+    ],
+    [
+      'evidence_unknown',
+      '$.issues[0].evidenceIds[0]',
+      () => response([{ ...issue(), evidenceIds: [facts.facts[0].id] }]),
+    ],
+    [
+      'evidence_unknown',
+      '$.issues[0].evidenceIds[0]',
+      () => response([{ ...issue(), evidenceIds: [input().evidence[0].sourceIds[1]] }]),
+    ],
+    [
+      'evidence_duplicate',
+      '$.issues[0].evidenceIds[1]',
+      () =>
+        response([{ ...issue(), evidenceIds: [issue().evidenceIds[0], issue().evidenceIds[0]] }]),
+    ],
+  ])('%sを失敗位置とともに区別する', (code, path, raw) => {
+    expect(() => parseAnalysisResponse(raw(), input())).toThrow(
+      expect.objectContaining({ code, path })
+    );
+  });
+
+  it('引用可能IDだけをモデルへ投影し、長さ・必須キー・件数をプロンプトとスキーマへ揃える', () => {
+    const source = input();
+    const model = analysisModelInput(source);
+    expect(model.allowedEvidenceIds).toEqual(source.evidence.map((e) => e.id));
+    expect(model.evidence).toEqual(source.evidence.map(({ sourceIds: _sources, ...e }) => e));
+    expect(JSON.stringify(model)).not.toContain('sourceIds');
+    expect(model.coverage).toEqual(source.coverage);
+    const schema = analysisResponseSchema(source);
+    expect(schema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['version', 'issues'],
+      properties: {
+        version: { enum: [3] },
+        issues: {
+          maxItems: ANALYSIS_LIMITS.issues,
+          items: {
+            additionalProperties: false,
+            properties: {
+              title: { minLength: 1, maxLength: ANALYSIS_LIMITS.title },
+              reading: { minLength: 1, maxLength: ANALYSIS_LIMITS.text },
+              evidenceIds: {
+                minItems: 1,
+                maxItems: ANALYSIS_LIMITS.references,
+                items: { enum: model.allowedEvidenceIds },
+              },
+            },
+          },
+        },
+      },
+    });
+    const messages = analysisPrompt(source);
+    expect(messages[0].content).toContain('titleは80文字以内');
+    expect(messages[0].content).toContain('各350文字以内');
+    expect(messages[0].content).toContain('evidence[].idと同一');
+    expect(messages[0].content).toContain('同じ配列内で重複させません');
+    expect(JSON.parse(messages[1].content.split('\n入力: ')[1])).toEqual(model);
+    // Projection never removes internal provenance from the saved/displayed evidence.
+    const result = parseAnalysisResponse(response(), source);
+    expect(result.evidence[0].sourceIds).toEqual(source.evidence[0].sourceIds);
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+  });
+
+  it.each([
+    ['openrouter', 'deepseek/deepseek-v4.1-flash', 'json_schema'],
+    ['openai', 'fixture', 'json_object'],
+    ['custom', 'fixture', undefined],
+  ])(
+    '%s/%sは既知の応答形式能力だけを使い、暗黙の形式再試行をしない',
+    async (provider, model, format) => {
+      vi.mocked(generateText).mockResolvedValueOnce(response());
+      await analyzeFacts({ ...config, provider, model }, facts, presentation);
+      const sent = vi.mocked(generateText).mock.calls[0][0];
+      if (format === 'json_schema') {
+        expect(sent.responseFormat).toEqual({
+          type: 'json_schema',
+          json_schema: {
+            name: 'tdnet_additional_analysis',
+            strict: true,
+            schema: analysisResponseSchema(input()),
+          },
+        });
+        expect(sent.reasoningEnabled).toBe(false);
+      } else expect(sent.responseFormat).toBe(format);
+      expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('不明参照の生応答と失敗位置を残し、保存失敗でも生成を再試行しない', async () => {
+    const raw = response([{ ...issue(), evidenceIds: ['p1s58'] }]);
+    const snapshots: AnalysisGenerationDiagnostic[] = [];
+    vi.mocked(generateText).mockImplementationOnce(async (options) => {
+      options.onUsage?.({
+        inputTokens: 100,
+        outputTokens: 1215,
+        elapsedMs: 20,
+        finishReason: 'stop',
+      });
+      options.onResponse?.(raw);
+      return raw;
+    });
+    await expect(
+      analyzeFacts(config, facts, presentation, (snapshot) => {
+        snapshots.push(snapshot);
+        throw new Error('quota');
+      })
+    ).rejects.toThrow(
+      expect.objectContaining({
+        code: 'evidence_unknown',
+        path: '$.issues[0].evidenceIds[0]',
+      })
+    );
+    expect(snapshots.map((s) => s.outcome)).toEqual(['running', 'running', 'failure']);
+    expect(snapshots[0].response).toBeNull();
+    expect(snapshots[snapshots.length - 1]).toMatchObject({
+      response: raw,
+      usage: { outputTokens: 1215, finishReason: 'stop' },
+      error: { code: 'evidence_unknown', path: '$.issues[0].evidenceIds[0]' },
+    });
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+  });
+
+  it('使用量と中断された生応答を通信層の例外後も保持し、未受信と空応答を区別する', async () => {
+    for (const raw of [null, '', '{"version":3,"issues":[']) {
+      const snapshots: AnalysisGenerationDiagnostic[] = [];
+      vi.mocked(generateText).mockImplementationOnce(async (options) => {
+        if (raw !== null) options.onResponse?.(raw);
+        if (raw)
+          options.onUsage?.({
+            inputTokens: 100,
+            outputTokens: 8192,
+            elapsedMs: 20,
+            finishReason: 'length',
+          });
+        throw new Error(raw ? 'APIの推論・出力上限' : '通信エラー');
+      });
+      await expect(
+        analyzeFacts(config, facts, presentation, (s) => {
+          snapshots.push(s);
+        })
+      ).rejects.toBeInstanceOf(AnalysisValidationError);
+      expect(snapshots[snapshots.length - 1]).toMatchObject({
+        outcome: 'failure',
+        response: raw,
+        error: { code: raw ? 'output_limit' : 'request_failed' },
+      });
+    }
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(3);
+  });
+
+  it('開始前の中断はAPIを呼ばず診断し、成功応答は診断保存失敗でも返す', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const snapshots: AnalysisGenerationDiagnostic[] = [];
+    await expect(
+      analyzeFacts({ ...config, signal: controller.signal }, facts, presentation, (s) => {
+        snapshots.push(s);
+      })
+    ).rejects.toThrow(expect.objectContaining({ code: 'interrupted' }));
+    expect(snapshots[snapshots.length - 1]).toMatchObject({
+      outcome: 'failure',
+      response: null,
+      error: { code: 'interrupted' },
+    });
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
+    vi.mocked(generateText).mockResolvedValueOnce(response());
+    const result = await analyzeFacts(config, facts, presentation, () => {
+      throw new Error('quota');
+    });
+    expect(result.issues).toHaveLength(1);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
+  });
+
+  it('診断保存の待ち時間をモデルの生成期限へ混ぜない', async () => {
+    vi.useFakeTimers();
+    vi.mocked(generateText).mockResolvedValueOnce(response());
+    const completed = analyzeFacts(config, facts, presentation, async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 65_000));
+    });
+    await vi.runAllTimersAsync();
+    expect((await completed).issues).toHaveLength(1);
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
   });
 });
