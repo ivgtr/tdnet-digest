@@ -1,4 +1,4 @@
-import { reportingCoverBlocks } from './document-context';
+import { reportingDocumentCover } from './document-context';
 import { declaredSubjectsIn, normalized } from './document-structure';
 import {
   reportingScope,
@@ -68,7 +68,7 @@ function sourceTarget(text: string): EarningsTarget | null {
 
 /** The document declares the headline period; surviving figures cannot redefine it. */
 export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolution {
-  const coverFields = reportingCoverBlocks(excerpts.filter((excerpt) => excerpt.page === 1));
+  const coverFields = reportingDocumentCover(excerpts.filter((excerpt) => excerpt.page === 1));
   const coverTitles = coverFields
     .flatMap((excerpt) => reportingFieldSegments(excerpt.text))
     .filter(isReportingCoverTitle);

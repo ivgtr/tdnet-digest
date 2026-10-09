@@ -146,7 +146,9 @@ export function isReportingMetadata(
 }
 
 /** A title is leading only when every earlier original record is proved metadata. */
-function reportingTitleBoundary(block: TextBlock): { before: string; leading: boolean } | null {
+function reportingTitleBoundary(
+  block: Pick<TextBlock, 'id' | 'text'>
+): { before: string; leading: boolean } | null {
   const text = block.text.normalize('NFKC');
   const title = [...text.matchAll(/[^\n|│]+/g)].find((record) => hasReportingCoverTitle(record[0]));
   if (!title) return null;
@@ -181,6 +183,56 @@ export function reportingCoverBlocks<
     cover.push(block);
   }
   return cover;
+}
+
+/** One identity-shaped wordmark may precede the first complete reporting cover.
+ * It supplies no issuer or reporting attributes; arbitrary unknown text is a boundary.
+ */
+export function reportingDocumentCover<
+  T extends { id: string; text: string; kind?: 'paragraph' | 'row' | 'heading' },
+>(blocks: T[]): T[] {
+  const prefix = reportingCoverBlocks(blocks);
+  if (prefix.some(isReportingCover)) return prefix;
+  const administrative = (block: T) => {
+    const projection = reportingFieldProjection(block.text);
+    return (
+      projection.complete &&
+      projection.segments.length > 0 &&
+      projection.segments.every(isReportingAdministrativeRecord) &&
+      declaredSubjectsIn(block).length === 0 &&
+      reportingAttributes({ id: block.id, text: block.text }).length === 0
+    );
+  };
+  if (!prefix.every(administrative)) return prefix;
+  const start = blocks.findIndex((block) => block.text.trim() && !prefix.includes(block));
+  if (start < 0) return prefix;
+  const mark = blocks[start].text.normalize('NFKC').trim();
+  // Generic corporate identity syntax, never a list of supported companies.
+  // Reference/navigation labels cannot become identity marks by adding a suffix.
+  if (
+    !/^(?:[A-Z][A-Z&'-]*[ \t]+)+(?:GROUP|HOLDINGS|CORPORATION|INC\.?|LTD\.?)$/.test(mark) ||
+    /\b(?:REFERENCES?|APPENDIX|APPENDICES|ATTACHMENTS?)\b/.test(mark)
+  )
+    return prefix;
+  const before = [...prefix];
+  for (let index = start + 1; index < blocks.length; index++) {
+    const block = blocks[index];
+    if (!block.text.trim()) continue;
+    if (reportingTitleBoundary(block)?.leading) {
+      const cover = reportingCoverBlocks(blocks.slice(index));
+      const namedIssuer = cover.some((item) =>
+        reportingFieldSegments(item.text).some(
+          (text) =>
+            /^(?:上場会社名|会社名|名称)/.test(normalized(text)) &&
+            declaredSubjectsIn({ text }).length > 0
+        )
+      );
+      return cover.some(isReportingCover) && namedIssuer ? [...before, ...cover] : prefix;
+    }
+    if (!administrative(block)) break;
+    before.push(block);
+  }
+  return prefix;
 }
 
 /** Semantic context uses the proved title record; evidence IDs/text stay original. */
@@ -285,7 +337,7 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   const first = pages.find((p) => p.pageNumber === 1);
   const cover: TextBlock[] = [];
   const firstBlocks = first?.blocks ?? [];
-  const prefix = reportingCoverBlocks(firstBlocks);
+  const prefix = reportingDocumentCover(firstBlocks);
   const boundary = firstBlocks.find((block) => block.text.trim() && !prefix.includes(block));
   // Only a title in the contiguous leading records owns this document. A
   // malformed title at that boundary remains strict; later references cannot
@@ -296,15 +348,9 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   else {
     // Non-earnings disclosures retain their supported title/issuer ordering.
     let issuerSeen = false;
-    for (const [index, block] of firstBlocks.entries()) {
+    for (const block of firstBlocks) {
       const title = reportingTitleBoundary(block);
-      if (title?.leading) {
-        // A leading logo may precede the real title. Once a title is reached,
-        // retain only its proved metadata; ordinary parsing must not cross a
-        // malformed title or body value to borrow a later company field.
-        if (!issuerSeen) cover.push(...reportingCoverBlocks(firstBlocks.slice(index)));
-        break;
-      }
+      if (title?.leading) break;
       if (
         headingLevel(block) !== null &&
         (issuerSeen || /^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/.test(normalized(block.text)))
@@ -321,12 +367,7 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
     return {
       ...block,
       // An ordinary notice can share a physical block with its reference.
-      // A proved logo/title handoff retains fields, never title attributes.
-      text: title.leading
-        ? reportingFieldSegments(block.text)
-            .filter((text) => !isReportingCoverTitle(text))
-            .join('\n')
-        : title.before,
+      text: title.before,
     };
   };
   const issuer = cover.filter(
@@ -661,13 +702,13 @@ function inReportingCover(
   if (binding.page !== 1 || binding.sectionIds.length) return false;
   const blocks = pages.find((p) => p.pageNumber === 1)?.blocks ?? [];
   if (!requireValue) {
-    const cover = reportingCoverBlocks(blocks);
+    const cover = reportingDocumentCover(blocks);
     const target = cover.findIndex((block) => block.id === binding.blockId);
     return target >= 0 && cover.slice(0, target).some(isReportingCover);
   }
   const target = blocks.findIndex((b) => b.id === binding.blockId);
   let cover = -1;
-  for (const block of reportingCoverBlocks(blocks.slice(0, target)))
+  for (const block of reportingDocumentCover(blocks.slice(0, target)))
     if (isReportingCover(block)) cover = blocks.indexOf(block);
   if (cover < 0) return false;
   // Only a contiguous reporting-value area belongs to this cover. Unknown prose

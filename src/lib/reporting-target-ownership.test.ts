@@ -6,6 +6,7 @@ import {
   isReportingCoverField,
   isReportingMetadata,
   reportingCoverBlocks,
+  reportingDocumentCover,
 } from './document-context';
 import { coverageReport, declaredForecastFactIds } from './fact-coverage';
 import { reviewCandidates } from './fact-candidates';
@@ -84,7 +85,15 @@ it('先頭のロゴを後続の短信参照で厳格な空の表紙に置き換�
     `TEST GROUP\n2026年3月期 決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n1. 2026年3月期連結経営成績\n売上高は100百万円です。`
   );
   expect(reportingCoverBlocks(page.blocks)).toEqual([]);
+  expect(reportingDocumentCover(page.blocks).map((block) => block.text)).toEqual([
+    '2026年3月期 決算短信〔日本基準〕（連結）',
+    `会社名 ${issuer}`,
+  ]);
   expect(documentSubject(buildDocumentContext([page]))).toBe(issuer);
+  const validForecast = forecast(page, [`会社名 ${issuer}`]);
+  expect([...declaredForecastFactIds(validForecast.pages, validForecast.facts)]).toEqual([
+    validForecast.facts[0].id,
+  ]);
   for (const source of [
     '2026年3月期 決算短信〔日本基準〕（連結）\n売上高は100百万円です。',
     '2026年3月期 決算短信〔日本基準〕（連結） 売上高100百万円',
@@ -98,6 +107,42 @@ it('先頭のロゴを後続の短信参照で厳格な空の表紙に置き換�
     [`会社名 ${issuer}`, '会計基準 日本基準']
   );
   expect([...declaredForecastFactIds(pages, facts)]).toEqual([]);
+});
+
+it('一般的な会社識別語を持つ単独の先行記録だけを通し、本文・参照・別通知を飛ばさない', () => {
+  const title = '2026年3月期 決算短信〔日本基準〕（連結）';
+  for (const prefix of [
+    'REFERENCE',
+    'APPENDIX',
+    'REFERENCE GROUP',
+    'FOR REFERENCE GROUP',
+    '参考情報',
+    '参考資料です。',
+    '売上高は100百万円です。',
+    '業績予想の修正に関するお知らせ',
+    'TEST GROUP\n参考資料',
+    'TEST GROUP │ 別のセル',
+    'TEST GROUP 100株',
+    'TEST GROUP\nSECOND GROUP',
+  ]) {
+    const page = textPage(`${prefix}\n${title}\n会社名 ${issuer}`);
+    expect(reportingDocumentCover(page.blocks)).toEqual([]);
+    expect(documentSubject(buildDocumentContext([page]))).toBeNull();
+    expect(earningsTarget(sourceInventory([page], undefined, 'earnings')).target).toBeNull();
+  }
+  const page = textPage(
+    `2026年5月10日\nACME HOLDINGS\nTEL 03-0000-0000\n${title}\n会社名 ${issuer}`
+  );
+  expect(reportingDocumentCover(page.blocks).map((block) => block.text)).toEqual([
+    '2026年5月10日',
+    'TEL 03-0000-0000',
+    title,
+    `会社名 ${issuer}`,
+  ]);
+  expect(earningsTarget(sourceInventory([page], undefined, 'earnings'))).toMatchObject({
+    issue: null,
+    target: { subject: issuer, basis: '日本基準', scope: '連結' },
+  });
 });
 
 it('予想表題の年と月期が別spanでも同じ3指標の義務と2数量の根拠を保持する', () => {

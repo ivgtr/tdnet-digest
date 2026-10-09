@@ -7,7 +7,7 @@ import { cells, tableAmount } from './fixtures/fact-review-source';
 import { reviewCandidates } from './fact-candidates';
 import { parseFactSummary, renderFacts } from './fact-summary';
 import { validateSavedFacts } from './fact-cache';
-import { buildDocumentContext } from './document-context';
+import { buildDocumentContext, isReportingCoverUnit } from './document-context';
 import {
   buildPresentation,
   revalidatePresentation,
@@ -118,6 +118,49 @@ function assertBodyAndRestore(
 // Owner: the source-verified actual headline contract. Forecast vocabulary/completeness
 // stays in summary-presentation.test; the mixed story below owns the saved-PDF boundary.
 describe('報告対象の完全性を候補・冒頭・本文・保存復元で保つ', () => {
+  it.each([true, false])(
+    '先頭のロゴの後の完全な表紙を文脈・必須判定・冒頭・保存復元で共有する: 節=%s',
+    (section) => {
+      const page = textPage(
+        `TEST GROUP\n${fiscal} 決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n${section ? `1. ${fiscal}連結経営成績\n` : ''}${fiscal}の売上高は1000百万円です。`
+      );
+      const input = numberCandidate(page, '売上高', 1000, fiscal);
+      Object.assign(input.semantics, issuerUnit);
+      const summary = verifiedSummary([page], [input], [1000]);
+      expect(coverageReport('earnings', [page], []).map((slot) => slot.sourceIds.length)).toEqual([
+        1, 0, 0,
+      ]);
+      if (!section) {
+        const context = buildDocumentContext([page]);
+        const block = page.blocks.find((block) => block.text.includes('売上高'))!;
+        expect(
+          isReportingCoverUnit(context.bindings.find((binding) => binding.anchorId === block.id)!, [
+            page,
+          ])
+        ).toBe(true);
+      }
+      expect(earningsTarget(sourceInventory([page], undefined, 'earnings'))).toMatchObject({
+        issue: null,
+        target: { fiscal, periodKind: 'fullYear', ...issuerUnit },
+      });
+      const coverage = coverageReport('earnings', [page], summary.facts);
+      expect(coverage.map((slot) => slot.requirement)).toEqual([
+        'COVERAGE:当年決算実績の重要指標 revenue',
+        'COVERAGE:当年決算実績の重要指標 operatingProfit',
+        'COVERAGE:当年決算実績の重要指標 netProfit',
+      ]);
+      expect(coverage[0]).toMatchObject({
+        requirement: 'COVERAGE:当年決算実績の重要指標 revenue',
+        status: 'satisfied',
+        expected: { period: fiscal, periodKind: 'fullYear', ...issuerUnit },
+      });
+      expect(coverage[0].sourceIds).toHaveLength(1);
+      const display = buildPresentation(summary, [page]);
+      expect(headlineValues(summary, display)).toEqual([1000]);
+      assertBodyAndRestore(summary, [page], display, [1000]);
+    }
+  );
+
   it.each([
     ['', fiscal, 'fullYear', fiscal],
     ['通期', fiscal, 'fullYear', fiscal],

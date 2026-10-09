@@ -53,7 +53,7 @@ import {
   reportingUnitTitle,
   isReportingCoverUnit,
   isReportingCoverField,
-  reportingCoverBlocks,
+  reportingDocumentCover,
   isReportingMetadata,
   headingLevel,
   verifyScopeEvidence,
@@ -939,7 +939,7 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
   });
 }
 function earningsReportingPeriod(pages: ExtractedPage[]) {
-  const declarations = reportingCoverBlocks(pages.find((p) => p.pageNumber === 1)?.blocks ?? [])
+  const declarations = reportingDocumentCover(pages.find((p) => p.pageNumber === 1)?.blocks ?? [])
     .flatMap((block) => reportingFieldSegments(block.text))
     .filter(isReportingCoverTitle)
     .map((title) => {
