@@ -171,7 +171,7 @@ src/
   - OpenAI、Anthropic、Google、OpenRouter、カスタムの5種類
   - 各プロバイダーのデフォルトURL、デフォルトモデル、モデルリスト
 - **`fact-summary.ts`**: 候補v4・確定事実v6の根拠付き事実抽出。`summary-presentation.ts` / `summary-renderer.ts` は冒頭と本文を分け、全文の原文引用を確定事実と区別して保持・表示する。`fact-validation.ts` が原文字・構造・数量全断片・主体/範囲・期間・限定/条件・状態を照合し、採点は確定IDだけを参照する。詳細と対応境界は docs/development.md の承認済み設計・実装記録を正本とする
-- **`additional-analysis.ts`**: 確定事実・点検済み説明/指標・コード計算を使う論点型追加分析v3。結論と読みは推論として区別する。`analysis-input.ts` が根拠を構成し、`analysis-calculations.ts` が比較可能な金額だけを計算する。[設計・検証境界](docs/additional-analysis.md)を参照
+- **`additional-analysis.ts`**: 確定事実・点検済み説明/指標・コード計算を使う論点型追加分析v4。数字・期間を含む本文全体は未検証の推論として区別し、根拠参照不備は論点単位で隔離する。`analysis-input.ts` が根拠を構成し、`analysis-calculations.ts` が比較可能な金額だけを計算する。[設計・検証境界](docs/additional-analysis.md)を参照
 - **`prompts.ts`**: 旧要約経路の文書タイプ別プロンプト。現行の要約では使用しない
 - **`format-prompts.ts`**: 2パス要約のパス2用プロンプト
   - パス1の構造化データを文書タイプ別の固定テンプレートへ整形

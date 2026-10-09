@@ -135,7 +135,7 @@ export function buildSummaryHtml(
 
 function buildDiagnosticsHtml(metadata: SummaryMetadata | null): string {
   return `<details data-generation-info style="${SUMMARY_STYLES.diagnostics}">
-    <summary style="${SUMMARY_STYLES.disclosure}">生成情報・診断</summary>
+    <summary style="${SUMMARY_STYLES.disclosure}">要約の生成情報・診断</summary>
     ${buildMetadataHtml(metadata, 'info')}
     ${metadata?.extractionMode === 'smart' ? `<div style="margin: 8px 0;"><button type="button" id="full-retry-btn" style="${SUMMARY_STYLES.retryButton}">全文で再要約</button></div>` : ''}
     <div data-diagnostic-root></div>
@@ -170,7 +170,8 @@ export function buildAnalysisStageHtml(
   return analysis?.loading
     ? ''
     : analysis?.error
-      ? `<p role="alert" style="${SUMMARY_STYLES.warningBox} margin-top: 12px;">追加分析失敗: ${escapeMetadataText(analysis.error)}</p>` + buildPersistenceWarningHtml(analysis.persistenceWarning)
+      ? `<p role="alert" style="${SUMMARY_STYLES.warningBox} margin-top: 12px;">追加分析失敗: ${escapeMetadataText(analysis.error)}</p>` +
+        buildPersistenceWarningHtml(analysis.persistenceWarning)
       : analysis?.data
         ? buildAnalysisHtml(analysis.data, facts, pdfUrl) +
           buildPersistenceWarningHtml(analysis.persistenceWarning)
@@ -205,20 +206,33 @@ function buildAnalysisHtml(
       });
       const pages = [...new Set(evidence.flatMap((e) => e.pages))].sort((a, b) => a - b);
       return `<article style="margin:12px 0;padding:12px;border:1px solid #d5dee8;border-radius:6px;background:#fff;">
-      <h6 style="font-size:14px;margin:0 0 8px;">${escapeMetadataText(issue.title)}</h6>
-      <p><strong>結論（推論）:</strong> ${escapeMetadataText(issue.conclusion)}</p>
+      <h6 style="font-size:14px;margin:0 0 8px;">論点（未検証の推論）: ${escapeMetadataText(issue.title)}</h6>
+      <p><strong>結論（未検証の推論）:</strong> ${escapeMetadataText(issue.conclusion)}</p>
       <ul>${evidence.map((e) => `<li><strong>${labels[e.kind]}:</strong> ${escapeMetadataText(e.text)}${e.context ? ` <span style="color:#6b7280;">${escapeMetadataText(e.context)}</span>` : ''}</li>`).join('')}</ul>
-      <p><strong>読み（条件付き）:</strong> ${escapeMetadataText(issue.reading)}</p>
-      <p><strong>限界:</strong> ${escapeMetadataText(issue.caveat)}</p>
-      <p><strong>次の確認:</strong> ${escapeMetadataText(issue.nextCheck)}</p>
+      <p><strong>読み（未検証の推論・条件付き）:</strong> ${escapeMetadataText(issue.reading)}</p>
+      <p><strong>限界（未検証の推論）:</strong> ${escapeMetadataText(issue.caveat)}</p>
+      <p><strong>次の確認（未検証の推論）:</strong> ${escapeMetadataText(issue.nextCheck)}</p>
       <p>根拠ページ: ${pages.map(link).join('・')}</p>
       <details><summary>根拠IDを表示</summary><ul>${evidence.map((e) => `<li>${escapeMetadataText(e.id)}: ${escapeMetadataText(e.sourceIds.join(', '))}</li>`).join('')}</ul></details>
     </article>`;
     })
     .join('');
   const c = analysis.coverage;
-  return `<div><p style="font-size:12px;color:#6b7280;">結論と読みはAIの推論です。根拠との参照対応は確認していますが、推論の正しさを保証するものではありません。</p>
-    ${issues || '<p>確認済み入力から、要約に追加できる論点を生成できませんでした。</p>'}
+  const quarantined = new Set(
+    analysis.notices
+      .filter((notice) => notice.severity === 'quarantined')
+      .map((notice) => notice.issueIndex)
+  ).size;
+  const notices = analysis.notices.length
+    ? `<section data-analysis-notices role="status" style="${SUMMARY_STYLES.warningBox}">
+      <strong>追加分析の確認事項</strong>
+      <p>表示できる論点${analysis.issues.length}件${quarantined ? ` / 非表示の論点${quarantined}件` : ''}。注意付きの推論文は生成されたまま表示しています。形式・根拠参照が不正な論点は本文を表示していません。</p>
+      <ul>${analysis.notices.map((notice) => `<li>${notice.issueIndex < 0 ? '応答全体' : `元の論点${notice.issueIndex + 1}`}・${notice.severity === 'quarantined' ? '非表示' : '注意'}: ${escapeMetadataText(notice.message)}（${escapeMetadataText(notice.code)} / ${escapeMetadataText(notice.path)}）</li>`).join('')}</ul>
+    </section>`
+    : '';
+  return `<div><p data-analysis-boundary style="${SUMMARY_STYLES.warningBox}"><strong>追加分析の文章はすべて未検証のAI推論です。</strong>論点名・結論・読み・限界・次の確認に含まれる数値、因果関係、情報がないという主張は、根拠IDの参照確認では検証されません。確認済みの根拠欄と区別し、原PDFで確認してください。</p>
+    ${notices}
+    ${issues || (quarantined ? '<p>表示できる論点はありません。形式・根拠参照の確認で全論点を非表示にしました。</p>' : '<p>確認済み入力から、要約に追加できる論点を生成できませんでした。</p>')}
     ${c.organizationStatus !== 'ready' || c.unresolvedSources ? '<p style="color:#92400e;">説明・指標の一部が入力で未確認です。分析にない事項も原PDFを確認してください。</p>' : ''}
     ${c.limitations.map((text) => `<p style="color:#92400e;">${escapeMetadataText(text)}</p>`).join('')}
     ${c.unverifiedItems ? `<p style="color:#92400e;">未確認・不採用項目${c.unverifiedItems}件 / 関連する原文ページ ${c.unverifiedSourcePages.join(', ') || '未特定'}。原PDFで要因・条件を確認してください。</p>` : ''}

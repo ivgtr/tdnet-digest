@@ -281,7 +281,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
                 onClick={() => void copyDiagnostic()}
                 style={ACTION_BUTTON_STYLE}
               >
-                診断JSONをコピー
+                要約の診断JSONをコピー
               </button>
               {analysis.data && analysis.diagnosticRunId && result.resultId && (
                 <button
@@ -289,7 +289,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
                   onClick={() => void copyDiagnostic('analysis')}
                   style={ACTION_BUTTON_STYLE}
                 >
-                  成功した追加分析の診断JSONをコピー
+                  表示中の追加分析の診断JSONをコピー
                 </button>
               )}
               {lastAnalysisRunId &&
@@ -300,7 +300,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
                     onClick={() => void copyDiagnostic('lastAnalysis')}
                     style={ACTION_BUTTON_STYLE}
                   >
-                    直近の試行の診断JSONをコピー
+                    直近の追加分析の診断JSONをコピー
                   </button>
                 )}
               <span role="status" aria-live="polite" style={{ color: '#6b7280' }}>
@@ -312,9 +312,9 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
               analysis.lastAttempt.runId !== analysis.diagnosticRunId && (
                 <p role="status" style={{ color: '#92400e', margin: '8px 0' }}>
                   {analysis.lastAttempt.outcome === 'failure'
-                    ? `直近の追加分析は失敗しました: ${analysis.lastAttempt.error?.message ?? '生成失敗'}。以前の成功した分析を表示しています。`
+                    ? `直近の追加分析は失敗しました: ${analysis.lastAttempt.error?.message ?? '生成失敗'}。以前の保存済み分析を表示しています。`
                     : analysis.lastAttempt.outcome === 'running'
-                      ? '直近の追加分析の完了記録を確認できません。以前の成功した分析を表示しています。'
+                      ? '直近の追加分析の完了記録を確認できません。以前の保存済み分析を表示しています。'
                       : '直近の追加分析と、表示中の保存済み分析は別の実行です。'}
                 </p>
               )}
@@ -322,18 +322,18 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
               <details open={diagnosticError !== null} style={{ marginTop: 8 }}>
                 <summary style={{ cursor: 'pointer', padding: '4px 0' }}>
                   {diagnosticKind === 'analysis'
-                    ? '成功した追加分析の診断JSONを表示'
+                    ? '表示中の追加分析の診断JSONを表示'
                     : diagnosticKind === 'lastAnalysis'
-                      ? '直近の試行の診断JSONを表示'
-                      : '診断JSONを表示'}
+                      ? '直近の追加分析の診断JSONを表示'
+                      : '要約の診断JSONを表示'}
                 </summary>
                 <textarea
                   aria-label={
                     diagnosticKind === 'analysis'
-                      ? '成功した追加分析の診断JSON'
+                      ? '表示中の追加分析の診断JSON'
                       : diagnosticKind === 'lastAnalysis'
-                        ? '直近の試行の診断JSON'
-                        : '診断JSON'
+                        ? '直近の追加分析の診断JSON'
+                        : '要約の診断JSON'
                   }
                   readOnly
                   value={diagnosticText}

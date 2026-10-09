@@ -1,4 +1,8 @@
-import { loadAnalysisTrace, ANALYSIS_DIAGNOSTICS_KEY } from '../lib/analysis-trace';
+import {
+  loadAnalysisTrace,
+  readLastAnalysisAttempt,
+  ANALYSIS_DIAGNOSTICS_KEY,
+} from '../lib/analysis-trace';
 import type { SummaryTrace } from '../lib/summary-trace';
 import {
   matchingSummaryTrace,
@@ -598,7 +602,7 @@ describe('要約・採点・追加分析の分離', () => {
       .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))
       .mockResolvedValueOnce(
         JSON.stringify({
-          version: 3,
+          version: 4,
           issues: [
             {
               title: '計画の実現条件',
@@ -658,27 +662,78 @@ describe('要約・採点・追加分析の分離', () => {
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['malformed', '{broken', 'invalid_json', '$'],
-    [
-      'unknown-reference',
-      JSON.stringify({
-        version: 3,
-        issues: [
-          {
-            title: '計画の実現条件',
-            conclusion: '条件確認が必要です',
-            evidenceIds: ['fact:missing'],
-            reading: '足元の実績と計画の整合を点検します',
-            caveat: '継続性は未確認です',
-            nextCheck: '実績と前提を確認する',
-          },
-        ],
-      }),
-      'evidence_unknown',
-      '$.issues[0].evidenceIds[0]',
-    ],
-  ])(
+  it('一部の論点を隔離しても有効な論点を返し、部分成功の診断を同じ実行に保存する', async () => {
+    mocked.generateText.mockResolvedValueOnce(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
+    const request = await setup(false);
+    const summary = await request({ action: 'summarize' });
+    const issue = {
+      title: '計画の実現条件',
+      conclusion: '条件確認が必要です',
+      evidenceIds: [`fact:${facts.facts[0].id}`],
+      reading: '足元の実績と計画の整合を点検します',
+      caveat: '継続性は未確認です',
+      nextCheck: '実績と前提を確認する',
+    };
+    const raw = JSON.stringify({
+      version: 4,
+      issues: [issue, { ...issue, evidenceIds: ['fact:missing'] }],
+    });
+    mocked.generateText.mockResolvedValueOnce(raw);
+    const result = await request({
+      action: 'analyze',
+      facts: summary.facts,
+      presentation: summary.presentation,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.analysis.issues).toHaveLength(1);
+    expect(result.analysis.candidates).toHaveLength(2);
+    expect(result.analysis.notices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          issueIndex: 1,
+          code: 'evidence_unknown',
+          severity: 'quarantined',
+        }),
+      ])
+    );
+    expect(result.diagnosticPersistence).toBe('saved');
+    expect(
+      await loadAnalysisTrace(
+        'test.pdf',
+        result.diagnosticRunId,
+        summary.resultId,
+        'saved',
+        result.analysis.inputHash
+      )
+    ).toMatchObject({
+      outcome: 'partialSuccess',
+      error: null,
+      notices: result.analysis.notices,
+      response: raw,
+      contract: { version: 4 },
+    });
+    expect(
+      readLastAnalysisAttempt(
+        stored[ANALYSIS_DIAGNOSTICS_KEY],
+        'test.pdf',
+        summary.resultId,
+        result.analysis.inputHash
+      )
+    ).toMatchObject({
+      runId: result.diagnosticRunId,
+      outcome: 'partialSuccess',
+    });
+    expect(
+      await loadSummaryTrace('test.pdf', summary.diagnosticRunId, summary.resultId)
+    ).toMatchObject({ outcome: 'firstSuccess' });
+    expect(mocked.generateText).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([['malformed', '{broken', 'invalid_json', '$']])(
     '追加分析%sの生応答・使用量・拒否位置を残し、成功要約と前の分析を汚さない',
     async (_case, raw, code, path) => {
       mocked.generateText.mockResolvedValueOnce(
@@ -693,7 +748,7 @@ describe('要約・採点・追加分析の分離', () => {
         resultId: summary.resultId,
         fingerprint: summary.metadata.analysisFingerprint,
       };
-      mocked.generateText.mockResolvedValueOnce('{"version":3,"issues":[]}');
+      mocked.generateText.mockResolvedValueOnce('{"version":4,"issues":[]}');
       const success = await request(followup);
       const summaryTrace = structuredClone(stored[SUMMARY_DIAGNOSTICS_KEY]);
       mocked.generateText.mockImplementationOnce(async (config: LLMConfig) => {
@@ -732,7 +787,7 @@ describe('要約・採点・追加分析の分離', () => {
       mocked.generateText.mockImplementationOnce(
         (config: LLMConfig) =>
           new Promise((_resolve, reject) => {
-            config.onResponse?.('{"version":3,"issues":[');
+            config.onResponse?.('{"version":4,"issues":[');
             config.onUsage?.({ inputTokens: 12, outputTokens: 8, elapsedMs: 60_000 });
             config.signal!.addEventListener('abort', () => reject(new Error('aborted')), {
               once: true,
@@ -754,7 +809,7 @@ describe('要約・採点・追加分析の分離', () => {
         await loadAnalysisTrace('test.pdf', failed.diagnosticRunId, summary.resultId)
       ).toMatchObject({
         outcome: 'failure',
-        response: '{"version":3,"issues":[',
+        response: '{"version":4,"issues":[',
         error: { code: 'interrupted', path: '$' },
       });
       expect(mocked.generateText).toHaveBeenCalledTimes(2);
@@ -785,7 +840,7 @@ describe('要約・採点・追加分析の分離', () => {
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     };
-    mocked.generateText.mockResolvedValue('{"version":3,"issues":[]}');
+    mocked.generateText.mockResolvedValue('{"version":4,"issues":[]}');
     const result = await request(followup);
     expect(result.analysis).toMatchObject({ issues: [] });
     expect(result.diagnosticPersistence).toBe('failed');

@@ -98,7 +98,7 @@ describe('追加分析の不採用説明と入力範囲', () => {
     expect(input.evidence.some((e) => e.text.includes('下期利益'))).toBe(false);
     expect(JSON.stringify(input)).not.toContain('1174729');
     expect(input.evidence.some((e) => e.id.includes('gap'))).toBe(false);
-    const result = parseAnalysisResponse(JSON.stringify({ version: 3, issues: [] }), input);
+    const result = parseAnalysisResponse(JSON.stringify({ version: 4, issues: [] }), input);
     const restored = parseAnalysis(JSON.stringify(result), facts, display);
     const html = buildAnalysisStageHtml({ loading: false, data: restored, error: null });
     expect(html).toContain('未確認・不採用項目1件');
@@ -146,7 +146,7 @@ describe('追加分析の不採用説明と入力範囲', () => {
       unverifiedSourcePages: [4],
     });
     expect(input.coverage.limitations[0]).toContain('生成・点検に未確認または不採用');
-    const result = parseAnalysisResponse(JSON.stringify({ version: 3, issues: [] }), input);
+    const result = parseAnalysisResponse(JSON.stringify({ version: 4, issues: [] }), input);
     const html = buildAnalysisStageHtml({ loading: false, data: result, error: null });
     expect(html).toContain('未確認・不採用項目1件');
     expect(html).not.toContain('不採用候補');

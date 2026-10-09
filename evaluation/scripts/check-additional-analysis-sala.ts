@@ -156,7 +156,7 @@ assert.ok(
 const refs = (test: (e: (typeof input.evidence)[number]) => boolean) =>
   input.evidence.filter(test).map((e) => e.id);
 const response = {
-  version: 3,
+  version: 4,
   issues: [
     {
       title: '通期計画を超えた累計利益',

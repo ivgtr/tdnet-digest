@@ -1,8 +1,11 @@
+import type { AnalysisNotice } from './additional-analysis';
 import type { AnalysisInput } from './analysis-input';
 import { exact, record } from './fact-contract';
 import { normalizeTdnetPdfUrl } from './tdnet-url';
 import type { DiagnosticPersistence, Usage } from './summary-trace';
 
+// Envelope v1 is retained: contract.version identifies generation semantics.
+// partialSuccess and optional notices/resourceLimits extend v1; legacy records remain readable.
 export const ANALYSIS_DIAGNOSTICS_KEY = 'analysisDiagnosticsV1';
 export const ANALYSIS_CACHE_DIAGNOSTIC_PREFIX = 'analysisDiagnosticRefV1:';
 export const ANALYSIS_DIAGNOSTICS_LIMITS = {
@@ -19,13 +22,24 @@ export interface AnalysisDiagnosticContract {
   version: number;
   allowedEvidenceIds: string[];
   limits: { issues: number; references: number; title: number; text: number };
+  resourceLimits?: {
+    responseBytes: number;
+    savedBytes: number;
+    issues: number;
+    text: number;
+    references: number;
+    depth: number;
+    nodes: number;
+    savedNodes: number;
+  };
 }
 export interface AnalysisGenerationDiagnostic {
   contract: AnalysisDiagnosticContract;
   input: AnalysisInput;
   response: string | null;
   usage: Usage | null;
-  outcome: 'running' | 'success' | 'failure';
+  outcome: 'running' | 'success' | 'partialSuccess' | 'failure';
+  notices?: AnalysisNotice[];
   error: AnalysisDiagnosticError | null;
 }
 export interface AnalysisTrace {
@@ -46,6 +60,7 @@ export interface AnalysisTrace {
   response: string | null;
   usage: Usage | null;
   outcome: AnalysisGenerationDiagnostic['outcome'];
+  notices?: AnalysisNotice[];
   error: AnalysisDiagnosticError | null;
   elapsedMs: number;
   compaction?: { reason: 'storage-limit'; originalBytes: number };
@@ -78,6 +93,40 @@ const unavailable =
   'この追加分析に対応する診断がありません。保存上限で削除されたか、保存されていません';
 const nullableString = (value: unknown) => value === null || typeof value === 'string';
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+const resourceKeys = [
+  'responseBytes',
+  'savedBytes',
+  'issues',
+  'text',
+  'references',
+  'depth',
+  'nodes',
+  'savedNodes',
+] as const;
+function validNotices(value: unknown): value is AnalysisNotice[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 1024 &&
+    value.every(
+      (notice) =>
+        record(notice) &&
+        exact(notice, ['issueIndex', 'code', 'path', 'message', 'severity']) &&
+        Number.isInteger(notice.issueIndex) &&
+        Number(notice.issueIndex) >= -1 &&
+        Number(notice.issueIndex) < 16 &&
+        ['warning', 'quarantined'].includes(String(notice.severity)) &&
+        typeof notice.code === 'string' &&
+        notice.code.length > 0 &&
+        notice.code.length <= 128 &&
+        typeof notice.path === 'string' &&
+        notice.path.length > 0 &&
+        notice.path.length <= 256 &&
+        typeof notice.message === 'string' &&
+        notice.message.length > 0 &&
+        notice.message.length <= 1024
+    )
+  );
+}
 function isTrace(value: unknown): value is AnalysisTrace {
   return (
     record(value) &&
@@ -87,7 +136,8 @@ function isTrace(value: unknown): value is AnalysisTrace {
       (key) => typeof value[key] === 'string' && value[key].length > 0
     ) &&
     ['provider', 'model', 'inputHash', 'response'].every((key) => nullableString(value[key])) &&
-    ['running', 'success', 'failure'].includes(String(value.outcome)) &&
+    ['running', 'success', 'partialSuccess', 'failure'].includes(String(value.outcome)) &&
+    (value.notices === undefined || validNotices(value.notices)) &&
     typeof value.intentAt === 'number' &&
     Number.isFinite(value.intentAt) &&
     typeof value.elapsedMs === 'number' &&
@@ -97,6 +147,13 @@ function isTrace(value: unknown): value is AnalysisTrace {
         typeof value.contract.version === 'number' &&
         Array.isArray(value.contract.allowedEvidenceIds) &&
         value.contract.allowedEvidenceIds.every((id) => typeof id === 'string') &&
+        (value.contract.resourceLimits === undefined ||
+          (record(value.contract.resourceLimits) &&
+            exact(value.contract.resourceLimits, [...resourceKeys]) &&
+            resourceKeys.every((key) => {
+              const limit = (value.contract as AnalysisDiagnosticContract).resourceLimits![key];
+              return Number.isSafeInteger(limit) && limit > 0;
+            }))) &&
         record(value.contract.limits) &&
         ['issues', 'references', 'title', 'text'].every(
           (key) =>
@@ -143,7 +200,7 @@ function isLastAttempt(value: unknown): value is AnalysisLastAttempt {
     value.persistence === 'saved' &&
     typeof value.intentAt === 'number' &&
     Number.isFinite(value.intentAt) &&
-    ['running', 'success', 'failure'].includes(String(value.outcome)) &&
+    ['running', 'success', 'partialSuccess', 'failure'].includes(String(value.outcome)) &&
     (value.error === null ||
       (record(value.error) &&
         exact(value.error, ['code', 'path', 'message']) &&
@@ -166,6 +223,15 @@ function readStore(value: unknown): AnalysisDiagnosticStore {
 }
 /** Allow-listed projection, never config, endpoint, headers or credentials. */
 function snapshot(trace: AnalysisTrace): AnalysisTrace {
+  const notices = trace.notices?.map((notice) => ({
+    issueIndex: notice.issueIndex,
+    code: notice.code,
+    path: notice.path,
+    message: notice.message,
+    severity: notice.severity,
+  }));
+  if (notices !== undefined && !validNotices(notices))
+    throw new Error('追加分析診断の通知形式が不正です');
   const input = trace.input;
   return {
     version: 1,
@@ -210,6 +276,13 @@ function snapshot(trace: AnalysisTrace): AnalysisTrace {
     contract: trace.contract
       ? {
           version: trace.contract.version,
+          ...(trace.contract.resourceLimits
+            ? {
+                resourceLimits: Object.fromEntries(
+                  resourceKeys.map((key) => [key, trace.contract!.resourceLimits![key]])
+                ) as NonNullable<AnalysisDiagnosticContract['resourceLimits']>,
+              }
+            : {}),
           allowedEvidenceIds: [...trace.contract.allowedEvidenceIds],
           limits: {
             issues: trace.contract.limits.issues,
@@ -234,6 +307,7 @@ function snapshot(trace: AnalysisTrace): AnalysisTrace {
         }
       : null,
     outcome: trace.outcome,
+    ...(notices !== undefined ? { notices } : {}),
     error: trace.error
       ? { code: trace.error.code, path: trace.error.path, message: trace.error.message }
       : null,
@@ -257,6 +331,13 @@ function boundedTrace(trace: AnalysisTrace): AnalysisTrace {
     const compact: AnalysisTrace = {
       ...original,
       response: original.response === null ? null : clip(original.response),
+      ...(original.notices
+        ? {
+            notices: original.notices
+              .slice(0, 128)
+              .map((notice) => ({ ...notice, message: clip(notice.message) })),
+          }
+        : {}),
       error: original.error ? { ...original.error, message: clip(original.error.message) } : null,
       input: original.input
         ? {

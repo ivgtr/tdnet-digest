@@ -6,6 +6,7 @@ import { buildAnalysisInput } from './analysis-input';
 import {
   analyzeFacts,
   ANALYSIS_LIMITS,
+  ANALYSIS_RESOURCE_LIMITS,
   AnalysisValidationError,
   analysisModelInput,
   analysisResponseSchema,
@@ -43,7 +44,7 @@ const issue = () => ({
   caveat: '今回の確認済み入力では売却益の内訳と再発予定は未確認です',
   nextCheck: '次の開示で売却益を除いた本業利益と売却の再発予定を確認する',
 });
-const response = (issues = [issue()]) => JSON.stringify({ version: 3, issues });
+const response = (issues: unknown[] = [issue()]) => JSON.stringify({ version: 4, issues });
 const config = { provider: 'openai', apiKey: 'fixture', model: 'fixture' };
 afterEach(() => {
   vi.clearAllMocks();
@@ -146,23 +147,53 @@ describe('追加分析の根拠と論点の契約', () => {
   });
 
   it.each([
-    ['generated arithmetic', () => ({ ...issue(), reading: '来期は200百万円になります' })],
-    ['kanji arithmetic', () => ({ ...issue(), reading: '利益が二倍になる可能性があります' })],
+    '来期は200百万円になる可能性があります',
+    '利益が二倍になる可能性があります',
+    '第2四半期までに売却が集中し、第3四半期は低調でした',
+    '第４四半期・3Q・2026年・①・一株当たり・一件当たり・一桁・二ポイント',
+  ])('数字を含む推論を変更せず保持し根拠へ昇格しない: %s', (reading) => {
+    const result = parseAnalysisResponse(response([{ ...issue(), reading }]), input());
+    expect(result.issues[0].reading).toBe(reading);
+    expect(result.notices).toEqual([]);
+    expect(result.evidence).toEqual(input().evidence);
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+  });
+
+  it.each([
     ['same reading', () => ({ ...issue(), reading: issue().conclusion })],
     [
       'literal restatement',
       () => ({ ...issue(), reading: '自社保有資産の売却が利益を押し上げた。' }),
     ],
-  ])('%s is rejected at the schema boundary', (_name, make) => {
-    expect(() => parseAnalysisResponse(response([make()]), input())).toThrow();
+  ])('%sは警告して本文を保持する', (_name, make) => {
+    const result = parseAnalysisResponse(response([make()]), input());
+    expect(result.issues).toEqual([make()]);
+    expect(result.notices).toContainEqual(
+      expect.objectContaining({ code: 'evidence_restatement', severity: 'warning' })
+    );
   });
 
-  it('旧時間軸形式・重複論点を拒否し、不足時に四枠を埋めない', () => {
-    expect(() => parseAnalysisResponse('{"version":2,"interpretation":{}}', input())).toThrow();
-    expect(() =>
-      parseAnalysisResponse(response([issue(), { ...issue(), title: '別名' }]), input())
-    ).toThrow();
-    expect(parseAnalysisResponse(response([]), input()).issues).toEqual([]);
+  it('旧形式は再利用せず、重複論点は警告し、空配列と全隔離を区別する', () => {
+    for (const version of [2, 3])
+      expect(() =>
+        parseAnalysisResponse(JSON.stringify({ version, issues: [] }), input())
+      ).toThrow();
+    const repeated = parseAnalysisResponse(
+      response([issue(), { ...issue(), title: '別名' }]),
+      input()
+    );
+    expect(repeated.issues).toHaveLength(2);
+    expect(repeated.notices[0].code).toBe('issue_evidence_duplicate');
+    const empty = parseAnalysisResponse(response([]), input());
+    expect(empty.issues).toEqual([]);
+    expect(empty.notices).toEqual([]);
+    const rejected = parseAnalysisResponse(
+      response([{ ...issue(), evidenceIds: ['invented'] }]),
+      input()
+    );
+    expect(rejected.issues).toEqual([]);
+    expect(rejected.evidence).toEqual([]);
+    expect(rejected.notices[0].severity).toBe('quarantined');
   });
 
   it('一論点の同一ページ引用を一つへまとめ、IDは展開式で保持する', () => {
@@ -175,7 +206,7 @@ describe('追加分析の根拠と論点の契約', () => {
     expect(html.match(/href=/g)).toHaveLength(1);
     expect(html).toContain('#page=5');
     expect(html).toContain('<summary>根拠IDを表示</summary>');
-    expect(html).toContain('結論（推論）');
+    expect(html).toContain('結論（未検証の推論）');
     expect(html).not.toContain('判断不能');
     const escaped = { ...result, issues: [{ ...issue(), title: '<img src=x onerror=alert()>' }] };
     expect(buildAnalysisStageHtml({ loading: false, data: escaped, error: null })).toContain(
@@ -201,7 +232,7 @@ describe('追加分析の要求予算と診断', () => {
     expect(result.usage?.outputTokens).toBe(200);
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
   });
-  it('出力打切りを成功扱いにせず、確認済み入力の件数をエラーへ残す', async () => {
+  it('出力上限でも完全なJSONなら表示し、未完の可能性と使用量を残す', async () => {
     vi.mocked(generateText).mockImplementationOnce(async (options) => {
       options.onUsage?.({
         inputTokens: 100,
@@ -211,9 +242,14 @@ describe('追加分析の要求予算と診断', () => {
       });
       return response();
     });
-    await expect(analyzeFacts(config, facts, presentation)).rejects.toThrow(
-      /出力上限.*事実1・説明1・指標0.*8192token/
+    const result = await analyzeFacts(config, facts, presentation);
+    expect(result.issues).toHaveLength(1);
+    expect(result.notices).toContainEqual(
+      expect.objectContaining({ code: 'output_limit', issueIndex: -1 })
     );
+    expect(result.usage?.outputTokens).toBe(8192);
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
   });
   it('期限切れを中断し、暗黙の再試行をしない', async () => {
     vi.useFakeTimers();
@@ -240,72 +276,152 @@ describe('生成契約と診断の正負境界', () => {
     for (const character of ['続', '𠮷']) {
       const accepted = { ...issue(), [key]: character.repeat(limit) };
       expect(parseAnalysisResponse(response([accepted]), input()).issues).toHaveLength(1);
-      expect(() =>
-        parseAnalysisResponse(
-          response([{ ...accepted, [key]: character.repeat(limit + 1) }]),
-          input()
-        )
-      ).toThrow(expect.objectContaining({ code: 'text_length', path: `$.issues[0].${key}` }));
+      const long = parseAnalysisResponse(
+        response([{ ...accepted, [key]: character.repeat(limit + 1) }]),
+        input()
+      );
+      expect(long.issues[0][key]).toBe(character.repeat(limit + 1));
+      expect(long.notices).toContainEqual(
+        expect.objectContaining({
+          code: 'text_length',
+          path: `$.issues[0].${key}`,
+          severity: 'warning',
+        })
+      );
     }
   });
 
   it.each([
     ['invalid_json', '$', () => '{broken'],
-    ['response_shape', '$', () => JSON.stringify({ version: 3, issues: [], extra: true })],
+    ['response_shape', '$', () => JSON.stringify({ version: 4, extra: true })],
     ['response_version', '$.version', () => JSON.stringify({ version: 2, issues: [] })],
-    ['issues_type', '$.issues', () => JSON.stringify({ version: 3, issues: {} })],
-    ['issues_count', '$.issues', () => response(Array.from({ length: 5 }, issue))],
+    ['issues_type', '$.issues', () => JSON.stringify({ version: 4, issues: {} })],
     [
-      'issue_shape',
-      '$.issues[0]',
-      () => JSON.stringify({ version: 3, issues: [{ title: '欠損' }] }),
+      'issues_budget',
+      '$.issues',
+      () => response(Array.from({ length: ANALYSIS_RESOURCE_LIMITS.issues + 1 }, issue)),
     ],
+    ['response_budget', '$', () => ' '.repeat(ANALYSIS_RESOURCE_LIMITS.responseBytes + 1)],
     [
-      'text_type',
-      '$.issues[0].reading',
-      () => JSON.stringify({ version: 3, issues: [{ ...issue(), reading: null }] }),
-    ],
-    ['text_empty', '$.issues[0].caveat', () => response([{ ...issue(), caveat: '  ' }])],
-    [
-      'text_placeholder',
-      '$.issues[0].reading',
-      () => response([{ ...issue(), reading: ' 判断不能 ' }]),
-    ],
-    [
-      'evidence_type',
-      '$.issues[0].evidenceIds',
-      () => JSON.stringify({ version: 3, issues: [{ ...issue(), evidenceIds: 'not-array' }] }),
-    ],
-    [
-      'evidence_count',
-      '$.issues[0].evidenceIds',
-      () => response([{ ...issue(), evidenceIds: [] }]),
-    ],
-    [
-      'evidence_id_type',
-      '$.issues[0].evidenceIds[0]',
-      () => JSON.stringify({ version: 3, issues: [{ ...issue(), evidenceIds: [null] }] }),
-    ],
-    [
-      'evidence_unknown',
-      '$.issues[0].evidenceIds[0]',
-      () => response([{ ...issue(), evidenceIds: [facts.facts[0].id] }]),
-    ],
-    [
-      'evidence_unknown',
-      '$.issues[0].evidenceIds[0]',
-      () => response([{ ...issue(), evidenceIds: [input().evidence[0].sourceIds[1]] }]),
-    ],
-    [
-      'evidence_duplicate',
-      '$.issues[0].evidenceIds[1]',
+      'response_budget',
+      '$',
       () =>
-        response([{ ...issue(), evidenceIds: [issue().evidenceIds[0], issue().evidenceIds[0]] }]),
+        JSON.stringify({
+          version: 4,
+          issues: [],
+          extra: JSON.parse('['.repeat(40) + '0' + ']'.repeat(40)),
+        }),
     ],
-  ])('%sを失敗位置とともに区別する', (code, path, raw) => {
+  ])('表示できない応答は%sで失敗する', (code, path, raw) => {
     expect(() => parseAnalysisResponse(raw(), input())).toThrow(
       expect.objectContaining({ code, path })
     );
+  });
+
+  it.each([
+    ['issue_shape', '$.issues[1]', null],
+    ['text_type', '$.issues[1].reading', { ...issue(), reading: null }],
+    ['text_empty', '$.issues[1].reading', { ...issue(), reading: ' ' }],
+    [
+      'text_budget',
+      '$.issues[1].reading',
+      { ...issue(), reading: '長'.repeat(ANALYSIS_RESOURCE_LIMITS.text + 1) },
+    ],
+    ['evidence_type', '$.issues[1].evidenceIds', { ...issue(), evidenceIds: 'not-array' }],
+    ['evidence_count', '$.issues[1].evidenceIds', { ...issue(), evidenceIds: [] }],
+    ['evidence_id_type', '$.issues[1].evidenceIds[0]', { ...issue(), evidenceIds: [null] }],
+    ['evidence_unknown', '$.issues[1].evidenceIds[0]', { ...issue(), evidenceIds: ['p1s58'] }],
+    [
+      'evidence_budget',
+      '$.issues[1].evidenceIds',
+      { ...issue(), evidenceIds: Array(ANALYSIS_RESOURCE_LIMITS.references + 1).fill('invented') },
+    ],
+  ])('%sは元の位置で隔離し正常な隣の論点を残す', (code, path, candidate) => {
+    const candidates = [
+      issue(),
+      candidate,
+      { ...issue(), title: '次の問い', reading: '次の売却が実現するかを確認します' },
+    ];
+    const result = parseAnalysisResponse(
+      JSON.stringify({ version: 4, issues: candidates }),
+      input()
+    );
+    expect(result.candidates).toEqual(candidates);
+    expect(result.issues.map((x) => x.title)).toEqual([issue().title, '次の問い']);
+    expect(result.notices).toContainEqual(
+      expect.objectContaining({ code, path, issueIndex: 1, severity: 'quarantined' })
+    );
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+  });
+
+  it('構造の軽微な不備を警告し、本文を変更せず、保存された派生結果を再照合する', () => {
+    const candidate = {
+      ...issue(),
+      caveat: undefined,
+      nextCheck: '',
+      extra: { harmless: true },
+      evidenceIds: [issue().evidenceIds[0], issue().evidenceIds[0]],
+    };
+    const result = parseAnalysisResponse(response([candidate]), input());
+    expect(result.issues[0]).toEqual({
+      ...issue(),
+      caveat: '',
+      nextCheck: '',
+      evidenceIds: [issue().evidenceIds[0]],
+    });
+    expect(result.notices.map((n) => n.code)).toEqual([
+      'issue_extra',
+      'text_missing',
+      'text_empty',
+      'evidence_duplicate',
+    ]);
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+    for (const mutate of [
+      (x: typeof result) => {
+        x.notices = [];
+      },
+      (x: typeof result) => {
+        x.issues[0].reading = '改変';
+      },
+      (x: typeof result) => {
+        (x.candidates[0] as { reading: string }).reading = '改変';
+      },
+      (x: typeof result) => {
+        x.coverage.facts++;
+      },
+    ]) {
+      const changed = structuredClone(result);
+      mutate(changed);
+      expect(() => parseAnalysis(JSON.stringify(changed), facts, presentation)).toThrow();
+    }
+  });
+
+  it('応答予算の近くまである候補も保存封筒の増分で復元不能にならない', () => {
+    const candidate = { ...issue(), extra: Array.from({ length: 9500 }, () => null) };
+    const result = parseAnalysisResponse(response([candidate]), input());
+    expect(result.issues).toHaveLength(1);
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+  });
+
+  it('既知の入力を未確認とする推論を事実検証済みと扱わず、原文のまま境界を表示する', () => {
+    // Synthetic public-source regression: deliberately contradictory model prose.
+    // No private run IDs, provider metadata, or raw diagnostic are retained.
+    const source = input();
+    source.evidence[0].text = '固定資産売却益は1,174,729千円です';
+    const candidate = {
+      ...issue(),
+      reading: '第2四半期までに売却が集中し、第3四半期の利益水準は低い',
+      caveat: '固定資産売却益の金額は今回の確認済み入力では未確認です',
+      nextCheck: '第4四半期の予定を確認する',
+    };
+    const result = parseAnalysisResponse(response([candidate]), source);
+    expect(result.issues[0]).toEqual(candidate);
+    expect(result.evidence[0].text).toBe(source.evidence[0].text);
+    const html = buildAnalysisStageHtml({ loading: false, data: result, error: null });
+    expect(html).toContain('未検証の推論');
+    expect(html).toContain(candidate.caveat);
+    expect(html).toContain('1,174,729千円');
+    expect(analysisPrompt(source)[0].content).toContain('既にある金額・進捗・説明を未確認としない');
   });
 
   it('引用可能IDだけをモデルへ投影し、長さ・必須キー・件数をプロンプトとスキーマへ揃える', () => {
@@ -321,17 +437,17 @@ describe('生成契約と診断の正負境界', () => {
       additionalProperties: false,
       required: ['version', 'issues'],
       properties: {
-        version: { enum: [3] },
+        version: { enum: [4] },
         issues: {
-          maxItems: ANALYSIS_LIMITS.issues,
+          maxItems: ANALYSIS_RESOURCE_LIMITS.issues,
           items: {
             additionalProperties: false,
             properties: {
-              title: { minLength: 1, maxLength: ANALYSIS_LIMITS.title },
-              reading: { minLength: 1, maxLength: ANALYSIS_LIMITS.text },
+              title: { minLength: 1, maxLength: ANALYSIS_RESOURCE_LIMITS.text },
+              reading: { minLength: 1, maxLength: ANALYSIS_RESOURCE_LIMITS.text },
               evidenceIds: {
                 minItems: 1,
-                maxItems: ANALYSIS_LIMITS.references,
+                maxItems: ANALYSIS_RESOURCE_LIMITS.references,
                 items: { enum: model.allowedEvidenceIds },
               },
             },
@@ -389,29 +505,30 @@ describe('生成契約と診断の正負境界', () => {
       options.onResponse?.(raw);
       return raw;
     });
-    await expect(
-      analyzeFacts(config, facts, presentation, (snapshot) => {
-        snapshots.push(snapshot);
-        throw new Error('quota');
-      })
-    ).rejects.toThrow(
+    const result = await analyzeFacts(config, facts, presentation, (snapshot) => {
+      snapshots.push(snapshot);
+      throw new Error('quota');
+    });
+    expect(result.issues).toEqual([]);
+    expect(result.notices).toContainEqual(
       expect.objectContaining({
         code: 'evidence_unknown',
         path: '$.issues[0].evidenceIds[0]',
+        severity: 'quarantined',
       })
     );
-    expect(snapshots.map((s) => s.outcome)).toEqual(['running', 'running', 'failure']);
+    expect(snapshots.map((s) => s.outcome)).toEqual(['running', 'running', 'partialSuccess']);
     expect(snapshots[0].response).toBeNull();
     expect(snapshots[snapshots.length - 1]).toMatchObject({
       response: raw,
       usage: { outputTokens: 1215, finishReason: 'stop' },
-      error: { code: 'evidence_unknown', path: '$.issues[0].evidenceIds[0]' },
+      error: null,
     });
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(1);
   });
 
   it('使用量と中断された生応答を通信層の例外後も保持し、未受信と空応答を区別する', async () => {
-    for (const raw of [null, '', '{"version":3,"issues":[']) {
+    for (const raw of [null, '', '{"version":4,"issues":[']) {
       const snapshots: AnalysisGenerationDiagnostic[] = [];
       vi.mocked(generateText).mockImplementationOnce(async (options) => {
         if (raw !== null) options.onResponse?.(raw);

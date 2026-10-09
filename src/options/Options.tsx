@@ -140,6 +140,7 @@ const Options: React.FC = () => {
               `analysisCacheV1:${entry.resultId}`,
               `analysisCacheV2:${entry.resultId}`,
               `analysisCacheV3:${entry.resultId}`,
+              `analysisCacheV4:${entry.resultId}`,
               ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + entry.resultId,
             ]
           : []),
@@ -160,6 +161,7 @@ const Options: React.FC = () => {
           key.startsWith('analysisCacheV1:') ||
           key.startsWith('analysisCacheV2:') ||
           key.startsWith('analysisCacheV3:') ||
+          key.startsWith('analysisCacheV4:') ||
           key.startsWith(ANALYSIS_CACHE_DIAGNOSTIC_PREFIX) ||
           key === 'summaryCache'
       );

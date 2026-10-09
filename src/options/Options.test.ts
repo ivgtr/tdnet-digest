@@ -28,6 +28,7 @@ describe('追加分析キャッシュと診断参照の削除', () => {
           code: '1234',
         },
         'analysisCacheV3:summary-result': { issues: [] },
+        'analysisCacheV4:summary-result': { issues: [], candidates: [], notices: [] },
         [ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + 'summary-result']: { runId: 'analysis-run' },
         [ANALYSIS_DIAGNOSTICS_KEY]: { version: 1, traces: [] },
         [SUMMARY_DIAGNOSTICS_KEY]: { version: 1, traces: [] },
@@ -55,6 +56,7 @@ describe('追加分析キャッシュと診断参照の削除', () => {
       await act(async () => button.click());
       expect(stored['summaryCacheV2:fixture']).toBeUndefined();
       expect(stored['analysisCacheV3:summary-result']).toBeUndefined();
+      expect(stored['analysisCacheV4:summary-result']).toBeUndefined();
       expect(stored[ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + 'summary-result']).toBeUndefined();
       expect(stored[ANALYSIS_DIAGNOSTICS_KEY]).toBeDefined();
       expect(stored[SUMMARY_DIAGNOSTICS_KEY]).toBeDefined();

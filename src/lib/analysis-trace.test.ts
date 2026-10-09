@@ -113,6 +113,168 @@ describe('追加分析の実行別診断', () => {
     expect(stored[SUMMARY_DIAGNOSTICS_KEY]).toEqual({ unchangedSummaryTrace: true });
   });
 
+  it('v1の従来記録と部分成功を共存させ、最後の試行と診断を実行IDに結び付ける', async () => {
+    const success = trace('legacy-success');
+    await saveAnalysisTrace(success);
+    const partial: AnalysisTrace = {
+      ...trace('partial'),
+      intentAt: 2,
+      contract: { ...success.contract!, version: 4 },
+      outcome: 'partialSuccess',
+      response: '{"version":4,"issues":[{"evidenceIds":["fact:missing"]}]}',
+    };
+    await saveAnalysisTrace(partial);
+    expect(
+      await loadAnalysisTrace(
+        pdfUrl,
+        partial.runId,
+        partial.summaryResultId,
+        'saved',
+        partial.inputHash!
+      )
+    ).toEqual(partial);
+    expect(
+      readLastAnalysisAttempt(
+        stored[ANALYSIS_DIAGNOSTICS_KEY],
+        pdfUrl,
+        partial.summaryResultId,
+        partial.inputHash!
+      )
+    ).toMatchObject({
+      version: 1,
+      runId: partial.runId,
+      outcome: 'partialSuccess',
+      error: null,
+    });
+    await expect(
+      loadAnalysisTrace(pdfUrl, partial.runId, partial.summaryResultId, 'saved', 'wrong-input')
+    ).rejects.toThrow('対応する診断');
+    await saveAnalysisTrace({
+      ...trace('later-failure'),
+      intentAt: 3,
+      outcome: 'failure',
+      error: { code: 'invalid_json', path: '$', message: '形式不正' },
+    });
+    expect(await loadAnalysisTrace(pdfUrl, success.runId, success.summaryResultId)).toEqual(
+      success
+    );
+    expect(await loadAnalysisTrace(pdfUrl, partial.runId, partial.summaryResultId)).toEqual(
+      partial
+    );
+    expect(
+      readLastAnalysisAttempt(
+        stored[ANALYSIS_DIAGNOSTICS_KEY],
+        pdfUrl,
+        partial.summaryResultId,
+        partial.inputHash!
+      )
+    ).toMatchObject({ runId: 'later-failure', outcome: 'failure' });
+  });
+
+  it('通知と実行制限を許可項目だけで保存し、後続の変更を混ぜない', async () => {
+    const item: AnalysisTrace = {
+      ...trace('notices'),
+      outcome: 'partialSuccess',
+      notices: [
+        {
+          issueIndex: 0,
+          code: 'evidence_unknown',
+          path: '$.issues[0].evidenceIds[0]',
+          message: '参照不正',
+          severity: 'quarantined',
+        },
+        {
+          issueIndex: -1,
+          code: 'output_limit',
+          path: '$',
+          message: '出力上限',
+          severity: 'warning',
+        },
+      ],
+    };
+    item.contract!.resourceLimits = {
+      responseBytes: 262144,
+      savedBytes: 1048576,
+      issues: 16,
+      text: 4096,
+      references: 32,
+      depth: 32,
+      nodes: 10000,
+      savedNodes: 40000,
+    };
+    Object.assign(item.notices![0], { apiKey: 'secret' });
+    Object.assign(item.contract!.resourceLimits, { headers: 'secret' });
+    const pending = saveAnalysisTrace(item);
+    item.notices![0].message = 'changed';
+    await pending;
+    const saved = await loadAnalysisTrace(pdfUrl, item.runId, item.summaryResultId);
+    expect(saved.notices).toEqual([
+      {
+        issueIndex: 0,
+        code: 'evidence_unknown',
+        path: '$.issues[0].evidenceIds[0]',
+        message: '参照不正',
+        severity: 'quarantined',
+      },
+      { issueIndex: -1, code: 'output_limit', path: '$', message: '出力上限', severity: 'warning' },
+    ]);
+    expect(saved.contract!.resourceLimits).toMatchObject({ issues: 16, nodes: 10000 });
+    expect(JSON.stringify(saved)).not.toMatch(/secret|apiKey|headers/);
+  });
+
+  it.each([
+    { issueIndex: 16 },
+    { issueIndex: -2 },
+    { issueIndex: 0.5 },
+    { code: '' },
+    { path: 'x'.repeat(257) },
+    { message: 'x'.repeat(1025) },
+    { severity: 'success' },
+    { config: 'secret' },
+  ])('壊れた保存通知を受け入れない: %j', async (change) => {
+    const item = {
+      ...trace('bad-notice'),
+      notices: [
+        {
+          issueIndex: 0,
+          code: 'evidence_unknown',
+          path: '$.issues[0]',
+          message: '参照不正',
+          severity: 'quarantined',
+          ...change,
+        },
+      ],
+    };
+    stored[ANALYSIS_DIAGNOSTICS_KEY] = { version: 1, traces: [item], lastAttempts: [] };
+    await expect(loadAnalysisTrace(pdfUrl, item.runId, item.summaryResultId)).rejects.toThrow(
+      '形式が不正'
+    );
+  });
+
+  it('通知の保存量を明示的に制限し、縮小後も読める通知と実行IDを保つ', async () => {
+    const item: AnalysisTrace = {
+      ...trace('many-notices'),
+      outcome: 'partialSuccess',
+      notices: Array.from({ length: 1024 }, () => ({
+        issueIndex: 0,
+        code: 'text_length',
+        path: '$.issues[0].reading',
+        message: '長'.repeat(1024),
+        severity: 'warning' as const,
+      })),
+    };
+    await saveAnalysisTrace(item);
+    const saved = await loadAnalysisTrace(pdfUrl, item.runId, item.summaryResultId);
+    expect(saved.compaction?.reason).toBe('storage-limit');
+    expect(saved.notices).toHaveLength(128);
+    expect(saved.notices![0]).toMatchObject({
+      code: 'text_length',
+      path: '$.issues[0].reading',
+      severity: 'warning',
+    });
+    expect(size(saved)).toBeLessThanOrEqual(ANALYSIS_DIAGNOSTICS_LIMITS.recordBytes);
+  });
+
   it.each(['count', 'bytes'] as const)(
     '上限%sで古い完了記録を除き、保存量を明示的に制限する',
     async (boundary) => {
