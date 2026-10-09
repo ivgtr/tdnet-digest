@@ -10,6 +10,13 @@ import {
   readPdfExtractionError,
   type PdfExtractionStage,
 } from '@/lib/pdf-extraction-error';
+import {
+  saveAnalysisTrace,
+  nextAnalysisIntentAt,
+  type AnalysisTrace,
+  type AnalysisGenerationDiagnostic,
+} from '@/lib/analysis-trace';
+import { buildAnalysisInput } from '@/lib/analysis-input';
 import { serializeCandidateSource } from '@/lib/fact-candidates';
 import type { LLMConfig } from '@/lib/llm-client';
 import { configuredApiUrl } from '@/lib/llm-endpoint';
@@ -87,11 +94,13 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
   if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
-  const diagnosticRunId = request.action === 'summarize' ? crypto.randomUUID() : null;
+  const diagnosticRunId = request.action !== 'score' ? crypto.randomUUID() : null;
   const task =
     request.action === 'summarize'
       ? handleSummarize(request, diagnosticRunId!)
-      : handleFollowup(request);
+      : request.action === 'analyze'
+        ? handleAnalyze(request, diagnosticRunId!)
+        : handleFollowup(request);
   task
     .then((response) =>
       sendResponse({ ...response, ...(diagnosticRunId ? { diagnosticRunId } : {}) })
@@ -326,12 +335,97 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
   }
 }
 
+async function handleAnalyze(request: FollowupRequest, runId: string) {
+  const started = performance.now();
+  const trace: AnalysisTrace = {
+    version: 1,
+    stage: 'analysis',
+    intentAt: nextAnalysisIntentAt(),
+    runId,
+    summaryResultId: request.resultId,
+    startedAt: new Date().toISOString(),
+    pdfUrl: request.pdfUrl,
+    provider: null,
+    model: null,
+    buildDigest: summaryBuildDigest(),
+    fingerprint: request.fingerprint,
+    inputHash: null,
+    input: null,
+    contract: null,
+    response: null,
+    usage: null,
+    outcome: 'running',
+    error: null,
+    elapsedMs: 0,
+  };
+  let diagnosticPersistence: DiagnosticPersistence = 'failed';
+  const saveTrace = async () => {
+    trace.elapsedMs = Math.round(performance.now() - started);
+    try {
+      await saveAnalysisTrace(trace);
+      diagnosticPersistence = 'saved';
+    } catch {
+      diagnosticPersistence = 'failed';
+    }
+  };
+  let terminalObserved = false;
+  const metadata = () => ({
+    diagnosticPersistence,
+    diagnosticInputHash: trace.inputHash,
+    ...(diagnosticPersistence === 'failed'
+      ? { persistenceWarning: '追加分析の診断を保存できませんでした' }
+      : {}),
+  });
+  try {
+    trace.pdfUrl = fullUrl(request.pdfUrl);
+    validatePresentation(request.presentation, request.facts);
+    trace.inputHash = buildAnalysisInput(request.facts, request.presentation).inputHash;
+    await saveTrace();
+    const result = await handleFollowup(request, async (snapshot, identity) => {
+      if (identity) {
+        trace.provider = identity.provider;
+        trace.model = identity.model;
+      }
+      if (snapshot) {
+        trace.input = snapshot.input;
+        trace.contract = snapshot.contract;
+        trace.inputHash = snapshot.input.inputHash;
+        trace.response = snapshot.response;
+        trace.usage = snapshot.usage;
+        trace.outcome = snapshot.outcome;
+        terminalObserved = snapshot.outcome !== 'running';
+        trace.error = snapshot.error;
+      }
+      await saveTrace();
+    });
+    if (!terminalObserved) {
+      trace.outcome = 'success';
+      await saveTrace();
+    }
+    return { ...result, ...metadata() };
+  } catch (error) {
+    trace.outcome = 'failure';
+    trace.error ??= {
+      code: 'analysis-preflight-failed',
+      path: '$',
+      message: error instanceof Error ? error.message : String(error),
+    };
+    if (!terminalObserved) await saveTrace();
+    return { error: error instanceof Error ? error.message : String(error), ...metadata() };
+  }
+}
+
 async function handleFollowup(
-  request: FollowupRequest
+  request: FollowupRequest,
+  diagnostic?: (
+    snapshot: AnalysisGenerationDiagnostic | null,
+    identity?: { provider: string; model: string }
+  ) => Promise<void>
 ): Promise<{ score?: ExperimentalScore; analysis?: AdditionalAnalysis }> {
   validatePresentation(request.presentation, request.facts);
   const settings = await getSettings();
   const config = configOf(settings);
+  await diagnostic?.(null, { provider: settings.provider, model: settings.model });
   const fingerprints = await Promise.all(
     (['full', 'smart'] as const).map((extractionMode) =>
       buildAnalysisFingerprint({ ...config, extractionMode })
@@ -363,7 +457,7 @@ async function handleFollowup(
   )
     throw new Error('要約結果の識別子が一致しません');
   if (request.action === 'analyze')
-    return { analysis: await analyzeFacts(config, facts, presentation) };
+    return { analysis: await analyzeFacts(config, facts, presentation, diagnostic) };
   if (!settings.experimentalScoring) throw new Error('実験的スコアがOFFです');
   const score = await attachScore(
     config,

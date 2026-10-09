@@ -1,3 +1,4 @@
+import { loadAnalysisTrace, ANALYSIS_DIAGNOSTICS_KEY } from '../lib/analysis-trace';
 import type { SummaryTrace } from '../lib/summary-trace';
 import {
   matchingSummaryTrace,
@@ -620,12 +621,180 @@ describe('要約・採点・追加分析の分離', () => {
       fingerprint: summary.metadata.analysisFingerprint,
     });
     expect(analysis.analysis.issues).toHaveLength(1);
+    expect(analysis.diagnosticRunId).not.toBe(summary.diagnosticRunId);
+    expect(analysis.diagnosticPersistence).toBe('saved');
+    expect(
+      vi.mocked(chrome.storage.local.set).mock.calls.filter(([items]) => {
+        const store = (items as Record<string, unknown>)[ANALYSIS_DIAGNOSTICS_KEY] as
+          | { traces?: { runId: string; outcome: string }[] }
+          | undefined;
+        return store?.traces?.some(
+          (trace) => trace.runId === analysis.diagnosticRunId && trace.outcome === 'success'
+        );
+      })
+    ).toHaveLength(1);
+    expect(
+      await loadAnalysisTrace('test.pdf', analysis.diagnosticRunId, summary.resultId)
+    ).toMatchObject({
+      stage: 'analysis',
+      outcome: 'success',
+      summaryResultId: summary.resultId,
+      inputHash: analysis.analysis.inputHash,
+      input: {
+        evidence: expect.arrayContaining([
+          expect.objectContaining({ id: `fact:${facts.facts[0].id}` }),
+        ]),
+      },
+      response: expect.stringContaining('計画の実現条件'),
+    });
+    expect(
+      await loadSummaryTrace('test.pdf', summary.diagnosticRunId, summary.resultId)
+    ).toMatchObject({ outcome: 'firstSuccess' });
     const sent = mocked.generateText.mock.calls.at(-1)!;
     expect(sent[1][1].content).toContain('explanation:explanation-0');
     expect(sent[1][1].content).toContain('開示された数値と条件を確認する');
     expect(sent[0].maxOutputTokens).toBe(8192);
     expect(sent[0].signal).toBeInstanceOf(AbortSignal);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['malformed', '{broken', 'invalid_json', '$'],
+    [
+      'unknown-reference',
+      JSON.stringify({
+        version: 3,
+        issues: [
+          {
+            title: '計画の実現条件',
+            conclusion: '条件確認が必要です',
+            evidenceIds: ['fact:missing'],
+            reading: '足元の実績と計画の整合を点検します',
+            caveat: '継続性は未確認です',
+            nextCheck: '実績と前提を確認する',
+          },
+        ],
+      }),
+      'evidence_unknown',
+      '$.issues[0].evidenceIds[0]',
+    ],
+  ])(
+    '追加分析%sの生応答・使用量・拒否位置を残し、成功要約と前の分析を汚さない',
+    async (_case, raw, code, path) => {
+      mocked.generateText.mockResolvedValueOnce(
+        candidateResponse(facts.facts, [nativePage], facts.documentType)
+      );
+      const request = await setup(false);
+      const summary = await request({ action: 'summarize' });
+      const followup = {
+        action: 'analyze',
+        facts: summary.facts,
+        presentation: summary.presentation,
+        resultId: summary.resultId,
+        fingerprint: summary.metadata.analysisFingerprint,
+      };
+      mocked.generateText.mockResolvedValueOnce('{"version":3,"issues":[]}');
+      const success = await request(followup);
+      const summaryTrace = structuredClone(stored[SUMMARY_DIAGNOSTICS_KEY]);
+      mocked.generateText.mockImplementationOnce(async (config: LLMConfig) => {
+        config.onUsage?.({ inputTokens: 12, outputTokens: 8, elapsedMs: 2, finishReason: 'stop' });
+        return raw;
+      });
+      const failed = await request(followup);
+      expect(failed.analysis).toBeUndefined();
+      expect(failed.error).toContain(code);
+      expect(failed.diagnosticRunId).not.toBe(success.diagnosticRunId);
+      expect(
+        await loadAnalysisTrace('test.pdf', failed.diagnosticRunId, summary.resultId)
+      ).toMatchObject({
+        outcome: 'failure',
+        response: raw,
+        error: { code, path },
+        usage: { outputTokens: 8 },
+        inputHash: success.analysis.inputHash,
+      });
+      expect(
+        await loadAnalysisTrace('test.pdf', success.diagnosticRunId, summary.resultId)
+      ).toMatchObject({ outcome: 'success' });
+      expect(stored[SUMMARY_DIAGNOSTICS_KEY]).toEqual(summaryTrace);
+      expect(mocked.generateText).toHaveBeenCalledTimes(3);
+    }
+  );
+
+  it('追加分析の制限時間中断では完了していない応答を成功にせず、課金再試行しない', async () => {
+    mocked.generateText.mockResolvedValueOnce(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
+    const request = await setup(false);
+    const summary = await request({ action: 'summarize' });
+    vi.useFakeTimers();
+    try {
+      mocked.generateText.mockImplementationOnce(
+        (config: LLMConfig) =>
+          new Promise((_resolve, reject) => {
+            config.onResponse?.('{"version":3,"issues":[');
+            config.onUsage?.({ inputTokens: 12, outputTokens: 8, elapsedMs: 60_000 });
+            config.signal!.addEventListener('abort', () => reject(new Error('aborted')), {
+              once: true,
+            });
+          })
+      );
+      const pending = request({
+        action: 'analyze',
+        facts: summary.facts,
+        presentation: summary.presentation,
+        resultId: summary.resultId,
+        fingerprint: summary.metadata.analysisFingerprint,
+      });
+      await vi.waitFor(() => expect(mocked.generateText).toHaveBeenCalledTimes(2));
+      await vi.advanceTimersByTimeAsync(60_001);
+      const failed = await pending;
+      expect(failed.error).toContain('interrupted');
+      expect(
+        await loadAnalysisTrace('test.pdf', failed.diagnosticRunId, summary.resultId)
+      ).toMatchObject({
+        outcome: 'failure',
+        response: '{"version":3,"issues":[',
+        error: { code: 'interrupted', path: '$' },
+      });
+      expect(mocked.generateText).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('追加分析診断の保存失敗を通知して有効結果を返し、次の明示要求で回復する', async () => {
+    mocked.generateText.mockResolvedValueOnce(
+      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    );
+    const request = await setup(false);
+    const summary = await request({ action: 'summarize' });
+    const write = async (items: Record<string, unknown>) => {
+      Object.assign(stored, structuredClone(items));
+    };
+    vi.mocked(chrome.storage.local.set).mockImplementation(
+      async (items: Record<string, unknown>) => {
+        if (ANALYSIS_DIAGNOSTICS_KEY in items) throw new Error('quota');
+        return write(items);
+      }
+    );
+    const followup = {
+      action: 'analyze',
+      facts: summary.facts,
+      presentation: summary.presentation,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    };
+    mocked.generateText.mockResolvedValue('{"version":3,"issues":[]}');
+    const result = await request(followup);
+    expect(result.analysis).toMatchObject({ issues: [] });
+    expect(result.diagnosticPersistence).toBe('failed');
+    expect(result.persistenceWarning).toContain('保存できません');
+    expect(mocked.generateText).toHaveBeenCalledTimes(2);
+    vi.mocked(chrome.storage.local.set).mockImplementation(write);
+    const next = await request(followup);
+    expect(next.diagnosticPersistence).toBe('saved');
+    expect(next.diagnosticRunId).not.toBe(result.diagnosticRunId);
   });
 
   it('customUrlだけの変更で旧要約の追加分析・採点を通信前に拒否する', async () => {

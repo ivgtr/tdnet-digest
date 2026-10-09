@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
 import { loadSummaryTrace } from '@/lib/summary-trace';
+import { loadAnalysisTrace } from '@/lib/analysis-trace';
 import { ACTION_BUTTON_STYLE, BUTTON_STYLES, FOCUS_STYLE } from './constants/styles';
 
 interface RowData {
@@ -130,6 +131,9 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
   const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
   const [diagnosticText, setDiagnosticText] = useState<string | null>(null);
   const [diagnosticCopied, setDiagnosticCopied] = useState(false);
+  const [diagnosticKind, setDiagnosticKind] = useState<'summary' | 'analysis' | 'lastAnalysis'>(
+    'summary'
+  );
   const diagnosticRequest = useRef(0);
   useEffect(() => {
     diagnosticRequest.current++;
@@ -140,19 +144,35 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     return () => {
       pendingRequest.current++;
     };
-  }, [result]);
-  const copyDiagnostic = async () => {
+  }, [result, analysis.diagnosticRunId, analysis.lastAttempt?.runId]);
+  const lastAnalysisRunId =
+    analysis.lastAttempt?.runId ?? (!analysis.data ? analysis.diagnosticRunId : undefined);
+  const copyDiagnostic = async (kind: 'summary' | 'analysis' | 'lastAnalysis' = 'summary') => {
+    setDiagnosticKind(kind);
     const request = ++diagnosticRequest.current;
     setDiagnosticError(null);
     setDiagnosticText(null);
     setDiagnosticCopied(false);
     try {
-      const trace = await loadSummaryTrace(
-        rowData.pdfUrl,
-        result?.diagnosticRunId ?? null,
-        result?.resultId ?? null,
-        result?.diagnosticPersistence
-      );
+      const trace =
+        kind !== 'summary'
+          ? await loadAnalysisTrace(
+              rowData.pdfUrl,
+              kind === 'analysis' ? analysis.diagnosticRunId! : lastAnalysisRunId!,
+              result!.resultId!,
+              kind === 'lastAnalysis' && analysis.lastAttempt
+                ? analysis.lastAttempt.persistence
+                : analysis.diagnosticPersistence,
+              kind === 'analysis'
+                ? analysis.data?.inputHash
+                : (analysis.lastAttempt?.inputHash ?? analysis.diagnosticInputHash)
+            )
+          : await loadSummaryTrace(
+              rowData.pdfUrl,
+              result?.diagnosticRunId ?? null,
+              result?.resultId ?? null,
+              result?.diagnosticPersistence
+            );
       if (request !== diagnosticRequest.current) return;
       const text = JSON.stringify(trace, null, 2);
       setDiagnosticText(text);
@@ -263,15 +283,58 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
               >
                 診断JSONをコピー
               </button>
+              {analysis.data && analysis.diagnosticRunId && result.resultId && (
+                <button
+                  type="button"
+                  onClick={() => void copyDiagnostic('analysis')}
+                  style={ACTION_BUTTON_STYLE}
+                >
+                  成功した追加分析の診断JSONをコピー
+                </button>
+              )}
+              {lastAnalysisRunId &&
+                result.resultId &&
+                (!analysis.data || lastAnalysisRunId !== analysis.diagnosticRunId) && (
+                  <button
+                    type="button"
+                    onClick={() => void copyDiagnostic('lastAnalysis')}
+                    style={ACTION_BUTTON_STYLE}
+                  >
+                    直近の試行の診断JSONをコピー
+                  </button>
+                )}
               <span role="status" aria-live="polite" style={{ color: '#6b7280' }}>
                 {diagnosticCopied ? 'コピーしました' : ''}
               </span>
             </div>
+            {analysis.lastAttempt &&
+              analysis.data &&
+              analysis.lastAttempt.runId !== analysis.diagnosticRunId && (
+                <p role="status" style={{ color: '#92400e', margin: '8px 0' }}>
+                  {analysis.lastAttempt.outcome === 'failure'
+                    ? `直近の追加分析は失敗しました: ${analysis.lastAttempt.error?.message ?? '生成失敗'}。以前の成功した分析を表示しています。`
+                    : analysis.lastAttempt.outcome === 'running'
+                      ? '直近の追加分析の完了記録を確認できません。以前の成功した分析を表示しています。'
+                      : '直近の追加分析と、表示中の保存済み分析は別の実行です。'}
+                </p>
+              )}
             {diagnosticText !== null && (
               <details open={diagnosticError !== null} style={{ marginTop: 8 }}>
-                <summary style={{ cursor: 'pointer', padding: '4px 0' }}>診断JSONを表示</summary>
+                <summary style={{ cursor: 'pointer', padding: '4px 0' }}>
+                  {diagnosticKind === 'analysis'
+                    ? '成功した追加分析の診断JSONを表示'
+                    : diagnosticKind === 'lastAnalysis'
+                      ? '直近の試行の診断JSONを表示'
+                      : '診断JSONを表示'}
+                </summary>
                 <textarea
-                  aria-label="診断JSON"
+                  aria-label={
+                    diagnosticKind === 'analysis'
+                      ? '成功した追加分析の診断JSON'
+                      : diagnosticKind === 'lastAnalysis'
+                        ? '直近の試行の診断JSON'
+                        : '診断JSON'
+                  }
                   readOnly
                   value={diagnosticText}
                   rows={6}

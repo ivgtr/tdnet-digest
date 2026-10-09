@@ -28,6 +28,9 @@ export interface AnalysisCoverage {
   organizationStatus: SummaryPresentation['organization']['status'];
   unresolvedSources: number;
   unverifiedFacts: number;
+  unverifiedItems: number;
+  unverifiedSourcePages: number[];
+  limitations: string[];
 }
 export interface AnalysisInput {
   documentType: FactSummary['documentType'];
@@ -163,6 +166,24 @@ export function buildAnalysisInput(
       ),
     });
   }
+  // Rejection coverage is independent of paragraph coverage: a surviving claim
+  // about progress does not restore a rejected explanation of one-off profit.
+  const unverified = [
+    ...presentation.organization.issues,
+    ...[...presentation.organization.claims, ...presentation.organization.observations].filter(
+      (item) => typeof presentation.organization.review?.claims[item.id] === 'string'
+    ),
+    ...reconciled.conflicts,
+  ];
+  const limitations: string[] = [];
+  if (unverified.length)
+    limitations.push(
+      '説明・指標の生成・点検に未確認または不採用の項目があります。同じ原文の別の説明が採用されても、増減要因・一時要因・時期・条件の全体が確認済みになったわけではありません。不採用部分の内容を推測したり、資料に記載がないと断定したりしないでください。'
+    );
+  if (presentation.organization.status !== 'ready')
+    limitations.push(
+      '今回の確認済み入力は資料全体の説明・指標を網羅していません。継続性や達成見込みの判断には、未確認の要因・条件が影響する可能性があります。'
+    );
   const coverage: AnalysisCoverage = {
     facts: facts.facts.length,
     explanations: explanations.length,
@@ -182,6 +203,9 @@ export function buildAnalysisInput(
       ).map((e) => e.id),
     ]).length,
     unverifiedFacts: facts.unverified.length,
+    unverifiedItems: unverified.length,
+    unverifiedSourcePages: pagesOf(unverified.flatMap((item) => item.sourceIds)),
+    limitations,
   };
   return {
     documentType: facts.documentType,

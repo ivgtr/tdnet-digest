@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DiagnosticPersistence } from '@/lib/summary-trace';
+import {
+  ANALYSIS_CACHE_DIAGNOSTIC_PREFIX,
+  ANALYSIS_DIAGNOSTICS_KEY,
+  readLastAnalysisAttempt,
+  type AnalysisLastAttempt,
+  readAnalysisDiagnosticReference,
+} from '@/lib/analysis-trace';
+import { buildAnalysisInput } from '@/lib/analysis-input';
 import { summaryResultId } from '@/lib/summary-result-id';
 import { normalizeTdnetPdfUrl } from '@/lib/tdnet-url';
 import {
@@ -38,6 +46,10 @@ export interface SummaryResult {
   retryExtractionMode?: 'full';
 }
 export interface Stage<T> {
+  lastAttempt?: AnalysisLastAttempt;
+  diagnosticRunId?: string;
+  diagnosticInputHash?: string;
+  diagnosticPersistence?: DiagnosticPersistence;
   loading: boolean;
   data: T | null;
   error: string | null;
@@ -261,7 +273,12 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         current() && stageRequestRef.current[stage] === requests[stage];
       let data: Record<string, unknown>;
       try {
-        data = await chrome.storage.local.get([SCORE_PREFIX + id, ANALYSIS_PREFIX + id]);
+        data = await chrome.storage.local.get([
+          SCORE_PREFIX + id,
+          ANALYSIS_PREFIX + id,
+          ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + id,
+          ANALYSIS_DIAGNOSTICS_KEY,
+        ]);
       } catch {
         if (!current()) return;
         setPersistenceWarning((warning) =>
@@ -308,22 +325,61 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         }
       }
       if (canRestore('analyze')) {
+        let lastAttempt: AnalysisLastAttempt | null = null;
+        let diagnosticWarning: string | undefined;
+        try {
+          lastAttempt = readLastAnalysisAttempt(
+            data[ANALYSIS_DIAGNOSTICS_KEY],
+            pdfUrl,
+            id,
+            buildAnalysisInput(facts, presentation).inputHash
+          );
+        } catch {
+          diagnosticWarning = '直近の追加分析診断を読み込めませんでした';
+        }
+        const diagnosticHistory = {
+          ...(lastAttempt ? { lastAttempt } : {}),
+          ...(diagnosticWarning ? { persistenceWarning: diagnosticWarning } : {}),
+        };
         try {
           const entry = data[ANALYSIS_PREFIX + id];
-          setAnalysis(
-            entry
-              ? {
-                  loading: false,
-                  data: parseAnalysis(JSON.stringify(entry), facts, presentation),
-                  error: null,
-                }
-              : emptyStage()
-          );
+          if (entry) {
+            const analysis = parseAnalysis(JSON.stringify(entry), facts, presentation);
+            const diagnostic = readAnalysisDiagnosticReference(
+              data[ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + id],
+              id,
+              analysis.inputHash
+            );
+            setAnalysis({
+              loading: false,
+              data: analysis,
+              error: null,
+              ...diagnosticHistory,
+              ...(diagnostic
+                ? {
+                    diagnosticRunId: diagnostic.runId,
+                    diagnosticInputHash: diagnostic.inputHash,
+                    diagnosticPersistence: diagnostic.persistence,
+                  }
+                : {}),
+            });
+          } else
+            setAnalysis({
+              ...emptyStage<AdditionalAnalysis>(),
+              ...diagnosticHistory,
+              error:
+                lastAttempt?.outcome === 'failure'
+                  ? `前回の追加分析: ${lastAttempt.error?.message ?? '生成に失敗しました'}`
+                  : lastAttempt?.outcome === 'running'
+                    ? '前回の追加分析の完了記録を確認できません。途中の診断を確認できます'
+                    : null,
+            });
         } catch {
           setAnalysis({
             loading: false,
             data: null,
             error: '保存された追加分析の形式・根拠が不正です',
+            ...diagnosticHistory,
           });
         }
       }
@@ -560,6 +616,19 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       const set = action === 'score' ? setScore : setAnalysis;
       const cache = (action === 'score' ? SCORE_PREFIX : ANALYSIS_PREFIX) + id;
       set({ loading: true, data: null, error: null });
+      let diagnosticRunId: string | undefined;
+      let diagnosticInputHash: string | undefined;
+      let diagnosticPersistence: DiagnosticPersistence | undefined;
+      let diagnosticWarning: string | undefined;
+      const diagnosticState = () =>
+        action === 'analyze'
+          ? {
+              diagnosticRunId,
+              diagnosticInputHash,
+              diagnosticPersistence,
+              ...(diagnosticWarning ? { persistenceWarning: diagnosticWarning } : {}),
+            }
+          : {};
       try {
         const response = await chrome.runtime.sendMessage({
           action,
@@ -573,6 +642,23 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
           fingerprint: current.metadata.analysisFingerprint,
         });
         if (!isCurrent()) return;
+        if (action === 'analyze') {
+          diagnosticRunId =
+            typeof response.diagnosticRunId === 'string' && response.diagnosticRunId
+              ? response.diagnosticRunId
+              : undefined;
+          diagnosticInputHash =
+            typeof response.diagnosticInputHash === 'string'
+              ? response.diagnosticInputHash
+              : undefined;
+          diagnosticPersistence = ['saved', 'failed'].includes(response.diagnosticPersistence)
+            ? response.diagnosticPersistence
+            : undefined;
+          diagnosticWarning =
+            typeof response.persistenceWarning === 'string'
+              ? response.persistenceWarning
+              : undefined;
+        }
         if (response.error) throw new Error(response.error);
         const data =
           action === 'score'
@@ -585,16 +671,36 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (!data) throw new Error(`${action} の結果がありません`);
         if (action === 'score' && data.value === null)
           throw new Error(data.unverified?.join(' / ') || '採点の根拠を確認できません');
-        set({ loading: false, data, error: null });
+        set({ loading: false, data, error: null, ...diagnosticState() });
         try {
-          await chrome.storage.local.set({ [cache]: data });
+          await chrome.storage.local.set({
+            [cache]: data,
+            ...(action === 'analyze'
+              ? {
+                  [ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + id]: diagnosticRunId
+                    ? {
+                        runId: diagnosticRunId,
+                        summaryResultId: id,
+                        inputHash: (data as AdditionalAnalysis).inputHash,
+                        persistence: diagnosticPersistence ?? 'failed',
+                      }
+                    : null,
+                }
+              : {}),
+          });
         } catch {
           if (isCurrent())
             set({
               loading: false,
               data,
               error: null,
-              persistenceWarning: `${action === 'score' ? '採点' : '追加分析'}を保存できませんでした。表示結果は利用できます`,
+              ...diagnosticState(),
+              persistenceWarning: [
+                diagnosticWarning,
+                `${action === 'score' ? '採点' : '追加分析'}を保存できませんでした。表示結果は利用できます`,
+              ]
+                .filter(Boolean)
+                .join(' / '),
             });
         }
       } catch (error) {
@@ -603,6 +709,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
             loading: false,
             data: null,
             error: error instanceof Error ? error.message : String(error),
+            ...diagnosticState(),
           });
       }
     },
