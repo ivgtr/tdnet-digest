@@ -3,6 +3,8 @@ import {
   reportingFieldProjection,
   reportingFieldSegments,
   isReportingCoverTitle,
+  isReportingAdministrativeRecord,
+  isAdministrativeBlock,
   reportingTargetShape,
 } from './reporting-attributes';
 import { declaredSubjectsIn } from './document-structure';
@@ -78,6 +80,80 @@ it('分割管理欄の表記揺れを許し、本文・値の追加セルは完�
     expect(isReportingMetadata({ id: 'p1b2', text: mixed })).toBe(false);
 });
 
+// Field labels prove ownership only for values of the declared type. Keep this
+// vocabulary matrix here; inventory/cover integration owns one unknown-value case.
+it.each([
+  ['コード番号', ['1234', '464A'], ['参考情報', 'NOTE', '12345', '1234 参考情報']],
+  ['証券コード', ['123B'], ['売上高', '100百万円']],
+  ['URL', ['https://example.com/report%20list'], ['参考情報', 'example.com', 'https://']],
+  [
+    'TEL',
+    [
+      '03-0000-0000',
+      '(03)0000-0000',
+      '03(0000)0000',
+      '0 3-0 0 0 0-0 0 0 0',
+      '05012345678',
+      '+81-3-0000-0000',
+    ],
+    ['参考情報', '1234', '03-0000-0000 参考情報', '03(0000-0000', '03--0000-0000'],
+  ],
+  ['電話番号', ['0120-000-000'], ['100百万円', '未定']],
+  ['上場取引所', ['東', '東 名', '東京証券取引所'], ['参考情報', '1234', '東 参考情報']],
+  ['代表者', ['代表取締役社長', '(役職名) 社長 (氏名) 山田 太郎'], ['参考情報', '売上高100百万円']],
+  ['問合せ先', ['経理部', '経理部長 鈴木 花子'], ['参考情報', '1000']],
+])('管理値の型を罫線・非罫線の両方で検証する: %s', (label, valid, invalid) => {
+  for (const value of valid) {
+    for (const separator of [' │ ', ' ']) {
+      const text = `${label}${separator}${value}`;
+      expect(reportingFieldProjection(text).complete, text).toBe(true);
+      expect(isReportingMetadata({ id: 'p1b1', text }), text).toBe(true);
+    }
+    expect(isAdministrativeBlock(`${label} ${value}`)).toBe(true);
+  }
+  for (const value of [...invalid, '']) {
+    for (const separator of [' │ ', ' ']) {
+      const text = `${label}${separator}${value}`;
+      expect(reportingFieldProjection(text).complete, text).toBe(false);
+      expect(isReportingMetadata({ id: 'p1b1', text }), text).toBe(false);
+      expect(isReportingAdministrativeRecord(text), text).toBe(false);
+      expect(isAdministrativeBlock(text), text).toBe(false);
+    }
+  }
+});
+
+it('同一セルの管理フィールド連続と既知の役職・氏名・電話の結合を型ごとに読む', () => {
+  for (const text of [
+    'コ ー ド 番 号 ４６４Ａ ＵＲＬ https://example.com/report%20list',
+    '代表者名 代表取締役社長CEO 山田 太郎',
+    '問合せ先責任者 (役職名) 取締役執行役員CFO (氏名) 鈴木 花子 TEL 03-0000-0000',
+    '問合せ先責任者 (役職名) 財務本部長 (氏名) 鈴木 花子 (TEL)03(0000)0000',
+    '問合せ先責任者 （役 職 名） （氏 名）鈴木 花子 ＴＥＬ 050(0000)0000',
+  ])
+    expect(isReportingMetadata({ id: 'p1b1', text }), text).toBe(true);
+  for (const text of [
+    'コード番号 参考情報 URL https://example.com',
+    'コード番号 1234 URL 参考情報',
+    'コード番号 1234 URL',
+    '代表者名 参考情報 TEL 03-0000-0000',
+    '問合せ先責任者 (役職名) 経理部長 (氏名) 鈴木花子 TEL 参考情報',
+  ])
+    expect(isReportingMetadata({ id: 'p1b1', text }), text).toBe(false);
+});
+
+it('会社名の後ろにある管理欄も型を検査し、会社名による再受理を防ぐ', () => {
+  for (const separator of [' ', ' │ ']) {
+    const valid = `上場会社名${separator}株式会社テスト 上場取引所 東`;
+    expect(isReportingMetadata({ id: 'p1b1', text: valid })).toBe(true);
+    for (const field of ['上場取引所 参考情報', 'コード番号 参考情報', 'URL 参考情報', 'TEL']) {
+      const text = `上場会社名${separator}株式会社テスト ${field}`;
+      expect(reportingFieldProjection(text).complete, text).toBe(false);
+      expect(isReportingMetadata({ id: 'p1b1', text }), text).toBe(false);
+      expect(isAdministrativeBlock(text), text).toBe(false);
+    }
+  }
+});
+
 // Personnel records have two bounded slots. Vocabulary and rejected continuations
 // live here; the mixed ruled cover owns the projection → headline integration.
 it.each([
@@ -104,6 +180,7 @@ it('代表者・連絡先レコードの裸の追記・空欄・別行を管理�
     '代表者 │ 参考情報 │ 山田太郎',
     '代表者 │ 代表取締役社長 │ 山田太郎 │ 参考情報',
     '代表者 │ 代表取締役社長 │ 山田太郎 │ 売上高100百万円',
+    '代表者 │ 代表取締役社長 │ 山田太郎 TEL 参考情報',
     '代表者 │ 代表取締役社長 │ 山田太郎。業績は好調です。',
     '代表者 ││ 代表取締役社長 │ 山田太郎',
     '代表者 │ 代表取締役社長 ││ 山田太郎',

@@ -207,15 +207,16 @@ export function reportingDocumentCover<
   const start = blocks.findIndex((block) => block.text.trim() && !prefix.includes(block));
   if (start < 0) return prefix;
   const mark = blocks[start].text.normalize('NFKC').trim();
+  const words = mark.split(/[ \t]*,[ \t]*|[ \t]+/);
   // Generic corporate identity syntax, never a list of supported companies.
-  // Commas separate words; a final dot abbreviates a word (CO., INC., initials).
+  // Commas separate words; a token is a word/abbreviation or dotted initials.
   // Punctuation cannot erase a source record, quantity, or unknown trailing cell.
   // Reference/navigation labels cannot become identity marks by adding a suffix.
   if (
-    !/^(?:[A-Z][A-Z&'-]*\.?(?:[ \t]*,[ \t]*|[ \t]+))+(?:GROUP|HOLDINGS|CORPORATION|INC\.?|LTD\.?)$/.test(
-      mark
-    ) ||
-    /\b(?:REFERENCES?|APPENDIX|APPENDICES|ATTACHMENTS?)\b/.test(mark)
+    words.length < 2 ||
+    !/^(?:GROUP|HOLDINGS|CORPORATION|INC\.?|LTD\.?)$/.test(words[words.length - 1]) ||
+    !words.slice(0, -1).every((word) => /^(?:[A-Z][A-Z&'-]*\.?|(?:[A-Z]\.)+[A-Z]?)$/.test(word)) ||
+    /\b(?:REFERENCES?|APPENDIX|APPENDICES|ATTACHMENTS?)\b/.test(mark.replace(/\./g, ''))
   )
     return prefix;
   const before = [...prefix];

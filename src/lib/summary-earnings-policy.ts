@@ -1,19 +1,13 @@
-import { reportingDocumentCover } from './document-context';
-import { declaredSubjectsIn, normalized } from './document-structure';
-import {
-  reportingScope,
-  isReportingCoverTitle,
-  reportingFieldSegments,
-  reportingBasis,
-  bracketedReportingBases,
-  reportingAttributeKey,
-  hasCompleteReportingAttributes,
-  reportingTargetShape,
-} from './reporting-attributes';
+import { reportingAttributeKey, hasCompleteReportingAttributes } from './reporting-attributes';
 import type { FactPeriodKind, FactSummary, VerifiedFact } from './fact-contract';
 import type { SourceExcerpt } from './summary-source-inventory';
 import { reportingMetricKey } from './metric-semantics';
-import { reportingPeriodShapes, reportingPeriodText } from './period-semantics';
+import { reportingPeriodText } from './period-semantics';
+import {
+  declaredReportingPeriod,
+  selectReportingPeriod,
+  reportingTargetAttributes,
+} from './reporting-period-selection';
 
 export interface EarningsTarget {
   fiscal: string;
@@ -33,118 +27,18 @@ function fiscalPeriod(text: string): string | null {
   if (!match || Number(match[2]) < 1 || Number(match[2]) > 12) return null;
   return `${match[1]}年${Number(match[2])}月期`;
 }
-function sourceTarget(text: string): EarningsTarget | null {
-  const normalized = reportingPeriodText(text);
-  const periods = [...new Set(normalized.match(/20\d{2}年\d{1,2}月期/g) ?? [])];
-  if (periods.length !== 1) return null;
-  const fiscal = fiscalPeriod(periods[0]);
-  const shape = reportingTargetShape(normalized);
-  if (!fiscal || !shape) return null;
-  const scopes = [
-    ...new Set(
-      (normalized.match(new RegExp(reportingScope, 'g')) ?? []).map((scope) =>
-        reportingAttributeKey('scope', scope)
-      )
-    ),
-  ];
-  if (scopes.length > 1) return null;
-  const scope = scopes[0] ?? null;
-  const bases = [
-    ...new Set(
-      bracketedReportingBases(normalized).map((basis) => reportingAttributeKey('basis', basis))
-    ),
-  ];
-  if (bases.length > 1) return null;
-  const basis = bases[0] ?? null;
-  return {
-    fiscal,
-    scope,
-    subject: null,
-    basis,
-    periodKind: shape.periodKind,
-    label: `${fiscal}${shape.quarter ?? ''}${shape.periodKind.startsWith('cumulative') ? '累計' : ''}`,
-  };
-}
-
 /** The document declares the headline period; surviving figures cannot redefine it. */
 export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolution {
-  const coverFields = reportingDocumentCover(excerpts.filter((excerpt) => excerpt.page === 1));
-  const coverTitles = coverFields
-    .flatMap((excerpt) => reportingFieldSegments(excerpt.text))
-    .filter(isReportingCoverTitle);
-  // A missing fiscal year may be supplied by a performance heading. An explicit
-  // unresolved quarter must not be erased by that separate source selection.
-  if (coverTitles.some((title) => !reportingTargetShape(title)))
-    return { target: null, issue: 'ambiguous' };
-  const cover = coverTitles.filter((text) =>
-    /20\d{2}年\d{1,2}月期/.test(reportingPeriodText(text))
-  );
-  // A dated title or performance heading may supply the year, but cannot
-  // replace an explicit cover shape. A plain 決算短信 adds no shape constraint.
-  const explicitCoverShapes = coverTitles
-    .filter((title) => reportingPeriodShapes(title).length > 0)
-    .map((title) => reportingTargetShape(title)!.periodKind);
-  const titles = cover.length
-    ? cover
-    : excerpts
-        .filter((excerpt) => excerpt.page === 1 && excerpt.role === 'performance')
-        .map((excerpt) => excerpt.text)
-        .filter(
-          (text) =>
-            /経営成績|(?:連結|個別|中間期|四半期)業績/.test(text) &&
-            /20[0-9]{2}年\s*[0-9０-９]{1,2}月期/.test(text.normalize('NFKC')) &&
-            !/。|予想/.test(text)
-        );
-  if (!titles.length) return { target: null, issue: 'missing' };
-  // Only explicit cover fields before the first section/value belong to the report.
-  // A later local company, scope or accounting-basis field must not redefine it.
-  const fields: Record<'subject' | 'scope' | 'basis', Set<string>> = {
-    subject: new Set(),
-    scope: new Set(),
-    basis: new Set(),
+  const { coverFields, titles, period, issue: periodIssue } = selectReportingPeriod(excerpts);
+  if (!period) return { target: null, issue: periodIssue };
+  const attributes = reportingTargetAttributes(coverFields, titles);
+  if (!attributes) return { target: null, issue: 'ambiguous' };
+  const target: EarningsTarget = {
+    ...attributes,
+    fiscal: period.fiscal,
+    periodKind: period.periodKind,
+    label: `${period.fiscal}${period.quarter ?? ''}${period.periodKind.startsWith('cumulative') ? '累計' : ''}`,
   };
-  for (const excerpt of coverFields) {
-    for (const subject of declaredSubjectsIn(excerpt)) fields.subject.add(subject);
-    for (const line of reportingFieldSegments(excerpt.text)) {
-      const text = normalized(line);
-      const field = line
-        .normalize('NFKC')
-        .trim()
-        .match(/^(範囲|会計基準)(?:\s*:\s*|\s+)([^。；]+)$/);
-      const scopeAtom = text.match(
-        new RegExp(`^(?:範囲:?)?(?:\\((${reportingScope})\\)|(${reportingScope}))$`)
-      );
-      const scope = field?.[1] === '範囲' ? field[2] : (scopeAtom?.[1] ?? scopeAtom?.[2]);
-      if (scope) fields.scope.add(reportingAttributeKey('scope', scope));
-      const basis =
-        field?.[1] === '会計基準'
-          ? field[2]
-          : text.match(new RegExp(`^(?:会計基準:?)?(${reportingBasis})$`, 'i'))?.[1];
-      if (basis) fields.basis.add(reportingAttributeKey('basis', basis));
-    }
-  }
-  if (Object.values(fields).some((values) => values.size > 1))
-    return { target: null, issue: 'ambiguous' };
-  const targets = titles.map(sourceTarget).map((target) => {
-    if (!target || explicitCoverShapes.some((shape) => shape !== target.periodKind)) return null;
-    const subject = [...fields.subject][0] ?? null;
-    const scope = [...fields.scope][0] ?? target.scope;
-    const basis = [...fields.basis][0] ?? target.basis;
-    if ((target.scope && scope !== target.scope) || (target.basis && basis !== target.basis))
-      return null;
-    return { ...target, subject, scope, basis };
-  });
-  const distinct = new Map(
-    targets
-      .filter((target) => target !== null)
-      .map((target) => [
-        JSON.stringify([target.label, target.scope, target.subject, target.basis]),
-        target,
-      ])
-  );
-  if (targets.some((target) => target === null) || distinct.size !== 1)
-    return { target: null, issue: 'ambiguous' };
-  const target = [...distinct.values()][0];
   const issue =
     (['scope', 'subject', 'basis'] as const).find((role) => !target[role]?.trim()) ?? null;
   return { target, issue };
@@ -290,10 +184,12 @@ export function earningsPeriodOrder(
   target: EarningsTarget | null
 ): [number, number, string] {
   const text = reportingPeriodText(period ?? '');
-  const parsed = sourceTarget(text);
+  const parsed = declaredReportingPeriod(text);
   const fiscal = fiscalPeriod(text)?.match(/^(20\d{2})年(\d{1,2})月期$/);
   return [
-    parsed && target && parsed.label === target.label ? 0 : 1,
+    parsed && target && parsed.fiscal === target.fiscal && parsed.periodKind === target.periodKind
+      ? 0
+      : 1,
     fiscal ? -(Number(fiscal[1]) * 12 + Number(fiscal[2])) : 0,
     text,
   ];

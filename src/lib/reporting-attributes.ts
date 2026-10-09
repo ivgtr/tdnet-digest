@@ -80,11 +80,87 @@ const spacedLabels = (labels: string[]) => labels.map((label) => [...label].join
 
 /** Spacing between label glyphs is layout, but a field still needs a value delimiter. */
 const administrativeField = new RegExp(
-  `^(?:${spacedLabels(administrativeFieldLabels)})(?:\\s+|:)\\s*\\S`,
+  `^(${spacedLabels(administrativeFieldLabels)})(?=\\s|:|$)[\\s:]*(.*)$`,
   'i'
 );
+const nextAdministrativeField = new RegExp(
+  `\\s+(?=(?:${spacedLabels(administrativeFieldLabels)})(?=\\s|:|$)|\\(T\\s*E\\s*L\\))`,
+  'i'
+);
+const securitiesCode = /^[0-9][0-9A-Z][0-9][0-9A-Z]$/i;
+const telephone = /^\+?\d+(?:[-‐‑−–—ー]\d+)*$/;
+const exchange =
+  /^(?:(?:東|名|福|札)(?:証)?|(?:東京|名古屋|福岡|札幌)(?:証券取引所)?)(?:[・、,/]?(?:(?:東|名|福|札)(?:証)?|(?:東京|名古屋|福岡|札幌)(?:証券取引所)?))*$/;
+
+function isReportingUrl(value: string): boolean {
+  if (!/^https?:\/\/[^\s|│]+$/i.test(value)) return false;
+  try {
+    return !!new URL(value).hostname;
+  } catch {
+    return false;
+  }
+}
+
+function isReportingTelephone(value: string): boolean {
+  // Separators and a parenthesized area/exchange code are presentation. Require
+  // balanced numeric groups and a complete domestic or international digit count.
+  if (/[()]/.test(value.replace(/\(\d+\)/g, ''))) return false;
+  const number = value.replace(/[()]/g, '');
+  if (!telephone.test(number)) return false;
+  const digits = number.replace(/\D/g, '');
+  return number.startsWith('+') ? /^[1-9]\d{9,14}$/.test(digits) : /^0\d{9,10}$/.test(digits);
+}
+
+function administrativeValue(label: string, value: string): boolean {
+  const compact = value.replace(/\s/g, '');
+  switch (label.replace(/\s/g, '').toUpperCase()) {
+    case 'コード番号':
+    case '証券コード':
+      return securitiesCode.test(compact);
+    case 'URL':
+      return isReportingUrl(value);
+    case 'TEL':
+    case '電話番号':
+      return isReportingTelephone(compact);
+    case '上場取引所':
+      return exchange.test(compact);
+    default:
+      return isPersonnelFieldValue(value, /問.*合.*せ.*先/.test(label));
+  }
+}
+
 export function isReportingAdministrativeField(text: string): boolean {
-  return administrativeField.test(text.normalize('NFKC').trim());
+  const raw = text.normalize('NFKC').trim();
+  if (/[\n|│]/.test(raw)) return false;
+  const field = raw.match(administrativeField);
+  if (!field) return false;
+  // Complete adjacent records (code + URL, contact + TEL) share the same
+  // per-field proof. An unknown or empty suffix cannot hide behind the first label.
+  const next = field[2].search(nextAdministrativeField);
+  const value = next < 0 ? field[2] : field[2].slice(0, next);
+  const rest =
+    next < 0
+      ? ''
+      : field[2]
+          .slice(next)
+          .trim()
+          .replace(/^\(T\s*E\s*L\)/i, 'TEL ');
+  return administrativeValue(field[1], value) && (!rest || isReportingAdministrativeField(rest));
+}
+
+/** A company field may share a record with admin fields, but cannot validate them. */
+function hasInvalidAdministrativeField(text: string): boolean {
+  const raw = text.normalize('NFKC').trim();
+  const start = administrativeField.test(raw) ? 0 : raw.search(nextAdministrativeField);
+  return (
+    start >= 0 &&
+    !isReportingAdministrativeField(
+      raw
+        .slice(start)
+        .trim()
+        .replace(/^\(T\s*E\s*L\)/i, 'TEL ')
+    )
+  );
 }
 
 // Complete records are shared by ruled-cell projection and cover consumers.
@@ -188,6 +264,10 @@ const personnelSlots = {
   },
   name: { label: personnelSubfield(['氏名', '担当']), value: personnelValue },
 };
+const inlinePersonnelSlot = new RegExp(
+  `(?=\\((?:${spacedLabels(['役職名', '役職', '氏名', '担当'])})\\)|(?:^|\\s)(?:${spacedLabels(['役職名', '役職', '氏名', '担当'])})(?=\\s|:|$))`,
+  'i'
+);
 
 function isPersonnelRecord(values: string[]): boolean {
   const consume = (start: number, slot: keyof typeof personnelSlots, implicit: boolean) => {
@@ -206,6 +286,30 @@ function isPersonnelRecord(values: string[]): boolean {
   return (
     consume(0, 'name', false) === values.length ||
     (roleEnd !== null && consume(roleEnd, 'name', true) === values.length)
+  );
+}
+function isPersonnelFieldValue(value: string, contact: boolean): boolean {
+  if (!value) return false;
+  const slots = value
+    .split(inlinePersonnelSlot)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (isPersonnelRecord(slots)) return true;
+  // An omitted optional role inside a single value may accompany an explicit
+  // complete name. This never bridges an empty physical cell.
+  if (
+    slots.length === 2 &&
+    slots[0].match(personnelSlots.role.label)?.[1] === '' &&
+    isPersonnelRecord(slots.slice(1))
+  )
+    return true;
+  // A role or contact department is also a complete single value. A bare
+  // arbitrary string is not a role, and an extra name must fit the name slot.
+  const compact = value.replace(/\s/g, '');
+  if (personnelSlots.role.value.test(compact)) return true;
+  if (contact && /^[\p{L}\p{M}・&-]{1,60}(?:部|室|課|局)$/u.test(compact)) return true;
+  return [...value.matchAll(/\s+/g)].some((space) =>
+    isPersonnelRecord([value.slice(0, space.index), value.slice(space.index! + space[0].length)])
   );
 }
 const personnelStart = new RegExp(
@@ -267,6 +371,8 @@ export function reportingFieldProjection(text: string): { segments: string[]; co
           fieldName.test(fieldLabelText(cells[i])) &&
           next &&
           !fieldStart.test(fieldLabelText(next)) &&
+          (!administrativeField.test(cells[i]) ||
+            isReportingAdministrativeField(`${cells[i]} ${next}`)) &&
           (!isIndependentReportingRecord(next) || ownsIndependentRecord(cells[i], next))
         )
           parts.push(`${cells[i]} ${cells[++i]}`);
@@ -283,7 +389,9 @@ export function reportingFieldProjection(text: string): { segments: string[]; co
       }
       return parts;
     });
-  return { segments, complete };
+  // Inspect final records too: pairing a company label with its next cell must
+  // not conceal a malformed administrative suffix inside that consumed value.
+  return { segments, complete: complete && !segments.some(hasInvalidAdministrativeField) };
 }
 
 /** Preserve projection consumers; completeness is required only for whole-block metadata. */
@@ -315,10 +423,10 @@ export function isAdministrativeBlock(text: string): boolean {
     lines.every(
       (line) =>
         !/[。;；|│]/.test(line) &&
-        (/^(?:上場会社名|会社名|コード番号|証券コード|代表者名?|問合せ先|問い合わせ先|電話番号|TEL|URL)(?:\s|[:：])/i.test(
-          line
-        ) ||
-          /^(?:https?:\/\/\S+|各位|以上)$/i.test(line))
+        ((/^(?:上場会社名|会社名)(?:\s|:)/.test(line) && !hasInvalidAdministrativeField(line)) ||
+          isReportingAdministrativeField(line) ||
+          isReportingUrl(line) ||
+          /^(?:各位|以上)$/.test(line))
     )
   );
 }

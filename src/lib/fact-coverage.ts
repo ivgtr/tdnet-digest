@@ -1,17 +1,11 @@
-import {
-  reportingAttributeKey,
-  hasCompleteReportingAttributes,
-  reportingFieldSegments,
-  isReportingCoverTitle,
-  reportingTargetShape,
-} from './reporting-attributes';
+import { reportingTargetAttributes, selectReportingPeriod } from './reporting-period-selection';
+import { reportingAttributeKey, hasCompleteReportingAttributes } from './reporting-attributes';
 import {
   numericValueKind,
   matchesReportingPeriod,
   periodKind,
   reportingPeriodShape,
   reportingPeriodShapes,
-  reportingPeriodText,
 } from './period-semantics';
 import {
   NET_PROFIT_METRIC,
@@ -52,8 +46,6 @@ import {
   isFinancialUnit,
   reportingUnitTitle,
   isReportingCoverUnit,
-  isReportingCoverField,
-  reportingDocumentCover,
   isReportingMetadata,
   headingLevel,
   verifyScopeEvidence,
@@ -694,30 +686,16 @@ function sameReportingAttributes(
 }
 /** Required reporting units do not change the meaning of a locally valid fact. */
 function earningsTargets(pages: ExtractedPage[], context: DocumentContext) {
-  const report = earningsReportingPeriod(pages);
-  const cover = context.bindings.find((b) => b.page === 1);
-  // Read only the cover's contiguous explicit fields, before values or sections.
-  // Later local attributes cannot redefine its required reporting unit.
-  const coverFields = context.bindings.filter(
-    (b) =>
-      b.anchorId === b.blockId &&
-      isReportingCoverField(b, pages) &&
-      isIssuerSource(b.anchorId, context)
+  const { period, coverFields, titles } = selectReportingPeriod(
+    pages.flatMap((page) => page.blocks)
   );
-  const coverSource = coverFields[coverFields.length - 1];
-  const coverAttributes = cover ? reportingAttributesAt(cover, true) : null;
-  const fields = coverSource ? reportingAttributesAt(coverSource) : null;
-  const actual: ReportingTarget | null =
-    report && cover
-      ? {
-          ...report,
-          attributes: coverAttributes && {
-            subject: coverAttributes.subject ?? fields?.subject ?? null,
-            scope: coverAttributes.scope ?? fields?.scope ?? null,
-            basis: coverAttributes.basis ?? fields?.basis ?? null,
-          },
-        }
-      : null;
+  const actual: ReportingTarget | null = period
+    ? {
+        period: period.fiscal,
+        quarter: period.quarter,
+        attributes: reportingTargetAttributes(coverFields, titles),
+      }
+    : null;
   const declaration = declaredForecastUnit(pages, context);
   return { actual, forecast: forecastReportingTarget(pages, context, declaration), declaration };
 }
@@ -939,33 +917,8 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
   });
 }
 function earningsReportingPeriod(pages: ExtractedPage[]) {
-  const declarations = reportingDocumentCover(pages.find((p) => p.pageNumber === 1)?.blocks ?? [])
-    .flatMap((block) => reportingFieldSegments(block.text))
-    .filter(isReportingCoverTitle)
-    .map((title) => {
-      const text = reportingPeriodText(title);
-      return {
-        period: text.match(/20\d{2}年\d{1,2}月期/)?.[0],
-        shape: reportingTargetShape(text),
-        explicitShape: reportingPeriodShapes(text).length > 0,
-      };
-    });
-  const target = declarations.find((declaration) => declaration.period);
-  if (!target?.period || !target.shape) return null;
-  const shape = target.shape;
-  // Coverage needs a dated cover, and every other cover declaration must agree.
-  // An undated plain title supplies no shape; an explicit quarter still does.
-  if (
-    declarations.some(
-      (declaration) =>
-        !declaration.shape ||
-        (declaration.period && declaration.period !== target.period) ||
-        ((declaration.period || declaration.explicitShape) &&
-          declaration.shape.periodKind !== shape.periodKind)
-    )
-  )
-    return null;
-  return { period: target.period, quarter: shape.quarter };
+  const { period } = selectReportingPeriod(pages.flatMap((page) => page.blocks));
+  return period ? { period: period.fiscal, quarter: period.quarter } : null;
 }
 function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);

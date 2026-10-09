@@ -194,6 +194,39 @@ describe('報告対象の完全性を候補・冒頭・本文・保存復元で�
     }
   );
 
+  it.each([
+    ['決算短信〔日本基準〕（連結）\n会社名 ' + issuer, '1. ' + fiscal + '連結経営成績'],
+    ['会社名 ' + issuer + '\n範囲 連結\n会計基準 日本基準', fiscal + '連結経営成績'],
+  ])(
+    '先頭の対象期見出しを%sの属性と共有し、必須判定・冒頭・保存復元を一致させる',
+    (prefix, heading) => {
+      const page = textPage(`${prefix}\n${heading}\n${fiscal}の売上高は1000百万円です。`);
+      const input = numberCandidate(page, '売上高', 1000, fiscal);
+      Object.assign(input.semantics, issuerUnit);
+      const summary = verifiedSummary([page], [input], [1000]);
+      expect(earningsTarget(sourceInventory([page], undefined, 'earnings'))).toMatchObject({
+        issue: null,
+        target: { fiscal, periodKind: 'fullYear', ...issuerUnit },
+      });
+      const coverage = coverageReport('earnings', [page], summary.facts);
+      expect(coverage.map((slot) => slot.requirement)).toEqual([
+        'COVERAGE:当年決算実績の重要指標 revenue',
+        'COVERAGE:当年決算実績の重要指標 operatingProfit',
+        'COVERAGE:当年決算実績の重要指標 netProfit',
+      ]);
+      expect(coverage[0]).toMatchObject({
+        status: 'satisfied',
+        sourceIds: [page.blocks.at(-1)!.id],
+        expected: { period: fiscal, periodKind: 'fullYear', ...issuerUnit },
+      });
+      const display = buildPresentation(summary, [page]);
+      expect(headlineValues(summary, display)).toEqual([1000]);
+      const { markdown } = assertBodyAndRestore(summary, [page], display, [1000]);
+      expect(headline(markdown)).toContain(amount(1000));
+      expect(headline(markdown)).not.toContain('報告対象期が未特定');
+    }
+  );
+
   it('番号のない四半期表題から通期を推測せず、局所で確認した年次実績は本文と保存復元に保つ', () => {
     const firstPage = textPage(`${fiscal} 四半期決算短信〔日本基準〕（連結）\n会社名 ${issuer}`);
     const { pages, inputs } = actualSources(firstPage, [{ ...issuerUnit, value: 1000 }]);
@@ -233,6 +266,7 @@ describe('報告対象の完全性を候補・冒頭・本文・保存復元で�
     ['四半期', '', null],
     ['第3四半期', '', null],
     ['通期', '第3四半期累計', null],
+    ['', '', 'fullYear'],
     ['第3四半期', '第3四半期累計', 'cumulativeQ3'],
   ] as const)(
     '年のない%s表題と%s業績見出しは、明示した期間形が一致するときだけ対象期を補う',
@@ -241,9 +275,28 @@ describe('報告対象の完全性を候補・冒頭・本文・保存復元で�
         `${coverShape}決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n範囲 連結\n会計基準 日本基準\n1. ${fiscal}${headingShape}連結経営成績\n売上高は1000百万円です。`
       );
       const resolution = earningsTarget(sourceInventory([page], undefined, 'earnings'));
-      if (periodKind)
+      const coverage = coverageReport('earnings', [page], []);
+      if (periodKind) {
         expect(resolution).toMatchObject({ issue: null, target: { fiscal, periodKind } });
-      else expect(resolution).toEqual({ target: null, issue: 'ambiguous' });
+        expect(coverage.map((slot) => slot.requirement)).toEqual([
+          'COVERAGE:当年決算実績の重要指標 revenue',
+          'COVERAGE:当年決算実績の重要指標 operatingProfit',
+          'COVERAGE:当年決算実績の重要指標 netProfit',
+        ]);
+        expect(coverage[0].sourceIds).toEqual([page.blocks.at(-1)!.id]);
+        expect(coverage[0].expected).toMatchObject({
+          period: fiscal + headingShape.replace('累計', ''),
+          periodKind,
+          ...issuerUnit,
+        });
+      } else {
+        expect(resolution).toEqual({ target: null, issue: 'ambiguous' });
+        expect(coverage).toHaveLength(1);
+        expect(coverage[0]).toMatchObject({
+          requirement: 'COVERAGE:報告対象の決算期を確認できません',
+          status: 'unknown',
+        });
+      }
     }
   );
 

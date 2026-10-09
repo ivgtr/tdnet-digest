@@ -6,8 +6,30 @@ import { renderFacts } from './fact-summary';
 import { sourceInventory } from './summary-source-inventory';
 import { buildPresentation, revalidatePresentation } from './summary-presentation';
 import { generateSummaryOrganization } from './summary-organization';
+import { isReportingMetadata, reportingCoverBlocks } from './document-context';
+import { reportingFieldProjection } from './reporting-attributes';
 
 vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
+
+// A recognized label cannot erase an unknown value or extend cover ownership
+// through it to company/scope/basis declarations belonging to later content.
+it('管理欄の型に合わない値を原文に残し、表紙の連続範囲をそこで閉じる', () => {
+  const page = textPage(
+    '2026年3月期 決算短信\nコード番号 │ 参考情報\n会社名 │ 株式会社他社\n範囲 │ 連結\n会計基準 │ IFRS'
+  );
+  const invalid = page.blocks[1];
+  expect(reportingFieldProjection(invalid.text).complete).toBe(false);
+  expect(isReportingMetadata(invalid)).toBe(false);
+  expect(reportingCoverBlocks(page.blocks).map((block) => block.id)).toEqual([page.blocks[0].id]);
+  expect(sourceInventory([page])).toContainEqual(
+    expect.objectContaining({
+      id: `source:${invalid.id}`,
+      blockId: invalid.id,
+      text: invalid.text,
+      spanIds: invalid.spanIds,
+    })
+  );
+});
 
 // Projection vocabulary is tested in reporting-attributes. These cases own the
 // complete-record → inventory boundary, including the legacy unruled policy.
