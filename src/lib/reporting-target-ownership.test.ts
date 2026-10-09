@@ -116,6 +116,11 @@ it('一般的な会社識別語を持つ単独の先行記録だけを通し、�
     'APPENDIX',
     'REFERENCE GROUP',
     'FOR REFERENCE GROUP',
+    'FOR REFERENCE, INC.',
+    'SEE APPENDIX CO., LTD.',
+    'ACME,, INC.',
+    'ACME CO., LTD. │ 参考情報',
+    'ACME CO., LTD. 100株',
     '参考情報',
     '参考資料です。',
     '売上高は100百万円です。',
@@ -143,6 +148,24 @@ it('一般的な会社識別語を持つ単独の先行記録だけを通し、�
     issue: null,
     target: { subject: issuer, basis: '日本基準', scope: '連結' },
   });
+});
+
+it('企業名の語間のカンマと略語の末尾ピリオドを表紙の開始条件で許容する', () => {
+  const title = '2026年3月期 決算短信〔日本基準〕（連結）';
+  for (const mark of [
+    'ACME, INC.',
+    'ACME CO., LTD.',
+    'ACME,INC.',
+    'A. B. HOLDINGS',
+    'ＡＣＭＥ ＣＯ．， ＬＴＤ．',
+  ]) {
+    const page = textPage(`${mark}\n${title}\n会社名 ${issuer}`);
+    expect(
+      reportingDocumentCover(page.blocks).map((block) => block.text),
+      mark
+    ).toEqual([title, `会社名 ${issuer}`]);
+    expect(documentSubject(buildDocumentContext([page])), mark).toBe(issuer);
+  }
 });
 
 it('予想表題の年と月期が別spanでも同じ3指標の義務と2数量の根拠を保持する', () => {

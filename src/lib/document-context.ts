@@ -208,9 +208,13 @@ export function reportingDocumentCover<
   if (start < 0) return prefix;
   const mark = blocks[start].text.normalize('NFKC').trim();
   // Generic corporate identity syntax, never a list of supported companies.
+  // Commas separate words; a final dot abbreviates a word (CO., INC., initials).
+  // Punctuation cannot erase a source record, quantity, or unknown trailing cell.
   // Reference/navigation labels cannot become identity marks by adding a suffix.
   if (
-    !/^(?:[A-Z][A-Z&'-]*[ \t]+)+(?:GROUP|HOLDINGS|CORPORATION|INC\.?|LTD\.?)$/.test(mark) ||
+    !/^(?:[A-Z][A-Z&'-]*\.?(?:[ \t]*,[ \t]*|[ \t]+))+(?:GROUP|HOLDINGS|CORPORATION|INC\.?|LTD\.?)$/.test(
+      mark
+    ) ||
     /\b(?:REFERENCES?|APPENDIX|APPENDICES|ATTACHMENTS?)\b/.test(mark)
   )
     return prefix;

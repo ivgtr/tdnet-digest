@@ -14,6 +14,7 @@ import {
 } from './summary-content-policy';
 import type { DocumentType } from './document-type';
 import { proseQuantities } from './quantity';
+import { isReportingAdministrativeField, reportingFieldSegments } from './reporting-attributes';
 
 export interface SourceExcerpt {
   id: string;
@@ -74,7 +75,16 @@ export function sourceInventory(
       // Issuer/owner declarations remain evidence even when their own block is
       // otherwise administrative. Phone/contact-only blocks can still be omitted.
       // Filtering must not erase a substantive boundary before later issuer fields.
-      const administrative = isAdministrativeBlock(block.text) && isReportingMetadata(block);
+      // The complete-block proof includes every original cell. Classify its
+      // projected records, since the display policy cannot read ruled cells.
+      // Dates, schedules and reporting attributes keep their existing roles.
+      const records = reportingFieldSegments(block.text);
+      const administrative =
+        records.length > 0 &&
+        records.every(
+          (text) => isAdministrativeBlock(text) || isReportingAdministrativeField(text)
+        ) &&
+        isReportingMetadata(block);
       const subjectMetadata =
         administrative &&
         !!binding?.declarations.some(
