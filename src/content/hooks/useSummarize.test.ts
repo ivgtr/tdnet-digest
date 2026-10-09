@@ -15,7 +15,7 @@ import { buildPresentation } from '@/lib/fixtures/summary-narrative-source';
 import { summaryResultId } from '@/lib/summary-result-id';
 import { toValue } from '@/lib/score-extraction';
 import type { ExperimentalScore } from '@/lib/scoring';
-import { parseAnalysisResponse } from '@/lib/additional-analysis';
+import { parseAnalysisResponse, type AnalysisIssue } from '@/lib/additional-analysis';
 import { buildAnalysisInput } from '@/lib/analysis-input';
 import {
   ANALYSIS_CACHE_DIAGNOSTIC_PREFIX,
@@ -160,7 +160,7 @@ async function summaryRowFor(row: HTMLTableRowElement) {
 }
 const additionalAnalysis = parseAnalysisResponse(
   JSON.stringify({
-    version: 3,
+    version: 4,
     issues: [
       {
         title: '増益の継続条件',
@@ -174,6 +174,13 @@ const additionalAnalysis = parseAnalysisResponse(
   }),
   buildAnalysisInput(facts, presentation)
 );
+
+function analysisWithIssue(patch: Partial<AnalysisIssue>) {
+  return parseAnalysisResponse(
+    JSON.stringify({ version: 4, issues: [{ ...additionalAnalysis.issues[0], ...patch }] }),
+    buildAnalysisInput(facts, presentation)
+  );
+}
 
 async function traceFor(runId: string, resultId: string | null): Promise<SummaryTrace> {
   return {
@@ -310,10 +317,8 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     await act(async () => hook().reset());
     await act(async () => hook().showCached());
     await act(async () => hook().analyze());
-    const old = structuredClone(additionalAnalysis),
-      fresh = structuredClone(additionalAnalysis);
-    old.issues[0].title = '閉じる前の論点';
-    fresh.issues[0].title = '開き直した後の論点';
+    const old = analysisWithIssue({ title: '閉じる前の論点' }),
+      fresh = analysisWithIssue({ title: '開き直した後の論点' });
     await act(async () =>
       second.resolve({
         analysis: fresh,
@@ -333,7 +338,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     expect(stored[ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + response.resultId]).toMatchObject({
       runId: 'new-analysis-run',
     });
-    expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(fresh);
+    expect(stored[`analysisCacheV4:${response.resultId}`]).toEqual(fresh);
   });
 
   it.each(['success', 'failure'])(
@@ -452,7 +457,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     const oldKey =
       'summaryCacheV2:' + buildSummaryCacheKey(pdfUrl, response.metadata.analysisFingerprint);
     stored[oldKey] = response;
-    stored[`analysisCacheV3:${response.resultId}`] = additionalAnalysis;
+    stored[`analysisCacheV4:${response.resultId}`] = additionalAnalysis;
     const hook = await mount();
     await act(async () => hook().showCached());
     expect(hook().result?.resultId).toBe(response.resultId);
@@ -473,10 +478,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     expect(hook().hasCached).toBe(false);
     await act(async () =>
       oldAnalysis.resolve({
-        analysis: {
-          ...additionalAnalysis,
-          issues: [{ ...additionalAnalysis.issues[0], title: '旧APIの遅い分析' }],
-        },
+        analysis: analysisWithIssue({ title: '旧APIの遅い分析' }),
       })
     );
     expect(save).not.toHaveBeenCalled();
@@ -498,7 +500,7 @@ describe('実Reactでの要約・保存・後続処理の境界', () => {
     await act(async () => hook().summarize());
     expect(hook().result?.resultId).toBe(fresh.resultId);
     expect(hook().analysis.data).toBeNull();
-    expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(additionalAnalysis);
+    expect(stored[`analysisCacheV4:${response.resultId}`]).toEqual(additionalAnalysis);
     expect(pendingSettingsRead).not.toHaveBeenCalled();
   });
 
@@ -640,10 +642,10 @@ describe('実Reactの要約行アクション配置', () => {
     expect(analyze.textContent).toBe('追加分析する');
     const diagnostics = summaryRow.querySelector<HTMLDetailsElement>('[data-generation-info]')!;
     expect(diagnostics.open).toBe(false);
-    expect(diagnostics.querySelector('summary')?.textContent).toBe('生成情報・診断');
+    expect(diagnostics.querySelector('summary')?.textContent).toBe('要約の生成情報・診断');
     expect(diagnostics.querySelector('#full-retry-btn')).not.toBeNull();
     expect(diagnostics.querySelector('[data-diagnostic-root] button')?.textContent).toBe(
-      '診断JSONをコピー'
+      '要約の診断JSONをコピー'
     );
     expect(section.contains(diagnostics)).toBe(false);
     // CSSの契約を確認する。jsdomは実画面での折り返しを検証しない。
@@ -704,14 +706,11 @@ describe('実Reactの要約行アクション配置', () => {
     expect(cell.textContent).toBe('表示');
     await act(async () =>
       rerun.resolve({
-        analysis: {
-          ...additionalAnalysis,
-          issues: [{ ...additionalAnalysis.issues[0], conclusion: '閉じた後の遅い分析結果' }],
-        },
+        analysis: analysisWithIssue({ conclusion: '閉じた後の遅い分析結果' }),
       })
     );
     expect(row.nextElementSibling).toBeNull();
-    expect(stored[`analysisCacheV3:${response.resultId}`]).toEqual(additionalAnalysis);
+    expect(stored[`analysisCacheV4:${response.resultId}`]).toEqual(additionalAnalysis);
     await click(button);
     const reopened = await summaryRowFor(row);
     expect(cell.textContent).toBe('閉じる');
@@ -859,12 +858,34 @@ describe('実Reactの要約行アクション配置', () => {
     expect(writeText).toHaveBeenCalledTimes(3);
   });
 
-  it('追加分析の失敗JSONを別ボタンで出し、閉じて開くと保存済み成功の実行へ戻す', async () => {
+  it('部分表示の追加分析を保存復元し、直近の失敗と別の診断JSONを出す', async () => {
     settings.experimentalScoring = false;
     const response = await responseFor();
     const summaryTrace = await traceFor(response.diagnosticRunId, response.resultId);
     await saveSummaryTrace(summaryTrace);
     const input = buildAnalysisInput(facts, presentation);
+    // healthy / quarantined / healthy proves the UI/storage connection once;
+    // lexical warning and escaping boundaries belong to the builder tests.
+    const partialAnalysis = parseAnalysisResponse(
+      JSON.stringify({
+        version: 4,
+        issues: [
+          { ...additionalAnalysis.issues[0], title: '増益の継続条件 2026' },
+          {
+            ...additionalAnalysis.issues[0],
+            title: '隔離した本文は見せない',
+            evidenceIds: ['unknown'],
+          },
+          {
+            ...additionalAnalysis.issues[0],
+            title: '来期の確認点 2027',
+            conclusion: '2027年は増益要因を確認する',
+          },
+        ],
+      }),
+      input
+    );
+    expect(partialAnalysis.issues).toHaveLength(2);
     const traceA: AnalysisTrace = {
       version: 1,
       stage: 'analysis',
@@ -880,13 +901,13 @@ describe('実Reactの要約行アクション配置', () => {
       inputHash: input.inputHash,
       input,
       contract: {
-        version: 3,
+        version: 4,
         allowedEvidenceIds: input.evidence.map((e) => e.id),
         limits: { issues: 4, references: 6, title: 80, text: 350 },
       },
-      response: JSON.stringify({ version: 3, issues: additionalAnalysis.issues }),
+      response: JSON.stringify({ version: 4, issues: partialAnalysis.candidates }),
       usage: null,
-      outcome: 'success',
+      outcome: 'partialSuccess',
       error: null,
       elapsedMs: 2,
     };
@@ -903,7 +924,7 @@ describe('実Reactの要約行アクション配置', () => {
     sendMessage
       .mockResolvedValueOnce(response)
       .mockResolvedValueOnce({
-        analysis: additionalAnalysis,
+        analysis: partialAnalysis,
         diagnosticRunId: traceA.runId,
         diagnosticPersistence: 'saved',
         diagnosticInputHash: input.inputHash,
@@ -924,8 +945,8 @@ describe('実Reactの要約行アクション配置', () => {
         summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
       ).find(
         (b) =>
-          b.textContent === '成功した追加分析の診断JSONをコピー' ||
-          b.textContent === '直近の試行の診断JSONをコピー'
+          b.textContent === '表示中の追加分析の診断JSONをコピー' ||
+          b.textContent === '直近の追加分析の診断JSONをコピー'
       )!;
     await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
     expect(stored[ANALYSIS_CACHE_DIAGNOSTIC_PREFIX + response.resultId]).toMatchObject({
@@ -933,10 +954,16 @@ describe('実Reactの要約行アクション配置', () => {
       summaryResultId: response.resultId,
       inputHash: input.inputHash,
     });
+    const analysisHtml = summaryRow.querySelector('#analysis-result')!.innerHTML;
+    expect(summaryRow.querySelectorAll('#analysis-result article')).toHaveLength(2);
+    expect(summaryRow.querySelector('[data-analysis-notices]')?.textContent).toContain(
+      '元の論点2・非表示'
+    );
+    expect(summaryRow.textContent).not.toContain('隔離した本文は見せない');
     await click(analysisCopy());
     expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceA);
     expect(summaryRow.querySelector('textarea')?.getAttribute('aria-label')).toBe(
-      '成功した追加分析の診断JSON'
+      '表示中の追加分析の診断JSON'
     );
     await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
     expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain('JSON不正');
@@ -953,15 +980,17 @@ describe('実Reactの要約行アクション配置', () => {
     summaryRow = await summaryRowFor(row);
     expect(summaryRow.querySelector('#analysis-result')?.textContent).toContain('増益の継続条件');
     expect(summaryRow.querySelector('#analysis-result')?.textContent).not.toContain('JSON不正');
+    expect(summaryRow.querySelector('#analysis-result')?.innerHTML).toBe(analysisHtml);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
     await click(analysisCopy());
     expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceA);
     expect(summaryRow.querySelector('[data-diagnostic-root]')?.textContent).toContain(
-      '以前の成功した分析を表示しています'
+      '以前の保存済み分析を表示しています'
     );
     await click(
       Array.from(
         summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
-      ).find((b) => b.textContent === '直近の試行の診断JSONをコピー')!
+      ).find((b) => b.textContent === '直近の追加分析の診断JSONをコピー')!
     );
     expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(traceB);
     expect(sendMessage).toHaveBeenCalledTimes(3);
@@ -986,7 +1015,7 @@ describe('実Reactの要約行アクション配置', () => {
       inputHash: input.inputHash,
       input,
       contract: {
-        version: 3,
+        version: 4,
         allowedEvidenceIds: input.evidence.map((e) => e.id),
         limits: { issues: 4, references: 6, title: 80, text: 350 },
       },
@@ -1009,7 +1038,7 @@ describe('実Reactの要約行アクション配置', () => {
     await click(mounted.button);
     let summaryRow = await summaryRowFor(mounted.row);
     await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
-    expect(stored[`analysisCacheV3:${response.resultId}`]).toBeUndefined();
+    expect(stored[`analysisCacheV4:${response.resultId}`]).toBeUndefined();
     await act(async () => root.unmount());
     container.remove();
     mounted = await mountButton();
@@ -1024,12 +1053,12 @@ describe('実Reactの要約行アクション配置', () => {
     );
     const copy = Array.from(
       summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
-    ).find((b) => b.textContent === '直近の試行の診断JSONをコピー')!;
+    ).find((b) => b.textContent === '直近の追加分析の診断JSONをコピー')!;
     expect(copy).toBeDefined();
     await click(copy);
     expect(JSON.parse(writeText.mock.calls.at(-1)![0])).toEqual(trace);
     expect(summaryRow.querySelector('textarea')?.getAttribute('aria-label')).toBe(
-      '直近の試行の診断JSON'
+      '直近の追加分析の診断JSON'
     );
     expect(summaryRow.textContent).toContain('100百万円');
     expect(sendMessage).toHaveBeenCalledTimes(2);
@@ -1060,8 +1089,8 @@ describe('実Reactの要約行アクション配置', () => {
       summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
     ).find(
       (b) =>
-        b.textContent === '成功した追加分析の診断JSONをコピー' ||
-        b.textContent === '直近の試行の診断JSONをコピー'
+        b.textContent === '表示中の追加分析の診断JSONをコピー' ||
+        b.textContent === '直近の追加分析の診断JSONをコピー'
     )!;
     await click(copy);
     expect(

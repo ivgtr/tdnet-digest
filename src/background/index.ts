@@ -393,13 +393,15 @@ async function handleAnalyze(request: FollowupRequest, runId: string) {
         trace.response = snapshot.response;
         trace.usage = snapshot.usage;
         trace.outcome = snapshot.outcome;
+        trace.notices = snapshot.notices;
         terminalObserved = snapshot.outcome !== 'running';
         trace.error = snapshot.error;
       }
       await saveTrace();
     });
     if (!terminalObserved) {
-      trace.outcome = 'success';
+      trace.outcome = result.analysis?.notices.length ? 'partialSuccess' : 'success';
+      trace.notices = result.analysis?.notices;
       await saveTrace();
     }
     return { ...result, ...metadata() };

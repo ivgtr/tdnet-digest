@@ -95,7 +95,7 @@ async function copiedDiagnostic(summary: any, page: any, blocked = false) {
   const info = summary.locator('[data-generation-info]');
   if (!(await info.evaluate((element: HTMLDetailsElement) => element.open)))
     await info.locator('summary').first().click();
-  await summary.getByRole('button', { name: '診断JSONをコピー', exact: true }).click();
+  await summary.getByRole('button', { name: '要約の診断JSONをコピー', exact: true }).click();
   if (blocked)
     await summary
       .getByRole('alert')
@@ -540,7 +540,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
         } else if (prompt.includes('"claims"'))
           result = { version: 4, claims: [], unverified: ['固定試験:比較値なし'] };
         else if (prompt.includes('"evidenceIds"')) {
-          result = { version: 3, issues: [] };
+          result = { version: 4, issues: [] };
         } else
           result = JSON.parse(
             candidateResponse(fixedFacts as VerifiedFact[], sourcePages, item.documentType)
@@ -1586,7 +1586,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       );
       const analysis = await worker.evaluate(async () => {
         const entries = await chrome.storage.local.get();
-        return Object.entries(entries).find(([k]) => k.startsWith('analysisCacheV3:'))?.[1];
+        return Object.entries(entries).find(([k]) => k.startsWith('analysisCacheV4:'))?.[1];
       });
       evidence.analysis = analysis;
       assert.ok(analysis, '実API追加分析の現行キャッシュがありません');

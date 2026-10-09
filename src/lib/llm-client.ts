@@ -11,6 +11,9 @@ export interface LLMConfig {
   model: string;
   baseUrl?: string; // カスタムプロバイダー用
   maxOutputTokens?: number;
+  // Default callers reject limit termination. Opted-in callers must validate the
+  // returned response themselves and expose its potentially incomplete status.
+  outputLimitBehavior?: 'reject' | 'return-response';
   reasoningEffort?: 'low' | 'high';
   reasoningEnabled?: boolean;
   temperature?: number; // 生成温度（0-2、低いほど安定した出力）
@@ -34,6 +37,10 @@ export interface LLMConfig {
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+}
+
+export function isOutputLimitFinishReason(reason: string | null | undefined): boolean {
+  return ['length', 'max_tokens', 'model_context_window_exceeded'].includes(reason ?? '');
 }
 
 export class ApiError extends Error {
@@ -147,7 +154,10 @@ async function generateTextOpenAI(config: LLMConfig, messages: ChatMessage[]): P
 
   if (typeof data.choices?.[0]?.message?.content === 'string')
     config.onResponse?.(data.choices[0].message.content);
-  if (data.choices?.[0]?.finish_reason === 'length')
+  if (
+    isOutputLimitFinishReason(data.choices?.[0]?.finish_reason) &&
+    config.outputLimitBehavior !== 'return-response'
+  )
     throw new Error('APIの推論・出力上限に達しました。応答は採用できません');
   if (
     typeof data.choices?.[0]?.message?.content !== 'string' ||
@@ -214,7 +224,10 @@ async function generateTextAnthropic(config: LLMConfig, messages: ChatMessage[])
     finishReason: typeof data.stop_reason === 'string' ? data.stop_reason : null,
   });
   if (typeof data.content?.[0]?.text === 'string') config.onResponse?.(data.content[0].text);
-  if (['max_tokens', 'model_context_window_exceeded'].includes(data.stop_reason))
+  if (
+    isOutputLimitFinishReason(data.stop_reason) &&
+    config.outputLimitBehavior !== 'return-response'
+  )
     throw new Error('APIの推論・出力上限に達しました。応答は採用できません');
   if (typeof data.content?.[0]?.text !== 'string' || !data.content[0].text.trim()) {
     console.error('[LLM Client] 不正なレスポンス形式');
