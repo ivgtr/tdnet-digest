@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { FactSummary, VerifiedFact } from './fact-contract';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { textPage, numberCandidate } from './fixtures/v4-test-source';
 import { candidateResponse } from './fixtures/candidate-test-source';
-import { cells, tableAmount } from './fixtures/fact-review-source';
-import { reviewCandidates } from './fact-candidates';
-import { parseFactSummary, renderFacts } from './fact-summary';
+import { cells, event, tableAmount } from './fixtures/fact-review-source';
+import { reviewCandidates, serializeCandidateSource } from './fact-candidates';
+import { generateVerifiedFacts, parseFactSummary, renderFacts } from './fact-summary';
 import { validateSavedFacts } from './fact-cache';
 import { buildDocumentContext, isReportingCoverUnit } from './document-context';
 import {
@@ -18,6 +18,10 @@ import { sourceInventory } from './summary-source-inventory';
 import { earningsTarget } from './summary-earnings-policy';
 import { coverageReport } from './fact-coverage';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
+import { inspectCandidateSource } from './source-preflight';
+import { generateText } from './llm-client';
+
+vi.mock('./llm-client', () => ({ generateText: vi.fn() }));
 
 // Quarter-like characters belong to the literal issuer name, not the period grammar.
 const issuer = '株式会社2Qテスト';
@@ -345,6 +349,11 @@ describe('報告対象の完全性を候補・冒頭・本文・保存復元で�
         expect(summary.facts[0].semantics[axis]).toBe(absentEverywhere ? null : issuerUnit[axis]);
         const resolution = earningsTarget(sourceInventory(pages, undefined, 'earnings'));
         expect(resolution.issue).not.toBeNull();
+        const coverage = coverageReport('earnings', pages, summary.facts);
+        expect(coverage).toHaveLength(3);
+        expect(coverage.every((slot) => slot.status === 'unknown')).toBe(true);
+        expect(coverage.every((slot) => slot.sourceIds.length === 0)).toBe(true);
+        expect(coverage.every((slot) => slot.expected[axis] === undefined)).toBe(true);
         const display = buildPresentation(summary, pages);
         expect(display.overview).toEqual([]);
         const { markdown } = assertBodyAndRestore(summary, pages, display, [1000]);
@@ -356,6 +365,100 @@ describe('報告対象の完全性を候補・冒頭・本文・保存復元で�
         expect(() => validatePresentation(altered, summary)).not.toThrow();
         expect(() => revalidatePresentation(altered, summary, pages)).toThrow('報告対象');
       }
+    }
+  );
+
+  it.each([null, '日本基準'])(
+    '実績と予想の会計基準=%sでは、対象の解決と根拠・必須判定・修復可否が一致する',
+    async (basis) => {
+      const attributes = { ...issuerUnit, basis };
+      const forecastPeriod = '2027年3月期';
+      const metrics = ['売上高', '営業利益', '当期純利益'];
+      const pages = [
+        cover(attributes),
+        textPage(
+          `1. ${fiscal}連結経営成績\n` +
+            metrics
+              .map((label, index) => `${fiscal}の${label}は${1000 + index}百万円です。`)
+              .join('\n'),
+          2
+        ),
+        textPage(
+          `2. ${forecastPeriod}連結業績予想\n` +
+            metrics
+              .map((label, index) => `${forecastPeriod}の${label}は${2000 + index}百万円です。`)
+              .join('\n'),
+          3
+        ),
+      ];
+      const inputs = pages.slice(1).flatMap((page, group) =>
+        metrics.map((label, index) => {
+          const fact = numberCandidate(
+            page,
+            label,
+            (group + 1) * 1000 + index,
+            group ? forecastPeriod : fiscal
+          );
+          Object.assign(fact.semantics, attributes);
+          if (group) fact.valueKind = fact.semantics.state = 'forecast';
+          return fact;
+        })
+      );
+      const values = [1000, 1001, 1002, 2000, 2001, 2002];
+      const summary = verifiedSummary(pages, inputs, values);
+      const context = buildDocumentContext(pages);
+      const source = serializeCandidateSource(pages, context, 'earnings');
+      const slots = coverageReport('earnings', pages, summary.facts);
+      expect(slots).toHaveLength(6);
+      expect(slots.map((slot) => slot.status)).toEqual(
+        Array(6).fill(basis ? 'satisfied' : 'unknown')
+      );
+      expect(slots.map((slot) => slot.sourceIds.length)).toEqual(Array(6).fill(basis ? 1 : 0));
+      const issues = inspectCandidateSource('earnings', pages, context, source);
+      expect(issues).toHaveLength(basis ? 0 : 6);
+      if (!basis)
+        expect(issues.every((issue) => issue.endsWith('原文の根拠対応が未解決'))).toBe(true);
+      vi.mocked(generateText)
+        .mockReset()
+        .mockResolvedValueOnce(candidateResponse(inputs, pages, 'earnings'));
+      const result = await generateVerifiedFacts(
+        { provider: 'openai', model: 'fixture', apiKey: 'fixture' },
+        'earnings',
+        'source',
+        pages,
+        undefined,
+        true
+      );
+      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(result.repairAttempted).toBe(false);
+      expect(result.facts.facts.map((fact) => fact.value)).toEqual(values);
+      expect(result.facts.unverified.some((issue) => issue.includes('COVERAGE:'))).toBe(!basis);
+      const restored = parseFactSummary(JSON.stringify(result.facts), 'earnings', pages, false);
+      expect(restored.facts).toEqual(result.facts.facts);
+      expect(
+        buildPresentation(restored, pages).sections.flatMap((section) => section.factIds)
+      ).toHaveLength(6);
+
+      // An explicit undisclosed forecast may waive amounts only for a resolved target.
+      const statusPage = textPage(`3. ${forecastPeriod}連結業績予想\n業績予想は未定です。`, 4);
+      const status = event(numberCandidate(statusPage, '業績予想は未定'));
+      status.kind = 'status';
+      Object.assign(status.semantics, attributes, { state: 'unspecified' });
+      const withStatus = [...pages, statusPage];
+      const reviewed = reviewCandidates(
+        candidateResponse([...inputs, status], withStatus, 'earnings'),
+        'earnings',
+        withStatus
+      );
+      expect(reviewed.unverified).toEqual([]);
+      expect(reviewed.facts).toHaveLength(7);
+      const forecastSlots = coverageReport('earnings', withStatus, reviewed.facts).filter((slot) =>
+        slot.requirement.includes('通期予想')
+      );
+      expect(forecastSlots).toHaveLength(3);
+      expect(forecastSlots.map((slot) => slot.status)).toEqual(
+        Array(3).fill(basis ? 'satisfied' : 'unknown')
+      );
     }
   );
 

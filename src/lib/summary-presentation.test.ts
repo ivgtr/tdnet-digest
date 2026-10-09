@@ -37,6 +37,7 @@ import {
   earningsTarget,
   matchesEarningsTarget,
   earningsMetricOrder,
+  earningsMissingMajorLabels,
 } from './summary-earnings-policy';
 
 const page = textPage(expectation.text);
@@ -605,6 +606,45 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
       expect(markdown).toContain('### 2026年3月期 実績');
       expect(markdown).toContain('1,000百万円');
     }
+  });
+
+  it('直前の比較期の実績だけを当期主要値の未確認表示に使い、古い履歴は本文に保つ', () => {
+    const source = textPage(expectation.text.replace('日本基準', 'IFRS'));
+    const current = facts.facts.map((fact) => ({
+      ...fact,
+      semantics: { ...fact.semantics, basis: 'IFRS' },
+    }));
+    const target = earningsTarget(sourceInventory([source], undefined, 'earnings')).target!;
+    expect(target).toMatchObject({ fiscal: '2026年3月期', basis: 'IFRS' });
+    for (const [period, expected] of [
+      ['2020年3月期', []],
+      ['2025年3月期', ['税引前利益・損失']],
+      ['2025年6月期', []],
+      ['2026年3月期', []],
+      ['2027年3月期', []],
+    ] as const) {
+      const history = { ...current[1], id: `pretax-${period}`, label: '税引前利益', period };
+      const summary = { ...facts, facts: [...current, history] };
+      expect(earningsMissingMajorLabels(summary, target), period).toEqual(expected);
+      const markdown = renderFacts(summary, nativePresentation(summary, [source]));
+      expect(markdown).toContain(`### ${period} 実績`);
+      expect(markdown).toContain('税引前利益');
+      expect(markdown.split('## 業績と増減要因')[0].includes('未確認：税引前利益・損失')).toBe(
+        expected.length > 0
+      );
+    }
+    const comparative = {
+      ...current[1],
+      id: 'quarter-pretax',
+      label: '税引前利益',
+      period: '2025年3月期第3四半期累計',
+      semantics: { ...current[1].semantics, periodKind: 'cumulativeQ3' as const },
+    };
+    const summary = { ...facts, facts: [comparative] };
+    expect(earningsMissingMajorLabels(summary, target)).toEqual([]);
+    expect(earningsMissingMajorLabels(summary, { ...target, periodKind: 'cumulativeQ3' })).toEqual([
+      '税引前利益・損失',
+    ]);
   });
 
   it('IFRSの税引前利益を独立した名称で並べ、経常利益を欠落扱いしない', () => {

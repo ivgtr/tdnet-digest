@@ -2029,11 +2029,10 @@ describe('原数量・期間・主張と保存根拠の同一性', () => {
   it('中間期とQ2の別名を生成・修復・保存・表示で二重化しない', async () => {
     const pages = [
       textPage(
-        `会社名 株式会社テスト\n${period} 中間期決算短信\n1. ${period}中間期 経営成績\n売上高は100百万円です。\n営業利益は20百万円です。\n当期純利益は10百万円です。`
+        `会社名 株式会社テスト\n${period} 中間期決算短信〔日本基準〕（連結）\n1. ${period}中間期 経営成績\n売上高は100百万円です。\n営業利益は20百万円です。\n当期純利益は10百万円です。`
       ),
     ];
     const f = numberCandidate(pages[0], '売上高', 100, period + '中間期');
-    f.semantics.scope = f.semantics.basis = null;
     f.semantics.periodKind = 'cumulativeQ2';
     const alias = structuredClone(f);
     alias.period = period + '第2四半期';

@@ -1023,17 +1023,20 @@ export function verifyCoverage(
       const scopeId = ds.find((d) => d.role === 'scope' && d.value === scope)?.id;
       return { scope, basis, scopeId };
     };
-    const matchesReport = (f: VerifiedFact, kind: string, target: string) =>
-      reportingMetric(f) &&
-      f.valueKind === kind &&
-      matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
-      applicableMeaning(f) &&
-      sameReportingAttributes(
-        f.semantics,
-        (kind === 'actual' ? targets.actual : targets.forecast)?.attributes ?? null
-      ) &&
-      !!f.semantics.subject &&
-      issuer === normalized(f.semantics.subject ?? '');
+    const matchesReport = (f: VerifiedFact, kind: string, target: string) => {
+      const attributes =
+        (kind === 'actual' ? targets.actual : targets.forecast)?.attributes ?? null;
+      return (
+        hasCompleteReportingAttributes(attributes) &&
+        reportingMetric(f) &&
+        f.valueKind === kind &&
+        matchesReportingPeriod(f, target, kind === 'actual' ? reportQuarter : undefined) &&
+        applicableMeaning(f) &&
+        sameReportingAttributes(f.semantics, attributes) &&
+        !!f.semantics.subject &&
+        issuer === normalized(f.semantics.subject ?? '')
+      );
+    };
     const has = (metric: string, kind: 'actual' | 'forecast', target: string) =>
       facts.some(
         (f) =>
@@ -1086,6 +1089,7 @@ export function verifyCoverage(
           (() => {
             const anchor = f.evidence.kind === 'table' ? f.evidence.valueId : f.evidence.blockId;
             if (!isReportingMetricSource(anchor, 'forecast', allPages, context)) return false;
+            if (!hasCompleteReportingAttributes(targets.forecast?.attributes ?? null)) return false;
             if (!sameReportingAttributes(f.semantics, targets.forecast?.attributes ?? null))
               return false;
             const sourcePeriod = forecastReportingTitle(
@@ -1545,6 +1549,12 @@ export function coverageReport(
   let publicationSources: ReturnType<typeof forecastPublicationSources> | undefined;
   let comparativeSources: ReturnType<typeof comparativeReportingSources> | undefined;
   const sourceIds = (requirement: string): string[] => {
+    const target = requirementTarget(requirement);
+    // Earnings headlines and their coverage need the same resolved reporting unit.
+    // A locally valid fact with a missing attribute is still kept in the body,
+    // but cannot become a repair source for an unresolved target.
+    if (type === 'earnings' && target && !hasCompleteReportingAttributes(target.attributes))
+      return [];
     if (/前年決算実績/.test(requirement))
       return (comparativeSources ??= comparativeReportingSources(
         pages.map((p) => ({ ...p, selection: 'selected' as const })),
@@ -1662,7 +1672,6 @@ export function coverageReport(
       KPI: /MRR|ARR|KPI/,
     }[metric ?? ''] as RegExp | undefined;
     if (marker) {
-      const target = requirementTarget(requirement);
       if (type === 'ma' && /対象会社の最近/.test(requirement))
         return maMetricSources(pages, context)
           .filter(

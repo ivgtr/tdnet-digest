@@ -289,6 +289,25 @@ function forecast(first: ExtractedPage, fields: string[]) {
 
 // The shared ownership boundary owns these cases; the headline contract suite owns
 // the issuer/scope/basis selection matrix and source-backed save/restore behavior.
+it('氏名の型を明示した代表者名欄で完全な表紙の報告対象を失わない', () => {
+  const page = textPage(
+    `${cover}\n代表者名 │ 山田太郎\n会社名 ${issuer}\n会計基準 日本基準\n範囲 連結\n1. 2026年3月期連結経営成績\n営業利益は100百万円です。`
+  );
+  const context = buildDocumentContext([page]);
+  expect(documentSubject(context)).toBe(issuer);
+  expect(reportingDocumentCover(page.blocks).map((block) => block.text)).toEqual([
+    cover,
+    '代表者名 │ 山田太郎',
+    `会社名 ${issuer}`,
+    '会計基準 日本基準',
+    '範囲 連結',
+  ]);
+  expect(earningsTarget(sourceInventory([page], context, 'earnings'))).toMatchObject({
+    issue: null,
+    target: { fiscal: '2026年3月期', subject: issuer, scope: '連結', basis: '日本基準' },
+  });
+});
+
 it('表紙の日付・連絡欄は通し、値や未見出し本文を越えて属性を借りない', () => {
   const initial = [
     cover,

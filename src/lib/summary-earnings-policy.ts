@@ -119,10 +119,15 @@ export function earningsMissingMajorLabels(
       missing.add(match[1]);
   }
   if (target) {
+    const previous = {
+      ...target,
+      fiscal: target.fiscal.replace(/^(20\d{2})年/, (_, year: string) => `${Number(year) - 1}年`),
+    };
     const actual = facts.facts.filter((fact) => fact.quantity && fact.semantics.state === 'actual');
     for (const fact of actual) {
-      // A comparative figure from another reporting unit cannot create a current obligation.
-      if (!matchesEarningsTarget({ ...fact, period: target.fiscal }, target)) continue;
+      // Only the preceding same-shape period in this reporting unit is comparative.
+      // Older history and future actuals cannot create a current obligation.
+      if (!matchesEarningsTarget(fact, previous)) continue;
       const metric = earningsMetricKey(fact.label);
       if (!metric || !(metric in majorLabels) || fact.semantics.metricKind !== 'amount') continue;
       if (

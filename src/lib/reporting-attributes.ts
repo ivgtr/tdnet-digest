@@ -48,14 +48,16 @@ export function reportingAttributeKey(role: 'subject' | 'scope' | 'basis', value
 
 // Use the same vocabulary for complete administrative fields and structural
 // label/value pairing, so a recognized label cannot strand its adjacent value.
-const personnelFieldLabels = [
-  '代表者名',
-  '代表者',
-  '問合せ先責任者',
-  '問い合わせ先責任者',
-  '問合せ先',
-  '問い合わせ先',
-];
+const personnelFields = {
+  代表者名: 'name',
+  代表者: 'person',
+  問合せ先責任者: 'contact',
+  問い合わせ先責任者: 'contact',
+  問合せ先: 'contact',
+  問い合わせ先: 'contact',
+} as const;
+type PersonnelFieldKind = (typeof personnelFields)[keyof typeof personnelFields];
+const personnelFieldLabels = Object.keys(personnelFields);
 const administrativeFieldLabels = [
   '上場取引所',
   'コード番号',
@@ -124,8 +126,10 @@ function administrativeValue(label: string, value: string): boolean {
       return isReportingTelephone(compact);
     case '上場取引所':
       return exchange.test(compact);
-    default:
-      return isPersonnelFieldValue(value, /問.*合.*せ.*先/.test(label));
+    default: {
+      const kind = personnelFields[label.replace(/\s/g, '') as keyof typeof personnelFields];
+      return kind !== undefined && isPersonnelFieldValue(value, kind);
+    }
   }
 }
 
@@ -248,9 +252,10 @@ function isIndependentReportingRecord(text: string): boolean {
   return isReportingCoverTitle(text) || isReportingAdministrativeRecord(text);
 }
 
-// A personnel record has a role and a name, or an explicitly labelled name.
+// A personnel record has a role and a name, or a name owned by an explicit
+// outer field or subfield. Generic person/contact fields do not declare a name.
 // Each value occupies one cell; only explicit subfield labels may add cells.
-// Without a role label, the first slot must itself identify a position.
+// An unlabelled role slot must itself identify a position.
 const personnelValue = /^[\p{L}\p{M}・.'’&-]{1,80}$/u;
 const personnelSubfield = (labels: string[]) => {
   const names = spacedLabels(labels);
@@ -269,7 +274,7 @@ const inlinePersonnelSlot = new RegExp(
   'i'
 );
 
-function isPersonnelRecord(values: string[]): boolean {
+function isPersonnelRecord(values: string[], kind: PersonnelFieldKind): boolean {
   const consume = (start: number, slot: keyof typeof personnelSlots, implicit: boolean) => {
     if (!values[start]) return null;
     const schema = personnelSlots[slot];
@@ -284,36 +289,39 @@ function isPersonnelRecord(values: string[]): boolean {
   };
   const roleEnd = consume(0, 'role', true);
   return (
-    consume(0, 'name', false) === values.length ||
+    consume(0, 'name', kind === 'name') === values.length ||
     (roleEnd !== null && consume(roleEnd, 'name', true) === values.length)
   );
 }
-function isPersonnelFieldValue(value: string, contact: boolean): boolean {
+function isPersonnelFieldValue(value: string, kind: PersonnelFieldKind): boolean {
   if (!value) return false;
   const slots = value
     .split(inlinePersonnelSlot)
     .map((part) => part.trim())
     .filter(Boolean);
-  if (isPersonnelRecord(slots)) return true;
+  if (isPersonnelRecord(slots, kind)) return true;
   // An omitted optional role inside a single value may accompany an explicit
   // complete name. This never bridges an empty physical cell.
   if (
     slots.length === 2 &&
     slots[0].match(personnelSlots.role.label)?.[1] === '' &&
-    isPersonnelRecord(slots.slice(1))
+    isPersonnelRecord(slots.slice(1), kind)
   )
     return true;
   // A role or contact department is also a complete single value. A bare
   // arbitrary string is not a role, and an extra name must fit the name slot.
   const compact = value.replace(/\s/g, '');
   if (personnelSlots.role.value.test(compact)) return true;
-  if (contact && /^[\p{L}\p{M}・&-]{1,60}(?:部|室|課|局)$/u.test(compact)) return true;
+  if (kind === 'contact' && /^[\p{L}\p{M}・&-]{1,60}(?:部|室|課|局)$/u.test(compact)) return true;
   return [...value.matchAll(/\s+/g)].some((space) =>
-    isPersonnelRecord([value.slice(0, space.index), value.slice(space.index! + space[0].length)])
+    isPersonnelRecord(
+      [value.slice(0, space.index), value.slice(space.index! + space[0].length)],
+      kind
+    )
   );
 }
 const personnelStart = new RegExp(
-  `^(?:${spacedLabels(personnelFieldLabels)})(?=\\s|:|$)[\\s:]*(.*)$`,
+  `^(${spacedLabels(personnelFieldLabels)})(?=\\s|:|$)[\\s:]*(.*)$`,
   'i'
 );
 
@@ -321,7 +329,9 @@ const personnelStart = new RegExp(
 function personnelRecordEnd(cells: string[], start: number): number | null {
   const field = cells[start].match(personnelStart);
   if (!field) return null;
-  const values = field[1] ? [field[1]] : [];
+  const kind = personnelFields[field[1].replace(/\s/g, '') as keyof typeof personnelFields];
+  const values = field[2] ? [field[2]] : [];
+  let recordEnd: number | null = null;
   // Field label + role label/value + name label/value is the longest record.
   for (let end = start + 1; end < Math.min(cells.length, start + 5); end++) {
     if (
@@ -331,9 +341,11 @@ function personnelRecordEnd(cells: string[], start: number): number | null {
     )
       break;
     values.push(cells[end]);
-    if (isPersonnelRecord(values)) return end;
+    // A position also fits the name character grammar. Preserve a following
+    // name when the same field proves the complete role/name record.
+    if (isPersonnelRecord(values, kind)) recordEnd = end;
   }
-  return null;
+  return recordEnd;
 }
 
 /** Metadata projection only: a named field can own its immediately adjacent value cell.
