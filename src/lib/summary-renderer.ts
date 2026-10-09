@@ -218,7 +218,7 @@ function renderObservationGroups(
   presentation: SummaryPresentation,
   primarySubject: string | null,
   headings: boolean,
-  earnings?: { target: EarningsTarget | null }
+  earnings?: { target: EarningsTarget | null; sectionTitle: string }
 ): string[] {
   const lines: string[] = [];
   const groups = new Map<string, Array<DisclosureObservation | ConfirmedObservation>>();
@@ -229,15 +229,18 @@ function renderObservationGroups(
     groups.set(key, [...(groups.get(key) ?? []), observation]);
   }
   const topics = new Set<ObservationTopic>();
+  let previousPeriodHeading: string | undefined;
   const text = (value: string) => literalMarkdown(renderNarrativeText(value, presentation.values));
   const periodOrder = (a: DisclosureObservation, b: DisclosureObservation) => {
     const left = earningsPeriodOrder(a.period, earnings?.target ?? null);
     const right = earningsPeriodOrder(b.period, earnings?.target ?? null);
     return (
       left[0] - right[0] ||
-      Number(b.scope === earnings?.target?.scope) - Number(a.scope === earnings?.target?.scope) ||
       left[1] - right[1] ||
-      left[2].localeCompare(right[2])
+      left[2].localeCompare(right[2]) ||
+      // Equal normalized periods may retain different source spellings.
+      // Keep each displayed spelling contiguous before sorting table context.
+      ((a.period ?? '') < (b.period ?? '') ? -1 : a.period === b.period ? 0 : 1)
     );
   };
   const metricOrder = (a: DisclosureObservation, b: DisclosureObservation) =>
@@ -245,18 +248,27 @@ function renderObservationGroups(
     a.metric.localeCompare(b.metric) ||
     (a.entity ?? '').localeCompare(b.entity ?? '') ||
     a.valueId.localeCompare(b.valueId);
+  const genericTopic = (topic: ObservationTopic) => topic === 'performance' || topic === 'forecast';
+  const headingTopic = (topic: ObservationTopic) =>
+    earnings && genericTopic(topic) ? earnings.sectionTitle : observationTitles[topic];
+  const topicOrder = (topic: ObservationTopic) =>
+    earnings && headingTopic(topic) === earnings.sectionTitle
+      ? 0
+      : OBSERVATION_TOPICS.indexOf(topic);
   for (const group of [...groups.values()].sort(
     (a, b) =>
-      OBSERVATION_TOPICS.indexOf(a[0].topic) - OBSERVATION_TOPICS.indexOf(b[0].topic) ||
+      topicOrder(a[0].topic) - topicOrder(b[0].topic) ||
       (earnings
         ? periodOrder(a[0], b[0]) ||
           a[0].state.localeCompare(b[0].state) ||
+          Number(b[0].scope === earnings.target?.scope) -
+            Number(a[0].scope === earnings.target?.scope) ||
           observationGroup(a[0]).localeCompare(observationGroup(b[0]))
         : 0)
   )) {
     if (earnings) group.sort(metricOrder);
     const first = group[0];
-    if (headings && !topics.has(first.topic)) {
+    if (headings && !earnings && !topics.has(first.topic)) {
       topics.add(first.topic);
       lines.push('', `### ${observationTitles[first.topic]}`);
     }
@@ -272,11 +284,16 @@ function renderObservationGroups(
       '比較値',
       '増減',
     ];
-    if (earnings)
-      lines.push(
-        '',
-        `### ${literalMarkdown(first.period ?? '対象期未特定')} ${stateLabels[first.state]}`
-      );
+    if (earnings) {
+      // Period/state owns the heading; scope, basis and conditions still own
+      // separate tables underneath it. Topics remain named, never opaque IDs.
+      // Primary topics are generic (forecast includes dividends). The existing
+      // section owns their label; supplementary topics carry their own meaning.
+      const title = headingTopic(first.topic);
+      const heading = `${literalMarkdown(first.period ?? '対象期未特定')} ${stateLabels[first.state]}／${literalMarkdown(title)}`;
+      if (heading !== previousPeriodHeading) lines.push('', `### ${heading}`);
+      previousPeriodHeading = heading;
+    }
     lines.push(
       '',
       [
@@ -536,24 +553,21 @@ export function renderSummary(facts: FactSummary, presentation: SummaryPresentat
       (row) => row.comparison !== null || !referencesInPairs.has(row.valueId)
     );
     const supplement = sectionObservations;
-    lines.push(
-      ...renderObservationGroups(
-        primary,
-        presentation,
-        primarySubject,
-        false,
-        earnings ?? undefined
-      )
-    );
-    lines.push(
-      ...renderObservationGroups(
-        supplement,
-        presentation,
-        primarySubject,
-        true,
-        earnings ?? undefined
-      )
-    );
+    if (earnings) {
+      // Confirmed and supplementary rows share one period hierarchy.
+      lines.push(
+        ...renderObservationGroups(
+          [...primary, ...supplement],
+          presentation,
+          primarySubject,
+          true,
+          { ...earnings, sectionTitle: section.title }
+        )
+      );
+    } else {
+      lines.push(...renderObservationGroups(primary, presentation, primarySubject, false));
+      lines.push(...renderObservationGroups(supplement, presentation, primarySubject, true));
+    }
     const structured = [...primary, ...supplement];
     const shownConditions = new Set(structured.flatMap((value) => value.conditions));
     const shownClaimContexts = new Set<string>();

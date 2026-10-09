@@ -647,6 +647,59 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     ]);
   });
 
+  it('同一期・状態の表を一つの見出しにまとめ、範囲・基準・条件と別期・状態を保持する', () => {
+    const base = facts.facts[1];
+    const variants = [
+      {},
+      { conditions: ['特別な費用を含む'] },
+      { scope: '非連結' },
+      { basis: 'IFRS' },
+      { subject: '株式会社別会社' },
+      { state: 'forecast' as const },
+    ].map((semantics, index) => ({
+      ...base,
+      id: `group-${index}`,
+      valueKind: semantics.state === 'forecast' ? ('forecast' as const) : base.valueKind,
+      semantics: { ...base.semantics, ...semantics },
+    }));
+    variants.push({
+      ...variants[0],
+      id: 'previous-period',
+      label: '履歴指標',
+      period: '2025年3月期',
+    });
+    for (const scope of ['連結', '非連結'])
+      variants.push({
+        ...variants[0],
+        id: `source-spelling-${scope}`,
+        period: '2026年３月期',
+        semantics: { ...base.semantics, scope },
+      });
+    let rendered: string | undefined;
+    for (const ordered of [variants, [...variants].reverse()]) {
+      const summary = { ...facts, facts: ordered };
+      const display = nativePresentation(summary, [page]);
+      const markdown = renderFacts(summary, display);
+      const body = markdown.slice(markdown.indexOf('## 業績と増減要因'));
+      expect(body.match(/^### 2026年3月期 実績／業績と増減要因$/gm)).toHaveLength(1);
+      expect(body.match(/^### 2025年3月期 実績／業績と増減要因$/gm)).toHaveLength(1);
+      expect(body.match(/^### 2026年３月期 実績／業績と増減要因$/gm)).toHaveLength(1);
+      expect(body.match(/^### 2026年3月期 予想／通期見通し・前提$/gm)).toHaveLength(1);
+      expect(body.match(/^\| .*100百万円.*\|$/gm)).toHaveLength(9);
+      for (const context of ['非連結', 'IFRS', '特別な費用を含む', '株式会社別会社'])
+        expect(body).toContain(context);
+      const headings = body.match(/^### .+$/gm)!;
+      expect(new Set(headings).size).toBe(headings.length);
+      const html = buildSummaryHtml(markdown, null, { companyName: 'テスト', title: '決算' });
+      expect(html.match(/>2026年3月期 実績／業績と増減要因<\/h3>/g)).toHaveLength(1);
+      if (rendered) expect(markdown).toBe(rendered);
+      rendered = markdown;
+      const saved = JSON.parse(JSON.stringify(display));
+      validatePresentation(saved, summary);
+      expect(renderFacts(summary, saved)).toBe(markdown);
+    }
+  });
+
   it('IFRSの税引前利益を独立した名称で並べ、経常利益を欠落扱いしない', () => {
     const source = textPage(expectation.text + '\n本決算短信に記載の予想は不確実性を含みます。');
     const current = facts.facts[1];

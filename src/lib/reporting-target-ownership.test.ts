@@ -82,7 +82,7 @@ it('同じ物理段落の後続参照から発行会社・範囲・基準を借�
 
 it('先頭のロゴを後続の短信参照で厳格な空の表紙に置き換えない', () => {
   const page = textPage(
-    `TEST GROUP\n2026年3月期 決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n1. 2026年3月期連結経営成績\n売上高は100百万円です。`
+    `M3, INC.\n2026年3月期 決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n1. 2026年3月期連結経営成績\n売上高は100百万円です。`
   );
   expect(reportingCoverBlocks(page.blocks)).toEqual([]);
   expect(reportingDocumentCover(page.blocks).map((block) => block.text)).toEqual([
@@ -99,14 +99,17 @@ it('先頭のロゴを後続の短信参照で厳格な空の表紙に置き換�
     '2026年3月期 決算短信〔日本基準〕（連結） 売上高100百万円',
     '2026年3月期 決算短信〔日本基準〕（連結）\n参考情報',
   ]) {
-    const interrupted = textPage(`TEST GROUP\n${source}\n会社名 ${issuer}`);
+    const interrupted = textPage(`M3, INC.\n${source}\n会社名 ${issuer}`);
     expect(documentSubject(buildDocumentContext([interrupted]))).toBeNull();
   }
   const { pages, facts } = forecast(
-    textPage(`TEST GROUP\n${cover}\n売上高は100百万円です。\n会社名 ${issuer}`),
+    textPage(`M3, INC.\n${cover}\n売上高は100百万円です。\n会社名 ${issuer}`),
     [`会社名 ${issuer}`, '会計基準 日本基準']
   );
   expect([...declaredForecastFactIds(pages, facts)]).toEqual([]);
+  const unnamed = textPage(`M3, INC.\n${cover}\n${issuer}`);
+  expect(reportingDocumentCover(unnamed.blocks)).toEqual([]);
+  expect(documentSubject(buildDocumentContext([unnamed]))).toBeNull();
 });
 
 it('一般的な会社識別語を持つ単独の先行記録だけを通し、本文・参照・別通知を飛ばさない', () => {
@@ -119,11 +122,17 @@ it('一般的な会社識別語を持つ単独の先行記録だけを通し、�
     'FOR REFERENCE, INC.',
     'SEE APPENDIX CO., LTD.',
     'ACME,, INC.',
+    '123, INC.',
+    'M3 100 GROUP',
+    '100USD, INC.',
+    '100A. GROUP',
     'U..S. HOLDINGS',
-    'U.S. REFERENCE GROUP',
+    'M3 REFERENCE GROUP',
+    'REFERENCE1 GROUP',
+    '2APPENDIX HOLDINGS',
     'R.E.F.E.R.E.N.C.E. GROUP',
     'SEE A.P.P.E.N.D.I.X. GROUP',
-    'U.S. HOLDINGS │ 参考情報',
+    'M3, INC. │ 参考情報',
     'U.S. HOLDINGS 100株',
     'ACME CO., LTD. │ 参考情報',
     'ACME CO., LTD. 100株',
@@ -156,12 +165,16 @@ it('一般的な会社識別語を持つ単独の先行記録だけを通し、�
   });
 });
 
-it('企業名の語間カンマと略語・連続イニシャルのピリオドを表紙の開始条件で許容する', () => {
+it('企業名の英数字・語間カンマと略語・連続イニシャルを表紙の開始条件で許容する', () => {
   const title = '2026年3月期 決算短信〔日本基準〕（連結）';
   for (const mark of [
     'ACME, INC.',
     'ACME CO., LTD.',
     'ACME,INC.',
+    'M3, INC.',
+    '3M CORPORATION',
+    'B2B GROUP',
+    '７ＥＬＥＶＥＮ ＨＯＬＤＩＮＧＳ',
     'A. B. HOLDINGS',
     'U.S. HOLDINGS',
     'U.S.A. CO., LTD.',

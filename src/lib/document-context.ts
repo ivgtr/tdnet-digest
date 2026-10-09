@@ -33,6 +33,7 @@ import {
 import { buildTableMappings, type TableMapping } from './source-mappings';
 import { continuationFor, continuationPage, noteLinks, paragraphNoteLinks } from './document-links';
 import { splitNotes, splitNoteApplies } from './source-provenance';
+import { isUncaptionedUnit, parseExactQuantity } from './quantity';
 
 export type DeclarationRole = 'subject' | 'scope' | 'basis';
 export interface ContextDeclaration {
@@ -185,6 +186,15 @@ export function reportingCoverBlocks<
   return cover;
 }
 
+function isCompanyWordmarkToken(word: string): boolean {
+  if (!/[A-Z]/.test(word) || !/^(?:[A-Z0-9][A-Z0-9&'-]*\.?|(?:[A-Z]\.)+[A-Z]?)$/.test(word))
+    return false;
+  // Digits can belong to a name, but a complete quantity (100USD, 100A) is
+  // ambiguous. Match the whole token so the 2B inside B2B is not a byte count.
+  const quantity = parseExactQuantity(word.replace(/\.$/, ''));
+  return !quantity?.unit || !isUncaptionedUnit(quantity.unit);
+}
+
 /** One identity-shaped wordmark may precede the first complete reporting cover.
  * It supplies no issuer or reporting attributes; arbitrary unknown text is a boundary.
  */
@@ -209,14 +219,17 @@ export function reportingDocumentCover<
   const mark = blocks[start].text.normalize('NFKC').trim();
   const words = mark.split(/[ \t]*,[ \t]*|[ \t]+/);
   // Generic corporate identity syntax, never a list of supported companies.
-  // Commas separate words; a token is a word/abbreviation or dotted initials.
+  // Commas separate words; each token has a letter and may contain digits,
+  // abbreviation punctuation, or dotted initials. Numeric-only tokens fail.
   // Punctuation cannot erase a source record, quantity, or unknown trailing cell.
   // Reference/navigation labels cannot become identity marks by adding a suffix.
   if (
     words.length < 2 ||
     !/^(?:GROUP|HOLDINGS|CORPORATION|INC\.?|LTD\.?)$/.test(words[words.length - 1]) ||
-    !words.slice(0, -1).every((word) => /^(?:[A-Z][A-Z&'-]*\.?|(?:[A-Z]\.)+[A-Z]?)$/.test(word)) ||
-    /\b(?:REFERENCES?|APPENDIX|APPENDICES|ATTACHMENTS?)\b/.test(mark.replace(/\./g, ''))
+    !words.slice(0, -1).every(isCompanyWordmarkToken) ||
+    /(?:^|[^A-Z])(?:REFERENCES?|APPENDIX|APPENDICES|ATTACHMENTS?)(?=$|[^A-Z])/.test(
+      mark.replace(/\./g, '')
+    )
   )
     return prefix;
   const before = [...prefix];

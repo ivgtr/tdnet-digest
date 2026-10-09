@@ -124,7 +124,7 @@ function assertBodyAndRestore(
 describe('報告対象の完全性を候補・冒頭・本文・保存復元で保つ', () => {
   it.each([
     ['TEST GROUP', true],
-    ['ACME CO., LTD.', false],
+    ['M3, INC.', false],
   ] as const)(
     '先頭の%sの後の完全な表紙を文脈・必須判定・冒頭・保存復元で共有する: 節=%s',
     (mark, section) => {
