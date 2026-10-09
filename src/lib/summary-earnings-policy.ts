@@ -8,6 +8,7 @@ import {
   bracketedReportingBases,
   reportingAttributeKey,
   hasCompleteReportingAttributes,
+  reportingTargetShape,
 } from './reporting-attributes';
 import type { FactPeriodKind, FactSummary, VerifiedFact } from './fact-contract';
 import type { SourceExcerpt } from './summary-source-inventory';
@@ -37,9 +38,8 @@ function sourceTarget(text: string): EarningsTarget | null {
   const periods = [...new Set(normalized.match(/20\d{2}年\d{1,2}月期/g) ?? [])];
   if (periods.length !== 1) return null;
   const fiscal = fiscalPeriod(periods[0]);
-  const shapes = reportingPeriodShapes(normalized);
-  if (!fiscal || shapes.length > 1 || (/累計|中間期/.test(normalized) && /単独/.test(normalized)))
-    return null;
+  const shape = reportingTargetShape(normalized);
+  if (!fiscal || !shape) return null;
   const scopes = [
     ...new Set(
       (normalized.match(new RegExp(reportingScope, 'g')) ?? []).map((scope) =>
@@ -56,30 +56,34 @@ function sourceTarget(text: string): EarningsTarget | null {
   ];
   if (bases.length > 1) return null;
   const basis = bases[0] ?? null;
-  const quarter = shapes[0]?.match(/第([1-4])四半期/)?.[1];
-  if (!quarter)
-    return { fiscal, periodKind: 'fullYear', label: fiscal, scope, subject: null, basis };
-  if (quarter === '4' && !/単独/.test(normalized)) return null;
-  const standalone = /単独/.test(normalized);
   return {
     fiscal,
     scope,
     subject: null,
     basis,
-    periodKind: `${standalone ? 'standalone' : 'cumulative'}Q${quarter}` as FactPeriodKind,
-    label: `${fiscal}第${quarter}四半期${standalone ? '単独' : '累計'}`,
+    periodKind: shape.periodKind,
+    label: `${fiscal}${shape.quarter ?? ''}${shape.periodKind.startsWith('cumulative') ? '累計' : ''}`,
   };
 }
 
 /** The document declares the headline period; surviving figures cannot redefine it. */
 export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolution {
   const coverFields = reportingCoverBlocks(excerpts.filter((excerpt) => excerpt.page === 1));
-  const cover = coverFields
+  const coverTitles = coverFields
     .flatMap((excerpt) => reportingFieldSegments(excerpt.text))
-    .filter(
-      (text) =>
-        isReportingCoverTitle(text) && /20\d{2}年\d{1,2}月期/.test(reportingPeriodText(text))
-    );
+    .filter(isReportingCoverTitle);
+  // A missing fiscal year may be supplied by a performance heading. An explicit
+  // unresolved quarter must not be erased by that separate source selection.
+  if (coverTitles.some((title) => !reportingTargetShape(title)))
+    return { target: null, issue: 'ambiguous' };
+  const cover = coverTitles.filter((text) =>
+    /20\d{2}年\d{1,2}月期/.test(reportingPeriodText(text))
+  );
+  // A dated title or performance heading may supply the year, but cannot
+  // replace an explicit cover shape. A plain 決算短信 adds no shape constraint.
+  const explicitCoverShapes = coverTitles
+    .filter((title) => reportingPeriodShapes(title).length > 0)
+    .map((title) => reportingTargetShape(title)!.periodKind);
   const titles = cover.length
     ? cover
     : excerpts
@@ -122,7 +126,7 @@ export function earningsTarget(excerpts: SourceExcerpt[]): EarningsTargetResolut
   if (Object.values(fields).some((values) => values.size > 1))
     return { target: null, issue: 'ambiguous' };
   const targets = titles.map(sourceTarget).map((target) => {
-    if (!target) return null;
+    if (!target || explicitCoverShapes.some((shape) => shape !== target.periodKind)) return null;
     const subject = [...fields.subject][0] ?? null;
     const scope = [...fields.scope][0] ?? target.scope;
     const basis = [...fields.basis][0] ?? target.basis;

@@ -16,6 +16,7 @@ import {
 } from './summary-presentation';
 import { sourceInventory } from './summary-source-inventory';
 import { earningsTarget } from './summary-earnings-policy';
+import { coverageReport } from './fact-coverage';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
 
 // Quarter-like characters belong to the literal issuer name, not the period grammar.
@@ -117,6 +118,89 @@ function assertBodyAndRestore(
 // Owner: the source-verified actual headline contract. Forecast vocabulary/completeness
 // stays in summary-presentation.test; the mixed story below owns the saved-PDF boundary.
 describe('報告対象の完全性を候補・冒頭・本文・保存復元で保つ', () => {
+  it.each([
+    ['', fiscal, 'fullYear', fiscal],
+    ['通期', fiscal, 'fullYear', fiscal],
+    ['第2四半期', `${fiscal}第2四半期累計`, 'cumulativeQ2', `${fiscal}第2四半期`],
+  ] as const)(
+    '既知の%s表題では冒頭と必須判定が同じ期間の実績を選ぶ',
+    (shape, period, kind, targetPeriod) => {
+      const page = textPage(
+        `${fiscal} ${shape}決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n1. ${period}連結経営成績\n${period}の売上高は1000百万円です。`
+      );
+      const input = numberCandidate(page, '売上高', 1000, period);
+      Object.assign(input.semantics, issuerUnit, { periodKind: kind });
+      const summary = verifiedSummary([page], [input], [1000]);
+      expect(earningsTarget(sourceInventory([page], undefined, 'earnings'))).toMatchObject({
+        issue: null,
+        target: { fiscal, periodKind: kind },
+      });
+      expect(headlineValues(summary, buildPresentation(summary, [page]))).toEqual([1000]);
+      const revenue = coverageReport('earnings', [page], summary.facts).filter(
+        (slot) => slot.requirement === 'COVERAGE:当年決算実績の重要指標 revenue'
+      );
+      expect(revenue).toHaveLength(1);
+      expect(revenue[0]).toMatchObject({
+        requirement: 'COVERAGE:当年決算実績の重要指標 revenue',
+        status: 'satisfied',
+        expected: { period: targetPeriod, periodKind: kind },
+      });
+    }
+  );
+
+  it('番号のない四半期表題から通期を推測せず、局所で確認した年次実績は本文と保存復元に保つ', () => {
+    const firstPage = textPage(`${fiscal} 四半期決算短信〔日本基準〕（連結）\n会社名 ${issuer}`);
+    const { pages, inputs } = actualSources(firstPage, [{ ...issuerUnit, value: 1000 }]);
+    const summary = verifiedSummary(pages, inputs, [1000]);
+    expect(earningsTarget(sourceInventory(pages, undefined, 'earnings'))).toEqual({
+      target: null,
+      issue: 'ambiguous',
+    });
+    const coverage = coverageReport('earnings', pages, summary.facts);
+    expect(coverage).toHaveLength(1);
+    expect(coverage[0]).toMatchObject({
+      requirement: 'COVERAGE:報告対象の決算期を確認できません',
+      status: 'unknown',
+    });
+    expect(coverage[0].expected.periodKind).toBeUndefined();
+    const mixedCover = textPage(
+      `${fiscal} 決算短信〔日本基準〕（連結）\n第3四半期決算短信〔日本基準〕（連結）\n会社名 ${issuer}`
+    );
+    expect(earningsTarget(sourceInventory([mixedCover], undefined, 'earnings'))).toEqual({
+      target: null,
+      issue: 'ambiguous',
+    });
+    expect(coverageReport('earnings', [mixedCover], [])).toMatchObject([
+      { requirement: 'COVERAGE:報告対象の決算期を確認できません', status: 'unknown' },
+    ]);
+    const display = buildPresentation(summary, pages);
+    expect(display.overview).toEqual([]);
+    const { markdown } = assertBodyAndRestore(summary, pages, display, [1000]);
+    expect(headline(markdown)).toContain('報告対象を一意に特定できません');
+    expect(headline(markdown)).not.toContain(amount(1000));
+    const altered = structuredClone(display);
+    altered.overview = [summary.facts[0].id];
+    expect(() => revalidatePresentation(altered, summary, pages)).toThrow('報告対象');
+  });
+
+  it.each([
+    ['四半期', '', null],
+    ['第3四半期', '', null],
+    ['通期', '第3四半期累計', null],
+    ['第3四半期', '第3四半期累計', 'cumulativeQ3'],
+  ] as const)(
+    '年のない%s表題と%s業績見出しは、明示した期間形が一致するときだけ対象期を補う',
+    (coverShape, headingShape, periodKind) => {
+      const page = textPage(
+        `${coverShape}決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n範囲 連結\n会計基準 日本基準\n1. ${fiscal}${headingShape}連結経営成績\n売上高は1000百万円です。`
+      );
+      const resolution = earningsTarget(sourceInventory([page], undefined, 'earnings'));
+      if (periodKind)
+        expect(resolution).toMatchObject({ issue: null, target: { fiscal, periodKind } });
+      else expect(resolution).toEqual({ target: null, issue: 'ambiguous' });
+    }
+  );
+
   it('独立した会社名欄を保持し、先にある子会社・別基準・個別の重要値より後の発行会社実績を選ぶ', () => {
     const { pages, inputs } = actualSources(cover(issuerUnit), [
       { ...issuerUnit, subject: '株式会社子会社', value: 900 },

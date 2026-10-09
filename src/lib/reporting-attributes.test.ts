@@ -3,10 +3,30 @@ import {
   reportingFieldProjection,
   reportingFieldSegments,
   isReportingCoverTitle,
+  reportingTargetShape,
 } from './reporting-attributes';
 import { declaredSubjectsIn } from './document-structure';
 import { textPage } from './fixtures/v4-test-source';
 import { buildDocumentContext, isReportingMetadata } from './document-context';
+
+// Target shape is a shared declaration boundary for headline and coverage.
+it.each([
+  ['', { periodKind: 'fullYear' }],
+  ['通期', { periodKind: 'fullYear' }],
+  ['第1四半期', { quarter: '第1四半期', periodKind: 'cumulativeQ1' }],
+  ['中間', { quarter: '第2四半期', periodKind: 'cumulativeQ2' }],
+  ['第3四半期', { quarter: '第3四半期', periodKind: 'cumulativeQ3' }],
+  ['第4四半期単独', { quarter: '第4四半期単独', periodKind: 'standaloneQ4' }],
+  ['四半期', null],
+  ['通期四半期', null],
+  ['第4四半期', null],
+  ['中間期単独', null],
+  ['第1四半期第3四半期', null],
+])('報告対象の%s表題を解釈し、不明な四半期や衝突を通期へ変えない', (shape, expected) => {
+  const title = `2026年3月期 ${shape}決算短信〔日本基準〕（連結）`;
+  expect(isReportingCoverTitle(title)).toBe(true);
+  expect(reportingTargetShape(title)).toEqual(expected);
+});
 
 // Vocabulary coverage belongs here; drawing-to-headline integration has one
 // representative mixed cover in source-cell-boundaries.test.ts.

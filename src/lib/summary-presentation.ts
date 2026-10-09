@@ -40,7 +40,7 @@ export interface SummarySection {
   highlights: string[];
 }
 export interface SummaryPresentation {
-  version: 6;
+  version: 7;
   sourceHash: string;
   overview: string[];
   sections: SummarySection[];
@@ -265,7 +265,7 @@ function composePresentation(
   if (!overview.length && facts.documentType !== 'earnings')
     take(facts.facts.find((f) => f.importance === 'key'));
   return {
-    version: 6,
+    version: 7,
     sourceHash: hashText(canonicalJSON({ excerpts, values })),
     overview,
     sections: sections.filter((s) => s.factIds.length || s.excerptIds.length),
@@ -291,7 +291,7 @@ export function validatePresentation(
       'values',
       'organization',
     ]) ||
-    value.version !== 6 ||
+    value.version !== 7 ||
     !Array.isArray(value.overview) ||
     !Array.isArray(value.sections) ||
     !Array.isArray(value.excerpts) ||
@@ -334,9 +334,20 @@ export function validatePresentation(
     v.every((id) => typeof id === 'string' && allowed.has(id));
   const quantities = new Set<string>();
   for (const q of value.values) {
+    const fact = record(q) ? facts.facts.find((f) => f.id === q.id) : undefined;
+    const evidenceId =
+      fact && (fact.evidence.kind === 'table' ? fact.evidence.valueId : fact.evidence.quantityId);
+    const proseBlockId = fact?.evidence.kind === 'prose' ? fact.evidence.blockId : null;
     if (
       !record(q) ||
-      !exact(q, ['id', 'raw', 'decimal', 'unit', 'sourceIds']) ||
+      !exact(q, [
+        'id',
+        'raw',
+        'decimal',
+        'unit',
+        'sourceIds',
+        ...(fact ? ['sourceQuantityId'] : []),
+      ]) ||
       typeof q.id !== 'string' ||
       !(ids.has(q.id) || /^p\d+(?:s\d+|b\d+:q\d+)$/.test(q.id)) ||
       quantities.has(q.id) ||
@@ -346,13 +357,30 @@ export function validatePresentation(
       !(q.unit === null || typeof q.unit === 'string') ||
       !Array.isArray(q.sourceIds) ||
       !refs(q.sourceIds, sourceIds) ||
-      !q.sourceIds.length
+      !q.sourceIds.length ||
+      (fact &&
+        (typeof q.sourceQuantityId !== 'string' ||
+          !/^p\d+(?:s\d+|b\d+:q\d+)$/.test(q.sourceQuantityId) ||
+          (q.sourceQuantityId !== evidenceId &&
+            !(
+              proseBlockId !== null &&
+              (value.excerpts as SourceExcerpt[]).some(
+                (excerpt) =>
+                  excerpt.blockId === proseBlockId &&
+                  excerpt.spanIds.includes(q.sourceQuantityId as string)
+              ) &&
+              value.values.some(
+                (native) =>
+                  record(native) &&
+                  native.id === q.sourceQuantityId &&
+                  !('sourceQuantityId' in native)
+              )
+            ))))
     )
       throw new Error('保存された表示数量が不正です');
     quantities.add(q.id);
     const rawQuantity = q.raw;
     const literal = parseNarrativeQuantity(rawQuantity);
-    const fact = facts.facts.find((f) => f.id === q.id);
     const quantityExcerpts = (value.excerpts as SourceExcerpt[]).filter((e) =>
       (q.sourceIds as string[]).includes(e.id)
     );

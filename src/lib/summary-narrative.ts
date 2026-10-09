@@ -18,6 +18,8 @@ export interface NarrativeValue {
   decimal: string | null;
   unit: string | null;
   sourceIds: string[];
+  /** Required for a fact-backed value; points directly to its original literal. */
+  sourceQuantityId?: string;
 }
 export interface NarrativeLine {
   id: string;
@@ -67,7 +69,11 @@ function displayQuantities(block: { id: string; text: string }) {
         !added.some((m) => q.start < m.index! + m[0].length && q.start + q.raw.length > m.index!)
     ),
     ...added.map((m, i) => ({
-      id: `${block.id}:q${original.length + i + 1}`,
+      // Rendering may accept whitespace within a complete unit that the source
+      // parser already owns. Preserve that exact interval's original identity.
+      id:
+        original.find((q) => q.start === m.index && q.raw === m[0])?.id ??
+        `${block.id}:q${original.length + i + 1}`,
       raw: m[0],
       start: m.index!,
     })),
@@ -146,6 +152,7 @@ export function narrativeValues(
 ): NarrativeValue[] {
   const values = new Map<string, NarrativeValue>();
   const physicalQuantitySpans = new Map<string, string[]>();
+  const sourceAliases = new Map<string, string>();
   for (const page of pages.filter((p) => p.selection === 'selected')) {
     const owners = physicalCellOwners(
       buildTableCells(page.drawingLines, page.spans, page.pageNumber)
@@ -318,42 +325,45 @@ export function narrativeValues(
       ]);
     }
     for (const e of excerpts.filter((e) => e.page === page.pageNumber && e.kind !== 'heading')) {
-      // A row can be read as prose too. Offer its physical quantity ID once, using
-      // text offsets to prove ownership even when two columns have equal values.
+      // A physical quantity can also be read as prose, regardless of the block's
+      // reading classification. Require its complete glyph interval, not its value.
       const spans = e.spanIds.map((id) => page.spans.find((span) => span.id === id)!);
       let offset = 0;
-      const rowText = compact(e.text);
-      let mappedRow = e.kind === 'row';
+      const blockText = compact(e.text);
+      let mappedBlock = true;
       const intervals = new Map(
         spans.map((span) => {
           const raw = compact(span.text);
           // The block's structural cell separator consumes text offset but is
           // not an original glyph. Match every original span in order as well.
-          if (!rowText.startsWith(raw, offset) && rowText[offset] === '│') offset++;
+          while (!blockText.startsWith(raw, offset) && blockText[offset] === '│') offset++;
           const start = offset;
-          mappedRow &&= rowText.startsWith(raw, offset);
+          mappedBlock &&= blockText.startsWith(raw, offset);
           offset += raw.length;
           return [span.id, { start, end: offset }] as const;
         })
       );
-      mappedRow &&= offset === rowText.length;
+      mappedBlock &&= offset === blockText.length;
       for (const q of displayQuantities({ id: e.blockId, text: e.text })) {
         const start = compact(e.text.normalize('NFKC').slice(0, q.start)).length;
         const end = start + compact(q.raw).length;
-        if (
-          mappedRow &&
-          page.quantities.filter((native) => {
-            const ids = physicalQuantitySpans.get(native.id);
-            return (
-              ids &&
-              intervals.get(ids[0])?.start === start &&
-              intervals.get(ids[ids.length - 1])?.end === end &&
-              compact(ids.map((id) => page.spans.find((span) => span.id === id)!.text).join('')) ===
-                compact(q.raw)
-            );
-          }).length === 1
-        )
+        const matching = mappedBlock
+          ? page.quantities.filter((native) => {
+              const ids = physicalQuantitySpans.get(native.id);
+              return (
+                ids &&
+                intervals.get(ids[0])?.start === start &&
+                intervals.get(ids[ids.length - 1])?.end === end &&
+                compact(
+                  ids.map((id) => page.spans.find((span) => span.id === id)!.text).join('')
+                ) === compact(q.raw)
+              );
+            })
+          : [];
+        if (matching.length === 1) {
+          sourceAliases.set(q.id, matching[0].id);
           continue;
+        }
         const parsed = scalar(q.raw);
         const text = e.text.normalize('NFKC');
         const before = text.slice(0, q.start);
@@ -384,12 +394,28 @@ export function narrativeValues(
       decimal: fact.quantity.decimal,
       unit: fact.unit,
       sourceIds: sources.map((e) => e.id),
+      sourceQuantityId:
+        fact.evidence.kind === 'table'
+          ? fact.evidence.valueId
+          : (sourceAliases.get(fact.evidence.quantityId!) ?? fact.evidence.quantityId!),
     });
   }
   return [...values.values()];
 }
 
 export const NARRATIVE_TOKEN = /\{\{(value|change|delta):([^{}]+)\}\}/g;
+
+/** A confirmed fact is an alias of its explicit source quantity, never of an equal amount. */
+export function sourceQuantityId(id: string, facts: FactSummary, values: NarrativeValue[]): string {
+  const original = values.find((value) => value.id === id)?.sourceQuantityId;
+  if (original) return original;
+  const fact = facts.facts.find((f) => f.id === id);
+  return fact?.evidence.kind === 'table'
+    ? fact.evidence.valueId
+    : fact?.evidence.kind === 'prose'
+      ? (fact.evidence.quantityId ?? id)
+      : id;
+}
 
 const NARRATIVE_LABEL =
   /1株当たり|20\d{2}年(?:\d{1,2}月(?:\d{1,2}日|期(?:第[1-4]四半期|中間期)?)?)?|過去\d+(?:ヶ|ヵ|か|カ)?月|\d{1,2}月(?:\d{1,2}日)?|(?:午前|午後)?\d{1,2}時(?:\d{1,2}分)?|\d{1,2}:\d{2}|第\d+条(?:第\d+項)?|第[1-4]四半期|第\d+(?:期|回)|IFRS(?:第)?\d+号|\d+(?:丁目|番地?|号|以外)|\b(?:[A-Za-z][A-Za-z0-9-]*|\d+[A-Za-z][A-Za-z0-9-]*)\b/g;
@@ -520,7 +546,7 @@ export function checkText(
   sourceIds: string[],
   values: NarrativeValue[],
   excerpts: SourceExcerpt[],
-  _facts: FactSummary,
+  facts: FactSummary,
   _tableContext = false
 ): asserts text is string {
   if (typeof text !== 'string' || !text.trim() || text.length > 1200 || /[\r\n]/.test(text))
@@ -559,7 +585,8 @@ export function checkText(
       );
     if (
       kind !== 'value' &&
-      (selected[0] === selected[1] ||
+      (sourceQuantityId(selected[0], facts, values) ===
+        sourceQuantityId(selected[1], facts, values) ||
         quantities.some((v) => v!.decimal === null) ||
         !quantities[0]!.unit ||
         quantities[0]!.unit !== quantities[1]!.unit)

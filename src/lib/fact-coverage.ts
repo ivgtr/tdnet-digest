@@ -3,6 +3,7 @@ import {
   hasCompleteReportingAttributes,
   reportingFieldSegments,
   isReportingCoverTitle,
+  reportingTargetShape,
 } from './reporting-attributes';
 import {
   numericValueKind,
@@ -938,20 +939,33 @@ function reportedTableMargins(pages: ExtractedPage[], context: DocumentContext, 
   });
 }
 function earningsReportingPeriod(pages: ExtractedPage[]) {
-  const title = reportingCoverBlocks(pages.find((p) => p.pageNumber === 1)?.blocks ?? [])
+  const declarations = reportingCoverBlocks(pages.find((p) => p.pageNumber === 1)?.blocks ?? [])
     .flatMap((block) => reportingFieldSegments(block.text))
-    .find(
-      (text) =>
-        isReportingCoverTitle(text) && /20\d{2}年\d{1,2}月期/.test(reportingPeriodText(text))
-    );
-  if (!title) return null;
-  const text = reportingPeriodText(title);
-  const shape = reportingPeriodShape(text);
-  if (/単独/.test(text) && /累計|中間期/.test(text)) return null;
-  return {
-    period: text.match(/20\d{2}年\d{1,2}月期/)![0],
-    quarter: shape ? `${shape}${/単独/.test(text) ? '単独' : ''}` : undefined,
-  };
+    .filter(isReportingCoverTitle)
+    .map((title) => {
+      const text = reportingPeriodText(title);
+      return {
+        period: text.match(/20\d{2}年\d{1,2}月期/)?.[0],
+        shape: reportingTargetShape(text),
+        explicitShape: reportingPeriodShapes(text).length > 0,
+      };
+    });
+  const target = declarations.find((declaration) => declaration.period);
+  if (!target?.period || !target.shape) return null;
+  const shape = target.shape;
+  // Coverage needs a dated cover, and every other cover declaration must agree.
+  // An undated plain title supplies no shape; an explicit quarter still does.
+  if (
+    declarations.some(
+      (declaration) =>
+        !declaration.shape ||
+        (declaration.period && declaration.period !== target.period) ||
+        ((declaration.period || declaration.explicitShape) &&
+          declaration.shape.periodKind !== shape.periodKind)
+    )
+  )
+    return null;
+  return { period: target.period, quarter: shape.quarter };
 }
 function maMetricSources(pages: ExtractedPage[], context: DocumentContext) {
   const spans = pages.flatMap((p) => p.spans);

@@ -1,13 +1,32 @@
 import {
   calendarDatePattern,
   REPORTING_PERIOD_SHAPE_PATTERN,
+  reportingPeriodShapes,
   reportingPeriodText,
 } from './period-semantics';
+import type { FactPeriodKind } from './fact-contract';
 import { isUncaptionedUnit, parseExactNumeric, proseQuantities } from './quantity';
 
 /** Source vocabulary shared by reporting declarations and their consumers. */
 export const reportingScope = '非連結|個別|単体|連結';
 export const reportingBasis = '日本基準|IFRS(?:会計基準)?|国際会計基準|米国基準';
+
+/** A reporting declaration may imply annual only when it does not declare an unknown quarter. */
+export function reportingTargetShape(
+  text: string
+): { quarter?: string; periodKind: FactPeriodKind } | null {
+  const normalized = reportingPeriodText(text);
+  const shapes = reportingPeriodShapes(normalized);
+  if (shapes.length > 1 || (/累計|中間期/.test(normalized) && /単独/.test(normalized))) return null;
+  const quarter = shapes[0]?.match(/第([1-4])四半期/)?.[1];
+  if (!quarter) return /四半期/.test(normalized) ? null : { periodKind: 'fullYear' };
+  const standalone = /単独/.test(normalized);
+  if (quarter === '4' && !standalone) return null;
+  return {
+    quarter: `第${quarter}四半期${standalone ? '単独' : ''}`,
+    periodKind: `${standalone ? 'standalone' : 'cumulative'}Q${quarter}` as FactPeriodKind,
+  };
+}
 
 /** Read paired source brackets without assigning meaning to an absent capture. */
 export function bracketedReportingBases(text: string): string[] {

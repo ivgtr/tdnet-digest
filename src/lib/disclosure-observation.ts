@@ -17,6 +17,7 @@ import {
 import {
   checkText,
   quantitySourceClosure,
+  sourceQuantityId,
   type NarrativeLine,
   type NarrativeValue,
 } from './summary-narrative';
@@ -248,7 +249,13 @@ export function checkObservation(
   const previous = value.comparison
     ? values.find((q) => q.id === value.comparison!.valueId)!
     : null;
-  if (!current.unit || (previous && (current.unit !== previous.unit || current.id === previous.id)))
+  if (
+    !current.unit ||
+    (previous &&
+      (current.unit !== previous.unit ||
+        sourceQuantityId(current.id, facts, values) ===
+          sourceQuantityId(previous.id, facts, values)))
+  )
     throw new Error('OBSERVATION_QUANTITY:数量の単位・比較対象を確認できません');
   if (
     value.comparison?.rateId &&
@@ -567,14 +574,7 @@ export function reconcileObservations(
   supplement: DisclosureObservation[];
   conflicts: DisclosureObservation[];
 } {
-  const native = (id: string) => {
-    const fact = facts.facts.find((f) => f.id === id);
-    return fact?.evidence.kind === 'table'
-      ? fact.evidence.valueId
-      : fact?.evidence.kind === 'prose'
-        ? (fact.evidence.quantityId ?? id)
-        : id;
-  };
+  const native = (id: string) => sourceQuantityId(id, facts, values);
   const primary = new Map(
     facts.facts
       .filter((f) => f.quantity)

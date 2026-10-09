@@ -145,6 +145,18 @@ export function isReportingMetadata(
   );
 }
 
+/** A title is leading only when every earlier original record is proved metadata. */
+function reportingTitleBoundary(block: TextBlock): { before: string; leading: boolean } | null {
+  const text = block.text.normalize('NFKC');
+  const title = [...text.matchAll(/[^\n|│]+/g)].find((record) => hasReportingCoverTitle(record[0]));
+  if (!title) return null;
+  const before = text.slice(0, title.index);
+  return {
+    before,
+    leading: !before.replace(/[\s|│]/g, '') || isReportingMetadata({ ...block, text: before }),
+  };
+}
+
 /** Cover ownership is a contiguous prefix, never later values or appendix metadata. */
 export function reportingCoverBlocks<
   T extends { id: string; text: string; kind?: 'paragraph' | 'row' | 'heading' },
@@ -273,30 +285,63 @@ export function buildDocumentContext(pages: ExtractedPage[]): DocumentContext {
   const first = pages.find((p) => p.pageNumber === 1);
   const cover: TextBlock[] = [];
   const firstBlocks = first?.blocks ?? [];
-  if (firstBlocks.some((block) => hasReportingCoverTitle(block.text)))
-    cover.push(...reportingCoverBlocks(firstBlocks));
+  const prefix = reportingCoverBlocks(firstBlocks);
+  const boundary = firstBlocks.find((block) => block.text.trim() && !prefix.includes(block));
+  // Only a title in the contiguous leading records owns this document. A
+  // malformed title at that boundary remains strict; later references cannot
+  // retroactively replace an ordinary notice's issuer prefix with an empty one.
+  const earningsCover =
+    prefix.some(isReportingCover) || !!(boundary && reportingTitleBoundary(boundary)?.leading);
+  if (earningsCover) cover.push(...prefix);
   else {
     // Non-earnings disclosures retain their supported title/issuer ordering.
     let issuerSeen = false;
-    for (const block of firstBlocks) {
+    for (const [index, block] of firstBlocks.entries()) {
+      const title = reportingTitleBoundary(block);
+      if (title?.leading) {
+        // A leading logo may precede the real title. Once a title is reached,
+        // retain only its proved metadata; ordinary parsing must not cross a
+        // malformed title or body value to borrow a later company field.
+        if (!issuerSeen) cover.push(...reportingCoverBlocks(firstBlocks.slice(index)));
+        break;
+      }
       if (
         headingLevel(block) !== null &&
         (issuerSeen || /^(?:\(\d+\)|\d+[.．]|■|\(?[①-⑳]\)?)/.test(normalized(block.text)))
       )
         break;
       cover.push(block);
+      if (title) break;
       if (declaredSubjectsIn(block).length) issuerSeen = true;
     }
   }
+  const issuerSource = (block: TextBlock): TextBlock => {
+    const title = !earningsCover && reportingTitleBoundary(block);
+    if (!title) return block;
+    return {
+      ...block,
+      // An ordinary notice can share a physical block with its reference.
+      // A proved logo/title handoff retains fields, never title attributes.
+      text: title.leading
+        ? reportingFieldSegments(block.text)
+            .filter((text) => !isReportingCoverTitle(text))
+            .join('\n')
+        : title.before,
+    };
+  };
   const issuer = cover.filter(
-    (b) => /^(?:会社名|上場会社名)/.test(normalized(b.text)) || declaredSubjectsIn(b).length > 0
+    (b) =>
+      /^(?:会社名|上場会社名)/.test(normalized(issuerSource(b).text)) ||
+      declaredSubjectsIn(issuerSource(b)).length > 0
   );
   // A cover consisting of one standalone company name is also a declaration.
-  const namedIssuer = issuer.filter((b) => /^(?:上場会社名|会社名|名称)/.test(normalized(b.text)));
+  const namedIssuer = issuer.filter((b) =>
+    /^(?:上場会社名|会社名|名称)/.test(normalized(issuerSource(b).text))
+  );
   const issuerBlocks = namedIssuer.length ? namedIssuer : issuer.length === 1 ? issuer : [];
-  const reporting = cover.filter(isReportingCover);
+  const reporting = earningsCover ? cover.filter(isReportingCover) : [];
   const documentDeclarations = [...issuerBlocks, ...reporting].flatMap((b) =>
-    declarations(b, 'document')
+    declarations(issuerSource(b), 'document')
   );
   const links = noteLinks(pages),
     localNotes = paragraphNoteLinks(pages);

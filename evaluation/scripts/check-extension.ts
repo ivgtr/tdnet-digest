@@ -292,7 +292,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       !fixtureSource ||
       reviewCase ||
       !narrativeReplay.result ||
-      narrativeReplay.presentation?.version !== 6 ||
+      narrativeReplay.presentation?.version !== 7 ||
       !narrativeReplay.presentation?.organization ||
       narrativeReplay.item.id !== item.id)
   )
@@ -839,7 +839,7 @@ export async function checkExtension(item: BrowserCase, config: LLMConfig, args:
       return entry ? { key: entry[0], value: entry[1] } : null;
     }, ANALYSIS_SCHEMA_VERSION);
     assert.ok(stored?.value?.facts?.version === FACT_SCHEMA_VERSION);
-    assert.ok(stored.value.presentation?.version === 6);
+    assert.ok(stored.value.presentation?.version === 7);
     if (narrativeReplay) {
       // UI replay must preserve the model evaluation outcome, including warnings.
       // It is not a way to turn a failed model assessment into a success.

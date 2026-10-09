@@ -94,7 +94,7 @@ function inputs(
 ) {
   const summary: FactSummary = { version: 6, documentType: 'earnings', facts, unverified: [] };
   const presentation: SummaryPresentation = {
-    version: 6,
+    version: 7,
     sourceHash: 'source',
     overview: [],
     sections: [],

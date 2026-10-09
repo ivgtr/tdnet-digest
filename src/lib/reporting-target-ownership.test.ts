@@ -20,6 +20,86 @@ import { reportingFieldProjection, reportingFieldSegments } from './reporting-at
 const cover = '2026年3月期 決算短信（連結）';
 const issuer = '株式会社テスト';
 
+it('別の開示の参照短信で発行会社と予想・月次の根拠を消さない', () => {
+  const reference = '2026年3月期 決算短信〔IFRS〕（個別）';
+  const first = textPage(
+    `2026年5月10日\n各位\n業績予想の修正に関するお知らせ\n会社名 ${issuer}\n範囲 連結\n会計基準 日本基準\n参考資料\n${reference}`
+  );
+  const { pages, facts } = forecast(first, [`会社名 ${issuer}`, '会計基準 日本基準']);
+  const context = buildDocumentContext(pages);
+  expect(documentSubject(context)).toBe(issuer);
+  const referenceId = first.blocks.find((block) => block.text === reference)!.id;
+  expect(
+    context.bindings
+      .flatMap((binding) =>
+        binding.declarations.filter((declaration) => declaration.origin === 'document')
+      )
+      .some((declaration) => declaration.id === referenceId)
+  ).toBe(false);
+  const forecastSlots = coverageReport('earningsRevision', pages, facts);
+  expect(forecastSlots.map((slot) => slot.requirement)).toEqual([
+    'COVERAGE:予想修正の前後 forecastBefore/revenue 対象期=2027年3月期',
+    'COVERAGE:予想修正の前後 forecastBefore/operatingProfit 対象期=2027年3月期',
+    'COVERAGE:予想修正の前後 forecastAfter/revenue 対象期=2027年3月期',
+    'COVERAGE:予想修正の前後 forecastAfter/operatingProfit 対象期=2027年3月期',
+  ]);
+  expect(forecastSlots.filter((slot) => slot.sourceIds.length > 0)).toHaveLength(4);
+  expect([...declaredForecastFactIds(pages, facts)]).toEqual([facts[0].id]);
+
+  const monthly = textPage(
+    `月次実績のお知らせ\n会社名 ${issuer}\n1. 2026年6月月次実績\n2026年6月のMRRは100千円です。\n参考資料\n${reference}`
+  );
+  const monthlySlots = coverageReport('businessUpdate', [monthly], []);
+  expect(documentSubject(buildDocumentContext([monthly]))).toBe(issuer);
+  expect(monthlySlots.map((slot) => slot.requirement)).toEqual(['COVERAGE:報告対象月']);
+  expect(monthlySlots[0].sourceIds).toEqual([
+    monthly.blocks.find((block) => block.text.includes('MRR'))!.id,
+  ]);
+});
+
+it('同じ物理段落の後続参照から発行会社・範囲・基準を借りない', () => {
+  const first = cells(
+    [
+      ['業績予想の修正に関するお知らせ', 0, 0, 480],
+      [`会社名 ${issuer}`, 0, 15, 210],
+      ['2026年3月期 決算短信〔IFRS〕（個別）', 0, 30, 400],
+      ['会社名 株式会社参考', 0, 45, 210],
+    ],
+    1
+  );
+  expect(first.blocks).toHaveLength(1);
+  const { pages, facts } = forecast(first, [`会社名 ${issuer}`, '会計基準 日本基準']);
+  const context = buildDocumentContext(pages);
+  expect(documentSubject(context)).toBe(issuer);
+  expect(
+    context.bindings[0].declarations
+      .filter((declaration) => declaration.origin === 'document')
+      .map(({ role, value }) => ({ role, value }))
+  ).toEqual([{ role: 'subject', value: issuer }]);
+  expect([...declaredForecastFactIds(pages, facts)]).toEqual([facts[0].id]);
+});
+
+it('先頭のロゴを後続の短信参照で厳格な空の表紙に置き換えない', () => {
+  const page = textPage(
+    `TEST GROUP\n2026年3月期 決算短信〔日本基準〕（連結）\n会社名 ${issuer}\n1. 2026年3月期連結経営成績\n売上高は100百万円です。`
+  );
+  expect(reportingCoverBlocks(page.blocks)).toEqual([]);
+  expect(documentSubject(buildDocumentContext([page]))).toBe(issuer);
+  for (const source of [
+    '2026年3月期 決算短信〔日本基準〕（連結）\n売上高は100百万円です。',
+    '2026年3月期 決算短信〔日本基準〕（連結） 売上高100百万円',
+    '2026年3月期 決算短信〔日本基準〕（連結）\n参考情報',
+  ]) {
+    const interrupted = textPage(`TEST GROUP\n${source}\n会社名 ${issuer}`);
+    expect(documentSubject(buildDocumentContext([interrupted]))).toBeNull();
+  }
+  const { pages, facts } = forecast(
+    textPage(`TEST GROUP\n${cover}\n売上高は100百万円です。\n会社名 ${issuer}`),
+    [`会社名 ${issuer}`, '会計基準 日本基準']
+  );
+  expect([...declaredForecastFactIds(pages, facts)]).toEqual([]);
+});
+
 it('予想表題の年と月期が別spanでも同じ3指標の義務と2数量の根拠を保持する', () => {
   const first = textPage(`会社名 ${issuer}\n範囲 連結\n会計基準 日本基準`);
   const forms: [string, number, number, number][][] = [
@@ -329,6 +409,16 @@ it('表題セルの外の不明な範囲・基準・本文を表紙属性へ昇�
     scope: '連結',
     basis: '日本基準',
   });
+  const dateFirst = cells(
+    [
+      ['2026年5月10日', 0, 0, 480],
+      [`${title} 参考情報`, 0, 15, 480],
+      [`会社名 ${issuer}`, 0, 45, 210],
+    ],
+    1
+  );
+  expect(dateFirst.blocks[0].text).toContain('\n');
+  expect(documentSubject(buildDocumentContext([dateFirst]))).toBeNull();
 });
 
 it('年のない完全な表題は経営成績の明示対象期への既存の照合を妨げない', () => {
