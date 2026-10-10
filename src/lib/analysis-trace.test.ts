@@ -9,6 +9,8 @@ import {
   type AnalysisTrace,
 } from './analysis-trace';
 import { SUMMARY_DIAGNOSTICS_KEY } from './summary-trace';
+import { buildSourceLedger, sourceLedgerModelInput } from './source-ledger';
+import { textPage } from './fixtures/v4-test-source';
 
 const pdfUrl = 'https://www.release.tdnet.info/inbs/test.pdf';
 const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
@@ -81,6 +83,31 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('追加分析の実行別診断', () => {
+  it('原資料入力と抽出範囲を診断へ保持し、余分な秘密フィールドは保存しない', async () => {
+    const t = trace('source-ledger');
+    const ledger = buildSourceLedger([textPage('未知の利益段階 70百万円')]);
+    const document = sourceLedgerModelInput(ledger);
+    t.input!.sourceDocument = document;
+    t.input!.coverage.sourceLedger = {
+      sourceHash: ledger.sourceHash,
+      pages: [1],
+      failedPages: [],
+      emptyPages: [],
+      omittedPages: [],
+      rows: ledger.rows.length,
+      spans: ledger.pages[0].spans.length,
+      status: 'extracted-source',
+    };
+    Object.assign(document, { apiKey: 'DO-NOT-STORE' });
+    Object.assign(document.pages[0], { authorization: 'DO-NOT-STORE' });
+    await saveAnalysisTrace(t);
+    const restored = await loadAnalysisTrace(pdfUrl, t.runId, t.summaryResultId);
+    expect(restored.input?.sourceDocument?.pages[0].rows[0][1]).toBe('未知の利益段階 70百万円');
+    expect(restored.input?.coverage.sourceLedger).toEqual(t.input!.coverage.sourceLedger);
+    expect(JSON.stringify(restored)).not.toContain('DO-NOT-STORE');
+    expect(restored.compaction).toBeUndefined();
+  });
+
   it('並行保存を直列化し、逆順完了や同じ要約の次の失敗でも元の成功と要約診断を保つ', async () => {
     const older = { ...trace('older'), outcome: 'running' as const };
     const newer = { ...trace('newer'), intentAt: 2 };

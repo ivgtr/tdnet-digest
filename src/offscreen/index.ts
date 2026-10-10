@@ -66,6 +66,30 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   }
 });
 
+/** Text extraction can succeed even when horizontal evidence mapping is unsupported. */
+function extractionLimitations(pages: ExtractedPage[]): string[] {
+  const empty = pages.filter((p) => p.status === 'empty').map((p) => p.pageNumber);
+  const rotated = pages
+    .filter((p) =>
+      p.sourceItems.some(
+        (item) =>
+          item.text.trim() &&
+          (Math.abs(item.transform[1]) > 0.01 || Math.abs(item.transform[2]) > 0.01)
+      )
+    )
+    .map((p) => p.pageNumber);
+  return [
+    ...(empty.length
+      ? [`文字を取得できないページ: ${empty.join(', ')}。画像の文字認識は未対応です。`]
+      : []),
+    ...(rotated.length
+      ? [
+          `回転文字を含むページ: ${rotated.join(', ')}。取得した原文字は保持していますが、回転文字の水平行・表セルへの対応付けは未対応です。`,
+        ]
+      : []),
+  ];
+}
+
 /**
  * smartモードでのテキスト抽出
  * セクション検出 → 重要セクションフィルタ → 失敗時はページスコアリング
@@ -178,18 +202,10 @@ async function extractSmartMode(
   };
 
   // 品質警告を追加（最終状態の qualityCheck を使用）
-  if (
-    !qualityCheck.passed ||
-    extractedPages.length < totalPages ||
-    allPages.some((p) => p.status === 'empty')
-  ) {
+  const limitations = extractionLimitations(allPages);
+  if (!qualityCheck.passed || extractedPages.length < totalPages || limitations.length) {
     metadata.qualityWarning = {
-      message: `選択ページ ${extractedPages.length}/${totalPages}。文字を取得できないページ ${
-        allPages
-          .filter((p) => p.status === 'empty')
-          .map((p) => p.pageNumber)
-          .join(', ') || 'なし'
-      }。キーワード一致は意味・網羅性の保証ではありません。全文抽出を推奨します。`,
+      message: `選択ページ ${extractedPages.length}/${totalPages}。${limitations.join('')}キーワード一致は意味・網羅性の保証ではありません。全文抽出を推奨します。`,
       missingKeywords: qualityCheck.missingKeywords,
       matchRate: qualityCheck.matchRate,
     };
@@ -298,6 +314,7 @@ async function extractTextFromPDF(
     if (extractionMode === 'full') {
       // fullモード: 全文返却
       const analysisText = serializePagesForAnalysis(pages);
+      const limitations = extractionLimitations(pages);
       console.log(`[Offscreen] PDF抽出完了 (fullモード, ${analysisText.length}文字)`);
 
       return {
@@ -309,13 +326,10 @@ async function extractTextFromPDF(
           sectionsUsed: ['全ページ'],
           extractionMode: 'full',
           documentType,
-          ...(pages.some((p) => p.status === 'empty')
+          ...(limitations.length
             ? {
                 qualityWarning: {
-                  message: `文字を取得できないページ: ${pages
-                    .filter((p) => p.status === 'empty')
-                    .map((p) => p.pageNumber)
-                    .join(', ')}。画像・回転表等は未対応です。`,
+                  message: limitations.join(''),
                   missingKeywords: [],
                   matchRate: 0,
                 },

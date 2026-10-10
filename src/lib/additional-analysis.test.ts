@@ -3,6 +3,7 @@ import { numberCandidate, textPage } from './fixtures/v4-test-source';
 import { parseFactSummary } from './fact-summary';
 import { buildPresentation } from './fixtures/summary-narrative-source';
 import { buildAnalysisInput } from './analysis-input';
+import { buildSourceLedger } from './source-ledger';
 import {
   analyzeFacts,
   ANALYSIS_LIMITS,
@@ -161,7 +162,9 @@ describe('追加分析の根拠と論点の契約', () => {
     const result = parseAnalysisResponse(response([{ ...issue(), reading }]), input());
     expect(result.issues[0].reading).toBe(reading);
     expect(result.notices).toEqual([]);
-    expect(result.evidence).toEqual(input().evidence);
+    expect(result.evidence).toEqual(
+      input().evidence.filter((e) => issue().evidenceIds.includes(e.id))
+    );
     expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
   });
 
@@ -212,7 +215,7 @@ describe('追加分析の根拠と論点の契約', () => {
     expect(html.match(/href=/g)).toHaveLength(1);
     expect(html).toContain('#page=5');
     expect(html).toContain('<summary>根拠IDを表示</summary>');
-    expect(html).toContain('結論（未検証の推論）');
+    expect(html).toContain('data-analysis-conclusion');
     expect(html).not.toContain('判断不能');
     const escaped = { ...result, issues: [{ ...issue(), title: '<img src=x onerror=alert()>' }] };
     expect(buildAnalysisStageHtml({ loading: false, data: escaped, error: null })).toContain(
@@ -375,12 +378,7 @@ describe('生成契約と診断の正負境界', () => {
       nextCheck: '',
       evidenceIds: [issue().evidenceIds[0]],
     });
-    expect(result.notices.map((n) => n.code)).toEqual([
-      'issue_extra',
-      'text_missing',
-      'text_empty',
-      'evidence_duplicate',
-    ]);
+    expect(result.notices.map((n) => n.code)).toEqual(['issue_extra', 'evidence_duplicate']);
     expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
     for (const mutate of [
       (x: typeof result) => {
@@ -491,11 +489,39 @@ describe('生成契約と診断の正負境界', () => {
     expect(analysisPrompt(source)[0].content).toContain('既にある金額・進捗・説明を未確認としない');
   });
 
+  it('任意の確認条件を埋めず、原文を意味点検済みへ昇格させず表示する', () => {
+    const source = buildAnalysisInput(facts, {
+      ...presentation,
+      sourceLedger: buildSourceLedger([page]),
+    });
+    const raw = source.evidence.find((e) => e.kind === 'source')!;
+    const candidate = { ...issue(), evidenceIds: [raw.id], caveat: '', nextCheck: '' };
+    const result = parseAnalysisResponse(response([candidate]), source);
+    expect(result.notices).toEqual([]);
+    expect(result.issues[0]).toEqual(candidate);
+    const html = buildAnalysisStageHtml({ loading: false, data: result, error: null });
+    expect(html).toContain('抽出原文（意味未点検）');
+    expect(html).toContain(raw.text);
+    expect(html).not.toContain('data-analysis-caveat');
+    expect(html).not.toContain('data-analysis-next-check');
+    const model = analysisModelInput(source);
+    expect(model.sourceDocument).toEqual(source.sourceDocument);
+    expect(model.allowedEvidenceIds).toContain(raw.id);
+    expect(model.evidence.some((e) => e.id === raw.id)).toBe(false);
+    expect(
+      model.sourceDocument?.pages
+        .flatMap((p) => p.rows)
+        .some((r) => r[0] === raw.id.slice(4) && r[1] === raw.text)
+    ).toBe(true);
+  });
+
   it('引用可能IDだけをモデルへ投影し、長さ・必須キー・件数をプロンプトとスキーマへ揃える', () => {
     const source = input();
     const model = analysisModelInput(source);
     expect(model.allowedEvidenceIds).toEqual(source.evidence.map((e) => e.id));
-    expect(model.evidence).toEqual(source.evidence.map(({ sourceIds: _sources, ...e }) => e));
+    expect(model.evidence.filter((e) => e.kind !== 'source')).toEqual(
+      source.evidence.filter((e) => e.kind !== 'source').map(({ sourceIds: _sources, ...e }) => e)
+    );
     expect(JSON.stringify(model)).not.toContain('sourceIds');
     expect(model.coverage).toEqual(source.coverage);
     const schema = analysisResponseSchema(source);
@@ -512,6 +538,8 @@ describe('生成契約と診断の正負境界', () => {
             properties: {
               title: { minLength: 1, maxLength: ANALYSIS_RESOURCE_LIMITS.text },
               reading: { minLength: 1, maxLength: ANALYSIS_RESOURCE_LIMITS.text },
+              caveat: { minLength: 0, maxLength: ANALYSIS_RESOURCE_LIMITS.text },
+              nextCheck: { minLength: 0, maxLength: ANALYSIS_RESOURCE_LIMITS.text },
               evidenceIds: {
                 minItems: 1,
                 maxItems: ANALYSIS_RESOURCE_LIMITS.references,
@@ -525,7 +553,10 @@ describe('生成契約と診断の正負境界', () => {
     const messages = analysisPrompt(source);
     expect(messages[0].content).toContain('titleは80文字以内');
     expect(messages[0].content).toContain('各350文字以内');
-    expect(messages[0].content).toContain('evidence[].idと同一');
+    expect(messages[0].content).toContain('evidence[].idとraw:<行ID>・rawspan:<文字列ID>');
+    expect(messages[0].content).toContain('rowsの各行[0]');
+    expect(messages[0].content).toContain('looseSpansの各要素[0]');
+    expect(messages[0].content).not.toContain('rows[].id');
     expect(messages[0].content).toContain('同じ配列内で重複させません');
     expect(JSON.parse(messages[1].content.split('\n入力: ')[1])).toEqual(model);
     // Projection never removes internal provenance from the saved/displayed evidence.

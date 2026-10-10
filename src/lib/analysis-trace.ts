@@ -1,5 +1,6 @@
 import type { AnalysisNotice } from './additional-analysis';
 import type { AnalysisInput } from './analysis-input';
+import { projectSourceModelInput } from './source-ledger';
 import { exact, record } from './fact-contract';
 import { normalizeTdnetPdfUrl } from './tdnet-url';
 import type { DiagnosticPersistence, Usage } from './summary-trace';
@@ -11,7 +12,7 @@ export const ANALYSIS_CACHE_DIAGNOSTIC_PREFIX = 'analysisDiagnosticRefV1:';
 export const ANALYSIS_DIAGNOSTICS_LIMITS = {
   records: 12,
   bytes: 1024 * 1024,
-  recordBytes: 128 * 1024,
+  recordBytes: 256 * 1024,
 } as const;
 export interface AnalysisDiagnosticError {
   code: string;
@@ -22,6 +23,7 @@ export interface AnalysisDiagnosticContract {
   version: number;
   allowedEvidenceIds: string[];
   limits: { issues: number; references: number; title: number; text: number };
+  inputBudget?: { characters: number; bytes: number; characterLimit: number; byteLimit: number };
   resourceLimits?: {
     responseBytes: number;
     savedBytes: number;
@@ -258,6 +260,9 @@ function snapshot(trace: AnalysisTrace): AnalysisTrace {
             sourceIds: [...e.sourceIds],
             pages: [...e.pages],
           })),
+          ...(input.sourceDocument
+            ? { sourceDocument: projectSourceModelInput(input.sourceDocument) }
+            : {}),
           coverage: {
             facts: input.coverage.facts,
             explanations: input.coverage.explanations,
@@ -270,12 +275,36 @@ function snapshot(trace: AnalysisTrace): AnalysisTrace {
             unverifiedItems: input.coverage.unverifiedItems,
             unverifiedSourcePages: [...input.coverage.unverifiedSourcePages],
             limitations: [...input.coverage.limitations],
+            ...(input.coverage.sourceLedger
+              ? {
+                  sourceLedger: {
+                    sourceHash: input.coverage.sourceLedger.sourceHash,
+                    pages: [...input.coverage.sourceLedger.pages],
+                    failedPages: [...input.coverage.sourceLedger.failedPages],
+                    emptyPages: [...input.coverage.sourceLedger.emptyPages],
+                    omittedPages: [...input.coverage.sourceLedger.omittedPages],
+                    rows: input.coverage.sourceLedger.rows,
+                    spans: input.coverage.sourceLedger.spans,
+                    status: input.coverage.sourceLedger.status,
+                  },
+                }
+              : {}),
           },
         }
       : null,
     contract: trace.contract
       ? {
           version: trace.contract.version,
+          ...(trace.contract.inputBudget
+            ? {
+                inputBudget: {
+                  characters: trace.contract.inputBudget.characters,
+                  bytes: trace.contract.inputBudget.bytes,
+                  characterLimit: trace.contract.inputBudget.characterLimit,
+                  byteLimit: trace.contract.inputBudget.byteLimit,
+                },
+              }
+            : {}),
           ...(trace.contract.resourceLimits
             ? {
                 resourceLimits: Object.fromEntries(
@@ -342,6 +371,7 @@ function boundedTrace(trace: AnalysisTrace): AnalysisTrace {
       input: original.input
         ? {
             ...original.input,
+            ...(limit < 8192 ? { sourceDocument: undefined } : {}),
             evidence: original.input.evidence.slice(0, 24).map((e) => ({
               ...e,
               text: clip(e.text),

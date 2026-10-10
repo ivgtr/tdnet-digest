@@ -1,3 +1,5 @@
+import type { ExtractedPage } from '@/types/summaryMetadata';
+import { sameSourceLedgerContent } from './source-ledger-identity';
 import { canonicalJSON, hashText, type FactSummary } from './fact-contract';
 import type { SummaryPresentation } from './summary-presentation';
 import {
@@ -10,10 +12,16 @@ import { comparisonAxisLabels, factPeriodName } from './disclosure-observation';
 import { renderNarrativeText, literalValue } from './summary-narrative-renderer';
 import { stateLabels } from './summary-renderer';
 import { buildAnalysisCalculations } from './analysis-calculations';
+import {
+  buildSourceLedger,
+  sourceLedgerModelInput,
+  unrepresentedSourceItems,
+  type SourceModelInput,
+} from './source-ledger';
 
 export interface AnalysisEvidence {
   id: string;
-  kind: 'fact' | 'observation' | 'explanation' | 'calculation';
+  kind: 'fact' | 'observation' | 'explanation' | 'calculation' | 'source';
   text: string;
   context: string;
   sourceIds: string[];
@@ -31,21 +39,44 @@ export interface AnalysisCoverage {
   unverifiedItems: number;
   unverifiedSourcePages: number[];
   limitations: string[];
+  sourceLedger?: {
+    sourceHash: string;
+    pages: number[];
+    failedPages: number[];
+    emptyPages: number[];
+    /** Original summary selection, not a claim that the retained source was unread. */
+    omittedPages: number[];
+    rows: number;
+    spans: number;
+    /** Physical extraction coverage is not semantic completeness. */
+    status: 'extracted-source';
+  };
 }
 export interface AnalysisInput {
   documentType: FactSummary['documentType'];
   inputHash: string;
   evidence: AnalysisEvidence[];
   coverage: AnalysisCoverage;
+  sourceDocument?: SourceModelInput;
 }
 const unique = <T>(values: T[]) => [...new Set(values)];
 
-/** Callers revalidate the presentation against the PDF before generation. No raw
- * excerpt or unreviewed claim is silently promoted to analytical evidence. */
+/** Callers revalidate the presentation against the PDF before generation. Raw
+ * excerpts remain a distinct unreviewed source kind, never verified operands. */
 export function buildAnalysisInput(
   facts: FactSummary,
-  presentation: SummaryPresentation
+  presentation: SummaryPresentation,
+  sourcePages?: ExtractedPage[]
 ): AnalysisInput {
+  if (
+    sourcePages &&
+    presentation.sourceLedger &&
+    !sameSourceLedgerContent(
+      buildSourceLedger(sourcePages, facts.documentType),
+      presentation.sourceLedger
+    )
+  )
+    throw new Error('分析用原資料と再抽出したPDFが一致しません');
   const pagesOf = (ids: string[]) =>
     unique(
       ids.flatMap((id) => {
@@ -174,6 +205,47 @@ export function buildAnalysisInput(
       ),
     });
   }
+  const ledger = presentation.sourceLedger;
+  // Literal source rows are readable/citable without silently promoting them to
+  // verified facts or admitting their quantities into verified-only arithmetic.
+  if (ledger) {
+    for (const row of ledger.rows) {
+      evidence.push({
+        id: `raw:${row.id}`,
+        kind: 'source',
+        text: row.text,
+        context: '抽出原文（意味未点検）',
+        sourceIds: [row.id, ...row.spanIds],
+        pages: [row.page],
+      });
+    }
+  }
+  if (ledger) {
+    const owned = new Set(ledger.rows.flatMap((row) => row.spanIds));
+    for (const page of ledger.pages) {
+      for (const item of unrepresentedSourceItems(page)) {
+        evidence.push({
+          id: `rawitem:${item.id}`,
+          kind: 'source',
+          text: item.text,
+          context: '原抽出文字（行・表への対応・意味未点検）',
+          sourceIds: [item.id],
+          pages: [page.pageNumber],
+        });
+      }
+      for (const span of page.spans.filter((span) => !owned.has(span.id))) {
+        evidence.push({
+          id: `rawspan:${span.id}`,
+          kind: 'source',
+          text: span.text,
+          context: '抽出文字セル（行への対応・意味未点検）',
+          sourceIds: [span.id],
+          pages: [page.pageNumber],
+        });
+      }
+    }
+  }
+  const sourceDocument = ledger ? sourceLedgerModelInput(ledger) : undefined;
   // Rejection coverage is independent of paragraph coverage: a surviving claim
   // about progress does not restore a rejected explanation of one-off profit.
   const unverified = [
@@ -214,13 +286,36 @@ export function buildAnalysisInput(
     unverifiedItems: unverified.length,
     unverifiedSourcePages: pagesOf(unverified.flatMap((item) => item.sourceIds)),
     limitations,
+    ...(ledger
+      ? {
+          sourceLedger: {
+            sourceHash: ledger.sourceHash,
+            pages: ledger.pages.map((p) => p.pageNumber),
+            failedPages: ledger.pages.filter((p) => p.status === 'failed').map((p) => p.pageNumber),
+            emptyPages: ledger.pages.filter((p) => p.status === 'empty').map((p) => p.pageNumber),
+            omittedPages: ledger.pages
+              .filter((p) => p.selection === 'omitted')
+              .map((p) => p.pageNumber),
+            rows: ledger.rows.length,
+            spans: ledger.pages.reduce((n, p) => n + p.spans.length, 0),
+            status: 'extracted-source' as const,
+          },
+        }
+      : {}),
   };
   return {
     documentType: facts.documentType,
     evidence,
     coverage,
+    ...(sourceDocument ? { sourceDocument } : {}),
     inputHash: hashText(
-      canonicalJSON({ version: 3, sourceHash: presentation.sourceHash, evidence, coverage })
+      canonicalJSON({
+        version: 4,
+        sourceHash: presentation.sourceHash,
+        evidence,
+        coverage,
+        ...(sourceDocument ? { sourceDocument } : {}),
+      })
     ),
   };
 }

@@ -156,3 +156,56 @@ it('preserves a document-load failure before any page is available', async () =>
     },
   });
 });
+
+it.each(['full', 'smart'])(
+  '%s keeps rotated-only source pages and reports mapping limits separately from empty pages',
+  async (extractionMode) => {
+    const addListener = vi.fn();
+    vi.stubGlobal('chrome', {
+      runtime: { onMessage: { addListener }, getURL: (path: string) => path },
+    });
+    pdfjs.getDocument.mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage: async (pageNumber: number) => ({
+          getTextContent: async () => ({
+            items: [
+              {
+                str: pageNumber === 1 ? '回転した原文100百万円' : '　',
+                transform: [0, 12, -12, 0, 20, 700],
+                width: 84,
+                height: 12,
+                dir: 'ltr',
+                hasEOL: true,
+              },
+            ],
+          }),
+          getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+          cleanup: vi.fn(),
+        }),
+        destroy: vi.fn(),
+      }),
+    });
+    await import('./index');
+    const response = await new Promise<{
+      success: boolean;
+      text: string;
+      pages: import('../types/summaryMetadata').ExtractedPage[];
+      metadata: import('../types/summaryMetadata').SummaryMetadata;
+    }>((resolve) =>
+      addListener.mock.calls[0][0](
+        { action: 'extractPdfText', pdfData: [], extractionMode },
+        {},
+        resolve
+      )
+    );
+    expect(response.success).toBe(true);
+    expect(response.text).toContain('回転した原文100百万円');
+    expect(response.pages.map((page) => page.status)).toEqual(['ok', 'empty']);
+    expect(response.pages[0].spans).toEqual([]);
+    expect(response.metadata.qualityWarning?.message).toContain('文字を取得できないページ: 2');
+    expect(response.metadata.qualityWarning?.message).toContain('回転文字を含むページ: 1');
+    expect(response.metadata.qualityWarning?.message).toContain('表セルへの対応付けは未対応');
+    expect(response.metadata.qualityWarning?.message).not.toContain('画像・回転表等は未対応');
+  }
+);

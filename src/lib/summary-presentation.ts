@@ -1,4 +1,6 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
+import { buildSourceLedger, validateSourceLedger, type SourceLedger } from './source-ledger';
+import { sameSourceLedgerContent } from './source-ledger-identity';
 import {
   canonicalJSON,
   hashText,
@@ -47,6 +49,8 @@ export interface SummaryPresentation {
   excerpts: SourceExcerpt[];
   values: NarrativeValue[];
   organization: SummaryOrganization;
+  /** Complete extracted source, independent of display selection or semantic acceptance. */
+  sourceLedger?: SourceLedger;
 }
 const numeric = (f: VerifiedFact) => f.kind === 'number' || f.kind === 'range';
 const anchor = (f: VerifiedFact) =>
@@ -66,7 +70,8 @@ export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): S
     facts,
     excerpts,
     narrativeValues(facts, pages, excerpts),
-    facts.documentType === 'earnings' ? declaredForecastFactIds(pages, facts.facts) : new Set()
+    facts.documentType === 'earnings' ? declaredForecastFactIds(pages, facts.facts) : new Set(),
+    buildSourceLedger(pages, facts.documentType)
   );
 }
 
@@ -74,7 +79,8 @@ function composePresentation(
   facts: FactSummary,
   excerpts: SourceExcerpt[],
   values: NarrativeValue[],
-  forecastFactIds: ReadonlySet<string> = new Set()
+  forecastFactIds: ReadonlySet<string> = new Set(),
+  sourceLedger?: SourceLedger
 ): SummaryPresentation {
   const policies = sectionPolicies(facts.documentType);
   const sections: SummarySection[] = policies.map(([, title]) => ({
@@ -266,12 +272,19 @@ function composePresentation(
     take(facts.facts.find((f) => f.importance === 'key'));
   return {
     version: 7,
-    sourceHash: hashText(canonicalJSON({ excerpts, values })),
+    sourceHash: hashText(
+      canonicalJSON({
+        excerpts,
+        values,
+        ...(sourceLedger ? { ledgerHash: sourceLedger.sourceHash } : {}),
+      })
+    ),
     overview,
     sections: sections.filter((s) => s.factIds.length || s.excerptIds.length),
     excerpts,
     values,
     organization: emptyOrganization(),
+    ...(sourceLedger ? { sourceLedger } : {}),
   };
 }
 
@@ -290,6 +303,7 @@ export function validatePresentation(
       'excerpts',
       'values',
       'organization',
+      ...(Object.prototype.hasOwnProperty.call(value, 'sourceLedger') ? ['sourceLedger'] : []),
     ]) ||
     value.version !== 7 ||
     !Array.isArray(value.overview) ||
@@ -298,6 +312,8 @@ export function validatePresentation(
     !Array.isArray(value.values)
   )
     throw new Error('要約の表示構成が不正です');
+  if (Object.prototype.hasOwnProperty.call(value, 'sourceLedger'))
+    validateSourceLedger(value.sourceLedger);
   const ids = new Set(facts.facts.map((f) => f.id));
   const sourceIds = new Set<string>();
   for (const e of value.excerpts) {
@@ -416,7 +432,9 @@ export function validatePresentation(
   const expected = composePresentation(
     facts,
     value.excerpts as SourceExcerpt[],
-    value.values as NarrativeValue[]
+    value.values as NarrativeValue[],
+    new Set(),
+    value.sourceLedger as SourceLedger | undefined
   );
   if (
     !refs(
@@ -467,7 +485,9 @@ export function revalidatePresentation(
   const expected = buildPresentation(facts, pages);
   if (
     canonicalJSON(value.excerpts) !== canonicalJSON(expected.excerpts) ||
-    canonicalJSON(value.values) !== canonicalJSON(expected.values)
+    canonicalJSON(value.values) !== canonicalJSON(expected.values) ||
+    (value.sourceLedger !== undefined &&
+      !sameSourceLedgerContent(value.sourceLedger, expected.sourceLedger!))
   )
     throw new Error('原文引用とPDFが一致しません');
   // Storage-only validation permits headline adjustments. Rechecking the PDF must
