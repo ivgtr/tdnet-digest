@@ -207,8 +207,11 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
 
     // 同一描画内の連打でも要約要求は一度だけ送る。
     if (summaryPending.current) return;
+    const requestedGeneration = !hasCached;
     const request = (async () => {
-      if (!hasCached || !(await showCached())) await summarize();
+      // Always read first: availability can be unknown after a storage error.
+      // A click on 表示 must never silently turn into a paid generation.
+      if (!(await showCached()) && requestedGeneration) await summarize();
     })();
     summaryPending.current = request;
     const clearPending = () => {

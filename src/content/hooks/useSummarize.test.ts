@@ -1353,6 +1353,142 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     expect(button.textContent).toBe('閉じる');
   });
 
+  it.each([false, true])(
+    '再要約の上書き保存失敗後も、以前の有効な保存を無料で再表示する（圧縮=%s）',
+    async (compressed) => {
+      settings.experimentalScoring = false;
+      const response = await responseFor();
+      const key = await keyFor('full');
+      const old: CachedSummary = {
+        ...response,
+        ...options,
+        diagnosticRunId: 'old-cached-run',
+        cachedAt: 1,
+        metadata: {
+          ...response.metadata,
+          totalPages: 2,
+          extractedPages: [1, 2],
+          extractionMode: 'full',
+        },
+        title: compressed ? '保存内容'.repeat(100000) : options.title,
+      };
+      stored[key] = compressed ? await encodeSummaryStorage(old) : old;
+      const previous = structuredClone(stored[key]);
+      save.mockRejectedValue(new Error('QUOTA_BYTES'));
+      sendMessage.mockResolvedValue({ ...response, diagnosticRunId: 'new-unsaved-run' });
+      const { row, button } = await mountButton();
+      await vi.waitFor(() => expect(button.textContent).toBe('表示'));
+      await click(button);
+      let shown = await summaryRowFor(row);
+      expect(sendMessage).not.toHaveBeenCalled();
+      await click(shown.querySelector<HTMLButtonElement>('#resummarize-btn')!);
+      shown = await summaryRowFor(row);
+      await vi.waitFor(() =>
+        expect(shown.querySelector('[data-persistence-warning]')?.textContent).toContain(
+          '以前の保存済み要約'
+        )
+      );
+      expect(shown.textContent).toContain('100百万円');
+      expect(sendMessage).toHaveBeenCalledOnce();
+      expect(stored[key]).toEqual(previous);
+      await click(button);
+      expect(button.textContent).toBe('表示');
+      await click(button);
+      shown = await summaryRowFor(row);
+      expect(shown.textContent).toContain('100百万円');
+      expect(sendMessage).toHaveBeenCalledOnce();
+      expect(remove).not.toHaveBeenCalled();
+    }
+  );
+
+  it('保存失敗後の再確認は新しい表示中の実行を旧保存結果で置き換えない', async () => {
+    const response = await responseFor();
+    const key = await keyFor('full');
+    stored[key] = { ...response, diagnosticRunId: 'old-cached-run' };
+    save.mockRejectedValue(new Error('QUOTA_BYTES'));
+    sendMessage.mockResolvedValue({ ...response, diagnosticRunId: 'new-unsaved-run' });
+    const hook = await mount();
+    await act(async () => {
+      await hook().showCached();
+    });
+    expect(hook().result?.diagnosticRunId).toBe('old-cached-run');
+    await act(async () => {
+      await hook().summarize();
+    });
+    expect(hook().hasCached).toBe(true);
+    expect(hook().result?.diagnosticRunId).toBe('new-unsaved-run');
+    await act(async () => {
+      hook().reset();
+    });
+    await act(async () => {
+      await hook().showCached();
+    });
+    expect(hook().result?.diagnosticRunId).toBe('old-cached-run');
+    expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it('初回の存在確認が失敗しても、クリック時に残っている保存を読み、有料生成しない', async () => {
+    settings.experimentalScoring = false;
+    stored[await keyFor('full')] = await responseFor();
+    const get = chrome.storage.local.get;
+    chrome.storage.local.get = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary read failure'))
+      .mockImplementation(get);
+    const { row, button } = await mountButton();
+    expect(button.textContent).toBe('要約');
+    await click(button);
+    expect((await summaryRowFor(row)).textContent).toContain('100百万円');
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(['settings', 'deleted', 'replaced'])(
+    '保存失敗後の遅い再確認が%s後の状態を上書きしない',
+    async (change) => {
+      const response = await responseFor();
+      const key = await keyFor('full');
+      stored[key] = response;
+      const hook = await mount();
+      await vi.waitFor(() => expect(hook().hasCached).toBe(true));
+      const readback = deferred<Record<string, unknown>>();
+      let failedSave = false,
+        reading = false;
+      const get = chrome.storage.local.get;
+      chrome.storage.local.get = vi.fn().mockImplementation((...args) => {
+        if (failedSave && !reading) {
+          reading = true;
+          return readback.promise;
+        }
+        return get(...args);
+      });
+      save.mockImplementation(async () => {
+        failedSave = true;
+        throw new Error('QUOTA_BYTES');
+      });
+      sendMessage.mockResolvedValue(response);
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = hook().summarize();
+      });
+      await vi.waitFor(() => expect(reading).toBe(true));
+      if (change === 'settings') await changeSettings({ model: 'new-model' });
+      else
+        await act(async () => {
+          if (change === 'deleted') delete stored[key];
+          for (const listener of listeners) listener({ [key]: { newValue: stored[key] } }, 'local');
+        });
+      await vi.waitFor(() => expect(hook().hasCached).toBe(change === 'replaced'));
+      await act(async () => {
+        readback.resolve(change === 'replaced' ? {} : { [key]: response });
+        await pending;
+      });
+      expect(hook().hasCached).toBe(change === 'replaced');
+      expect(sendMessage).toHaveBeenCalledOnce();
+      if (change === 'settings') expect(hook().result).toBeNull();
+      else expect(hook().result?.summary).toBe(response.summary);
+    }
+  );
+
   it.each(['deleted', 'replaced'])(
     '圧縮中にキャッシュが%sになったら遅い保存で上書きしない',
     async (change) => {
@@ -1495,7 +1631,7 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
-  it('削除通知で表示を要約へ戻し、通知前のキャッシュミスも一度のクリックで回復する', async () => {
+  it('表示操作のキャッシュ消失・読込失敗を有料生成へ切り替えない', async () => {
     settings.experimentalScoring = false;
     const response = await responseFor();
     const key = await keyFor('full');
@@ -1518,6 +1654,10 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
       button.click();
       button.click();
     });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(button.textContent).toBe('要約');
+    // Only the next explicit 要約 click authorizes generation after a confirmed miss.
+    await click(button);
     await summaryRowFor(row);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(button.textContent).toBe('閉じる');
@@ -1529,7 +1669,8 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
       .mockImplementation(get);
     await click(button);
     await summaryRowFor(row);
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(row.nextElementSibling?.textContent).toContain('保存された要約を読み込めませんでした');
     expect(button.textContent).toBe('閉じる');
   });
 
@@ -1559,7 +1700,7 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
       availability.resolve({ [key]: response });
       await showing;
     });
-    expect(await showing).toBe(false);
+    expect(await showing).toBe(true);
     expect(hook().hasCached).toBe(false);
     expect(hook().result).toBeNull();
     expect(sendMessage).not.toHaveBeenCalled();

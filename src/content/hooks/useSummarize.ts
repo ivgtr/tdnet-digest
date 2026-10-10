@@ -91,6 +91,28 @@ function isCachedSummary(value: unknown, key: string, pdfUrl: string): value is 
   }
 }
 
+async function validatedCachedSummary(
+  value: unknown,
+  key: string,
+  pdfUrl: string
+): Promise<CachedSummary | null> {
+  try {
+    const entry = await decodeSummaryStorage(value);
+    if (!isCachedSummary(entry, key, pdfUrl)) return null;
+    return (await summaryResultId(
+      pdfUrl,
+      entry.metadata.analysisFingerprint!,
+      entry.facts,
+      entry.metadata.documentHash!,
+      entry.presentation
+    )) === entry.resultId
+      ? entry
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SummaryResult | null>(null);
@@ -234,17 +256,8 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         cacheKey === keyRef.current;
       try {
         const data = await chrome.storage.local.get(storageKey);
-        const entry = await decodeSummaryStorage(data[storageKey]);
-        const valid =
-          isCachedSummary(entry, cacheKey, pdfUrl) &&
-          (await summaryResultId(
-            pdfUrl,
-            entry.metadata.analysisFingerprint!,
-            entry.facts,
-            entry.metadata.documentHash!,
-            entry.presentation
-          )) === entry.resultId;
-        if (current()) setHasCached(valid);
+        const entry = await validatedCachedSummary(data[storageKey], cacheKey, pdfUrl);
+        if (current()) setHasCached(entry !== null);
       } catch {
         if (current()) setHasCached(false);
       }
@@ -413,42 +426,48 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
     try {
       data = await chrome.storage.local.get(SUMMARY_PREFIX + key);
     } catch {
-      if (key !== keyRef.current || run !== runRef.current) return true;
-      invalidate();
-      return false;
-    }
-    if (key !== keyRef.current || run !== runRef.current) return true;
-    const entry: unknown = await decodeSummaryStorage(data[SUMMARY_PREFIX + key]).catch(
-      () => data[SUMMARY_PREFIX + key]
-    );
-    const valid =
-      isCachedSummary(entry, key, pdfUrl) &&
-      (await summaryResultId(
-        pdfUrl,
-        entry.metadata.analysisFingerprint!,
-        entry.facts,
-        entry.metadata.documentHash!,
-        entry.presentation
-      )) === entry.resultId;
-    if (key !== keyRef.current || run !== runRef.current) return true;
-    if (revision !== cacheRevisionRef.current || !valid) {
-      invalidate();
-      if (revision !== cacheRevisionRef.current || entry === undefined) return false;
-    }
-    if (!valid) {
-      if (entry !== undefined)
-        setResult({
-          summary: null,
-          metadata: null,
-          facts: null,
-          presentation: null,
-          resultId: null,
-          diagnosticRunId: null,
-          error: '保存された現行要約の形式・原数量・設定が不正です。再要約してください。',
-        });
+      if (
+        !mountedRef.current ||
+        key !== keyRef.current ||
+        run !== runRef.current ||
+        revision !== cacheRevisionRef.current
+      )
+        return true;
+      // A failed read is not an absent entry and must never authorize a paid retry.
+      setResult({
+        summary: null,
+        metadata: null,
+        facts: null,
+        presentation: null,
+        resultId: null,
+        diagnosticRunId: null,
+        error:
+          '保存された要約を読み込めませんでした。時間をおいて再度表示してください。再要約は新たな生成を行います。',
+      });
       return true;
     }
-    if (!entry) return false;
+    if (!mountedRef.current || key !== keyRef.current || run !== runRef.current) return true;
+    const value = data[SUMMARY_PREFIX + key];
+    const entry = await validatedCachedSummary(value, key, pdfUrl);
+    if (!mountedRef.current || key !== keyRef.current || run !== runRef.current) return true;
+    // A newer storage event owns availability. Do not clear its state or convert
+    // an interrupted lookup into permission to generate a new paid summary.
+    if (revision !== cacheRevisionRef.current) return true;
+    if (!entry) {
+      invalidate();
+      if (value === undefined) return false;
+      setResult({
+        summary: null,
+        metadata: null,
+        facts: null,
+        presentation: null,
+        resultId: null,
+        diagnosticRunId: null,
+        error: '保存された現行要約の形式・原数量・設定が不正です。再要約してください。',
+      });
+      return true;
+    }
+    setHasCached(true);
     idRef.current = entry.resultId;
     setPersistenceWarning(entry.metadata.persistenceWarning ?? null);
     setResult({
@@ -583,11 +602,36 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
             setHasCached(true);
           }
         } catch (error) {
-          if (run === runRef.current) {
-            setHasCached(false);
-            setPersistenceWarning(
-              [diagnosticWarning, summaryStorageWarning(error)].filter(Boolean).join(' / ')
-            );
+          if (run === runRef.current && key === keyRef.current) {
+            const warning = [diagnosticWarning, summaryStorageWarning(error)]
+              .filter(Boolean)
+              .join(' / ');
+            setPersistenceWarning(warning);
+            // Replacement failure says nothing about the previous entry. Re-read
+            // and validate it without replacing the fresh visible result.
+            if (cacheRevision === cacheRevisionRef.current) {
+              try {
+                const saved = await chrome.storage.local.get(SUMMARY_PREFIX + key);
+                const prior = await validatedCachedSummary(
+                  saved[SUMMARY_PREFIX + key],
+                  key,
+                  pdfUrl
+                );
+                if (
+                  mountedRef.current &&
+                  run === runRef.current &&
+                  key === keyRef.current &&
+                  cacheRevision === cacheRevisionRef.current
+                ) {
+                  setHasCached(prior !== null);
+                  if (prior)
+                    setPersistenceWarning(`${warning}。以前の保存済み要約は引き続き表示できます`);
+                }
+              } catch {
+                // Unknown availability is not a cache miss. Keep prior knowledge;
+                // reopening always performs a fresh read before any generation.
+              }
+            }
           }
         }
       } catch (error) {
