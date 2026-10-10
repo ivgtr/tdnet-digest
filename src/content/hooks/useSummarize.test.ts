@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto';
+import { setImmediate } from 'node:timers/promises';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -115,7 +116,24 @@ async function mount(url = pdfUrl) {
     });
   return () => current;
 }
+async function waitForSummaryCacheRead(firstRead: number) {
+  const get = vi.mocked(chrome.storage.local.get);
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    // Only this mount's summary-cache read proves that async settings hashing
+    // finished. Earlier diagnostic reads (or a previous mount) do not.
+    expect(
+      get.mock.calls
+        .slice(firstRead)
+        .some(
+          ([key]) =>
+            typeof key === 'string' && key.startsWith('summaryCacheV2:') && key.endsWith(pdfUrl)
+        )
+    ).toBe(true);
+  });
+}
 async function mountButton() {
+  const firstRead = vi.mocked(chrome.storage.local.get).mock.calls.length;
   container = document.createElement('div');
   document.body.append(container);
   const table = document.createElement('table');
@@ -133,11 +151,34 @@ async function mountButton() {
       })
     )
   );
-  await vi.waitFor(async () => {
-    await act(async () => {});
-    expect(chrome.storage.local.get).toHaveBeenCalled();
-  });
+  await waitForSummaryCacheRead(firstRead);
   return { row, cell, button: cell.querySelector('button')! };
+}
+// Existing storage reads must not make either mount report readiness while
+// its own settings callback is held. Yield event-loop turns, not a timed sleep.
+async function mountWithPendingSettings<T>(mount: () => Promise<T>): Promise<T> {
+  const readSettings = chrome.storage.sync.get;
+  const pendingSettings = deferred<void>();
+  const get = vi.spyOn(chrome.storage.sync, 'get').mockImplementation((keys, callback) => {
+    if (Array.isArray(keys) && keys.some((key) => key === 'provider')) {
+      void pendingSettings.promise.then(() => readSettings(keys, callback));
+    } else {
+      readSettings(keys, callback);
+    }
+  });
+  let mountReady = false;
+  const pendingMount = mount().then((mounted) => {
+    mountReady = true;
+    return mounted;
+  });
+  try {
+    for (let turn = 0; turn < 10; turn++) await setImmediate();
+    expect(mountReady).toBe(false);
+  } finally {
+    pendingSettings.resolve();
+    get.mockRestore();
+  }
+  return pendingMount;
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -812,7 +853,7 @@ describe('実Reactの要約行アクション配置', () => {
     sendMessage.mockResolvedValueOnce(response);
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    let mounted = await mountButton();
+    let mounted = await mountWithPendingSettings(mountButton);
     await click(mounted.button);
     let summaryRow = await summaryRowFor(mounted.row);
     expect(stored[await keyFor('full')]).toMatchObject({
@@ -1393,16 +1434,14 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     });
   }
   async function mountLifecycle() {
+    const firstRead = vi.mocked(chrome.storage.local.get).mock.calls.length;
     container = document.createElement('div');
     document.body.append(container);
     const fixture = frameFixture();
     await act(async () => {
       stopContentScript = startContentScript();
     });
-    await vi.waitFor(async () => {
-      await act(async () => {});
-      expect(chrome.storage.local.get).toHaveBeenCalled();
-    });
+    await waitForSummaryCacheRead(firstRead);
     return fixture;
   }
 
@@ -1410,7 +1449,8 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     settings.experimentalScoring = false;
     const pending = deferred<unknown>();
     sendMessage.mockReturnValueOnce(pending.promise).mockResolvedValue(await responseFor());
-    const { frame, doc, row } = await mountLifecycle();
+    await chrome.storage.local.get(SUMMARY_TRACE_KEY);
+    const { frame, doc, row } = await mountWithPendingSettings(mountLifecycle);
     const subscriptions = listeners.size;
     await act(async () => {
       window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
