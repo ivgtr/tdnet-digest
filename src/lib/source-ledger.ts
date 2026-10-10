@@ -2,6 +2,7 @@ import type { ExtractedPage } from '@/types/summaryMetadata';
 import { canonicalJSON, exact, hashText, record } from './fact-contract';
 import { sourceInventory } from './summary-source-inventory';
 import type { ContentRole } from './summary-content-policy';
+import type { DocumentType } from './document-type';
 
 /** Source layout, not a verified financial assertion. Coordinates retain extraction precision. */
 type Box = [number, number, number, number];
@@ -77,8 +78,11 @@ function freeze<T>(value: T): T {
 }
 
 /** Every source block survives. Recognition adds hints only; it never gates retention. */
-export function buildSourceLedger(pages: ExtractedPage[]): SourceLedger {
-  const hints = new Map(sourceInventory(pages).map((e) => [e.blockId, e]));
+export function buildSourceLedger(
+  pages: ExtractedPage[],
+  documentType: DocumentType = 'other'
+): SourceLedger {
+  const hints = new Map(sourceInventory(pages, undefined, documentType).map((e) => [e.blockId, e]));
   const body: Omit<SourceLedger, 'sourceHash'> = {
     version: 1,
     pages: pages.map((p) => ({
@@ -283,12 +287,48 @@ export function validateSourceLedger(value: unknown): SourceLedger {
   return freeze(JSON.parse(JSON.stringify(value)) as SourceLedger);
 }
 
+/** Original text absent from the reading spans remains independently citable.
+ * Coverage is scoped to provenance IDs, never equal text elsewhere on the page.
+ * A claimed source ID alone is insufficient: filtered/partial spans can lose text.
+ * Trimming matches native span construction; returned originals retain their exact text.
+ */
+export function unrepresentedSourceItems(page: SourceLedgerPage): SourceLedgerPage['sourceItems'] {
+  const items = new Map(page.sourceItems.map((item) => [item.id, item]));
+  const covered = new Set<string>();
+  const fragments = new Map<string, string[]>();
+  for (const span of page.spans) {
+    if (span.sourceIds.length === 1) {
+      const sourceId = span.sourceIds[0];
+      if (!fragments.has(sourceId)) fragments.set(sourceId, []);
+      fragments.get(sourceId)!.push(span.text);
+      continue;
+    }
+    // Merged native items appear in sourceIds order. Consume separate text ranges,
+    // so one surviving occurrence cannot cover two equal-text originals.
+    let cursor = 0;
+    for (const sourceId of span.sourceIds) {
+      const original = items.get(sourceId)?.text.trim();
+      if (!original) continue;
+      const at = span.text.indexOf(original, cursor);
+      if (at < 0) continue;
+      covered.add(sourceId);
+      cursor = at + original.length;
+    }
+  }
+  for (const [sourceId, parts] of fragments) {
+    const original = items.get(sourceId)?.text.trim();
+    if (original && parts.join('').includes(original)) covered.add(sourceId);
+  }
+  return page.sourceItems.filter((item) => item.text.trim() && !covered.has(item.id));
+}
+
 /** Compact reading view. Rounded positions are hints, not numeric verification inputs. */
 export interface SourceModelInput {
   sourceHash: string;
   columns: {
     rows: ['blockId', 'text', 'cells'];
     cells: ['spanId', 'text', 'x', 'y'];
+    originalItems: ['sourceItemId', 'text', 'x', 'y'];
     marks: ['roleHint', 'headingId', 'blockIds'];
     tables: ['tableId', 'method', 'unitSpanIds', 'cells', 'spanIds'];
     tableCells: ['cellId', 'spanIds'];
@@ -301,11 +341,14 @@ export interface SourceModelInput {
     rows: Array<[string, string, Array<[string, string, number, number]>]>;
     marks: Array<[ContentRole | null, string | null, string[]]>;
     looseSpans: Array<[string, string, number, number]>;
+    originalItems: Array<[string, string, number, number]>;
     tables: Array<[string, 'ruled' | 'aligned', string[], Array<[string, string[]]>, string[]]>;
   }>;
 }
 export function sourceLedgerModelInput(ledger: SourceLedger): SourceModelInput {
-  const position = (s: SourceLedgerSpan): [string, string, number, number] => [
+  const position = (
+    s: Pick<SourceLedgerSpan, 'id' | 'text' | 'box'>
+  ): [string, string, number, number] => [
     s.id,
     s.text,
     Math.round(s.box[0] * 10) / 10,
@@ -316,6 +359,7 @@ export function sourceLedgerModelInput(ledger: SourceLedger): SourceModelInput {
     columns: {
       rows: ['blockId', 'text', 'cells'],
       cells: ['spanId', 'text', 'x', 'y'],
+      originalItems: ['sourceItemId', 'text', 'x', 'y'],
       marks: ['roleHint', 'headingId', 'blockIds'],
       tables: ['tableId', 'method', 'unitSpanIds', 'cells', 'spanIds'],
       tableCells: ['cellId', 'spanIds'],
@@ -346,6 +390,7 @@ export function sourceLedgerModelInput(ledger: SourceLedger): SourceModelInput {
         rows: rows.map((r) => [r.id, r.text, r.spanIds.map((id) => position(spans.get(id)!))]),
         marks: [...marks.values()],
         looseSpans: p.spans.filter((s) => !used.has(s.id)).map(position),
+        originalItems: unrepresentedSourceItems(p).map(position),
         tables: p.tables.map((t) => [
           t.id,
           t.method,
@@ -371,6 +416,7 @@ export function projectSourceModelInput(input: SourceModelInput): SourceModelInp
     columns: {
       rows: ['blockId', 'text', 'cells'],
       cells: ['spanId', 'text', 'x', 'y'],
+      originalItems: ['sourceItemId', 'text', 'x', 'y'],
       marks: ['roleHint', 'headingId', 'blockIds'],
       tables: ['tableId', 'method', 'unitSpanIds', 'cells', 'spanIds'],
       tableCells: ['cellId', 'spanIds'],
@@ -389,6 +435,7 @@ export function projectSourceModelInput(input: SourceModelInput): SourceModelInp
       rows: p.rows.map((r) => [r[0], r[1], r[2].map(cell)]),
       marks: p.marks.map((m) => [m[0], m[1], m[2].map((id) => id)]),
       looseSpans: p.looseSpans.map(cell),
+      originalItems: p.originalItems.map(cell),
       tables: p.tables.map((t) => [
         t[0],
         t[1],

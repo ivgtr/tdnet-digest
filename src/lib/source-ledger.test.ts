@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalJSON, hashText } from './fact-contract';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
+import { extractPageLayout } from './pdf-layout';
 import { textPage } from './fixtures/v4-test-source';
 import {
   buildSourceLedger,
   sourceLedgerModelInput,
   projectSourceModelInput,
   validateSourceLedger,
+  unrepresentedSourceItems,
   type SourceLedger,
 } from './source-ledger';
 
@@ -112,6 +115,93 @@ describe('source ledger (raw retention and integrity, not semantic verification)
     expect(JSON.stringify(input)).not.toMatch(/semanticsVerified|numericVerified/);
     Object.assign(input.pages[0], { secret: 'not persisted' });
     expect(projectSourceModelInput(input).pages[0]).not.toHaveProperty('secret');
+  });
+
+  it('uses the explicit document type for hints while retaining identical source rows', () => {
+    const pages = [textPage('1. 経営成績\n売上高は増加した。')];
+    const earnings = buildSourceLedger(pages, 'earnings');
+    const other = buildSourceLedger(pages);
+    expect(earnings.rows[0].marks.role).toBe('performance');
+    expect(other.rows[0].marks.role).toBe('content');
+    expect(earnings.pages).toEqual(other.pages);
+    expect(earnings.rows.map(({ marks: _marks, ...row }) => row)).toEqual(
+      other.rows.map(({ marks: _marks, ...row }) => row)
+    );
+  });
+
+  it('projects rotated native originals by provenance even when horizontal text is identical', () => {
+    const item = (str: string, rotated: boolean, y: number): TextItem => ({
+      str,
+      dir: 'ltr',
+      transform: rotated ? [0, 10, -10, 0, 0, y] : [10, 0, 0, 10, 0, y],
+      width: str.length * 10,
+      height: 10,
+      hasEOL: true,
+      fontName: 'test',
+    });
+    const page = extractPageLayout(
+      [
+        item('同一の注記', false, 800),
+        item('同一の注記', true, 760),
+        item('  回転した限定条件  ', true, 720),
+        item('   ', false, 680),
+      ],
+      1
+    );
+    expect(page.text).toContain('回転した限定条件');
+    expect(page.sourceItems.map((s) => s.id)).toEqual(['p1i1', 'p1i2', 'p1i3', 'p1i4']);
+    const ledger = buildSourceLedger([page]);
+    const originals = unrepresentedSourceItems(ledger.pages[0]);
+    expect(originals.map((s) => [s.id, s.text])).toEqual([
+      ['p1i2', '同一の注記'],
+      ['p1i3', '  回転した限定条件  '],
+    ]);
+    const input = sourceLedgerModelInput(ledger);
+    expect(input.pages[0].originalItems.map((s) => s.slice(0, 2))).toEqual(
+      originals.map((s) => [s.id, s.text])
+    );
+    expect(input.columns.originalItems).toEqual(['sourceItemId', 'text', 'x', 'y']);
+    Object.assign(input.pages[0].originalItems[0], { secret: 'not persisted' });
+    input.pages[0].originalItems[0].push('hidden' as never);
+    const projected = projectSourceModelInput(input);
+    expect(projected.pages[0].originalItems[0]).toHaveLength(4);
+    expect(projected.pages[0].originalItems[0]).not.toHaveProperty('secret');
+    expect(JSON.stringify(projected)).not.toContain('hidden');
+  });
+
+  it('checks claimed item text coverage and does not repeat fully represented joined or split items', () => {
+    const page = textPage('第一原文\n第二原文\n一部が失われた原文');
+    const ledger = copy(buildSourceLedger([page]));
+    const p = ledger.pages[0];
+    p.spans = [
+      { ...p.spans[0], text: '第一原文第二原文', sourceIds: ['p1i1', 'p1i2'] },
+      { ...p.spans[2], text: '一部', sourceIds: ['p1i3'] },
+    ];
+    expect(unrepresentedSourceItems(p).map((s) => s.id)).toEqual(['p1i3']);
+    p.spans.push({ ...p.spans[1], id: 'p1split', text: 'が失われた原文' });
+    expect(unrepresentedSourceItems(p)).toEqual([]);
+    // Equal originals inside one merged span still need separate occurrences.
+    p.sourceItems[1].text = '第一原文';
+    p.spans[0].text = '第一原文';
+    expect(unrepresentedSourceItems(p).map((s) => s.id)).toContain('p1i2');
+  });
+
+  it('adds only empty original-item lists for normal multi-page text rather than duplicating source items', () => {
+    const pages = Array.from({ length: 26 }, (_, i) =>
+      textPage(
+        Array.from({ length: 30 }, (_, j) => `区分${j} 原文の説明と注記をそのまま保持する。`).join(
+          '\n'
+        ),
+        i + 1
+      )
+    );
+    const input = sourceLedgerModelInput(buildSourceLedger(pages));
+    expect(input.pages.every((p) => p.originalItems.length === 0)).toBe(true);
+    const before = JSON.stringify({
+      ...input,
+      pages: input.pages.map(({ originalItems: _items, ...p }) => p),
+    });
+    expect(JSON.stringify(input).length - before.length).toBeLessThan(600);
   });
 
   it('round trips canonical JSON, hashing source order, marks, states and exact text', () => {

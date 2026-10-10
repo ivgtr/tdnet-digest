@@ -15,6 +15,9 @@ import {
   ANALYSIS_INPUT_LIMITS,
 } from './additional-analysis';
 import { buildSourceLedger } from './source-ledger';
+import { sameSourceLedgerContent } from './source-ledger-identity';
+import { extractPageLayout } from './pdf-layout';
+import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 
 const page = textPage(
   '会社名 株式会社テスト | 会計基準 日本基準 | 範囲 連結\n2026年3月期 連結経営成績\n営業利益は100百万円です。\n未知の独自利益段階は70百万円です。\n会社は需要減速の可能性を説明しています。'
@@ -31,6 +34,82 @@ const facts = parseFactSummary(
 );
 
 describe('原資料台帳から分析・保存までの境界', () => {
+  it('選択方針だけを同一性比較から外し、本文・配置・状態・目印の変更は拒否する', () => {
+    const blank = { ...textPage('', 2), selection: 'omitted' as const };
+    const original = buildSourceLedger([page, blank]);
+    const full = buildSourceLedger([page, { ...blank, selection: 'selected' }]);
+    expect(sameSourceLedgerContent(original, full)).toBe(true);
+    const presentation = buildPresentation(facts, [page, blank]);
+    const restored = revalidatePresentation(presentation, facts, [
+      page,
+      { ...blank, selection: 'selected' },
+    ]);
+    expect(restored).toBe(presentation);
+    expect(
+      buildAnalysisInput(facts, restored, [page, { ...blank, selection: 'selected' }]).inputHash
+    ).toBe(buildAnalysisInput(facts, presentation).inputHash);
+    for (const change of [
+      (p: typeof page) => {
+        p.text += '変更';
+      },
+      (p: typeof page) => {
+        p.spans[0].x += 1;
+      },
+      (p: typeof page) => {
+        p.status = 'failed';
+      },
+    ]) {
+      const changed = structuredClone(page);
+      change(changed);
+      expect(sameSourceLedgerContent(original, buildSourceLedger([changed, blank]))).toBe(false);
+    }
+    const broken = structuredClone(original);
+    broken.pages[1].selection = 'selected';
+    expect(() => sameSourceLedgerContent(broken, full)).toThrow('SOURCE_LEDGER');
+  });
+
+  it('回転文字だけのページを原文として読めて引用・保存でき、空ページや検算値としない', () => {
+    const rotated = extractPageLayout(
+      [
+        {
+          str: '回転した指標 777百万円',
+          transform: [0, 10, -10, 0, 100, 700],
+          width: 80,
+          height: 10,
+          dir: 'ltr',
+          hasEOL: false,
+          fontName: 'fixture',
+        } as TextItem,
+      ],
+      2
+    );
+    const presentation = buildPresentation(facts, [page, rotated]);
+    const input = buildAnalysisInput(facts, presentation, [page, rotated]);
+    const raw = input.evidence.find((e) => e.id === `rawitem:${rotated.sourceItems[0].id}`)!;
+    expect(raw.text).toBe('回転した指標 777百万円');
+    expect(raw.kind).toBe('source');
+    expect(input.sourceDocument!.pages[1].originalItems[0][1]).toBe(raw.text);
+    expect(input.coverage.sourceLedger!.emptyPages).not.toContain(2);
+    expect(input.coverage.calculations).toBe(0);
+    const result = parseAnalysisResponse(
+      JSON.stringify({
+        version: 4,
+        issues: [
+          {
+            title: '原文の対応を確認',
+            conclusion: '原文の記載は読める。',
+            reading: '指標の期間と対象への対応は未点検。',
+            caveat: '',
+            nextCheck: '',
+            evidenceIds: [raw.id],
+          },
+        ],
+      }),
+      input
+    );
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation).evidence).toEqual([raw]);
+  });
+
   it('全文の入力予算は文字数とUTF-8容量の両方で境界を確認し、切り捨てない', () => {
     const messages = [{ content: 'a'.repeat(ANALYSIS_INPUT_LIMITS.characters) }];
     expect(() => assertAnalysisInputBudget(messages)).not.toThrow();

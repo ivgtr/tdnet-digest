@@ -1,5 +1,6 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { buildSourceLedger, validateSourceLedger, type SourceLedger } from './source-ledger';
+import { sameSourceLedgerContent } from './source-ledger-identity';
 import {
   canonicalJSON,
   hashText,
@@ -70,7 +71,7 @@ export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): S
     excerpts,
     narrativeValues(facts, pages, excerpts),
     facts.documentType === 'earnings' ? declaredForecastFactIds(pages, facts.facts) : new Set(),
-    buildSourceLedger(pages)
+    buildSourceLedger(pages, facts.documentType)
   );
 }
 
@@ -486,7 +487,7 @@ export function revalidatePresentation(
     canonicalJSON(value.excerpts) !== canonicalJSON(expected.excerpts) ||
     canonicalJSON(value.values) !== canonicalJSON(expected.values) ||
     (value.sourceLedger !== undefined &&
-      canonicalJSON(value.sourceLedger) !== canonicalJSON(expected.sourceLedger))
+      !sameSourceLedgerContent(value.sourceLedger, expected.sourceLedger!))
   )
     throw new Error('原文引用とPDFが一致しません');
   // Storage-only validation permits headline adjustments. Rechecking the PDF must

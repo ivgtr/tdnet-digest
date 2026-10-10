@@ -1,4 +1,5 @@
 import type { ExtractedPage } from '@/types/summaryMetadata';
+import { sameSourceLedgerContent } from './source-ledger-identity';
 import { canonicalJSON, hashText, type FactSummary } from './fact-contract';
 import type { SummaryPresentation } from './summary-presentation';
 import {
@@ -11,7 +12,12 @@ import { comparisonAxisLabels, factPeriodName } from './disclosure-observation';
 import { renderNarrativeText, literalValue } from './summary-narrative-renderer';
 import { stateLabels } from './summary-renderer';
 import { buildAnalysisCalculations } from './analysis-calculations';
-import { buildSourceLedger, sourceLedgerModelInput, type SourceModelInput } from './source-ledger';
+import {
+  buildSourceLedger,
+  sourceLedgerModelInput,
+  unrepresentedSourceItems,
+  type SourceModelInput,
+} from './source-ledger';
 
 export interface AnalysisEvidence {
   id: string;
@@ -38,6 +44,7 @@ export interface AnalysisCoverage {
     pages: number[];
     failedPages: number[];
     emptyPages: number[];
+    /** Original summary selection, not a claim that the retained source was unread. */
     omittedPages: number[];
     rows: number;
     spans: number;
@@ -64,7 +71,10 @@ export function buildAnalysisInput(
   if (
     sourcePages &&
     presentation.sourceLedger &&
-    canonicalJSON(buildSourceLedger(sourcePages)) !== canonicalJSON(presentation.sourceLedger)
+    !sameSourceLedgerContent(
+      buildSourceLedger(sourcePages, facts.documentType),
+      presentation.sourceLedger
+    )
   )
     throw new Error('分析用原資料と再抽出したPDFが一致しません');
   const pagesOf = (ids: string[]) =>
@@ -213,6 +223,16 @@ export function buildAnalysisInput(
   if (ledger) {
     const owned = new Set(ledger.rows.flatMap((row) => row.spanIds));
     for (const page of ledger.pages) {
+      for (const item of unrepresentedSourceItems(page)) {
+        evidence.push({
+          id: `rawitem:${item.id}`,
+          kind: 'source',
+          text: item.text,
+          context: '原抽出文字（行・表への対応・意味未点検）',
+          sourceIds: [item.id],
+          pages: [page.pageNumber],
+        });
+      }
       for (const span of page.spans.filter((span) => !owned.has(span.id))) {
         evidence.push({
           id: `rawspan:${span.id}`,

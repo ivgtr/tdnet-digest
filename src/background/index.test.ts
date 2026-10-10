@@ -600,6 +600,47 @@ describe('要約・採点・追加分析の分離', () => {
     ).toThrow();
   });
 
+  it('smartが空ページだけを省略した要約から全文の追加分析と採点へ進める', async () => {
+    const blank = { ...textPage('', 2), selection: 'omitted' as const };
+    mocked.generateText
+      .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))
+      .mockResolvedValueOnce(JSON.stringify({ version: 4, issues: [] }));
+    mocked.extractScoreInput.mockResolvedValue({
+      claims: [{ category: 'revenue' }],
+      unverified: [],
+      searchStatus: '元PDF内',
+    });
+    mocked.inferExperimentalScore.mockResolvedValue({
+      value: 70,
+      verdict: '参考',
+      positives: [],
+      negatives: [],
+      breakdown: [],
+      unverified: [],
+      searchStatus: '元PDF内',
+    });
+    const request = await setup(true, true, false, false, {
+      pages: [nativePage, blank],
+      mode: 'smart',
+    });
+    const summary = await request({ action: 'summarize' });
+    expect(summary.error).toBeUndefined();
+    expect(summary.presentation.sourceLedger!.pages[1].selection).toBe('omitted');
+    const payload = {
+      facts: summary.facts,
+      presentation: summary.presentation,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    };
+    const analysis = await request({ action: 'analyze', ...payload });
+    expect(analysis.error).toBeUndefined();
+    expect(analysis.analysis.issues).toEqual([]);
+    const score = await request({ action: 'score', ...payload });
+    expect(score.error).toBeUndefined();
+    expect(score.score.value).toBe(70);
+    expect(summary.presentation.sourceLedger!.pages[1].selection).toBe('omitted');
+  });
+
   it('スコアOFFでも追加分析を明示操作で実行できる', async () => {
     mocked.generateText
       .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))

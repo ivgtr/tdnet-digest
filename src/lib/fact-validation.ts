@@ -117,9 +117,6 @@ export function validatePages(pages: ExtractedPage[]): void {
     )
       fail('SOURCE:原文字・構造・抽出状態がありません');
     if (p.status === 'failed') fail(`SOURCE:PDF p.${p.pageNumber}の抽出失敗`);
-    if (p.status === 'ok' && (!p.sourceItems.length || !p.spans.length || !p.blocks.length))
-      fail('SOURCE:成功ページの原文字欠落');
-    if (p.status === 'empty' && p.spans.length) fail('SOURCE:空ページと原文字の状態が不一致');
     if (
       p.sourceItems.some(
         (s) =>
@@ -138,6 +135,20 @@ export function validatePages(pages: ExtractedPage[]): void {
       )
     )
       fail('SOURCE:原アイテムの座標・変換・方向・改行情報が不正です');
+    const hasSourceText = p.sourceItems.some((item) => item.text.trim());
+    const hasHorizontalText = p.sourceItems.some(
+      (item) =>
+        item.text.trim() &&
+        Math.abs(item.transform[1]) <= 0.01 &&
+        Math.abs(item.transform[2]) <= 0.01
+    );
+    if (
+      p.status === 'ok' &&
+      (!hasSourceText || (hasHorizontalText && (!p.spans.length || !p.blocks.length)))
+    )
+      fail('SOURCE:成功ページの原文字欠落');
+    if (p.status === 'empty' && (hasSourceText || p.spans.length || p.text.trim()))
+      fail('SOURCE:空ページと原文字の状態が不一致');
     if (
       p.spans.some(
         (s) => ![s.x, s.y, s.width, s.height].every(Number.isFinite) || s.height <= 0 || s.width < 0

@@ -167,7 +167,8 @@ export function extractPageLayout(
     text: cleanPageText(groupTextItemsByY(items).join('\n'), pageNumber),
     spans,
     sourceItems,
-    status: spans.length ? 'ok' : 'empty',
+    // Extraction status describes retained source text, not horizontal mapping support.
+    status: sourceItems.some((item) => item.text.trim()) ? 'ok' : 'empty',
     selection: 'selected',
     blocks: buildBlocks({ pageNumber, spans, tableRegions }, cells),
     quantities,
