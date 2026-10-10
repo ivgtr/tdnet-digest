@@ -1,3 +1,5 @@
+import { nativeAnalysisEvidence, nativeAnalysisCalculations } from './native-analysis';
+import { nativeDisclosureModelInput } from './native-disclosure';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { sameSourceLedgerContent } from './source-ledger-identity';
 import { canonicalJSON, hashText, type FactSummary } from './fact-contract';
@@ -21,7 +23,14 @@ import {
 
 export interface AnalysisEvidence {
   id: string;
-  kind: 'fact' | 'observation' | 'explanation' | 'calculation' | 'source';
+  kind:
+    | 'fact'
+    | 'observation'
+    | 'explanation'
+    | 'calculation'
+    | 'source'
+    | 'nativeFact'
+    | 'nativeSource';
   text: string;
   context: string;
   sourceIds: string[];
@@ -58,6 +67,7 @@ export interface AnalysisInput {
   evidence: AnalysisEvidence[];
   coverage: AnalysisCoverage;
   sourceDocument?: SourceModelInput;
+  nativeDocument?: ReturnType<typeof nativeDisclosureModelInput>;
 }
 const unique = <T>(values: T[]) => [...new Set(values)];
 
@@ -246,6 +256,13 @@ export function buildAnalysisInput(
     }
   }
   const sourceDocument = ledger ? sourceLedgerModelInput(ledger) : undefined;
+  const native =
+    presentation.sourceFirst?.nativeMode === 'included'
+      ? presentation.sourceFirst.native
+      : undefined;
+  const nativeCalculations = native ? nativeAnalysisCalculations(native) : [];
+  if (native) evidence.push(...nativeAnalysisEvidence(native), ...nativeCalculations);
+  const nativeDocument = native ? nativeDisclosureModelInput(native) : undefined;
   // Rejection coverage is independent of paragraph coverage: a surviving claim
   // about progress does not restore a rejected explanation of one-off profit.
   const unverified = [
@@ -260,15 +277,20 @@ export function buildAnalysisInput(
     limitations.push(
       '説明・指標の生成・点検に未確認または不採用の項目があります。同じ原文の別の説明が採用されても、増減要因・一時要因・時期・条件の全体が確認済みになったわけではありません。不採用部分の内容を推測したり、資料に記載がないと断定したりしないでください。'
     );
-  if (presentation.organization.status !== 'ready')
+  if (!presentation.sourceFirst && presentation.organization.status !== 'ready')
     limitations.push(
       '今回の確認済み入力は資料全体の説明・指標を網羅していません。継続性や達成見込みの判断には、未確認の要因・条件が影響する可能性があります。'
+    );
+  if (presentation.sourceFirst)
+    limitations.push(
+      '原資料を直接読んだAI文章です。構造化事実の未抽出を資料の未開示と扱いません。数値と指標・期間の対応や因果の意味は原資料で確認してください。',
+      ...presentation.sourceFirst.warnings
     );
   const coverage: AnalysisCoverage = {
     facts: facts.facts.length,
     explanations: explanations.length,
     observations: observations.length,
-    calculations: calculations.length,
+    calculations: calculations.length + nativeCalculations.length,
     pages: unique(evidence.flatMap((e) => e.pages)).sort((a, b) => a - b),
     organizationStatus: presentation.organization.status,
     unresolvedSources: unique([
@@ -282,7 +304,7 @@ export function buildAnalysisInput(
         presentation.excerpts
       ).map((e) => e.id),
     ]).length,
-    unverifiedFacts: facts.unverified.length,
+    unverifiedFacts: presentation.sourceFirst ? 0 : facts.unverified.length,
     unverifiedItems: unverified.length,
     unverifiedSourcePages: pagesOf(unverified.flatMap((item) => item.sourceIds)),
     limitations,
@@ -308,13 +330,15 @@ export function buildAnalysisInput(
     evidence,
     coverage,
     ...(sourceDocument ? { sourceDocument } : {}),
+    ...(nativeDocument ? { nativeDocument } : {}),
     inputHash: hashText(
       canonicalJSON({
-        version: 4,
+        version: 5,
         sourceHash: presentation.sourceHash,
         evidence,
         coverage,
         ...(sourceDocument ? { sourceDocument } : {}),
+        ...(nativeDocument ? { nativeDocument } : {}),
       })
     ),
   };

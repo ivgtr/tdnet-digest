@@ -204,9 +204,11 @@ export async function checkExtensionSmoke(args: string[]) {
       if (outcome === 'failure') {
         assert.equal(stored.trace.outcome, 'failure');
         assert.equal(stored.trace.resultId, null);
-        assert.match(await summary.innerText(), /SCHEMA/);
+        assert.match(await summary.innerText(), /invalid_json/);
         assert.equal(stored.caches.length, 0);
-        stages.push('failed repair → visible error; no success cache');
+        stages.push(
+          'invalid source-summary output → visible error; no paid repair or success cache'
+        );
       } else {
         assert.equal(
           stored.trace.outcome,
@@ -218,8 +220,8 @@ export async function checkExtensionSmoke(args: string[]) {
         validatePresentation(saved.presentation, saved.facts);
         assert.deepEqual(saved.facts, preflight.result!.facts);
         assert.equal(
-          saved.presentation.organization.status,
-          outcome === 'success' ? 'ready' : 'unavailable'
+          Boolean(saved.presentation.sourceFirst?.summary?.notices.length),
+          outcome === 'partial'
         );
         assert.equal(saved.resultId, stored.trace.resultId);
         assert.equal(saved.diagnosticRunId, stored.trace.runId);
@@ -230,14 +232,14 @@ export async function checkExtensionSmoke(args: string[]) {
         const sourceToggles = summary.locator('details.tdnet-digest-source');
         assert.ok(await sourceToggles.count());
         if (outcome === 'partial') {
-          assert.doesNotMatch(visible, /販売体制を強化している。/);
+          assert.doesNotMatch(visible, /この項目は表示してはいけない/);
           await sourceToggles.evaluateAll((nodes: HTMLDetailsElement[]) =>
             nodes.forEach((node) => {
               node.open = true;
             })
           );
-          assert.match(await summary.innerText(), /販売体制の強化を進めています/);
-          stages.push('unavailable explanation → confirmed amount retained; original accessible');
+          assert.match(await summary.innerText(), /営業利益.*100/);
+          stages.push('invalid issue quarantined → supported summary retained; source accessible');
         }
         // Reload disposes React state; restoring must use chrome.storage without PDF/API calls.
         await page.reload();

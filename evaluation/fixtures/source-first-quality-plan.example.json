@@ -1,0 +1,40 @@
+{
+  "suite": "known-pilot",
+  "caseIds": ["cando-548129"],
+  "workflow": "summary-and-analysis",
+  "provider": "openrouter",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "repeats": 3,
+  "variants": {
+    "baseline": {
+      "revision": "72d8509cb07944473973ae2b3643b22fccc7430f",
+      "buildDigest": "REPLACE_WITH_64_HEX_DIGEST",
+      "settings": {
+        "extractionMode": "full",
+        "temperature": 0,
+        "reasoningPolicy": "legacy extraction/repair low; optional organization/review/analysis disabled when supported",
+        "maxRequestsPerRun": 5,
+        "maxOutputTokensPerRequest": 32768,
+        "maxTotalOutputTokens": 90112
+      }
+    },
+    "candidate": {
+      "revision": "REPLACE_WITH_40_HEX_COMMIT",
+      "buildDigest": "REPLACE_WITH_64_HEX_DIGEST",
+      "settings": {
+        "extractionMode": "full",
+        "temperature": 0,
+        "reasoningPolicy": "source summary/analysis disabled when supported",
+        "maxRequestsPerRun": 2,
+        "maxOutputTokensPerRequest": 8192,
+        "maxTotalOutputTokens": 16384
+      }
+    }
+  },
+  "reservation": {
+    "maxInputTokensPerRequest": 262144,
+    "inputUsdPerMillion": null,
+    "outputUsdPerMillion": null,
+    "approvedTotalUsd": null
+  }
+}

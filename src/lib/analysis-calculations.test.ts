@@ -355,9 +355,8 @@ describe('checked-source analysis calculations', () => {
     expect(buildAnalysisCalculations(summary, presentation)).toEqual([]);
   });
 
-  it('uses only supported observation comparisons and checked quantities, including a self-contained company-wide context', () => {
+  it('never promotes a model-approved metric/value association to a calculation operand', () => {
     const current = observation('observation-1', {
-      entity: null,
       comparison: {
         axis: 'yearOnYear',
         period: '2025年3月期第3四半期累計',
@@ -366,20 +365,13 @@ describe('checked-source analysis calculations', () => {
         rateId: null,
       },
     });
-    const quantities = [value(current.valueId, '-80.25'), value('old', '-100.50')];
-    const { summary, presentation } = inputs([], [current], quantities);
-    expect(buildAnalysisCalculations(summary, presentation)).toMatchObject([
-      {
-        kind: 'difference',
-        value: '20.25',
-        sourceFactIds: [],
-        sourceObservationIds: [current.id],
-        sourceIds: ['source:observation-1', 'source:old', 'source:value:observation-1'],
-      },
-    ]);
-    presentation.organization.review!.claims[current.id] = '対象期間を確認できません';
+    const { summary, presentation } = inputs(
+      [],
+      [current],
+      [value(current.valueId, '-80.25'), value('old', '-100.50')]
+    );
     expect(buildAnalysisCalculations(summary, presentation)).toEqual([]);
-    presentation.organization.review = null;
+    current.metric = '同じ段落にある別の指標';
     expect(buildAnalysisCalculations(summary, presentation)).toEqual([]);
   });
 
@@ -400,7 +392,7 @@ describe('checked-source analysis calculations', () => {
     ).toEqual([]);
   });
 
-  it('can pair an explicit supported forecast observation with a verified actual, without reusing a duplicate native value', () => {
+  it('withholds a forecast observation lacking strict source ownership even beside a verified actual', () => {
     const annual = observation('observation-1', {
       topic: 'forecast',
       period: '2026年3月期',
@@ -408,11 +400,7 @@ describe('checked-source analysis calculations', () => {
     });
     const actual = fact('actual', '8168');
     const result = calculate([actual], [annual], [value(annual.valueId, '7800')]);
-    expect(result.find((c) => c.kind === 'remaining')).toMatchObject({
-      value: '-368',
-      sourceFactIds: [actual.id],
-      sourceObservationIds: [annual.id],
-    });
+    expect(result).toEqual([]);
     const duplicate = observation('observation-2', { valueId: 'cell-actual' });
     expect(
       calculate(
@@ -425,36 +413,14 @@ describe('checked-source analysis calculations', () => {
     expect(calculate([actual], [annual], [value(annual.valueId, '7800')])).toEqual([]);
   });
 
-  it('sums only matched explicit operating and investing cash flows, retaining signs and conditions', () => {
-    const operating = observation('observation-1', {
-      topic: 'cash',
-      metric: '営業活動によるキャッシュ・フロー',
-      measure: 'flow',
-    });
-    const investing = observation('observation-2', {
-      topic: 'cash',
-      metric: '投資活動によるキャッシュ・フロー',
-      measure: 'flow',
-    });
-    const quantities = [value(operating.valueId, '0.3'), value(investing.valueId, '-0.2')];
-    const result = calculate([], [operating, investing], quantities);
-    expect(result).toMatchObject([
-      {
-        kind: 'cashFlowTotal',
-        value: '0.1',
-        unit: '百万円',
-        sourceObservationIds: [operating.id, investing.id],
-      },
-    ]);
+  it('sums verified cash-flow operands with their signs, never model labels alone', () => {
+    const operating = fact('operating', '0.3', { label: '営業CF' });
+    const investing = fact('investing', '-0.2', { label: '投資CF' });
+    const result = calculate([operating, investing]);
+    expect(result).toMatchObject([{ kind: 'cashFlowTotal', value: '0.1', unit: '百万円' }]);
     expect(result[0].caveat).toContain('単純合計');
-    investing.period = '2026年3月期第2四半期累計';
-    expect(calculate([], [operating, investing], quantities)).toEqual([]);
-    investing.period = operating.period;
-    investing.conditions = ['組替後'];
-    expect(calculate([], [operating, investing], quantities)).toEqual([]);
-    investing.conditions = [];
-    investing.entity = null;
-    expect(calculate([], [operating, investing], quantities)).toEqual([]);
+    investing.semantics.conditions = ['組替後'];
+    expect(calculate([operating, investing])).toEqual([]);
   });
 
   it.each([
@@ -564,7 +530,9 @@ describe('checked-source analysis calculations', () => {
           : route === 'table cell alias'
             ? 'cell-known'
             : 'quantity-known';
+      const actual = fact('actual-known', '200');
       const current = observation('observation-1', {
+        valueId: actual.id,
         comparison: {
           axis: 'yearOnYear',
           period: '2025年3月期第3四半期累計',
@@ -573,28 +541,26 @@ describe('checked-source analysis calculations', () => {
           rateId: null,
         },
       });
-      const quantities = [
-        value(current.valueId, '200'),
-        ...(selected !== known.id ? [value(selected, '100')] : []),
-      ];
+      const quantities = [...(selected !== known.id ? [value(selected, '100')] : [])];
       known.semantics.qualifiers = ['上限'];
-      expect(calculate([known], [current], quantities)).toEqual([]);
+      expect(calculate([known, actual], [current], quantities)).toEqual([]);
       known.semantics.qualifiers = [];
       known.semantics.conditions = ['特別損失を含む'];
-      expect(calculate([known], [current], quantities)).toEqual([]);
+      expect(calculate([known, actual], [current], quantities)).toEqual([]);
       current.conditions = known.semantics.conditions;
-      expect(calculate([known], [current], quantities)).toMatchObject([
+      actual.semantics.conditions = known.semantics.conditions;
+      expect(calculate([known, actual], [current], quantities)).toMatchObject([
         {
           kind: 'difference',
           value: '100',
-          sourceFactIds: [known.id],
+          sourceFactIds: [actual.id, known.id],
           sourceObservationIds: [current.id],
         },
       ]);
     }
   );
 
-  it('pairs the documented null-entity whole-company observations without equating them to unknown fact subjects', () => {
+  it('keeps null-entity reviewed observations outside verified arithmetic', () => {
     const operating = observation('observation-1', {
       topic: 'cash',
       entity: null,
@@ -608,9 +574,7 @@ describe('checked-source analysis calculations', () => {
       measure: 'flow',
     });
     const quantities = [value(operating.valueId, '100'), value(investing.valueId, '-20')];
-    expect(calculate([], [operating, investing], quantities)).toMatchObject([
-      { kind: 'cashFlowTotal', value: '80', label: expect.stringContaining('全社') },
-    ]);
+    expect(calculate([], [operating, investing], quantities)).toEqual([]);
     const unknown = fact('unknown', '100', { label: '営業CF' });
     unknown.semantics.subject = null;
     expect(calculate([unknown], [investing], [value(investing.valueId, '-20')])).toEqual([]);

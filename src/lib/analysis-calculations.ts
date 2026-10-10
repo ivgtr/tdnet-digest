@@ -277,7 +277,9 @@ export function buildAnalysisCalculations(
       sourceObservationIds: [observation.id],
       sourceIds: unique([...observation.sourceIds, ...value.sourceIds]),
     };
-    if (!known) return operand;
+    // A model-reviewed observation proves neither metric/value ownership nor
+    // comparable periods. Only a strict fact alias can enter this calculator.
+    if (!known) return null;
     // Native cell/prose aliases carry the same eligibility and verified context as
     // fact IDs, including comparison operands. Review cannot erase a fact's bounds,
     // conditions, scope or adjustment basis by selecting its presentation alias.

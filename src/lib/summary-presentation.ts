@@ -1,3 +1,6 @@
+import { validateNativeDisclosure } from './native-disclosure';
+import { parseAnalysis } from './additional-analysis';
+import { SOURCE_SUMMARY_ANCHOR, type SourceFirstSummary } from './source-summary';
 import type { ExtractedPage } from '@/types/summaryMetadata';
 import { buildSourceLedger, validateSourceLedger, type SourceLedger } from './source-ledger';
 import { sameSourceLedgerContent } from './source-ledger-identity';
@@ -51,6 +54,8 @@ export interface SummaryPresentation {
   organization: SummaryOrganization;
   /** Complete extracted source, independent of display selection or semantic acceptance. */
   sourceLedger?: SourceLedger;
+  /** Direct source reading, independent of optional strict fact extraction. */
+  sourceFirst?: SourceFirstSummary;
 }
 const numeric = (f: VerifiedFact) => f.kind === 'number' || f.kind === 'range';
 const anchor = (f: VerifiedFact) =>
@@ -71,6 +76,20 @@ export function buildPresentation(facts: FactSummary, pages: ExtractedPage[]): S
     excerpts,
     narrativeValues(facts, pages, excerpts),
     facts.documentType === 'earnings' ? declaredForecastFactIds(pages, facts.facts) : new Set(),
+    buildSourceLedger(pages, facts.documentType)
+  );
+}
+
+/** Direct reading has no dependency on optional narrative quantity/fact schemas. */
+export function buildDirectSourcePresentation(
+  facts: FactSummary,
+  pages: ExtractedPage[]
+): SummaryPresentation {
+  return composePresentation(
+    facts,
+    [],
+    [],
+    new Set(),
     buildSourceLedger(pages, facts.documentType)
   );
 }
@@ -304,6 +323,7 @@ export function validatePresentation(
       'values',
       'organization',
       ...(Object.prototype.hasOwnProperty.call(value, 'sourceLedger') ? ['sourceLedger'] : []),
+      ...(Object.prototype.hasOwnProperty.call(value, 'sourceFirst') ? ['sourceFirst'] : []),
     ]) ||
     value.version !== 7 ||
     !Array.isArray(value.overview) ||
@@ -314,6 +334,33 @@ export function validatePresentation(
     throw new Error('要約の表示構成が不正です');
   if (Object.prototype.hasOwnProperty.call(value, 'sourceLedger'))
     validateSourceLedger(value.sourceLedger);
+  if (Object.prototype.hasOwnProperty.call(value, 'sourceFirst')) {
+    const source = value.sourceFirst;
+    if (
+      !record(source) ||
+      !exact(source, [
+        'version',
+        'summary',
+        'warnings',
+        ...('native' in source ? ['native', 'nativeMode'] : []),
+      ]) ||
+      source.version !== 1 ||
+      !Array.isArray(source.warnings) ||
+      !source.warnings.every((warning) => typeof warning === 'string' && warning.length <= 1000) ||
+      !value.sourceLedger ||
+      facts.facts.length !== 0 ||
+      canonicalJSON(facts.unverified) !== canonicalJSON([SOURCE_SUMMARY_ANCHOR])
+    )
+      throw new Error('原資料要約の契約が不正です');
+    if (source.native !== undefined) {
+      const native = validateNativeDisclosure(source.native);
+      if (
+        !['included', 'pdf-only'].includes(String(source.nativeMode)) ||
+        (source.nativeMode === 'included' && native.status !== 'eligible')
+      )
+        throw new Error('XBRL/HTMLの利用状態が不正です');
+    }
+  }
   const ids = new Set(facts.facts.map((f) => f.id));
   const sourceIds = new Set<string>();
   for (const e of value.excerpts) {
@@ -474,6 +521,12 @@ export function validatePresentation(
     value.values as NarrativeValue[],
     value.excerpts as SourceExcerpt[]
   );
+  if (value.sourceFirst && (value.sourceFirst as unknown as SourceFirstSummary).summary !== null)
+    parseAnalysis(
+      JSON.stringify((value.sourceFirst as unknown as SourceFirstSummary).summary),
+      facts,
+      value as unknown as SummaryPresentation
+    );
 }
 
 export function revalidatePresentation(
@@ -482,7 +535,12 @@ export function revalidatePresentation(
   pages: ExtractedPage[]
 ): SummaryPresentation {
   validatePresentation(value, facts);
-  const expected = buildPresentation(facts, pages);
+  const expected = value.sourceFirst
+    ? buildDirectSourcePresentation(
+        facts,
+        pages.map((page) => ({ ...page, selection: 'selected' }))
+      )
+    : buildPresentation(facts, pages);
   if (
     canonicalJSON(value.excerpts) !== canonicalJSON(expected.excerpts) ||
     canonicalJSON(value.values) !== canonicalJSON(expected.values) ||

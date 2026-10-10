@@ -8,7 +8,9 @@ import {
   saveAnalysisTrace,
   readAnalysisDiagnosticReference,
   type AnalysisTrace,
+  isAnalysisModelInput,
 } from './analysis-trace';
+import { analysisModelInput } from './additional-analysis';
 import { SUMMARY_DIAGNOSTICS_KEY } from './summary-trace';
 import { buildSourceLedger, sourceLedgerModelInput } from './source-ledger';
 import { textPage } from './fixtures/v4-test-source';
@@ -84,6 +86,39 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('追加分析の実行別診断', () => {
+  it('wire input validation ignores object key order but rejects changed identity and unknown fields', async () => {
+    const t = trace('wire');
+    const wire = analysisModelInput(t.input!);
+    const reordered = Object.fromEntries(Object.entries(wire).reverse());
+    expect(isAnalysisModelInput(reordered, t.inputHash)).toBe(true);
+    expect(isAnalysisModelInput({ ...wire, inputHash: 'other' }, t.inputHash)).toBe(false);
+    expect(isAnalysisModelInput({ ...wire, apiKey: 'not-source' }, t.inputHash)).toBe(false);
+    t.modelInput = wire;
+    t.input = null;
+    await saveAnalysisTrace(t);
+    expect(
+      (await loadAnalysisTrace(pdfUrl, t.runId, t.summaryResultId, 'saved', t.inputHash!))
+        .modelInput
+    ).toEqual(wire);
+  });
+
+  it('keeps the full diagnostic when a large error would otherwise be duplicated into the latest-attempt pointer', async () => {
+    const t = trace('long-error');
+    t.input = null;
+    t.outcome = 'failure';
+    t.error = { code: 'api', path: '$', message: 'e'.repeat(600_000) };
+    await saveAnalysisTrace(t);
+    expect(traces()[0].error?.message).toHaveLength(600_000);
+    const latest = readLastAnalysisAttempt(
+      stored[ANALYSIS_DIAGNOSTICS_KEY],
+      pdfUrl,
+      t.summaryResultId,
+      t.inputHash!
+    );
+    expect(latest?.error?.message).toContain('[診断の全文を参照]');
+    expect(size(stored[ANALYSIS_DIAGNOSTICS_KEY])).toBeLessThan(ANALYSIS_DIAGNOSTICS_LIMITS.bytes);
+  });
+
   it('原資料入力と抽出範囲を診断へ保持し、余分な秘密フィールドは保存しない', async () => {
     const t = trace('source-ledger');
     const ledger = buildSourceLedger([textPage('未知の利益段階 70百万円')]);

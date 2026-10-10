@@ -9,6 +9,7 @@ import {
 } from './fact-contract';
 import { checkProvenance, isAdjustments } from './source-provenance';
 import { FACT_KEYS } from './fact-validation';
+import { isFactDiagnostics } from './fact-diagnostics';
 import { quantityNumber, parseExactQuantity, parseExactRange } from './quantity';
 import { toValue } from './score-extraction';
 import { classifyMetric } from './metric-semantics';
@@ -41,8 +42,7 @@ export function validateSavedFacts(value: unknown): asserts value is FactSummary
       'other',
     ].includes(String(value.documentType)) ||
     !Array.isArray(value.facts) ||
-    !Array.isArray(value.unverified) ||
-    !value.unverified.every((x) => typeof x === 'string') ||
+    !isFactDiagnostics(value.unverified) ||
     (!value.facts.length && !value.unverified.length)
   )
     throw new Error('保存された事実v6の形式が不正です');

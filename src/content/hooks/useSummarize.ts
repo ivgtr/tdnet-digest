@@ -1,3 +1,4 @@
+import type { NativeCompanionRef } from '@/lib/native-disclosure-contract';
 import {
   decodeSummaryStorage,
   encodeSummaryStorage,
@@ -34,6 +35,7 @@ import type { ExperimentalScore } from '@/lib/scoring';
 import type { SummaryMetadata, ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 
 interface Options {
+  nativeCompanion?: NativeCompanionRef;
   pdfUrl: string;
   title: string;
   code: string;
@@ -51,6 +53,7 @@ export interface SummaryResult {
   retryExtractionMode?: 'full';
 }
 export interface Stage<T> {
+  unavailable?: boolean;
   lastAttempt?: AnalysisLastAttempt;
   diagnosticRunId?: string;
   diagnosticInputHash?: string;
@@ -113,7 +116,7 @@ async function validatedCachedSummary(
   }
 }
 
-export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
+export function useSummarize({ pdfUrl, title, code, companyName, nativeCompanion }: Options) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SummaryResult | null>(null);
   const [score, setScore] = useState<Stage<ExperimentalScore>>(emptyStage());
@@ -513,6 +516,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         );
         const response = await chrome.runtime.sendMessage({
           action: 'summarize',
+          ...(nativeCompanion ? { nativeCompanion } : {}),
           pdfUrl,
           title,
           code,
@@ -651,7 +655,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         if (run === runRef.current) setLoading(false);
       }
     },
-    [pdfUrl, title, code, companyName]
+    [pdfUrl, title, code, companyName, nativeCompanion]
   );
 
   const requestStage = useCallback(
@@ -663,6 +667,15 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         !current.metadata?.analysisFingerprint
       )
         return;
+      if (action === 'score' && current.presentation?.sourceFirst) {
+        setScore({
+          loading: false,
+          data: null,
+          error: '原資料要約では実験的スコアを利用できません。追加分析をご利用ください。',
+          unavailable: true,
+        });
+        return;
+      }
       const id = current.resultId;
       const epoch = runRef.current;
       const requestNumber = ++stageRequestRef.current[action];

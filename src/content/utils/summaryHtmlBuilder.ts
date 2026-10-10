@@ -53,7 +53,7 @@ export function buildMetadataHtml(
   } = metadata;
   const analysisInfo =
     provider && model && summaryMode
-      ? ` | <span style="font-weight: bold;">要約:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・根拠照合＋説明要約${generationCalls === undefined ? '' : `・API${generationCalls}回`}・事実v${analysisSchemaVersion ?? '?'}`
+      ? ` | <span style="font-weight: bold;">要約:</span> ${escapeMetadataText(provider)}/${escapeMetadataText(model)}・${metadata.summaryMode === 'source-first' ? '原資料から直接要約' : '根拠照合＋説明要約'}${generationCalls === undefined ? '' : `・API${generationCalls}回`}・事実v${analysisSchemaVersion ?? '?'}`
       : '';
 
   let html =
@@ -121,7 +121,7 @@ export function buildSummaryHtml(
       <div id="score-result">${buildScoreStageHtml(score)}</div>
       <section data-additional-analysis style="${SUMMARY_STYLES.analysisSection}">
         <h5 style="${SUMMARY_STYLES.sectionTitle}">追加分析</h5>
-        <p style="${SUMMARY_STYLES.sectionDescription}">確認済みの数値・会社説明から重要な論点を絞り、根拠・条件付きの読み・次の確認点を整理します。</p>
+        <p style="${SUMMARY_STYLES.sectionDescription}">原資料から重要な論点を絞り、全体の見立て、その理由と継続・減速を左右する条件を整理します。</p>
         <div style="${SUMMARY_STYLES.buttonGroup}">
           <button type="button" id="analyze-btn" style="${SUMMARY_STYLES.analyzeButton}" ${analysis?.loading ? 'disabled' : ''}>${analysisButtonLabel(analysis)}</button>
           <span id="analysis-status" role="status" aria-live="polite" style="font-size: 12px; color: #6b7280;">${analysis?.loading ? '追加分析を作成しています…' : ''}</span>
@@ -155,11 +155,13 @@ export function analysisButtonLabel(analysis?: Stage<AdditionalAnalysis>): strin
 export function buildScoreStageHtml(score?: Stage<ExperimentalScore>): string {
   return score?.loading
     ? '採点中…'
-    : score?.error
-      ? `採点失敗: ${escapeMetadataText(score.error)} <button type="button" id="retry-score-btn" style="${SUMMARY_STYLES.retryButton}">採点を再試行</button>`
-      : score?.data
-        ? buildScoreHtml(score.data) + buildPersistenceWarningHtml(score.persistenceWarning)
-        : '';
+    : score?.unavailable
+      ? `<p style="font-size:12px;color:#6b7280;">${escapeMetadataText(score.error ?? '実験的スコアを利用できません')}</p>`
+      : score?.error
+        ? `採点失敗: ${escapeMetadataText(score.error)} <button type="button" id="retry-score-btn" style="${SUMMARY_STYLES.retryButton}">採点を再試行</button>`
+        : score?.data
+          ? buildScoreHtml(score.data) + buildPersistenceWarningHtml(score.persistenceWarning)
+          : '';
 }
 
 export function buildAnalysisStageHtml(
@@ -195,6 +197,8 @@ function buildAnalysisHtml(
     explanation: '点検済み会社説明',
     calculation: '機械計算',
     source: '抽出原文（意味未点検）',
+    nativeFact: 'iXBRL原資料値（タグ・文脈対応）',
+    nativeSource: 'HTML原文（意味未点検）',
   };
   const link = (page: number) =>
     parseMarkdown(`[p.${page}](tdnet-page:${page})`, pdfUrl).replace(/^<p[^>]*>|<\/p>$/g, '');
@@ -210,7 +214,7 @@ function buildAnalysisHtml(
       <h6 style="font-size:14px;margin:0 0 8px;">${escapeMetadataText(issue.title)}</h6>
       <p data-analysis-conclusion style="margin:6px 0;">${escapeMetadataText(issue.conclusion)}</p>
       <p data-analysis-reading style="margin:6px 0;color:#374151;">${escapeMetadataText(issue.reading)}</p>
-      <p style="font-size:12px;margin:6px 0;">根拠ページ: ${pages.map(link).join('・')}</p>
+      <p style="font-size:12px;margin:6px 0;">${pages.length ? '根拠ページ: ' + pages.map(link).join('・') : 'XBRL/HTMLの根拠は詳細に表示'}</p>
       <details data-analysis-evidence><summary>根拠・確認条件を表示</summary>
       <ul>${evidence.map((e) => `<li><strong>${labels[e.kind]}:</strong> ${escapeMetadataText(e.text)}${e.context ? ` <span style="color:#6b7280;">${escapeMetadataText(e.context)}</span>` : ''}</li>`).join('')}</ul>
       ${issue.caveat.trim() ? `<p data-analysis-caveat><strong>判断の限界:</strong> ${escapeMetadataText(issue.caveat)}</p>` : ''}

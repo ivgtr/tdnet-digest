@@ -1,14 +1,10 @@
-/** One physical PDF and fixed wire responses for the extension boundary, not model quality. */
+/** One physical PDF and fixed source-first wire response; no model-quality claim. */
 import assert from 'node:assert/strict';
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { extractPdfPageLayout } from '../../src/lib/pdf-layout';
-import { candidateResponse } from '../../src/lib/fixtures/candidate-test-source';
-import { numberCandidate } from '../../src/lib/fixtures/v4-test-source';
-import {
-  generateVerifiedFactSummary,
-  parseFactSummary,
-  renderFacts,
-} from '../../src/lib/fact-summary';
+import { generateSourceSummary } from '../../src/lib/source-summary';
+import { ANALYSIS_VERSION } from '../../src/lib/additional-analysis';
+import { renderFacts } from '../../src/lib/fact-summary';
 import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { validatePresentation } from '../../src/lib/summary-presentation';
 import { buildSummaryHtml } from '../../src/content/utils/summaryHtmlBuilder';
@@ -35,61 +31,54 @@ export async function extensionSmokeFixture(outcome: SmokeOutcome) {
     await document.destroy();
   }
   const pages = [page];
-  const candidate = candidateResponse([numberCandidate(page)], pages, 'other');
-  // Source IDs refer to actual PDF.js extraction. Meaning and expected values stay explicit.
-  const sourceIds = page.blocks.map((block) => `source:${block.id}`);
-  const responses = [
-    candidate,
-    JSON.stringify({
-      version: 6,
-      contexts: [
-        {
-          id: 'business',
-          topic: 'other',
-          entity: null,
-          scope: null,
-          basis: null,
-          period: null,
-          state: 'unspecified',
-          conditions: [],
-          sourceIds,
-        },
-      ],
-      observations: [],
-      claims: [{ contextId: 'business', text: '販売体制を強化している。', sourceIds }],
-    }),
-  ];
+  const valueRow = page.blocks.find((block) => block.text.includes('100'));
+  assert.ok(valueRow, 'physical PDF extraction must contain the tested amount');
+  const evidenceIds = [`raw:${valueRow.id}`];
   return {
     pdf,
     pages,
-    candidate,
     response(body: { messages: Array<{ role: string; content: string }> }) {
       const prompt = body.messages.find((message) => message.role === 'user')?.content ?? '';
-      if (outcome === 'failure') return JSON.stringify({ candidateVersion: 0 });
-      // Discriminate public request payloads so a repair/new phase cannot consume the next reply.
-      if (prompt.includes('\n指標・説明: ')) {
-        const ids = JSON.parse(prompt.split('\n対象段落: ')[1]) as string[];
-        return JSON.stringify({
-          version: 2,
-          claims: [
-            { id: 'explanation-0', reason: outcome === 'partial' ? '説明の裏付けが不足' : null },
-          ],
-          sources: ids.map((id) => ({ id, reason: null })),
-        });
-      }
-      if (prompt.startsWith('{"facts":')) return responses[1];
-      return responses[0];
+      // Fail closed on a legacy extraction/repair request or an unexpected contract.
+      assert.match(prompt, /今回の要求は事実要約/);
+      assert.ok(prompt.includes(evidenceIds[0]));
+      if (outcome === 'failure') return '{invalid JSON';
+      return JSON.stringify({
+        version: ANALYSIS_VERSION,
+        overallSummary: { text: '営業利益100百万円を発表した。', evidenceIds },
+        issues: [
+          {
+            title: '営業利益の発表',
+            conclusion: '営業利益は100百万円。',
+            reading: '2026年3月期の連結経営成績として公表している。',
+            caveat: '',
+            nextCheck: '',
+            evidenceIds,
+          },
+          ...(outcome === 'partial'
+            ? [
+                {
+                  title: '参照不正の項目',
+                  conclusion: 'この項目は表示してはいけない。',
+                  reading: '存在しない根拠を参照している。',
+                  caveat: '',
+                  nextCheck: '',
+                  evidenceIds: ['raw:missing-smoke-source'],
+                },
+              ]
+            : []),
+        ],
+      });
     },
   };
 }
 
-/** Exercise the same wire fixtures through real code before any browser is imported/launched. */
+/** Exercise the active source-first path before importing or launching a browser. */
 export async function preflightExtensionSmoke(outcome: SmokeOutcome) {
   const fixture = await extensionSmokeFixture(outcome);
   const previousFetch = globalThis.fetch;
   let requests = 0;
   const phases: string[] = [];
-  // No server, credentials or network access. Any unexpected URL fails closed.
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), SMOKE_API);
     assert.equal(init?.method, 'POST');
@@ -105,39 +94,32 @@ export async function preflightExtensionSmoke(outcome: SmokeOutcome) {
   };
   try {
     const generate = () =>
-      generateVerifiedFactSummary(
+      generateSourceSummary(
         { provider: 'openai', model: 'fixture', apiKey: 'fixture' },
         'other',
-        fixture.pages.map((page) => page.text).join('\n'),
         fixture.pages,
-        (attempt) => {
-          phases.push(attempt.phase);
+        (snapshot) => {
+          if (snapshot.response !== null && !phases.length) phases.push('summary');
         }
       );
     if (outcome === 'failure') {
-      await assert.rejects(generate, /SCHEMA/);
-      assert.deepEqual(phases, ['first', 'repair']);
-      assert.equal(requests, 2);
+      await assert.rejects(generate, /invalid_json/);
+      assert.deepEqual(phases, ['summary']);
+      assert.equal(requests, 1, 'invalid output must not trigger a paid repair');
       return { fixture, requests, phases, result: null };
     }
     const result = await generate();
-    assert.deepEqual(phases, ['first', 'summary', 'summaryReview']);
-    assert.equal(requests, 3);
+    assert.deepEqual(phases, ['summary']);
+    assert.equal(requests, 1);
+    assert.equal(result.facts.facts.length, 0, 'raw-source summary must not invent verified facts');
+    assert.equal(result.presentation.sourceFirst?.summary?.issues.length, 1);
     assert.equal(
-      result.presentation.organization.status,
-      outcome === 'success' ? 'ready' : 'unavailable'
+      Boolean(result.presentation.sourceFirst?.summary?.notices.length),
+      outcome === 'partial'
     );
-    assert.equal(result.facts.facts.length, 1);
-    assert.equal(result.facts.facts[0].value, 100);
-    assert.equal(result.facts.facts[0].unit, '百万円');
-    assert.equal(result.facts.facts[0].period, '2026年3月期');
     const restored = JSON.parse(JSON.stringify(result));
     validateSavedFacts(restored.facts);
     validatePresentation(restored.presentation, restored.facts);
-    assert.deepEqual(
-      parseFactSummary(JSON.stringify(restored.facts), 'other', fixture.pages),
-      result.facts
-    );
     const rendered = renderFacts(restored.facts, restored.presentation);
     const html = buildSummaryHtml(rendered, null, {
       companyName: '株式会社テスト',
@@ -146,6 +128,7 @@ export async function preflightExtensionSmoke(outcome: SmokeOutcome) {
     });
     assert.match(html, /100/);
     assert.match(html, /百万円/);
+    assert.doesNotMatch(html, /この項目は表示してはいけない/);
     return { fixture, requests, phases, result };
   } finally {
     globalThis.fetch = previousFetch;
