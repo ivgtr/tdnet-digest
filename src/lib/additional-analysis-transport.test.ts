@@ -24,6 +24,10 @@ const facts = parseFactSummary(
 const presentation = buildPresentation(facts, [page]);
 const raw = JSON.stringify({
   version: 4,
+  overallSummary: {
+    text: '利益計上は確認できますが、持続性の評価には収益要因の裏付けが必要です。',
+    evidenceIds: [`fact:${facts.facts[0].id}`],
+  },
   issues: [
     {
       title: '利益の継続性',
@@ -70,6 +74,7 @@ describe('追加分析の通信から保存までの出力上限境界', () => {
         snapshots.push(value);
       });
       expect(result.issues).toHaveLength(1);
+      expect(result.overallSummary).toEqual(JSON.parse(raw).overallSummary);
       expect(result.notices).toContainEqual(
         expect.objectContaining({ code: 'output_limit', issueIndex: -1, severity: 'warning' })
       );

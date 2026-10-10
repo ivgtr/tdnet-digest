@@ -1,3 +1,4 @@
+import { acquireSourceComparisons } from './source-comparison';
 import { unchangedDividend, unchangedDividendReference } from './dividend-semantics';
 import type { DocumentType } from './document-type';
 import type { ExtractedPage } from '@/types/summaryMetadata';
@@ -208,7 +209,12 @@ export async function generateVerifiedFacts(
     { role: 'system', content: prompt.system },
     { role: 'user', content: prompt.user },
   ]);
-  const first = reviewCandidates(raw, documentType, pages, context);
+  const first = acquireSourceComparisons(
+    reviewCandidates(raw, documentType, pages, context),
+    documentType,
+    pages,
+    context
+  );
   const pendingSlots = (slots: CoverageSlot[]) =>
     slots.filter((s) => s.status !== 'satisfied' && s.status !== 'outsideSelection');
   const firstSlots = coverageReport(documentType, pages, first.facts, first.diagnostics, context);
@@ -289,7 +295,12 @@ export async function generateVerifiedFacts(
       true
     );
   }
-  const repaired = reviewCandidates(revised, documentType, repairPages, context);
+  const repaired = acquireSourceComparisons(
+    reviewCandidates(revised, documentType, repairPages, context),
+    documentType,
+    repairPages,
+    context
+  );
   let failure: string | null = null;
   if (repaired.envelopeValid)
     for (const candidate of JSON.parse(revised).candidates) {

@@ -7,6 +7,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateSavedFacts } from '../../src/lib/fact-cache';
 import { validatePresentation } from '../../src/lib/summary-presentation';
+import { decodeSummaryStorage } from '../../src/lib/summary-storage';
+import type { CachedSummary } from '../../src/types/summaryMetadata';
 import { SUMMARY_DIAGNOSTICS_KEY } from '../../src/lib/summary-trace';
 import {
   preflightExtensionSmoke,
@@ -211,7 +213,7 @@ export async function checkExtensionSmoke(args: string[]) {
           outcome === 'success' ? 'firstSuccess' : 'partialSuccess'
         );
         assert.equal(stored.caches.length, 1);
-        const saved = stored.caches[0][1];
+        const saved = (await decodeSummaryStorage(stored.caches[0][1])) as CachedSummary;
         validateSavedFacts(saved.facts);
         validatePresentation(saved.presentation, saved.facts);
         assert.deepEqual(saved.facts, preflight.result!.facts);

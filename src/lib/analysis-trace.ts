@@ -393,49 +393,102 @@ function boundedTrace(trace: AnalysisTrace): AnalysisTrace {
   }
   throw new Error('追加分析診断の識別情報が保存上限を超えています');
 }
+/** Terminal snapshots exist only in this service-worker instance. No storage/session
+ * permission or persistent recovery is implied; eviction/restart makes them unavailable. */
+interface AnalysisPersistenceFailure {
+  code: 'quota' | 'storage-error';
+  stage: 'read' | 'prepare' | 'write';
+}
+const failedTerminalTraces = new Map<
+  string,
+  {
+    trace: AnalysisTrace;
+    persistenceFailure: AnalysisPersistenceFailure;
+  }
+>();
+export interface AnalysisDiagnosticExport extends AnalysisTrace {
+  volatile?: true;
+  persistenceFailure?: AnalysisPersistenceFailure;
+  persistenceWarning?: string;
+}
+const volatileWarning =
+  '未保存の最終診断です。この一時記録は現在のサービスワーカーが終了するか、保持上限を超えると失われます';
+function retainFailedTerminal(
+  copy: AnalysisTrace,
+  persistenceFailure: AnalysisPersistenceFailure
+): void {
+  failedTerminalTraces.delete(copy.runId);
+  if (copy.outcome === 'running' || !copy.inputHash) return;
+  failedTerminalTraces.set(copy.runId, { trace: copy, persistenceFailure });
+  while (
+    failedTerminalTraces.size > ANALYSIS_DIAGNOSTICS_LIMITS.records ||
+    bytes([...failedTerminalTraces.values()]) > ANALYSIS_DIAGNOSTICS_LIMITS.bytes
+  ) {
+    failedTerminalTraces.delete(failedTerminalTraces.keys().next().value!);
+  }
+}
 let writeQueue: Promise<void> = Promise.resolve();
 export function saveAnalysisTrace(trace: AnalysisTrace): Promise<void> {
   // Snapshot when invoked, before queued work observes a later mutation.
   const copy = boundedTrace(trace);
-  const write = writeQueue.then(async () => {
-    const saved = await chrome.storage.local.get(ANALYSIS_DIAGNOSTICS_KEY);
-    const store = readStore(saved[ANALYSIS_DIAGNOSTICS_KEY]);
-    store.traces = store.traces.filter((item) => item.runId !== copy.runId);
-    store.traces.push(copy);
-    if (copy.inputHash) {
-      const prior = store.lastAttempts.find(
-        (item) => item.summaryResultId === copy.summaryResultId && item.inputHash === copy.inputHash
-      );
-      if (!prior || copy.intentAt > prior.intentAt || prior.runId === copy.runId) {
-        store.lastAttempts = store.lastAttempts.filter((item) => item !== prior);
-        store.lastAttempts.push({
-          version: 1,
-          runId: copy.runId,
-          summaryResultId: copy.summaryResultId,
-          inputHash: copy.inputHash,
-          pdfUrl: copy.pdfUrl,
-          intentAt: copy.intentAt,
-          persistence: 'saved',
-          outcome: copy.outcome,
-          error: copy.error,
-        });
-        store.lastAttempts.sort((a, b) => a.intentAt - b.intentAt);
+  let stage: AnalysisPersistenceFailure['stage'] = 'read';
+  const write = writeQueue
+    .then(async () => {
+      const saved = await chrome.storage.local.get(ANALYSIS_DIAGNOSTICS_KEY);
+      stage = 'prepare';
+      const store = readStore(saved[ANALYSIS_DIAGNOSTICS_KEY]);
+      store.traces = store.traces.filter((item) => item.runId !== copy.runId);
+      store.traces.push(copy);
+      if (copy.inputHash) {
+        const prior = store.lastAttempts.find(
+          (item) =>
+            item.summaryResultId === copy.summaryResultId && item.inputHash === copy.inputHash
+        );
+        if (!prior || copy.intentAt > prior.intentAt || prior.runId === copy.runId) {
+          store.lastAttempts = store.lastAttempts.filter((item) => item !== prior);
+          store.lastAttempts.push({
+            version: 1,
+            runId: copy.runId,
+            summaryResultId: copy.summaryResultId,
+            inputHash: copy.inputHash,
+            pdfUrl: copy.pdfUrl,
+            intentAt: copy.intentAt,
+            persistence: 'saved',
+            outcome: copy.outcome,
+            error: copy.error,
+          });
+          store.lastAttempts.sort((a, b) => a.intentAt - b.intentAt);
+        }
       }
-    }
-    store.lastAttempts = store.lastAttempts.slice(-ANALYSIS_DIAGNOSTICS_LIMITS.records);
-    while (
-      store.traces.length > ANALYSIS_DIAGNOSTICS_LIMITS.records ||
-      bytes(store) > ANALYSIS_DIAGNOSTICS_LIMITS.bytes
-    ) {
-      const completed = store.traces.findIndex(
-        (item) => item.runId !== copy.runId && item.outcome !== 'running'
-      );
-      if (store.traces.length > 1) store.traces.splice(completed < 0 ? 0 : completed, 1);
-      else if (store.lastAttempts.length > 1) store.lastAttempts.shift();
-      else throw new Error('追加分析診断の識別情報が保存上限を超えています');
-    }
-    await chrome.storage.local.set({ [ANALYSIS_DIAGNOSTICS_KEY]: store });
-  });
+      store.lastAttempts = store.lastAttempts.slice(-ANALYSIS_DIAGNOSTICS_LIMITS.records);
+      while (
+        store.traces.length > ANALYSIS_DIAGNOSTICS_LIMITS.records ||
+        bytes(store) > ANALYSIS_DIAGNOSTICS_LIMITS.bytes
+      ) {
+        const completed = store.traces.findIndex(
+          (item) => item.runId !== copy.runId && item.outcome !== 'running'
+        );
+        if (store.traces.length > 1) store.traces.splice(completed < 0 ? 0 : completed, 1);
+        else if (store.lastAttempts.length > 1) store.lastAttempts.shift();
+        else throw new Error('追加分析診断の識別情報が保存上限を超えています');
+      }
+      stage = 'write';
+      await chrome.storage.local.set({ [ANALYSIS_DIAGNOSTICS_KEY]: store });
+    })
+    .then(
+      () => {
+        failedTerminalTraces.delete(copy.runId);
+      },
+      (error: unknown) => {
+        // Classify only; raw storage errors can contain private endpoint/config data.
+        const message = error instanceof Error ? error.message : String(error);
+        retainFailedTerminal(copy, {
+          code: /quota|QUOTA_BYTES|容量|上限/i.test(message) ? 'quota' : 'storage-error',
+          stage,
+        });
+        throw error;
+      }
+    );
   writeQueue = write.then(
     () => {},
     () => {}
@@ -448,7 +501,28 @@ export async function loadAnalysisTrace(
   summaryResultId: string,
   persistence?: DiagnosticPersistence,
   expectedInputHash?: string
-): Promise<AnalysisTrace> {
+): Promise<AnalysisDiagnosticExport> {
+  if (persistence === 'failed') {
+    const retained = failedTerminalTraces.get(runId);
+    const terminal = retained?.trace;
+    if (
+      terminal &&
+      expectedInputHash !== undefined &&
+      terminal.inputHash === expectedInputHash &&
+      terminal.summaryResultId === summaryResultId &&
+      terminal.pdfUrl === normalizeTdnetPdfUrl(pdfUrl)
+    )
+      return {
+        ...snapshot(terminal),
+        volatile: true,
+        persistenceWarning: volatileWarning,
+        persistenceFailure: { ...retained!.persistenceFailure },
+      };
+    // Never pass off an older running record as the missing final result.
+    throw new Error(
+      '追加分析の未保存の最終診断は利用できません。一時記録の保持上限またはサービスワーカーの再起動により失われた可能性があります'
+    );
+  }
   const saved = await chrome.storage.local.get(ANALYSIS_DIAGNOSTICS_KEY);
   const trace = readStore(saved[ANALYSIS_DIAGNOSTICS_KEY]).traces.find(
     (item) => item.runId === runId
@@ -459,16 +533,54 @@ export async function loadAnalysisTrace(
     trace.pdfUrl !== normalizeTdnetPdfUrl(pdfUrl) ||
     (expectedInputHash !== undefined && trace.inputHash !== expectedInputHash)
   )
-    throw new Error(
-      persistence === 'failed' ? 'この追加分析の診断を保存できませんでした' : unavailable
-    );
-  // A saved running snapshot is useful after interruption, but must not pretend
-  // to be the missing terminal outcome following a failed final write.
-  if (persistence === 'failed')
-    throw new Error(
-      '追加分析の最終診断を保存できませんでした。途中の記録だけが残っている可能性があります'
-    );
+    throw new Error(unavailable);
   return snapshot(trace);
+}
+/** Content scripts have separate module memory; ask the worker for failed writes.
+ * Callers must still discard replies after their current UI/request epoch changes. */
+export async function requestAnalysisTrace(
+  pdfUrl: string,
+  runId: string,
+  summaryResultId: string,
+  persistence?: DiagnosticPersistence,
+  expectedInputHash?: string
+): Promise<AnalysisDiagnosticExport> {
+  if (persistence !== 'failed')
+    return loadAnalysisTrace(pdfUrl, runId, summaryResultId, persistence, expectedInputHash);
+  const response: unknown = await chrome.runtime.sendMessage({
+    action: 'getAnalysisDiagnostic',
+    pdfUrl,
+    runId,
+    summaryResultId,
+    inputHash: expectedInputHash,
+  });
+  if (record(response) && typeof response.error === 'string') throw new Error(response.error);
+  const trace = record(response) ? response.trace : undefined;
+  if (
+    !isTrace(trace) ||
+    trace.runId !== runId ||
+    trace.summaryResultId !== summaryResultId ||
+    !expectedInputHash ||
+    trace.inputHash !== expectedInputHash ||
+    trace.pdfUrl !== normalizeTdnetPdfUrl(pdfUrl) ||
+    trace.outcome === 'running' ||
+    !record(trace) ||
+    trace.volatile !== true ||
+    !record(trace.persistenceFailure) ||
+    !exact(trace.persistenceFailure, ['code', 'stage']) ||
+    !['quota', 'storage-error'].includes(String(trace.persistenceFailure.code)) ||
+    !['read', 'prepare', 'write'].includes(String(trace.persistenceFailure.stage))
+  )
+    throw new Error(unavailable);
+  return {
+    ...snapshot(trace),
+    volatile: true,
+    persistenceWarning: volatileWarning,
+    persistenceFailure: {
+      code: trace.persistenceFailure.code as AnalysisPersistenceFailure['code'],
+      stage: trace.persistenceFailure.stage as AnalysisPersistenceFailure['stage'],
+    },
+  };
 }
 export function readAnalysisDiagnosticReference(
   value: unknown,

@@ -311,7 +311,8 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     expect(reading).toContain(statement);
     expect(result.facts.facts[0].semantics.conditions).toContain(condition);
     expect(reading).toContain('当局の承認を条件とします');
-    expect(reading).toContain('補足要約の未整理部分');
+    expect(reading).toContain('一部の補足説明・数値は要約に反映できていません');
+    expect(reading).not.toContain('補足要約の未整理部分');
     const savedFacts: unknown = JSON.parse(JSON.stringify(result.facts));
     validateSavedFacts(savedFacts);
     const restored = revalidatePresentation(
@@ -513,7 +514,7 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
       '↑増加 約+50.0%',
       '↑増加（+10百万円）',
       '価格転嫁',
-      '補足要約の未整理部分',
+      '一部の補足説明・数値は要約に反映できていません',
     ])
       expect(reading).toContain(expected);
     expect(reading).not.toContain('来期の増収が確定');

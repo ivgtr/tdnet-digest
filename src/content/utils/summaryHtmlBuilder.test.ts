@@ -63,6 +63,10 @@ describe('追加分析の表示境界', () => {
       const data: AdditionalAnalysis = {
         version: 4,
         inputHash: 'fixture',
+        overallSummary: {
+          text: `売上の伸びと利益の質を総合して見る必要があります ${unsafe}`,
+          evidenceIds: ['fact:verified'],
+        },
         candidates: [
           { ...issue, title: '隔離した本文は見せない', evidenceIds: ['missing'] },
           issue,
@@ -141,13 +145,23 @@ describe('追加分析の表示境界', () => {
       expect(notices.textContent).not.toContain('元の論点0');
       expect(root.textContent).not.toContain('隔離した本文は見せない');
       expect(root.querySelectorAll('img,script,[onerror]')).toHaveLength(0);
+      const overview = root.querySelector('[data-analysis-overall-summary]')!;
+      expect(overview.textContent).toContain(data.overallSummary!.text);
+      expect(overview.closest('details')).toBeNull();
+      expect(overview.querySelector<HTMLDetailsElement>('details')!.open).toBe(false);
+      expect(overview.textContent).toContain('確認済み事実');
+      if (!allQuarantined)
+        expect(
+          overview.compareDocumentPosition(root.querySelector('article')!) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
       expect(root.querySelectorAll('article')).toHaveLength(allQuarantined ? 0 : 1);
       if (allQuarantined) {
         expect(root.textContent).toContain('表示できる論点はありません');
         expect(notices.textContent).toContain('非表示の論点2件');
       } else {
         expect(notices.textContent).toContain('元の論点2・注意: 文章が長い');
-        expect(root.querySelector('h6')?.textContent).toBe(issue.title);
+        expect(root.querySelector('article h6')?.textContent).toBe(issue.title);
         expect(root.querySelector('[data-analysis-conclusion]')?.closest('details')).toBeNull();
         expect(root.querySelector('[data-analysis-reading]')?.textContent).toBe(issue.reading);
         const evidenceDetails = root.querySelector<HTMLDetailsElement>('[data-analysis-evidence]')!;

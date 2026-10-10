@@ -672,7 +672,7 @@ describe('生成専用候補と原文文脈の契約', () => {
     ).toMatchObject({ kind: 'event', state: 'forecast', periodKind: 'none' });
   });
   // These repair flows replay the complete PDF fixture through several validation passes.
-  it('当年だけの応答を受理せず、原文の前年値だけを修復して保存する', async () => {
+  it('原文で前年金額を補完し、未補完のEPSだけを修復して保存する', async () => {
     const r = review(candidates);
     expect(r.unverified).toEqual([]);
     expect(r.facts).toHaveLength(fixture.length);
@@ -723,12 +723,34 @@ describe('生成専用候補と原文文脈の契約', () => {
     vi.mocked(generateText)
       .mockReset()
       .mockResolvedValueOnce(raw(candidates.slice(0, 14)))
-      .mockResolvedValueOnce(raw(candidates.slice(14)));
+      .mockResolvedValueOnce(
+        raw(candidates.slice(14).filter((c) => c.meaning.metricKind === 'perShare'))
+      );
     const repaired = await generateVerifiedFactSummary(config, 'earnings', 'source', pages);
     expect(repaired.repairAttempted).toBe(true);
-    expect(repaired.facts.facts).toEqual(r.facts);
+    // Exact source facts remain identical; deterministic prior amounts inherit
+    // the selected current metric's importance instead of model priority.
+    expect([...repaired.facts.facts].sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+      r.facts
+        .map((fact) =>
+          fact.period === '2025年3月期' && fact.semantics.metricKind === 'amount'
+            ? { ...fact, importance: 'key' }
+            : fact
+        )
+        .sort((a, b) => a.id.localeCompare(b.id))
+    );
+    expect(parseFactSummary(JSON.stringify(repaired.facts), 'earnings', pages)).toEqual(
+      repaired.facts
+    );
     expect(vi.mocked(generateText)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(generateText).mock.calls[1][1][1].content).toContain('修復方式=delta');
+    const repairInput = vi.mocked(generateText).mock.calls[1][1][1].content;
+    expect(repairInput).toContain('修復方式=delta');
+    const missing = JSON.parse(
+      repairInput.split('不足slotの型と原文: ')[1].split('\n独立した診断:')[0]
+    );
+    expect(missing).toHaveLength(1);
+    expect(missing[0].expected.metricKind).toBe('perShare');
+    expect(missing[0].expected.period).toBe('2025年3月期');
   }, 30_000);
   it('通期の前年値を四半期の前年比較へ転用しない', () => {
     const items = structuredClone(corpus[0].pages[0].items);

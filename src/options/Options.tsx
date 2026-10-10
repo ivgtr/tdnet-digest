@@ -1,10 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import { decodeSummaryStorage, isSummaryStorageEntry } from '@/lib/summary-storage';
+import React, { useEffect, useState, useRef } from 'react';
 import type { ExtractionMode, CachedSummary } from '@/types/summaryMetadata';
 import { ANALYSIS_CACHE_DIAGNOSTIC_PREFIX } from '@/lib/analysis-trace';
 import { LLM_PROVIDERS, getProvider } from '@/lib/llm-providers';
 import { customApiPermission, SCORING_PDF_PERMISSIONS } from '@/lib/host-permissions';
 
 const CACHE_PREFIX = 'summaryCacheV2:';
+type CacheListEntry = Pick<
+  CachedSummary,
+  'title' | 'companyName' | 'code' | 'cachedAt' | 'resultId'
+>;
 
 const Options: React.FC = () => {
   const [provider, setProvider] = useState('openai');
@@ -17,7 +22,14 @@ const Options: React.FC = () => {
   const [saved, setSaved] = useState(false);
   const [autoSwitchedToCustom, setAutoSwitchedToCustom] = useState(false);
   const [hasAutoSwitched, setHasAutoSwitched] = useState(false);
-  const [cacheEntries, setCacheEntries] = useState<[string, CachedSummary][]>([]);
+  const cacheLoadRequest = useRef(0);
+  useEffect(
+    () => () => {
+      cacheLoadRequest.current++;
+    },
+    []
+  );
+  const [cacheEntries, setCacheEntries] = useState<[string, CacheListEntry][]>([]);
   const [permissionMessage, setPermissionMessage] = useState('');
 
   const SETTINGS_KEYS = [
@@ -114,15 +126,35 @@ const Options: React.FC = () => {
   };
 
   const loadCacheEntries = () => {
+    const request = ++cacheLoadRequest.current;
     chrome.storage.local.get(null, (data) => {
-      const entries = Object.entries(data)
-        .filter(
-          ([key, value]) =>
-            key.startsWith(CACHE_PREFIX) && value && typeof value === 'object' && 'facts' in value
-        )
-        .map(([key, value]) => [key, value as CachedSummary] as [string, CachedSummary])
-        .sort(([, a], [, b]) => b.cachedAt - a.cachedAt);
-      setCacheEntries(entries);
+      void (async () => {
+        const entries: [string, CacheListEntry][] = [];
+        // Decode one ledger at a time; retain only list metadata, never the
+        // expanded source documents for every cached summary in React state.
+        for (const [key, value] of Object.entries(data)) {
+          if (request !== cacheLoadRequest.current) return;
+          if (!key.startsWith(CACHE_PREFIX) || !isSummaryStorageEntry(value)) continue;
+          try {
+            const decoded = (await decodeSummaryStorage(value)) as CachedSummary;
+            const { title, companyName, code, cachedAt, resultId } = decoded;
+            entries.push([key, { title, companyName, code, cachedAt, resultId }]);
+          } catch {
+            entries.push([
+              key,
+              {
+                title: '読み込めない保存要約',
+                companyName: '',
+                code: '',
+                cachedAt: 0,
+                resultId: '',
+              },
+            ]);
+          }
+        }
+        if (request !== cacheLoadRequest.current) return;
+        setCacheEntries(entries.sort(([, a], [, b]) => b.cachedAt - a.cachedAt));
+      })();
     });
   };
 
@@ -131,7 +163,7 @@ const Options: React.FC = () => {
     chrome.storage.local.remove(
       [
         key,
-        ...(entry
+        ...(entry?.resultId
           ? [
               `scoreCacheV1:${entry.resultId}`,
               `scoreCacheV2:${entry.resultId}`,

@@ -3,6 +3,7 @@ import {
   ANALYSIS_DIAGNOSTICS_KEY,
   ANALYSIS_DIAGNOSTICS_LIMITS,
   loadAnalysisTrace,
+  requestAnalysisTrace,
   readLastAnalysisAttempt,
   saveAnalysisTrace,
   readAnalysisDiagnosticReference,
@@ -371,13 +372,129 @@ describe('追加分析の実行別診断', () => {
     await expect(saveAnalysisTrace(item)).rejects.toThrow('quota');
     await expect(
       loadAnalysisTrace(pdfUrl, item.runId, item.summaryResultId, 'failed')
-    ).rejects.toThrow('途中の記録');
+    ).rejects.toThrow('未保存の最終診断');
+    expect(
+      await loadAnalysisTrace(pdfUrl, item.runId, item.summaryResultId, 'failed', item.inputHash!)
+    ).toMatchObject({
+      outcome: 'success',
+      response: item.response,
+      volatile: true,
+      persistenceWarning: expect.stringContaining('未保存'),
+    });
     expect(await loadAnalysisTrace(pdfUrl, item.runId, item.summaryResultId)).toMatchObject({
       outcome: 'running',
     });
     const next = trace('next');
     await saveAnalysisTrace(next);
     expect(await loadAnalysisTrace(pdfUrl, next.runId, next.summaryResultId)).toEqual(next);
+  });
+
+  // New boundaries: failed final save is exportable only in this worker and for
+  // the exact requested identity; retention has the same count/byte limits as disk.
+  it('未保存の最終記録は呼出時に固定し、別実行・結果・入力・PDFへ流用しない', async () => {
+    const item = trace('volatile-identity');
+    vi.mocked(chrome.storage.local.set).mockRejectedValue(new Error('quota'));
+    const pending = saveAnalysisTrace(item);
+    item.response = 'changed after save';
+    await expect(pending).rejects.toThrow('quota');
+    const load = (
+      runId = item.runId,
+      result = item.summaryResultId,
+      input = item.inputHash!,
+      pdf = pdfUrl
+    ) => loadAnalysisTrace(pdf, runId, result, 'failed', input);
+    const saved = await load();
+    expect(saved.response).not.toBe(item.response);
+    saved.input!.evidence[0].text = 'changed after export';
+    expect((await load()).input!.evidence[0].text).toBe('fixture');
+    for (const args of [
+      ['other'],
+      [item.runId, 'other'],
+      [item.runId, item.summaryResultId, 'other'],
+      [item.runId, item.summaryResultId, item.inputHash!, 'other.pdf'],
+    ]) {
+      await expect(load(...args)).rejects.toThrow('未保存の最終診断');
+    }
+    vi.resetModules();
+    const restarted = await import('./analysis-trace');
+    await expect(
+      restarted.loadAnalysisTrace(
+        pdfUrl,
+        item.runId,
+        item.summaryResultId,
+        'failed',
+        item.inputHash!
+      )
+    ).rejects.toThrow('再起動');
+  });
+
+  it.each(['count', 'bytes'] as const)(
+    '未保存記録の%s上限では古い記録を復活させない',
+    async (boundary) => {
+      vi.mocked(chrome.storage.local.set).mockRejectedValue(new Error('quota'));
+      const count = boundary === 'count' ? 13 : 12;
+      const items = Array.from({ length: count }, (_, i) => ({
+        ...trace(`volatile-${boundary}-${i}`),
+        response: boundary === 'bytes' ? 'あ'.repeat(40_000) : '{}',
+      }));
+      for (const item of items) await expect(saveAnalysisTrace(item)).rejects.toThrow('quota');
+      const load = (item: AnalysisTrace) =>
+        loadAnalysisTrace(pdfUrl, item.runId, item.summaryResultId, 'failed', item.inputHash!);
+      await expect(load(items[0])).rejects.toThrow('保持上限');
+      expect(await load(items.at(-1)!)).toMatchObject({ volatile: true });
+    }
+  );
+
+  it.each([
+    { stage: 'write', code: 'quota', message: 'QUOTA_BYTES secret-api-key' },
+    { stage: 'read', code: 'storage-error', message: 'read failed private-endpoint' },
+  ] as const)(
+    '未保存診断は生成結果と別に安全な保存理由を保持する: $stage/$code',
+    async ({ stage, code, message }) => {
+      const item = trace(`safe-storage-error-${stage}`);
+      if (stage === 'write')
+        vi.mocked(chrome.storage.local.set).mockRejectedValueOnce(new Error(message));
+      else vi.mocked(chrome.storage.local.get).mockRejectedValueOnce(new Error(message));
+      await expect(saveAnalysisTrace(item)).rejects.toThrow(message);
+      const exported = await loadAnalysisTrace(
+        pdfUrl,
+        item.runId,
+        item.summaryResultId,
+        'failed',
+        item.inputHash!
+      );
+      expect(exported).toMatchObject({
+        outcome: 'success',
+        error: null,
+        persistenceFailure: { code, stage },
+      });
+      expect(JSON.stringify(exported)).not.toMatch(/secret-api-key|private-endpoint/);
+    }
+  );
+
+  it('content側は未保存診断だけをworkerへ要求し、異なる応答や途中記録を拒否する', async () => {
+    const item = {
+      ...trace('bridge'),
+      persistenceFailure: { code: 'quota' as const, stage: 'write' as const },
+    };
+    const sendMessage = vi.fn().mockResolvedValue({ trace: { ...item, volatile: true } });
+    Object.assign(chrome, { runtime: { sendMessage } });
+    const load = () =>
+      requestAnalysisTrace(pdfUrl, item.runId, item.summaryResultId, 'failed', item.inputHash!);
+    expect(await load()).toMatchObject({ runId: item.runId, volatile: true });
+    expect(sendMessage).toHaveBeenCalledWith({
+      action: 'getAnalysisDiagnostic',
+      pdfUrl,
+      runId: item.runId,
+      summaryResultId: item.summaryResultId,
+      inputHash: item.inputHash,
+    });
+    for (const change of [{ runId: 'other' }, { outcome: 'running' }, { volatile: undefined }]) {
+      sendMessage.mockResolvedValueOnce({ trace: { ...item, volatile: true, ...change } });
+      await expect(load()).rejects.toThrow('対応する診断');
+    }
+    sendMessage.mockResolvedValueOnce({ error: '再起動後は利用できません' });
+    await expect(load()).rejects.toThrow('再起動後');
   });
 
   it('直近の試行は応答完了順でなく開始順に結び、別結果・別入力へ混ぜない', async () => {

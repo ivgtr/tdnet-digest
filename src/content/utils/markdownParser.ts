@@ -193,17 +193,20 @@ export function parseSummaryMarkdown(markdown: string, pdfUrl?: string): string 
   let start = 0;
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
+    if (token.type !== 'heading') continue;
+    const unresolved = token.depth === 2 && token.text === '補足要約の未整理部分';
     if (
-      token.type !== 'heading' ||
-      token.depth !== 3 ||
-      !['原文を見る', '確認の詳細（原文）'].includes(token.text)
+      !unresolved &&
+      (token.depth !== 3 || !['原文を見る', '確認の詳細（原文）'].includes(token.text))
     )
       continue;
     html += parser.parser(tokens.slice(start, i));
     let end = i + 1;
     while (end < tokens.length) {
       const next = tokens[end];
-      if (next.type === 'heading' && next.depth <= 3) break;
+      if (next.type === 'heading' && next.depth <= (unresolved ? 2 : 3)) {
+        if (!(unresolved && next.depth === 2 && next.text === '原文')) break;
+      }
       end++;
     }
     const pages = new Set<number>();
@@ -211,18 +214,32 @@ export function parseSummaryMarkdown(markdown: string, pdfUrl?: string): string 
       if (item.type === 'link' && /^tdnet-page:[1-9]\d*$/.test(item.href))
         pages.add(Number(item.href.slice('tdnet-page:'.length)));
     });
+    const body = tokens
+      .slice(i + 1, end)
+      .filter(
+        (item) =>
+          !(
+            unresolved &&
+            item.type === 'heading' &&
+            ((item.depth === 2 && item.text === '原文') ||
+              (item.depth === 3 && item.text === '原文を見る'))
+          )
+      );
     const label =
-      token.text +
+      (unresolved ? '原文を見る' : token.text) +
       (pages.size
         ? `（${[...pages]
             .sort((a, b) => a - b)
             .map((page) => `p.${page}`)
             .join('、')}）`
         : '');
+    if (unresolved)
+      html +=
+        '<p data-summary-incomplete style="font-size:12px;color:#92400e;margin:6px 0;">一部の補足説明・数値は要約に反映できていません。</p>';
     html +=
       '<details class="tdnet-digest-source" style="margin:8px 0;">' +
       `<summary style="cursor:pointer;font-size:12px;color:#6b7280;padding:4px 0;">${escapeHtml(label)}</summary>` +
-      parser.parser(tokens.slice(i + 1, end)) +
+      parser.parser(body) +
       '</details>';
     start = end;
     i = end - 1;

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ANALYSIS_CACHE_DIAGNOSTIC_PREFIX, ANALYSIS_DIAGNOSTICS_KEY } from '@/lib/analysis-trace';
 import { SUMMARY_DIAGNOSTICS_KEY } from '@/lib/summary-trace';
 import Options from './Options';
+import { encodeSummaryStorage } from '@/lib/summary-storage';
+import type { CachedSummary } from '@/types/summaryMetadata';
 
 let root: Root | undefined;
 afterEach(async () => {
@@ -15,9 +17,14 @@ afterEach(async () => {
 });
 
 describe('追加分析キャッシュと診断参照の削除', () => {
-  it.each(['削除', 'すべて削除'])(
-    '%sで成功キャッシュの参照も消し、上限付き実行履歴は別に保つ',
-    async (label) => {
+  it.each([
+    ['削除', false],
+    ['すべて削除', false],
+    ['削除', true],
+    ['すべて削除', true],
+  ] as const)(
+    '%sで成功キャッシュの参照も消し、上限付き実行履歴は別に保つ（圧縮=%s）',
+    async (label, compressed) => {
       const stored: Record<string, unknown> = {
         'summaryCacheV2:fixture': {
           resultId: 'summary-result',
@@ -33,6 +40,11 @@ describe('追加分析キャッシュと診断参照の削除', () => {
         [ANALYSIS_DIAGNOSTICS_KEY]: { version: 1, traces: [] },
         [SUMMARY_DIAGNOSTICS_KEY]: { version: 1, traces: [] },
       };
+      if (compressed)
+        stored['summaryCacheV2:fixture'] = await encodeSummaryStorage({
+          ...(stored['summaryCacheV2:fixture'] as CachedSummary),
+          summary: '原文'.repeat(150000),
+        });
       vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
       vi.stubGlobal('chrome', {
         storage: {
@@ -50,6 +62,10 @@ describe('追加分析キャッシュと診断参照の削除', () => {
       document.body.append(container);
       root = createRoot(container);
       await act(async () => root!.render(createElement(Options)));
+      await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(container.textContent).toContain('fixture');
+      });
       const button = Array.from(container.querySelectorAll('button')).find(
         (item) => item.textContent === label
       )!;

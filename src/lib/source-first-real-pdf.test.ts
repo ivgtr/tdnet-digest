@@ -10,6 +10,10 @@ import {
   parseAnalysis,
   parseAnalysisResponse,
 } from './additional-analysis';
+import { acquireSourceComparisons } from './source-comparison';
+import { buildDocumentContext } from './document-context';
+import { summaryComparison, comparisonGrowth } from './summary-comparison';
+import { renderFacts } from './fact-summary';
 import { reviewCandidates } from './fact-candidates';
 import { buildAnalysisCalculations } from './analysis-calculations';
 import type { FactSummary } from './fact-contract';
@@ -111,6 +115,33 @@ describe('source-first public PDF regression', () => {
       ['税引前利益', '25204', '百万円'],
       ['税引前利益', '65500', '百万円'],
     ]);
+    // A selected current cell must recover its omitted prior-year partner through
+    // the ordinary verifier, independently of a model recalling the prior cell.
+    const currentOnly = pretaxCandidates();
+    currentOnly.candidates = currentOnly.candidates.slice(0, 1);
+    currentOnly.candidates[0].importance = 'detail';
+    currentOnly.candidates[0].meaning.period = '2027年2月期中間期';
+    const acquired = acquireSourceComparisons(
+      reviewCandidates(JSON.stringify(currentOnly), 'earnings', pages),
+      'earnings',
+      pages,
+      buildDocumentContext(pages)
+    );
+    expect(acquired.facts.map((f) => f.quantity?.decimal)).toEqual(['25963', '25204']);
+    expect(acquired.facts[1].evidence).toMatchObject({ valueId: 'p1s62', metricIds: ['p1s38'] });
+    const comparison = summaryComparison(acquired.facts[0], acquired.facts)!;
+    expect(comparisonGrowth(acquired.facts[0], comparison)).toEqual({
+      kind: 'change',
+      rate: '+3.0%',
+    });
+    const acquiredFacts = { ...noFacts, facts: acquired.facts };
+    const acquiredDisplay = buildPresentation(acquiredFacts, pages);
+    const rendered = renderFacts(acquiredFacts, acquiredDisplay);
+    expect(rendered).toContain('25,204');
+    expect(rendered).not.toContain('前年の値が要約に未抽出');
+    expect(
+      renderFacts(acquiredFacts, revalidatePresentation(acquiredDisplay, acquiredFacts, pages))
+    ).toBe(rendered);
     const facts = { ...noFacts, facts: reviewed.facts };
     const display = buildPresentation(facts, pages);
     const selected = buildAnalysisInput(facts, display);
