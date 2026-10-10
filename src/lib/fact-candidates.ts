@@ -46,6 +46,7 @@ import {
   assertionKinds,
 } from './assertion-semantics';
 import { assertionId, sourceTableId } from './source-provenance';
+import { sourceDeclaredTables } from './source-declared-tables';
 import { selectableFactCapacity } from './summary-source-inventory';
 
 export const CANDIDATE_VERSION = 4;
@@ -723,6 +724,7 @@ export function serializeCandidateSource(
           ),
         }
       : {}),
+    sourceDeclaredTables: sourceDeclaredTables(pages, context),
     declarations,
     contextTemplates: templates,
     unitContexts: units,

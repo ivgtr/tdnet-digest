@@ -459,7 +459,7 @@ async function handleFollowup(
   )
     throw new Error('要約結果の識別子が一致しません');
   if (request.action === 'analyze')
-    return { analysis: await analyzeFacts(config, facts, presentation, diagnostic) };
+    return { analysis: await analyzeFacts(config, facts, presentation, diagnostic, extraction.pages) };
   if (!settings.experimentalScoring) throw new Error('実験的スコアがOFFです');
   const score = await attachScore(
     config,

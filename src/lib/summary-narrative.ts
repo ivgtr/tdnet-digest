@@ -54,7 +54,8 @@ function displayQuantities(block: { id: string; text: string }) {
   const source = block.text.normalize('NFKC');
   const original = proseQuantities(block);
   const added = [
-    ...source.matchAll(/[△▲−-]?(?:\d[\d,]*(?:兆|億|千万|百万|十万|万|千|百|十)){2,}\d*円/g),
+    // Whitespace may separate complete scale groups, never digits within a group.
+    ...source.matchAll(/[△▲−-]?(?:\d[\d,]*(?:兆|億|千万|百万|十万|万|千|百|十)[^\S\n]*){2,}\d*円/g),
     ...source.matchAll(
       /\d[\d,]*(?:万)?(?:つ|区分|領域|項目|部門|分野|点|拠点|機関|世帯|カ国|割|テーマ)/g
     ),
@@ -143,6 +144,39 @@ function completePhysicalQuantity(
     spanIds: ids,
     width: Math.max(native.x + native.width, last.x + last.width) - native.x,
   };
+}
+
+/** A labelled row unit overrides a column caption only inside one proved table.
+ * This is source syntax, not a metric-name list: e.g. 増減率（％） or 数量（台）.
+ * A nearby caption in another row/table cannot lend its unit to these cells. */
+export function explicitTableRowUnit(
+  page: ExtractedPage,
+  quantityId: string
+): { unit: string; spanIds: string[] } | null {
+  const quantity = page.quantities.find((q) => q.id === quantityId);
+  const tables = page.tableRegions.filter((table) => table.valueIds.includes(quantityId));
+  if (!quantity || tables.length !== 1) return null;
+  const table = tables[0];
+  const row = page.spans.filter(
+    (span) =>
+      table.spanIds.includes(span.id) &&
+      Math.abs(span.y - quantity.y) <= Math.min(span.height, quantity.height) * 0.25
+  );
+  const cells = page.quantities.filter(
+    (q) =>
+      table.valueIds.includes(q.id) &&
+      Math.abs(q.y - quantity.y) <= Math.min(q.height, quantity.height) * 0.25
+  );
+  if (!cells.length) return null;
+  const firstX = Math.min(...cells.map((q) => q.x));
+  const labels = row.filter((span) => span.x + span.width <= firstX);
+  // Do not cross two separately labelled groups on one physical line.
+  if (row.some((span) => span.x >= firstX && !cells.some((q) => q.spanIds.includes(span.id))))
+    return null;
+  const text = compact(labels.map((span) => span.text).join(''));
+  const match = text.match(/^[^()。！？]+\(([^()]+)\)$/);
+  const unit = match ? declaredQuantityUnit(match[1]) : null;
+  return unit && isUncaptionedUnit(unit) ? { unit, spanIds: labels.map((span) => span.id) } : null;
 }
 
 export function narrativeValues(
@@ -299,22 +333,25 @@ export function narrativeValues(
             : [];
       const commonUnit =
         common.length === 1 && columnUnits.every((u) => u === common[0]) ? common[0] : null;
+      const rowUnit = explicitTableRowUnit(page, q.id);
       const unitSources =
         parsed.unit === null &&
-        (adjacentUnit !== null || columnUnit !== null || commonUnit !== null)
+        (adjacentUnit !== null || rowUnit !== null || columnUnit !== null || commonUnit !== null)
           ? excerpts.filter((e) =>
               adjacentUnit !== null
                 ? e.spanIds.includes(adjacent!.id)
-                : columnUnit !== null
-                  ? columnContext!.some((s) => e.spanIds.includes(s.id))
-                  : captions.some((c) => e.spanIds.includes(c.id))
+                : rowUnit !== null
+                  ? rowUnit.spanIds.some((id) => e.spanIds.includes(id))
+                  : columnUnit !== null
+                    ? columnContext!.some((s) => e.spanIds.includes(s.id))
+                    : captions.some((c) => e.spanIds.includes(c.id))
             )
           : [];
       values.set(q.id, {
         id: q.id,
         raw: q.text,
         decimal: parsed.decimal,
-        unit: parsed.unit ?? adjacentUnit ?? columnUnit ?? commonUnit,
+        unit: parsed.unit ?? adjacentUnit ?? rowUnit?.unit ?? columnUnit ?? commonUnit,
         sourceIds: [...new Set([...sources, ...unitSources].map((e) => e.id))],
       });
       // A neighboring unit is part of this literal's physical extent only when

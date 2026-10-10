@@ -147,10 +147,15 @@ describe('追加分析の表示境界', () => {
         expect(notices.textContent).toContain('非表示の論点2件');
       } else {
         expect(notices.textContent).toContain('元の論点2・注意: 文章が長い');
-        expect(root.querySelector('h6')?.textContent).toContain('論点（未検証の推論）');
-        for (const field of ['結論', '読み', '限界', '次の確認']) {
-          expect(root.textContent).toContain(`${field}（未検証の推論`);
-        }
+        expect(root.querySelector('h6')?.textContent).toBe(issue.title);
+        expect(root.querySelector('[data-analysis-conclusion]')?.closest('details')).toBeNull();
+        expect(root.querySelector('[data-analysis-reading]')?.textContent).toBe(issue.reading);
+        const evidenceDetails = root.querySelector<HTMLDetailsElement>('[data-analysis-evidence]')!;
+        expect(evidenceDetails.open).toBe(false);
+        expect(evidenceDetails.textContent).toContain(issue.caveat);
+        expect(evidenceDetails.textContent).toContain(issue.nextCheck);
+        evidenceDetails.open = true;
+        expect(evidenceDetails.textContent).toContain('確認済み事実');
         expect(root.textContent).toContain(issue.conclusion);
         expect(root.querySelector('article ul')?.textContent).toContain(
           '確認済み事実: 売上100億円'

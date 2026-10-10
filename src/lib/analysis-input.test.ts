@@ -212,8 +212,15 @@ describe('追加分析の不採用説明と入力範囲', () => {
       unverifiedSourcePages: [4],
     });
     expect(input.coverage.limitations.join('')).toContain('一時要因・時期・条件');
-    expect(input.evidence.some((e) => e.text.includes('下期利益'))).toBe(false);
-    expect(JSON.stringify(input)).not.toContain('1174729');
+    expect(input.evidence.some((e) => e.kind !== 'source' && e.text.includes('下期利益'))).toBe(
+      false
+    );
+    expect(input.evidence.some((e) => e.kind === 'source' && e.text.includes('下期利益'))).toBe(
+      true
+    );
+    expect(JSON.stringify(input.evidence.filter((e) => e.kind !== 'source'))).not.toContain(
+      '1174729'
+    );
     expect(input.evidence.some((e) => e.id.includes('gap'))).toBe(false);
     const result = parseAnalysisResponse(JSON.stringify({ version: 4, issues: [] }), input);
     const restored = parseAnalysis(JSON.stringify(result), facts, display);
@@ -236,7 +243,12 @@ describe('追加分析の不採用説明と入力範囲', () => {
     expect(input.evidence.map((e) => e.text)).toContain(
       '物件売却は上期に集中し、下期利益は相対的に低い。'
     );
-    expect(input.evidence.map((e) => e.text).join('')).not.toContain('1,174,729');
+    expect(
+      input.evidence
+        .filter((e) => e.kind !== 'source')
+        .map((e) => e.text)
+        .join('')
+    ).not.toContain('1,174,729');
     expect(vi.mocked(generateText).mock.calls[0][1][0].content).toContain(
       '否定・条件・因果・対象の限定を切り離す分割はしない'
     );

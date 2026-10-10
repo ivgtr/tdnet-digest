@@ -194,6 +194,7 @@ function buildAnalysisHtml(
     observation: '点検済み指標',
     explanation: '点検済み会社説明',
     calculation: '機械計算',
+    source: '抽出原文（意味未点検）',
   };
   const link = (page: number) =>
     parseMarkdown(`[p.${page}](tdnet-page:${page})`, pdfUrl).replace(/^<p[^>]*>|<\/p>$/g, '');
@@ -206,14 +207,16 @@ function buildAnalysisHtml(
       });
       const pages = [...new Set(evidence.flatMap((e) => e.pages))].sort((a, b) => a - b);
       return `<article style="margin:12px 0;padding:12px;border:1px solid #d5dee8;border-radius:6px;background:#fff;">
-      <h6 style="font-size:14px;margin:0 0 8px;">論点（未検証の推論）: ${escapeMetadataText(issue.title)}</h6>
-      <p><strong>結論（未検証の推論）:</strong> ${escapeMetadataText(issue.conclusion)}</p>
+      <h6 style="font-size:14px;margin:0 0 8px;">${escapeMetadataText(issue.title)}</h6>
+      <p data-analysis-conclusion style="margin:6px 0;">${escapeMetadataText(issue.conclusion)}</p>
+      <p data-analysis-reading style="margin:6px 0;color:#374151;">${escapeMetadataText(issue.reading)}</p>
+      <p style="font-size:12px;margin:6px 0;">根拠ページ: ${pages.map(link).join('・')}</p>
+      <details data-analysis-evidence><summary>根拠・確認条件を表示</summary>
       <ul>${evidence.map((e) => `<li><strong>${labels[e.kind]}:</strong> ${escapeMetadataText(e.text)}${e.context ? ` <span style="color:#6b7280;">${escapeMetadataText(e.context)}</span>` : ''}</li>`).join('')}</ul>
-      <p><strong>読み（未検証の推論・条件付き）:</strong> ${escapeMetadataText(issue.reading)}</p>
-      <p><strong>限界（未検証の推論）:</strong> ${escapeMetadataText(issue.caveat)}</p>
-      <p><strong>次の確認（未検証の推論）:</strong> ${escapeMetadataText(issue.nextCheck)}</p>
-      <p>根拠ページ: ${pages.map(link).join('・')}</p>
+      ${issue.caveat.trim() ? `<p data-analysis-caveat><strong>判断の限界:</strong> ${escapeMetadataText(issue.caveat)}</p>` : ''}
+      ${issue.nextCheck.trim() ? `<p data-analysis-next-check><strong>見方が変わる確認点:</strong> ${escapeMetadataText(issue.nextCheck)}</p>` : ''}
       <details><summary>根拠IDを表示</summary><ul>${evidence.map((e) => `<li>${escapeMetadataText(e.id)}: ${escapeMetadataText(e.sourceIds.join(', '))}</li>`).join('')}</ul></details>
+      </details>
     </article>`;
     })
     .join('');
@@ -230,10 +233,10 @@ function buildAnalysisHtml(
       <ul>${analysis.notices.map((notice) => `<li>${notice.issueIndex < 0 ? '応答全体' : `元の論点${notice.issueIndex + 1}`}・${notice.severity === 'quarantined' ? '非表示' : '注意'}: ${escapeMetadataText(notice.message)}（${escapeMetadataText(notice.code)} / ${escapeMetadataText(notice.path)}）</li>`).join('')}</ul>
     </section>`
     : '';
-  return `<div><p data-analysis-boundary style="${SUMMARY_STYLES.warningBox}"><strong>追加分析の文章はすべて未検証のAI推論です。</strong>論点名・結論・読み・限界・次の確認に含まれる数値、因果関係、情報がないという主張は、根拠IDの参照確認では検証されません。確認済みの根拠欄と区別し、原PDFで確認してください。</p>
+  return `<div><p data-analysis-boundary style="${SUMMARY_STYLES.warningBox}"><strong>AIによる分析です。</strong>本文の数値、因果関係、情報がないという主張には未検証の推論を含みます。根拠IDの一致は意味の検証ではありません。展開した根拠欄で、確認済み事実・会社説明・機械計算・抽出原文を区別しています。</p>
     ${notices}
-    ${issues || (quarantined ? '<p>表示できる論点はありません。形式・根拠参照の確認で全論点を非表示にしました。</p>' : '<p>確認済み入力から、要約に追加できる論点を生成できませんでした。</p>')}
-    ${c.organizationStatus !== 'ready' || c.unresolvedSources ? '<p style="color:#92400e;">説明・指標の一部が入力で未確認です。分析にない事項も原PDFを確認してください。</p>' : ''}
+    ${issues || (quarantined ? '<p>表示できる論点はありません。形式・根拠参照の確認で全論点を非表示にしました。</p>' : '<p>提供された入力から、要約に追加できる論点を生成できませんでした。</p>')}
+    ${c.organizationStatus !== 'ready' || c.unresolvedSources ? '<p style="color:#92400e;">一部の説明・指標は意味の点検が済んでいません。分析にない事項も原PDFを確認してください。</p>' : ''}
     ${c.limitations.map((text) => `<p style="color:#92400e;">${escapeMetadataText(text)}</p>`).join('')}
     ${c.unverifiedItems ? `<p style="color:#92400e;">未確認・不採用項目${c.unverifiedItems}件 / 関連する原文ページ ${c.unverifiedSourcePages.join(', ') || '未特定'}。原PDFで要因・条件を確認してください。</p>` : ''}
     <details><summary>追加分析の生成情報</summary><p>入力: 事実${c.facts}・説明${c.explanations}・指標${c.observations}・計算${c.calculations} / 根拠ページ ${c.pages.join(', ')} / 未整理原文${c.unresolvedSources}件・未確認事実${c.unverifiedFacts}件</p><p>入力識別子: ${escapeMetadataText(analysis.inputHash)}${analysis.usage ? ` / 出力${analysis.usage.outputTokens ?? '不明'}token / ${Math.round(analysis.usage.elapsedMs)}ms / ${escapeMetadataText(analysis.usage.finishReason ?? '終了理由不明')}` : ' / API使用量は未取得'}</p></details></div>`;

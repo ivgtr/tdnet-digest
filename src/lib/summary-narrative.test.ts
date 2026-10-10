@@ -29,6 +29,7 @@ import {
   quantitySourceClosure,
   checkText,
   parseNarrativeResponse,
+  explicitTableRowUnit,
 } from './summary-narrative';
 import { buildAnalysisInput } from './analysis-input';
 import { buildSummaryHtml } from '../content/utils/summaryHtmlBuilder';
@@ -475,7 +476,11 @@ describe('構造化を主とする表示と未整理部分の保持', () => {
     display.values.push(alias);
     observation.comparison!.valueId = alias.id;
     display.sourceHash = hashText(
-      canonicalJSON({ excerpts: display.excerpts, values: display.values })
+      canonicalJSON({
+        excerpts: display.excerpts,
+        values: display.values,
+        ledgerHash: display.sourceLedger?.sourceHash,
+      })
     );
     display.organization.status = 'partial';
     review();
@@ -985,7 +990,11 @@ describe('原文数量の符号・単位・所有セル', () => {
       const stale = structuredClone(restored);
       stale.values.find((value) => value.id === fact.id)!.sourceQuantityId = 'p1b3:q1';
       stale.sourceHash = hashText(
-        canonicalJSON({ excerpts: stale.excerpts, values: stale.values })
+        canonicalJSON({
+          excerpts: stale.excerpts,
+          values: stale.values,
+          ledgerHash: stale.sourceLedger?.sourceHash,
+        })
       );
       expect(() => revalidatePresentation(stale, summary, [source])).toThrow('原文引用とPDF');
     }
@@ -1200,5 +1209,89 @@ describe('原文数量の符号・単位・所有セル', () => {
     expect(() =>
       checkObservation(cash, signed.values, signed.excerpts, { ...facts, facts: [] }, true)
     ).not.toThrow();
+  });
+});
+
+describe('source quantity boundaries', () => {
+  const empty = { ...facts, facts: [] };
+  it('keeps spaced compound amounts whole with exact text, sign and source ownership', () => {
+    const raw = '△1,184億 4百万円';
+    const source = textPage(`売上収益 ${raw} (前年同期比 △0.7％)`);
+    const presentation = buildPresentation(empty, [source]);
+    const quantity = presentation.values.find((value) => value.raw === raw)!;
+    expect(quantity).toMatchObject({ raw, decimal: null, unit: '円' });
+    expect(presentation.values.some((value) => ['4', '1184'].includes(value.decimal!))).toBe(false);
+    expect(literalValue(quantity)).toBe(raw.replace(/\s/g, ''));
+    expect(
+      revalidatePresentation(JSON.parse(JSON.stringify(presentation)), empty, [source]).values
+    ).toContainEqual(quantity);
+    const separated = buildPresentation(empty, [textPage('売上収益 1,184億 ││ 4百万円')]);
+    expect(
+      separated.values.some((value) => value.raw.includes('億') && value.raw.includes('4百万'))
+    ).toBe(false);
+  });
+
+  function revisionTable(caption = '増減率（％）') {
+    const rows = [
+      ['項目', '売上収益', '営業利益', 'EPS'],
+      ['', '百万円', '百万円', '円'],
+      ['前回予想（Ａ）', '100', '20', '10.00'],
+      ['今回修正予想（Ｂ）', '110', '19', '11.00'],
+      ['増減額', '10', '△1', '1.00'],
+      [caption, '10.0', '△5.0', '10.0'],
+    ];
+    return layoutPage([
+      { id: 'title', text: '2027年2月期 連結業績予想', x: 0, y: -24, width: 200, height: 10 },
+      ...rows.flatMap((row, y) =>
+        row.flatMap((text, x) =>
+          text
+            ? [
+                {
+                  id: `p1s${y * 4 + x + 1}`,
+                  text,
+                  x: x * 100,
+                  y: y * 24,
+                  width: x === 0 ? 80 : 60,
+                  height: 10,
+                },
+              ]
+            : []
+        )
+      ),
+    ]);
+  }
+  it('row-declared units override monetary and EPS columns but not amounts in other rows', () => {
+    const source = revisionTable();
+    const presentation = buildPresentation(empty, [source]);
+    const rateIds = source.spans
+      .filter((span) => span.y === 120 && span.x > 0)
+      .map((span) => span.id);
+    expect(rateIds).toHaveLength(3);
+    const rates = presentation.values.filter((value) => rateIds.includes(value.id));
+    expect(rates.map((value) => value.unit)).toEqual(['%', '%', '%']);
+    const amountIds = source.spans
+      .filter((span) => span.y === 96 && span.x > 0)
+      .map((span) => span.id);
+    expect(
+      presentation.values.filter((value) => amountIds.includes(value.id)).map((value) => value.unit)
+    ).toEqual(['百万円', '百万円', '円']);
+    const owner = presentation.excerpts.find((excerpt) => excerpt.text.includes('増減率'))!;
+    expect(rates.every((value) => value.sourceIds.includes(owner.id))).toBe(true);
+    expect(
+      revalidatePresentation(JSON.parse(JSON.stringify(presentation)), empty, [source]).values
+    ).toEqual(presentation.values);
+  });
+  it('does not infer row units from a metric name or borrow a caption from another table', () => {
+    const source = revisionTable('増減率');
+    const quantity = source.quantities.find((q) => q.y === 120)!;
+    expect(explicitTableRowUnit(source, quantity.id)).toBeNull();
+    const captioned = revisionTable();
+    const rate = captioned.quantities.find((q) => q.y === 120)!;
+    captioned.tableRegions.forEach((table) => {
+      table.spanIds = table.spanIds.filter(
+        (id) => !captioned.spans.some((span) => span.id === id && span.text.includes('増減率'))
+      );
+    });
+    expect(explicitTableRowUnit(captioned, rate.id)).toBeNull();
   });
 });
