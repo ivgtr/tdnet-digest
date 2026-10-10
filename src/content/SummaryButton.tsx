@@ -1,3 +1,4 @@
+import type { RowData } from './utils/rowDataExtractor';
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useSummarize } from './hooks/useSummarize';
@@ -5,14 +6,6 @@ import { useSummaryRow } from './hooks/useSummaryRow';
 import { loadSummaryTrace } from '@/lib/summary-trace';
 import { requestAnalysisTrace } from '@/lib/analysis-trace';
 import { ACTION_BUTTON_STYLE, BUTTON_STYLES, FOCUS_STYLE } from './constants/styles';
-
-interface RowData {
-  time: string;
-  code: string;
-  companyName: string;
-  title: string;
-  pdfUrl: string;
-}
 
 interface SummaryButtonProps {
   rowData: RowData;
@@ -38,6 +31,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     reset,
   } = useSummarize({
     pdfUrl: rowData.pdfUrl,
+    nativeCompanion: rowData.nativeCompanion,
     title: rowData.title,
     code: rowData.code,
     companyName: rowData.companyName,

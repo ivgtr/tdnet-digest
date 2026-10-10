@@ -1,3 +1,4 @@
+import { parseNativeDisclosureArchive } from '@/lib/native-disclosure';
 /**
  * Offscreen Document for PDF Processing
  * Service WorkerではDOM APIが使えないため、ここでPDF.jsを使ってPDF処理を行う
@@ -42,6 +43,19 @@ console.log('[Offscreen] Offscreen Documentが起動しました');
 
 // メッセージハンドラー
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+  if (request.action === 'parseNativeDisclosure') {
+    parseNativeDisclosureArchive(new Uint8Array(request.archiveData), request.ref, {
+      pdfText: request.pdfText,
+    })
+      .then((native) => sendResponse({ success: true, native }))
+      .catch((error) =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
+    return true;
+  }
   if (request.action === 'extractPdfText') {
     // ArrayをUint8Arrayに変換
     const uint8Array = new Uint8Array(request.pdfData);

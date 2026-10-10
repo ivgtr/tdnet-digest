@@ -25,6 +25,7 @@ import {
   type VerifiedFact,
 } from './fact-contract';
 import { validateFact, validatePages } from './fact-validation';
+import { chunkFactDiagnostics, isFactDiagnostics } from './fact-diagnostics';
 import { verifyCoverage, coverageReport, type CoverageSlot } from './fact-coverage';
 import { inspectCandidateSource, preflightCandidateSource } from './source-preflight';
 import { selectableFactCapacity } from './summary-source-inventory';
@@ -92,8 +93,7 @@ export function parseFactSummary(
     parsed.documentType !== documentType ||
     !Array.isArray(parsed.facts) ||
     parsed.facts.length > selectableFactCapacity(pages) ||
-    !Array.isArray(parsed.unverified) ||
-    !parsed.unverified.every((x) => typeof x === 'string' && x.length <= 1000)
+    !isFactDiagnostics(parsed.unverified)
   )
     throw new Error('事実要約の形式が不正です');
   const facts: VerifiedFact[] = [],
@@ -113,7 +113,9 @@ export function parseFactSummary(
       else facts[facts.indexOf(previous)] = promoteSourceImportance(previous, fact);
     } catch (error) {
       unverified.push(
-        `${item.id} ${item.label}: ${error instanceof Error ? error.message : String(error)}`
+        ...chunkFactDiagnostics([
+          `${item.id} ${item.label}: ${error instanceof Error ? error.message : String(error)}`,
+        ])
       );
     }
   }
@@ -228,15 +230,20 @@ export async function generateVerifiedFacts(
     slots: firstSlots,
     confirmedIds: first.facts.map((f) => f.id),
   });
-  const summary = (review: CandidateReview): FactSummary => ({
+  const summary = (review: CandidateReview, reason?: string): FactSummary => ({
     version: FACT_SCHEMA_VERSION,
     documentType,
     facts: review.facts,
-    unverified: [...new Set([...review.unverified, ...sourceIssues])],
+    unverified: chunkFactDiagnostics([
+      ...new Set([
+        ...review.unverified,
+        ...sourceIssues,
+        ...(reason === undefined ? [] : [reason]),
+      ]),
+    ]),
   });
   const incomplete = (review: CandidateReview, reason: string, repairAttempted: boolean) => {
-    const facts = summary(review);
-    facts.unverified = [...new Set([...facts.unverified, reason])];
+    const facts = summary(review, reason);
     return { facts, presentation: buildPresentation(facts, pages), repairAttempted };
   };
   if (error === null) {

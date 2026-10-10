@@ -10,15 +10,15 @@ import {
   SUMMARY_DIAGNOSTICS_KEY,
 } from '../lib/summary-trace';
 import type { LLMConfig } from '../lib/llm-client';
-import { candidateResponse } from '../lib/fixtures/candidate-test-source';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { textPage, numberCandidate } from '../lib/fixtures/v4-test-source';
 import { parseFactSummary } from '../lib/fact-summary';
 import type { FactSummary } from '../lib/fact-summary';
 import type { ExtractedPage, ExtractionMode } from '../types/summaryMetadata';
 import { serializePagesForAnalysis } from '../lib/page-text';
-import { fixedOrganization } from '../lib/fixtures/summary-narrative-source';
-import type { SummaryAttempt } from '../lib/summary-trace';
+import { buildPresentation as legacyPresentation } from '../lib/fixtures/summary-narrative-source';
+import { summaryResultId } from '../lib/summary-result-id';
+import { nativeFixtureRef } from '../lib/fixtures/native-disclosure-source';
 import type { PdfExtractionErrorDetails } from '../lib/pdf-extraction-error';
 
 const mocked = vi.hoisted(() => ({
@@ -36,7 +36,12 @@ interface TestResponse {
   diagnosticPersistence?: 'saved' | 'failed';
   persistenceWarning?: string;
   summary: string;
-  metadata: { analysisFingerprint: string; score?: unknown; persistenceWarning?: string };
+  metadata: {
+    analysisFingerprint: string;
+    documentHash: string;
+    score?: unknown;
+    persistenceWarning?: string;
+  };
   facts: FactSummary;
   presentation: import('../lib/summary-presentation').SummaryPresentation;
   resultId: string;
@@ -46,28 +51,6 @@ interface TestResponse {
 vi.mock('@/lib/llm-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/llm-client')>()),
   generateText: mocked.generateText,
-}));
-// Candidate transport/diagnostic races belong here; synthesis semantics are owned
-// by summary-narrative.test. Keep its current storage contract at this boundary.
-vi.mock('@/lib/summary-organization', async (original) => ({
-  ...(await original<typeof import('../lib/summary-organization')>()),
-  generateSummaryOrganization: async (
-    _config: LLMConfig,
-    facts: FactSummary,
-    values: import('../lib/summary-narrative').NarrativeValue[],
-    excerpts: import('../lib/summary-source-inventory').SourceExcerpt[],
-    _pages: ExtractedPage[],
-    onAttempt?: (attempt: SummaryAttempt) => void | Promise<void>
-  ) => {
-    const result = fixedOrganization(facts, { values, excerpts, sections: [] });
-    await onAttempt?.({ phase: 'summary', response: JSON.stringify(result), error: null });
-    await onAttempt?.({
-      phase: 'summaryReview',
-      response: JSON.stringify(result.review),
-      error: null,
-    });
-    return result;
-  },
 }));
 vi.mock('@/lib/score-extraction', () => ({ extractScoreInput: mocked.extractScoreInput }));
 vi.mock('@/lib/scoring', () => ({
@@ -108,6 +91,47 @@ const facts: FactSummary = parseFactSummary(
   'earningsRevision',
   [nativePage]
 );
+
+// Public source-first response: the original PDF row supports a generated
+// summary, without fabricating verified facts or invoking the legacy pipeline.
+const sourceEvidenceId = `raw:${nativePage.blocks[2].id}`;
+const sourceSummaryResponse = JSON.stringify({
+  version: 4,
+  overallSummary: {
+    text: '会社は2026年3月期の業績予想を公表しました。営業利益予想は1150百万円です。',
+    evidenceIds: [sourceEvidenceId],
+  },
+  issues: [
+    {
+      title: '営業利益予想',
+      conclusion: '営業利益予想は1150百万円です。',
+      evidenceIds: [sourceEvidenceId],
+      reading: '会社が通期の業績予想として公表しています。',
+      caveat: '予想であり実績ではありません。',
+      nextCheck: '',
+    },
+  ],
+});
+
+// The score API still accepts independently verified legacy results. Construct
+// one explicitly; a new source-first summary must never extract facts to score.
+async function legacyScorePayload(summary: TestResponse, withDate = false) {
+  const pages = [withDate ? textPage(page + '\n2026年8月13日') : nativePage];
+  const presentation = legacyPresentation(facts, pages);
+  const fingerprint = summary.metadata.analysisFingerprint;
+  return {
+    facts,
+    presentation,
+    fingerprint,
+    resultId: await summaryResultId(
+      'test.pdf',
+      fingerprint,
+      facts,
+      summary.metadata.documentHash,
+      presentation
+    ),
+  };
+}
 
 let stored: Record<string, unknown>;
 function latestTrace(items: Record<string, unknown>): SummaryTrace {
@@ -224,7 +248,7 @@ describe('要約・採点・追加分析の分離', () => {
     });
   });
 
-  it('修復APIが失敗しても初回診断を先に保存し、未完と失敗を区別する', async () => {
+  it('不正JSONは元応答・使用量と終端診断を保存し、修復APIを呼ばない', async () => {
     const request = await setup(false);
     const writes: SummaryTrace[] = [];
     vi.mocked(chrome.storage.local.set).mockImplementation(
@@ -233,48 +257,153 @@ describe('要約・採点・追加分析の分離', () => {
         writes.push(structuredClone(latestTrace(items)));
       }
     );
-    mocked.generateText
-      .mockImplementationOnce(async (config: LLMConfig) => {
-        expect(config.signal).toBeInstanceOf(AbortSignal);
-        expect(writes[writes.length - 1]).toMatchObject({ outcome: 'running', attempts: [] });
-        return 'malformed';
-      })
-      .mockImplementationOnce(async () => {
-        expect(writes[writes.length - 1].attempts).toEqual([
-          expect.objectContaining({ phase: 'first', response: 'malformed' }),
-        ]);
-        throw new Error('fixture API failure');
-      });
-    const result = await request({ action: 'summarize' });
-    expect(result.error).toContain('fixture API failure');
-    expect(writes[writes.length - 1]).toMatchObject({
-      outcome: 'failure',
-      error: 'fixture API failure',
+    mocked.generateText.mockImplementationOnce(async (config: LLMConfig) => {
+      expect(config.signal).toBeInstanceOf(AbortSignal);
+      expect(writes.at(-1)).toMatchObject({ outcome: 'running', attempts: [] });
+      config.onUsage?.({ inputTokens: 12, outputTokens: 8, elapsedMs: 2, finishReason: 'stop' });
+      return '{malformed';
     });
-    expect(writes[writes.length - 1].attempts.map((a) => a.phase)).toEqual(['first', 'repair']);
-    expect(
-      matchingSummaryTrace(writes[writes.length - 1], 'test.pdf', result.diagnosticRunId, null)
-    ).toEqual(writes[writes.length - 1]);
-    expect(JSON.stringify(writes)).not.toMatch(/apiKey|headers|authorization/);
-  });
-  it('根拠照合・説明生成・点検を完了し、採点を待たずに返す', async () => {
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
+    const result = await request({ action: 'summarize' });
+    expect(result.error).toContain('invalid_json');
+    expect(result.summary).toBeUndefined();
+    expect(writes.at(-1)).toMatchObject({
+      outcome: 'failure',
+      resultId: null,
+      error: result.error,
+      attempts: [
+        expect.objectContaining({
+          phase: 'summary',
+          response: '{malformed',
+          error: expect.any(String),
+        }),
+      ],
+      usage: [expect.objectContaining({ outputTokens: 8 })],
+      sourceFirst: { contract: { version: 4, generation: { purpose: 'summary' } } },
+    });
+    expect(matchingSummaryTrace(writes.at(-1), 'test.pdf', result.diagnosticRunId, null)).toEqual(
+      writes.at(-1)
     );
+    expect(JSON.stringify(writes)).not.toMatch(/apiKey|headers|authorization/);
+    expect(mocked.generateText).toHaveBeenCalledTimes(1);
+  });
+  it('原資料から全体要約と論点を一度に生成し、採点を待たずに返す', async () => {
+    mocked.generateText.mockResolvedValue(sourceSummaryResponse);
     const request = await setup(true);
     const result = await request({ action: 'summarize' });
     expect(result.summary).toContain('1150百万円');
     expect(result.metadata.score).toBeUndefined();
-    expect(result.metadata).toMatchObject({ summaryMode: 'sourced-summary', generationCalls: 3 });
+    expect(result.facts.facts).toEqual([]);
+    expect(result.presentation.sourceFirst!.summary).toMatchObject({
+      overallSummary: { text: expect.stringContaining('会社は2026年3月期') },
+      issues: [expect.objectContaining({ title: '営業利益予想' })],
+    });
+    expect(result.summary.indexOf('会社は2026年3月期')).toBeLessThan(
+      result.summary.indexOf('### 営業利益予想')
+    );
+    expect(mocked.generateText.mock.calls[0][1][1].content).toContain('今回の要求は事実要約');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'parseNativeDisclosure' })
+    );
+    expect(result.metadata).toMatchObject({ summaryMode: 'source-first', generationCalls: 1 });
     expect(mocked.generateText).toHaveBeenCalledTimes(1);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
+  it('要約の不正な参照だけを隔離し、全体要約・有効論点と部分成功の診断を保存する', async () => {
+    const raw = JSON.parse(sourceSummaryResponse);
+    raw.issues.push({ ...raw.issues[0], title: '参照切れ', evidenceIds: ['raw:missing'] });
+    mocked.generateText.mockResolvedValueOnce(JSON.stringify(raw));
+    const request = await setup(false);
+    const result = await request({ action: 'summarize' });
+    expect(result.error).toBeUndefined();
+    expect(result.presentation.sourceFirst!.summary).toMatchObject({
+      overallSummary: { text: raw.overallSummary.text },
+      issues: [expect.objectContaining({ title: '営業利益予想' })],
+      candidates: expect.any(Array),
+      notices: [
+        expect.objectContaining({
+          issueIndex: 1,
+          code: 'evidence_unknown',
+          severity: 'quarantined',
+        }),
+      ],
+    });
+    expect(result.presentation.sourceFirst!.summary!.candidates).toHaveLength(2);
+    const trace = await loadSummaryTrace('test.pdf', result.diagnosticRunId, result.resultId);
+    expect(trace).toMatchObject({
+      outcome: 'partialSuccess',
+      resultId: result.resultId,
+      attempts: [expect.objectContaining({ phase: 'summary', response: JSON.stringify(raw) })],
+      sourceFirst: {
+        contract: { generation: { purpose: 'summary' } },
+        notices: [expect.objectContaining({ issueIndex: 1, code: 'evidence_unknown' })],
+      },
+    });
+    expect(mocked.generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['download', 'parse'] as const)(
+    '同じ開示行のZIPの%s失敗を表示し、PDF全文から一回だけ生成する',
+    async (stage) => {
+      const request = await setup(false);
+      const ref = nativeFixtureRef();
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(new Uint8Array(4)));
+      if (stage === 'download')
+        vi.mocked(fetch).mockRejectedValueOnce(new Error('ZIP download failed'));
+      else {
+        vi.mocked(fetch).mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4])));
+        vi.mocked(chrome.runtime.sendMessage)
+          .mockResolvedValueOnce({
+            success: true,
+            text: serializePagesForAnalysis([nativePage]),
+            pages: [nativePage],
+            metadata: {
+              totalPages: 1,
+              extractedPages: [1],
+              extractionMode: 'full',
+              documentType: 'earningsRevision',
+            },
+          })
+          .mockResolvedValueOnce({ success: false, error: 'ZIP parse failed' });
+      }
+      mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
+      const result = await request({
+        action: 'summarize',
+        pdfUrl: ref.pdfUrl,
+        nativeCompanion: ref,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.summary).toContain('1150百万円');
+      expect(result.summary).toContain('PDF全文へ切り替えました');
+      expect(result.presentation.sourceFirst).toMatchObject({
+        warnings: [expect.stringContaining(`ZIP ${stage} failed`)],
+      });
+      expect(result.presentation.sourceFirst!.native).toBeUndefined();
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenLastCalledWith(
+        ref.zipUrl,
+        expect.objectContaining({ redirect: 'error' })
+      );
+      if (stage === 'parse')
+        expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({
+          action: 'parseNativeDisclosure',
+          archiveData: [80, 75, 3, 4],
+          ref,
+          pdfText: serializePagesForAnalysis([nativePage]),
+        });
+      else expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
+      expect(mocked.generateText).toHaveBeenCalledTimes(1);
+      expect(mocked.generateText.mock.calls[0][1][1].content).toContain('営業利益は1150百万円です');
+      expect(mocked.generateText.mock.calls[0][1][1].content).not.toContain('"nativeDocument":');
+      expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+    }
+  );
+
   it.each(['settings', 'download', 'extraction'])(
     '同じPDFの次の実行が%sで失敗しても以前の診断を現在の結果として出力しない',
     async (stage) => {
-      mocked.generateText.mockResolvedValue(
-        candidateResponse(facts.facts, [nativePage], facts.documentType)
-      );
+      mocked.generateText.mockResolvedValue(sourceSummaryResponse);
       const request = await setup(false);
       let saved: SummaryTrace | undefined;
       vi.mocked(chrome.storage.local.set).mockImplementation(
@@ -398,7 +527,7 @@ describe('要約・採点・追加分析の分離', () => {
       const first = new Promise<string>((resolve) => {
         release = resolve;
       });
-      const raw = candidateResponse(facts.facts, [nativePage], facts.documentType);
+      const raw = sourceSummaryResponse;
       mocked.generateText
         .mockImplementationOnce(() => {
           entered();
@@ -451,7 +580,7 @@ describe('要約・採点・追加分析の分離', () => {
 
   it('A成功後にBを開始してもAの診断を保持し、同じresultIdの別runも分ける', async () => {
     const request = await setup(false);
-    const raw = candidateResponse(facts.facts, [nativePage], facts.documentType);
+    const raw = sourceSummaryResponse;
     mocked.generateText.mockResolvedValueOnce(raw);
     const a = await request({ action: 'summarize' });
     const traceA = await loadSummaryTrace('test.pdf', a.diagnosticRunId, a.resultId);
@@ -481,9 +610,7 @@ describe('要約・採点・追加分析の分離', () => {
     '診断保存の%s失敗は完成結果と生成元のエラーを覆わず、後続の保存も妨げない',
     async (stage) => {
       const request = await setup(false);
-      mocked.generateText.mockResolvedValue(
-        candidateResponse(facts.facts, [nativePage], facts.documentType)
-      );
+      mocked.generateText.mockResolvedValue(sourceSummaryResponse);
       const get = vi.mocked(chrome.storage.local.get).getMockImplementation()!;
       const set = vi.mocked(chrome.storage.local.set).getMockImplementation()!;
       if (stage === 'read')
@@ -497,7 +624,7 @@ describe('要約・採点・追加分析の分離', () => {
       expect(success.metadata.persistenceWarning).toContain('診断を保存できませんでした');
       mocked.generateText.mockRejectedValueOnce(new Error('generation failed'));
       const failure = await request({ action: 'summarize' });
-      expect(failure.error).toBe('generation failed');
+      expect(failure.error).toContain('generation failed');
       expect(failure.diagnosticPersistence).toBe('failed');
       expect(failure.persistenceWarning).toContain('診断を保存できませんでした');
       vi.mocked(chrome.storage.local.get).mockImplementation(get);
@@ -519,9 +646,7 @@ describe('要約・採点・追加分析の分離', () => {
     '同時初回要求はOffscreen初期化を共有し、失敗=%sの後も再確認する',
     async (fails) => {
       const request = await setup(false);
-      mocked.generateText.mockResolvedValue(
-        candidateResponse(facts.facts, [nativePage], facts.documentType)
-      );
+      mocked.generateText.mockResolvedValue(sourceSummaryResponse);
       chrome.runtime.getContexts = vi.fn(async () => []);
       let finish!: () => void;
       let entered!: () => void;
@@ -558,9 +683,7 @@ describe('要約・採点・追加分析の分離', () => {
   );
 
   it('更新前から残る二段階要約設定を削除し、要約を続行する', async () => {
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+    mocked.generateText.mockResolvedValue(sourceSummaryResponse);
     const request = await setup(false, true, false, true);
     const result = await request({ action: 'summarize' });
     expect(result.summary).toContain('1150百万円');
@@ -602,32 +725,23 @@ describe('要約・採点・追加分析の分離', () => {
     ).toThrow();
   });
 
-  it('smartが空ページだけを省略した要約から全文の追加分析と採点へ進める', async () => {
+  it('smart設定でも全文を読み、空の確定事実から追加分析へ進み、採点は通信前に停止する', async () => {
     const blank = { ...textPage('', 2), selection: 'omitted' as const };
     mocked.generateText
-      .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))
-      .mockResolvedValueOnce(JSON.stringify({ version: 4, issues: [] }));
-    mocked.extractScoreInput.mockResolvedValue({
-      claims: [{ category: 'revenue' }],
-      unverified: [],
-      searchStatus: '元PDF内',
-    });
-    mocked.inferExperimentalScore.mockResolvedValue({
-      value: 70,
-      verdict: '参考',
-      positives: [],
-      negatives: [],
-      breakdown: [],
-      unverified: [],
-      searchStatus: '元PDF内',
-    });
+      .mockResolvedValueOnce(sourceSummaryResponse)
+      .mockResolvedValueOnce(JSON.stringify({ version: 4, overallSummary: null, issues: [] }));
     const request = await setup(true, true, false, false, {
       pages: [nativePage, blank],
       mode: 'smart',
     });
     const summary = await request({ action: 'summarize' });
     expect(summary.error).toBeUndefined();
-    expect(summary.presentation.sourceLedger!.pages[1].selection).toBe('omitted');
+    expect(summary.facts.facts).toEqual([]);
+    expect(summary.presentation.sourceFirst!.summary!.issues).toHaveLength(1);
+    expect(summary.presentation.sourceLedger!.pages[1].selection).toBe('selected');
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ extractionMode: 'full' })
+    );
     const payload = {
       facts: summary.facts,
       presentation: summary.presentation,
@@ -637,30 +751,36 @@ describe('要約・採点・追加分析の分離', () => {
     const analysis = await request({ action: 'analyze', ...payload });
     expect(analysis.error).toBeUndefined();
     expect(analysis.analysis.issues).toEqual([]);
+    expect(mocked.generateText).toHaveBeenCalledTimes(2);
+    const fetches = vi.mocked(fetch).mock.calls.length;
+    const extractionCalls = vi.mocked(chrome.runtime.sendMessage).mock.calls.length;
     const score = await request({ action: 'score', ...payload });
-    expect(score.error).toBeUndefined();
-    expect(score.score.value).toBe(70);
-    expect(summary.presentation.sourceLedger!.pages[1].selection).toBe('omitted');
+    expect(score.error).toContain('原資料要約では実験的スコアを利用できません');
+    expect(fetch).toHaveBeenCalledTimes(fetches);
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(extractionCalls);
+    expect(mocked.generateText).toHaveBeenCalledTimes(2);
+    expect(mocked.extractScoreInput).not.toHaveBeenCalled();
+    expect(mocked.inferExperimentalScore).not.toHaveBeenCalled();
+    expect(mocked.searchDisclosureCandidates).not.toHaveBeenCalled();
   });
 
   it('スコアOFFでも追加分析を明示操作で実行できる', async () => {
-    mocked.generateText
-      .mockResolvedValueOnce(candidateResponse(facts.facts, [nativePage], facts.documentType))
-      .mockResolvedValueOnce(
-        JSON.stringify({
-          version: 4,
-          issues: [
-            {
-              title: '計画の実現条件',
-              conclusion: '会社計画の実現性は前提条件と実績の確認が必要です',
-              evidenceIds: [`fact:${facts.facts[0].id}`],
-              reading: '予想の水準だけから達成確度を決めることはできません',
-              caveat: '今回の確認済み入力では予想に対応する実績は未確認です',
-              nextCheck: '次の決算で同じ対象期間の実績と予想の前提を確認する',
-            },
-          ],
-        })
-      );
+    mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse).mockResolvedValueOnce(
+      JSON.stringify({
+        version: 4,
+        overallSummary: null,
+        issues: [
+          {
+            title: '計画の実現条件',
+            conclusion: '会社計画の実現性は前提条件と実績の確認が必要です',
+            evidenceIds: [sourceEvidenceId],
+            reading: '予想の水準だけから達成確度を決めることはできません',
+            caveat: '今回の確認済み入力では予想に対応する実績は未確認です',
+            nextCheck: '次の決算で同じ対象期間の実績と予想の前提を確認する',
+          },
+        ],
+      })
+    );
     const request = await setup(false);
     const summary = await request({ action: 'summarize' });
     const analysis = await request({
@@ -690,10 +810,11 @@ describe('要約・採点・追加分析の分離', () => {
       outcome: 'success',
       summaryResultId: summary.resultId,
       inputHash: analysis.analysis.inputHash,
-      input: {
-        evidence: expect.arrayContaining([
-          expect.objectContaining({ id: `fact:${facts.facts[0].id}` }),
-        ]),
+      input: null,
+      modelInput: {
+        evidence: [],
+        allowedEvidenceIds: expect.arrayContaining([sourceEvidenceId]),
+        sourceDocument: { pages: expect.any(Array) },
       },
       response: expect.stringContaining('計画の実現条件'),
     });
@@ -701,30 +822,30 @@ describe('要約・採点・追加分析の分離', () => {
       await loadSummaryTrace('test.pdf', summary.diagnosticRunId, summary.resultId)
     ).toMatchObject({ outcome: 'firstSuccess' });
     const sent = mocked.generateText.mock.calls.at(-1)!;
-    expect(sent[1][1].content).toContain('explanation:explanation-0');
-    expect(sent[1][1].content).toContain('開示された数値と条件を確認する');
+    expect(sent[1][1].content).toContain(sourceEvidenceId);
+    expect(sent[1][1].content).toContain('営業利益は1150百万円です');
+    expect(sent[1][1].content).toContain('今回の要求は追加分析');
     expect(sent[0].maxOutputTokens).toBe(8192);
     expect(sent[0].signal).toBeInstanceOf(AbortSignal);
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
 
   it('一部の論点を隔離しても有効な論点を返し、部分成功の診断を同じ実行に保存する', async () => {
-    mocked.generateText.mockResolvedValueOnce(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+    mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
     const request = await setup(false);
     const summary = await request({ action: 'summarize' });
     const issue = {
       title: '計画の実現条件',
       conclusion: '条件確認が必要です',
-      evidenceIds: [`fact:${facts.facts[0].id}`],
+      evidenceIds: [sourceEvidenceId],
       reading: '足元の実績と計画の整合を点検します',
       caveat: '継続性は未確認です',
       nextCheck: '実績と前提を確認する',
     };
     const raw = JSON.stringify({
       version: 4,
-      issues: [issue, { ...issue, evidenceIds: ['fact:missing'] }],
+      overallSummary: null,
+      issues: [issue, { ...issue, evidenceIds: ['raw:missing'] }],
     });
     mocked.generateText.mockResolvedValueOnce(raw);
     const result = await request({
@@ -782,9 +903,7 @@ describe('要約・採点・追加分析の分離', () => {
   it.each([['malformed', '{broken', 'invalid_json', '$']])(
     '追加分析%sの生応答・使用量・拒否位置を残し、成功要約と前の分析を汚さない',
     async (_case, raw, code, path) => {
-      mocked.generateText.mockResolvedValueOnce(
-        candidateResponse(facts.facts, [nativePage], facts.documentType)
-      );
+      mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
       const request = await setup(false);
       const summary = await request({ action: 'summarize' });
       const followup = {
@@ -794,7 +913,7 @@ describe('要約・採点・追加分析の分離', () => {
         resultId: summary.resultId,
         fingerprint: summary.metadata.analysisFingerprint,
       };
-      mocked.generateText.mockResolvedValueOnce('{"version":4,"issues":[]}');
+      mocked.generateText.mockResolvedValueOnce('{"version":4,"overallSummary":null,"issues":[]}');
       const success = await request(followup);
       const summaryTrace = structuredClone(stored[SUMMARY_DIAGNOSTICS_KEY]);
       mocked.generateText.mockImplementationOnce(async (config: LLMConfig) => {
@@ -822,10 +941,57 @@ describe('要約・採点・追加分析の分離', () => {
     }
   );
 
-  it('追加分析の制限時間中断では完了していない応答を成功にせず、課金再試行しない', async () => {
-    mocked.generateText.mockResolvedValueOnce(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
+  it('同じ要約の追加分析が逆順に完了しても最新の操作と各実行の診断を分けて保持する', async () => {
+    const request = await setup(false);
+    mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
+    const summary = await request({ action: 'summarize' });
+    const followup = {
+      action: 'analyze',
+      facts: summary.facts,
+      presentation: summary.presentation,
+      resultId: summary.resultId,
+      fingerprint: summary.metadata.analysisFingerprint,
+    };
+    let finishOlder!: (response: string) => void;
+    mocked.generateText.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          finishOlder = resolve;
+        })
     );
+    const olderRequest = request(followup);
+    await vi.waitFor(() => expect(mocked.generateText).toHaveBeenCalledTimes(2));
+    mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
+    const newer = await request(followup);
+    finishOlder(sourceSummaryResponse);
+    const older = await olderRequest;
+    expect(newer.error).toBeUndefined();
+    expect(older.error).toBeUndefined();
+    expect(older.diagnosticRunId).not.toBe(newer.diagnosticRunId);
+    expect(
+      readLastAnalysisAttempt(
+        stored[ANALYSIS_DIAGNOSTICS_KEY],
+        'test.pdf',
+        summary.resultId,
+        newer.analysis.inputHash
+      )
+    ).toMatchObject({
+      runId: newer.diagnosticRunId,
+      outcome: 'success',
+    });
+    for (const result of [newer, older])
+      expect(
+        await loadAnalysisTrace('test.pdf', result.diagnosticRunId, summary.resultId)
+      ).toMatchObject({
+        runId: result.diagnosticRunId,
+        outcome: 'success',
+        inputHash: result.analysis.inputHash,
+      });
+    expect(mocked.generateText).toHaveBeenCalledTimes(3);
+  });
+
+  it('追加分析の制限時間中断では完了していない応答を成功にせず、課金再試行しない', async () => {
+    mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
     const request = await setup(false);
     const summary = await request({ action: 'summarize' });
     vi.useFakeTimers();
@@ -865,9 +1031,7 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('追加分析診断の保存失敗を通知して有効結果を返し、次の明示要求で回復する', async () => {
-    mocked.generateText.mockResolvedValueOnce(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+    mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
     const request = await setup(false);
     const summary = await request({ action: 'summarize' });
     const write = async (items: Record<string, unknown>) => {
@@ -886,7 +1050,7 @@ describe('要約・採点・追加分析の分離', () => {
       resultId: summary.resultId,
       fingerprint: summary.metadata.analysisFingerprint,
     };
-    mocked.generateText.mockResolvedValue('{"version":4,"issues":[]}');
+    mocked.generateText.mockResolvedValue('{"version":4,"overallSummary":null,"issues":[]}');
     const result = await request(followup);
     expect(result.analysis).toMatchObject({ issues: [] });
     expect(result.diagnosticPersistence).toBe('failed');
@@ -921,9 +1085,7 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('customUrlだけの変更で旧要約の追加分析・採点を通信前に拒否する', async () => {
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+    mocked.generateText.mockResolvedValue(sourceSummaryResponse);
     const request = await setup(true);
     const settings = {
       provider: 'custom',
@@ -960,10 +1122,57 @@ describe('要約・採点・追加分析の分離', () => {
     expect(mocked.extractScoreInput).not.toHaveBeenCalled();
   });
 
-  it('スコアONの採点は別要求で事実を起点にする', async () => {
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+  it.each(['resultId', 'pdfBytes', 'sourceRows'] as const)(
+    '追加分析の%s不一致では確定事実が空でも課金せず、元の要約を保持する',
+    async (changed) => {
+      const request = await setup(false);
+      mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
+      const summary = await request({ action: 'summarize' });
+      const original = structuredClone(summary);
+      const followup = {
+        action: 'analyze',
+        facts: summary.facts,
+        presentation: summary.presentation,
+        resultId: summary.resultId,
+        fingerprint: summary.metadata.analysisFingerprint,
+      };
+      if (changed === 'resultId') followup.resultId = 'another-result';
+      if (changed === 'pdfBytes')
+        vi.mocked(fetch).mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3, 4])));
+      if (changed === 'sourceRows') {
+        const changedPage = textPage(page.replace('1150', '9999'));
+        vi.mocked(chrome.runtime.sendMessage).mockResolvedValueOnce({
+          success: true,
+          text: serializePagesForAnalysis([changedPage]),
+          pages: [changedPage],
+          metadata: {
+            totalPages: 1,
+            extractedPages: [1],
+            extractionMode: 'full',
+            documentType: 'earningsRevision',
+          },
+        });
+      }
+      const failed = await request(followup);
+      expect(failed.error).toBeTruthy();
+      expect(failed.analysis).toBeUndefined();
+      expect(mocked.generateText).toHaveBeenCalledTimes(1);
+      expect(summary).toEqual(original);
+      expect(
+        await loadSummaryTrace('test.pdf', summary.diagnosticRunId, summary.resultId)
+      ).toMatchObject({ outcome: 'firstSuccess' });
+      expect(
+        await loadAnalysisTrace('test.pdf', failed.diagnosticRunId, followup.resultId)
+      ).toMatchObject({
+        outcome: 'failure',
+        error: { code: 'analysis-preflight-failed' },
+        response: null,
+      });
+    }
+  );
+
+  it('保存済みの旧形式の採点は別要求で確認済み事実を起点にする', async () => {
+    mocked.generateText.mockResolvedValue(sourceSummaryResponse);
     mocked.extractScoreInput.mockResolvedValue({
       claims: [{ category: 'revenue' }],
       unverified: [],
@@ -982,16 +1191,13 @@ describe('要約・採点・追加分析の分離', () => {
     const summary = await request({ action: 'summarize' });
     const score = await request({
       action: 'score',
-      facts: summary.facts,
-      presentation: summary.presentation,
-      resultId: summary.resultId,
-      fingerprint: summary.metadata.analysisFingerprint,
+      ...(await legacyScorePayload(summary)),
     });
     expect(score.score.value).toBe(70);
-    expect(mocked.extractScoreInput.mock.calls[0][4]).toEqual(summary.facts);
+    expect(mocked.extractScoreInput.mock.calls[0][4]).toEqual(facts);
   });
 
-  it('smartで本文が選択外なら生成前に全文再要約を促す', async () => {
+  it('smartで以前は選択外だった本文も同じ一回の要約入力に残す', async () => {
     const pages = [
       nativePage,
       {
@@ -999,17 +1205,20 @@ describe('要約・採点・追加分析の分離', () => {
         selection: 'omitted' as const,
       },
     ];
+    mocked.generateText.mockResolvedValueOnce(sourceSummaryResponse);
     const request = await setup(false, false, false, false, { pages, mode: 'smart' });
     const summary = await request({ action: 'summarize' });
-    expect(summary.error).toContain('全文で再要約');
-    expect(summary.retryExtractionMode).toBe('full');
-    expect(mocked.generateText).not.toHaveBeenCalled();
+    expect(summary.error).toBeUndefined();
+    expect(summary.presentation.sourceLedger!.pages.map((page) => page.selection)).toEqual([
+      'selected',
+      'selected',
+    ]);
+    expect(mocked.generateText.mock.calls[0][1][1].content).toContain('取得は承認を条件とします。');
+    expect(mocked.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('過去資料の任意権限がない場合は別サイトを取得しない', async () => {
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+    mocked.generateText.mockResolvedValue(sourceSummaryResponse);
     mocked.extractScoreInput.mockResolvedValue({
       claims: [{ category: 'revenue' }],
       unverified: [],
@@ -1028,10 +1237,7 @@ describe('要約・採点・追加分析の分離', () => {
     const summary = await request({ action: 'summarize' });
     const score = await request({
       action: 'score',
-      facts: summary.facts,
-      presentation: summary.presentation,
-      resultId: summary.resultId,
-      fingerprint: summary.metadata.analysisFingerprint,
+      ...(await legacyScorePayload(summary, true)),
     });
     expect(score.error).toContain('採点の根拠を検証できません');
     expect(mocked.inferExperimentalScore.mock.calls[0][2].searchStatus).toContain(
@@ -1048,9 +1254,7 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('検索API失敗は採点エラーとして返し、表示済み要約を保持する', async () => {
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+    mocked.generateText.mockResolvedValue(sourceSummaryResponse);
     mocked.extractScoreInput.mockResolvedValue({ claims: [], unverified: [], searchStatus: '' });
     mocked.searchDisclosureCandidates.mockResolvedValue({
       urls: [],
@@ -1064,10 +1268,7 @@ describe('要約・採点・追加分析の分離', () => {
     const summary = await request({ action: 'summarize' });
     const score = await request({
       action: 'score',
-      facts: summary.facts,
-      presentation: summary.presentation,
-      resultId: summary.resultId,
-      fingerprint: summary.metadata.analysisFingerprint,
+      ...(await legacyScorePayload(summary, true)),
     });
     expect(summary.summary).toContain('1150百万円');
     expect(score.error).toContain('HTTP 429');
@@ -1075,9 +1276,7 @@ describe('要約・採点・追加分析の分離', () => {
   });
 
   it('検索後も比較値を検証できなければ採点結果を作らない', async () => {
-    mocked.generateText.mockResolvedValue(
-      candidateResponse(facts.facts, [nativePage], facts.documentType)
-    );
+    mocked.generateText.mockResolvedValue(sourceSummaryResponse);
     mocked.extractScoreInput.mockResolvedValue({
       claims: [],
       unverified: ['引用を確認できません'],
@@ -1087,10 +1286,7 @@ describe('要約・採点・追加分析の分離', () => {
     const summary = await request({ action: 'summarize' });
     const score = await request({
       action: 'score',
-      facts: summary.facts,
-      presentation: summary.presentation,
-      resultId: summary.resultId,
-      fingerprint: summary.metadata.analysisFingerprint,
+      ...(await legacyScorePayload(summary, true)),
     });
     expect(summary.summary).toContain('1150百万円');
     expect(score.error).toContain('比較値を原文で確認できません');

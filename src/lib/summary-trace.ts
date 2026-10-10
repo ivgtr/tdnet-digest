@@ -1,3 +1,10 @@
+import {
+  projectAnalysisModelInput,
+  isAnalysisModelInput,
+  type AnalysisDiagnosticContract,
+} from './analysis-trace';
+import type { analysisModelInput } from './additional-analysis';
+import { ANALYSIS_RESOURCE_LIMITS, type AnalysisNotice } from './additional-analysis';
 import type { CoverageSlot } from './fact-coverage';
 import type { Diagnostic } from './fact-candidates';
 import type { LLMConfig } from './llm-client';
@@ -11,7 +18,7 @@ export const SUMMARY_DIAGNOSTICS_KEY = 'summaryDiagnosticsV1';
 export const SUMMARY_DIAGNOSTICS_LIMITS = {
   records: 12,
   bytes: 2 * 1024 * 1024,
-  recordBytes: 192 * 1024,
+  recordBytes: 768 * 1024,
 } as const;
 export type DiagnosticPersistence = 'saved' | 'failed';
 export type Usage = Parameters<NonNullable<LLMConfig['onUsage']>>[0];
@@ -25,6 +32,12 @@ export interface SummaryAttempt {
   repairMode?: 'delta' | 'complete';
 }
 export interface SummaryTrace {
+  sourceFirst?: {
+    version: 1;
+    modelInput: ReturnType<typeof analysisModelInput> | null;
+    contract: AnalysisDiagnosticContract;
+    notices: AnalysisNotice[];
+  };
   version: 1;
   runId: string;
   resultId: string | null;
@@ -34,6 +47,7 @@ export interface SummaryTrace {
   provider: string | null;
   model: string | null;
   extractionMode: string | null;
+  requestedExtractionMode?: string;
   fingerprint: string | null;
   buildDigest: string;
   documentHash: string | null;
@@ -63,6 +77,13 @@ function isSummaryTrace(value: unknown): value is SummaryTrace {
     typeof value.runId === 'string' &&
     value.runId.length > 0 &&
     nullableString(value.resultId) &&
+    (value.sourceFirst === undefined ||
+      (record(value.sourceFirst) &&
+        value.sourceFirst.version === 1 &&
+        record(value.sourceFirst.contract) &&
+        Array.isArray(value.sourceFirst.notices) &&
+        (value.sourceFirst.modelInput === null ||
+          isAnalysisModelInput(value.sourceFirst.modelInput, value.inputHash)))) &&
     ['startedAt', 'pdfUrl', 'documentType', 'buildDigest'].every(
       (key) => typeof value[key] === 'string'
     ) &&
@@ -132,9 +153,9 @@ export function matchingSummaryTrace(
     value.resultId === null &&
     value.pdfUrl === pdfUrl
   )
-    return value;
+    return diagnosticSnapshot(value);
   if (value.pdfUrl !== normalizeTdnetPdfUrl(pdfUrl)) throw new Error(unavailable);
-  return value;
+  return diagnosticSnapshot(value);
 }
 
 function readStore(value: unknown): DiagnosticStore {
@@ -163,6 +184,9 @@ function diagnosticSnapshot(trace: SummaryTrace): SummaryTrace {
     provider: trace.provider,
     model: trace.model,
     extractionMode: trace.extractionMode,
+    ...(trace.requestedExtractionMode
+      ? { requestedExtractionMode: trace.requestedExtractionMode }
+      : {}),
     fingerprint: trace.fingerprint,
     buildDigest: trace.buildDigest,
     documentHash: trace.documentHash,
@@ -171,6 +195,66 @@ function diagnosticSnapshot(trace: SummaryTrace): SummaryTrace {
     elapsedMs: trace.elapsedMs,
     outcome: trace.outcome,
     error: trace.error,
+    ...(trace.sourceFirst
+      ? {
+          sourceFirst: {
+            version: 1 as const,
+            modelInput: trace.sourceFirst.modelInput
+              ? projectAnalysisModelInput(trace.sourceFirst.modelInput)
+              : null,
+            contract: {
+              version: trace.sourceFirst.contract.version,
+              ...(trace.sourceFirst.contract.resourceLimits
+                ? {
+                    resourceLimits: Object.fromEntries(
+                      Object.keys(ANALYSIS_RESOURCE_LIMITS).map((key) => [
+                        key,
+                        trace.sourceFirst!.contract.resourceLimits![
+                          key as keyof typeof ANALYSIS_RESOURCE_LIMITS
+                        ],
+                      ])
+                    ) as typeof ANALYSIS_RESOURCE_LIMITS,
+                  }
+                : {}),
+              allowedEvidenceIds: [...trace.sourceFirst.contract.allowedEvidenceIds],
+              limits: {
+                issues: trace.sourceFirst.contract.limits.issues,
+                references: trace.sourceFirst.contract.limits.references,
+                title: trace.sourceFirst.contract.limits.title,
+                text: trace.sourceFirst.contract.limits.text,
+              },
+              ...(trace.sourceFirst.contract.generation
+                ? {
+                    generation: {
+                      purpose: trace.sourceFirst.contract.generation.purpose,
+                      maxOutputTokens: trace.sourceFirst.contract.generation.maxOutputTokens,
+                      timeoutMs: trace.sourceFirst.contract.generation.timeoutMs,
+                    },
+                  }
+                : {}),
+              ...(trace.sourceFirst.contract.inputBudget
+                ? {
+                    inputBudget: {
+                      characters: trace.sourceFirst.contract.inputBudget.characters,
+                      bytes: trace.sourceFirst.contract.inputBudget.bytes,
+                      characterLimit: trace.sourceFirst.contract.inputBudget.characterLimit,
+                      byteLimit: trace.sourceFirst.contract.inputBudget.byteLimit,
+                    },
+                  }
+                : {}),
+            },
+            notices: trace.sourceFirst.notices.map(
+              ({ issueIndex, code, path, message, severity }) => ({
+                issueIndex,
+                code,
+                path,
+                message,
+                severity,
+              })
+            ),
+          },
+        }
+      : {}),
     attempts: trace.attempts.map((attempt) => ({
       phase: attempt.phase,
       response: attempt.response,
@@ -246,6 +330,23 @@ function boundedTrace(trace: SummaryTrace): SummaryTrace {
       value === null || value.length <= limit ? value : value.slice(0, limit) + '…[省略]';
     const compact: SummaryTrace = {
       ...snapshot,
+      ...(snapshot.sourceFirst
+        ? {
+            sourceFirst: {
+              ...snapshot.sourceFirst,
+              modelInput: null,
+              contract: {
+                ...snapshot.sourceFirst.contract,
+                allowedEvidenceIds: snapshot.sourceFirst.contract.allowedEvidenceIds
+                  .slice(0, 128)
+                  .map((id) => clip(id)!),
+              },
+              notices: snapshot.sourceFirst.notices
+                .slice(0, 128)
+                .map((notice) => ({ ...notice, message: clip(notice.message)! })),
+            },
+          }
+        : {}),
       documentType: clip(snapshot.documentType)!,
       provider: clip(snapshot.provider),
       model: clip(snapshot.model),

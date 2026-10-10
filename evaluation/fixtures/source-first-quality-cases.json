@@ -1,0 +1,934 @@
+{
+  "version": 1,
+  "scope": "人が公開PDFで点検した既知の診断例。将来のモデル品質や統計的精度を保証しない。全ページ番号は物理ページ。",
+  "nativeFixture": "../../src/lib/fixtures/native-disclosure-source.ts",
+  "cases": [
+    {
+      "id": "cando-548129",
+      "company": "キャンドゥ",
+      "role": "known",
+      "pdfUrl": "https://www.release.tdnet.info/inbs/140120261008548129.pdf",
+      "pdfSha256": "722d44c7229447d23d26f8ce1c9fb229304c1635facfc3d3559cee04dee64d34",
+      "facts": [
+        {
+          "id": "current-sales",
+          "label": "売上高",
+          "value": "44743",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "current-op",
+          "label": "営業利益",
+          "value": "997",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "current-ordinary",
+          "label": "経常利益",
+          "value": "952",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "current-net",
+          "label": "親会社株主に帰属する純利益",
+          "value": "480",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "current-eps",
+          "label": "1株当たり純利益",
+          "value": "30.05",
+          "unit": "円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "prior-sales",
+          "label": "売上高",
+          "value": "43372",
+          "unit": "百万円",
+          "period": "2026年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "prior-op",
+          "label": "営業利益",
+          "value": "1324",
+          "unit": "百万円",
+          "period": "2026年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "prior-ordinary",
+          "label": "経常利益",
+          "value": "1322",
+          "unit": "百万円",
+          "period": "2026年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "prior-net",
+          "label": "親会社株主に帰属する純利益",
+          "value": "725",
+          "unit": "百万円",
+          "period": "2026年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "prior-eps",
+          "label": "1株当たり純利益",
+          "value": "45.32",
+          "unit": "円",
+          "period": "2026年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "forecast-sales",
+          "label": "売上高",
+          "value": "88600",
+          "unit": "百万円",
+          "period": "2027年2月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "forecast-op",
+          "label": "営業利益",
+          "value": "1670",
+          "unit": "百万円",
+          "period": "2027年2月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "forecast-ordinary",
+          "label": "経常利益",
+          "value": "1600",
+          "unit": "百万円",
+          "period": "2027年2月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "forecast-net",
+          "label": "親会社株主に帰属する純利益",
+          "value": "450",
+          "unit": "百万円",
+          "period": "2027年2月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "forecast-eps",
+          "label": "1株当たり純利益",
+          "value": "28.12",
+          "unit": "円",
+          "period": "2027年2月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "fc-sales",
+          "label": "FC店向け卸売上高",
+          "value": "4904",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "FC卸売",
+          "state": "actual",
+          "physicalPage": 4
+        },
+        {
+          "id": "other-sales",
+          "label": "その他売上高",
+          "value": "796",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "その他",
+          "state": "actual",
+          "physicalPage": 4
+        },
+        {
+          "id": "other-share",
+          "label": "その他売上高の構成比",
+          "value": "1.8",
+          "unit": "%",
+          "period": "2027年2月期中間期",
+          "scope": "その他",
+          "state": "actual",
+          "physicalPage": 4
+        },
+        {
+          "id": "cash-ending",
+          "label": "現金及び現金同等物期末残高",
+          "value": "3648",
+          "unit": "百万円",
+          "period": "2027年2月期中間期末",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 9
+        },
+        {
+          "id": "cash-decline",
+          "label": "現金及び現金同等物の減少額",
+          "value": "993",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 5
+        }
+      ],
+      "checks": [
+        {
+          "id": "major-source",
+          "dimension": "sourceReading",
+          "expectation": "p1の15主要数量を原資料入力で参照できる。抽出成功と意味の正しさを別に記録する。",
+          "sourceFactIds": [
+            "current-sales",
+            "current-op",
+            "current-ordinary",
+            "current-net",
+            "current-eps",
+            "prior-sales",
+            "prior-op",
+            "prior-ordinary",
+            "prior-net",
+            "prior-eps",
+            "forecast-sales",
+            "forecast-op",
+            "forecast-ordinary",
+            "forecast-net",
+            "forecast-eps"
+          ]
+        },
+        {
+          "id": "value-current-sales",
+          "dimension": "factualAccuracy",
+          "expectation": "売上高 44743百万円、2027年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["current-sales"]
+        },
+        {
+          "id": "value-current-op",
+          "dimension": "factualAccuracy",
+          "expectation": "営業利益 997百万円、2027年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["current-op"]
+        },
+        {
+          "id": "value-current-ordinary",
+          "dimension": "factualAccuracy",
+          "expectation": "経常利益 952百万円、2027年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["current-ordinary"]
+        },
+        {
+          "id": "value-current-net",
+          "dimension": "factualAccuracy",
+          "expectation": "親会社株主に帰属する純利益 480百万円、2027年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["current-net"]
+        },
+        {
+          "id": "value-current-eps",
+          "dimension": "factualAccuracy",
+          "expectation": "1株当たり純利益 30.05円、2027年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["current-eps"]
+        },
+        {
+          "id": "value-prior-sales",
+          "dimension": "factualAccuracy",
+          "expectation": "売上高 43372百万円、2026年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["prior-sales"]
+        },
+        {
+          "id": "value-prior-op",
+          "dimension": "factualAccuracy",
+          "expectation": "営業利益 1324百万円、2026年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["prior-op"]
+        },
+        {
+          "id": "value-prior-ordinary",
+          "dimension": "factualAccuracy",
+          "expectation": "経常利益 1322百万円、2026年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["prior-ordinary"]
+        },
+        {
+          "id": "value-prior-net",
+          "dimension": "factualAccuracy",
+          "expectation": "親会社株主に帰属する純利益 725百万円、2026年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["prior-net"]
+        },
+        {
+          "id": "value-prior-eps",
+          "dimension": "factualAccuracy",
+          "expectation": "1株当たり純利益 45.32円、2026年2月期中間期、actual、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["prior-eps"]
+        },
+        {
+          "id": "value-forecast-sales",
+          "dimension": "factualAccuracy",
+          "expectation": "売上高 88600百万円、2027年2月期通期、forecast、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["forecast-sales"]
+        },
+        {
+          "id": "value-forecast-op",
+          "dimension": "factualAccuracy",
+          "expectation": "営業利益 1670百万円、2027年2月期通期、forecast、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["forecast-op"]
+        },
+        {
+          "id": "value-forecast-ordinary",
+          "dimension": "factualAccuracy",
+          "expectation": "経常利益 1600百万円、2027年2月期通期、forecast、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["forecast-ordinary"]
+        },
+        {
+          "id": "value-forecast-net",
+          "dimension": "factualAccuracy",
+          "expectation": "親会社株主に帰属する純利益 450百万円、2027年2月期通期、forecast、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["forecast-net"]
+        },
+        {
+          "id": "value-forecast-eps",
+          "dimension": "factualAccuracy",
+          "expectation": "1株当たり純利益 28.12円、2027年2月期通期、forecast、連結を正しく扱う。旧候補の会計基準拒否を数字自体の誤りと混同しない。",
+          "sourceFactIds": ["forecast-eps"]
+        },
+        {
+          "id": "fc-other-ownership",
+          "dimension": "factualAccuracy",
+          "expectation": "FC卸売4,904百万円とその他796百万円、その他構成比1.8%を取り違えない。FC=796、その他売上=1.8%は誤り。",
+          "sourceFactIds": ["fc-sales", "other-sales", "other-share"]
+        },
+        {
+          "id": "cash-balance",
+          "dimension": "factualAccuracy",
+          "expectation": "期末残高3,648百万円と減少額993百万円を混同しない。",
+          "sourceFactIds": ["cash-ending", "cash-decline"]
+        },
+        {
+          "id": "qualified-reading",
+          "dimension": "reasoning",
+          "expectation": "正しい15値の過剰拒否を解消する一方、範囲や参照が違う値まで受理しない。売上構成と利益の変化を因果と断定しない。",
+          "sourceFactIds": []
+        },
+        {
+          "id": "decision-use",
+          "dimension": "usefulness",
+          "expectation": "決算期・増減・主要論点を簡潔に整理し、判断に必要な根拠へたどれる。強気/弱気の結論や指定された言い回しは要求しない。",
+          "sourceFactIds": []
+        },
+        {
+          "id": "drawing-uncertainty",
+          "dimension": "uncertainty",
+          "expectation": "有/無の並記だけから囲み選択を断定しない。欠損記号を0にせず、未選択・未抽出・資料にない情報を区別する。",
+          "sourceFactIds": []
+        }
+      ]
+    },
+    {
+      "id": "yaskawa-548685",
+      "company": "安川電機",
+      "role": "known",
+      "pdfUrl": "https://www.release.tdnet.info/inbs/140120261009548685.pdf",
+      "pdfSha256": "c51e468019526f86c8fda18fba8dd715d2513bae321f3fc0e380477da2ed8ce4",
+      "facts": [
+        {
+          "id": "pretax-current",
+          "label": "税引前中間利益",
+          "value": "25963",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "pretax-prior",
+          "label": "税引前中間利益",
+          "value": "25204",
+          "unit": "百万円",
+          "period": "2026年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "pretax-forecast",
+          "label": "税引前利益",
+          "value": "65500",
+          "unit": "百万円",
+          "period": "2027年2月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "cfo",
+          "label": "営業CF",
+          "value": "45628",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 13
+        },
+        {
+          "id": "cfi",
+          "label": "投資CF",
+          "value": "-29642",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 13
+        },
+        {
+          "id": "cff",
+          "label": "財務CF",
+          "value": "-12776",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 13
+        },
+        {
+          "id": "movement",
+          "label": "CFによる増加",
+          "value": "3208",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 13
+        },
+        {
+          "id": "fx",
+          "label": "換算差額",
+          "value": "1651",
+          "unit": "百万円",
+          "period": "2027年2月期中間期",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 13
+        },
+        {
+          "id": "opening",
+          "label": "期首現金残高",
+          "value": "61223",
+          "unit": "百万円",
+          "period": "2027年2月期中間期首",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 13
+        },
+        {
+          "id": "ending",
+          "label": "期末現金残高",
+          "value": "66083",
+          "unit": "百万円",
+          "period": "2027年2月期中間期末",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 13
+        }
+      ],
+      "checks": [
+        {
+          "id": "source-pages",
+          "dimension": "sourceReading",
+          "expectation": "p1・p13の行、期間、単位を選択済み要約の成否に依存せず参照できる。",
+          "sourceFactIds": [
+            "pretax-current",
+            "pretax-prior",
+            "pretax-forecast",
+            "cfo",
+            "cfi",
+            "cff",
+            "movement",
+            "fx",
+            "opening",
+            "ending"
+          ]
+        },
+        {
+          "id": "pretax-values",
+          "dimension": "factualAccuracy",
+          "expectation": "税引前当期25,963、前年25,204、通期予想65,500百万円を正しく区別。",
+          "sourceFactIds": ["pretax-current", "pretax-prior", "pretax-forecast"]
+        },
+        {
+          "id": "cash-direction",
+          "dimension": "reasoning",
+          "expectation": "CF3区分合計は+3,210百万円、開示増加+3,208、期末現金は増加。見出しも本文も純減としない。丸め残差2/1百万円を原文誤りと断定せず別記する。",
+          "sourceFactIds": ["cfo", "cfi", "cff", "movement", "fx", "opening", "ending"]
+        },
+        {
+          "id": "implied-period",
+          "dimension": "reasoning",
+          "expectation": "下期税引前39,537百万円は機械的な残差であり、別途の会社下期ガイダンスや達成確実性としない。",
+          "sourceFactIds": ["pretax-current", "pretax-forecast"]
+        },
+        {
+          "id": "wrong-reference",
+          "dimension": "factualAccuracy",
+          "expectation": "前年営業CFを契約資産8,082、前年財務CFを借入金45,572等の貸借対照表セルで代用しない。",
+          "sourceFactIds": []
+        },
+        {
+          "id": "cause-boundary",
+          "dimension": "uncertainty",
+          "expectation": "欧州再編費用の個別額、正常化の正確な時期、事業別下期予想、為替利益感応度はこの資料だけで補わない。",
+          "sourceFactIds": []
+        },
+        {
+          "id": "decision-use",
+          "dimension": "usefulness",
+          "expectation": "営業減益と税引前増益やCF増加の両面を根拠付きで整理し、持続性の論点を限定条件と共に示す。指定の投資判断を正解にしない。",
+          "sourceFactIds": []
+        }
+      ],
+      "calculations": [
+        {
+          "id": "pretax-delta",
+          "expression": "25963 - 25204",
+          "value": "759",
+          "unit": "百万円"
+        },
+        {
+          "id": "implied-h2-pretax",
+          "expression": "65500 - 25963",
+          "value": "39537",
+          "unit": "百万円",
+          "interpretation": "通期予想からの機械的残差。会社が別途開示した下期予想ではない"
+        },
+        {
+          "id": "flow-sum",
+          "expression": "45628 - 29642 - 12776",
+          "value": "3210",
+          "unit": "百万円",
+          "reportedValue": "3208",
+          "residual": "2"
+        },
+        {
+          "id": "cash-reconcile",
+          "expression": "61223 + 3208 + 1651",
+          "value": "66082",
+          "unit": "百万円",
+          "reportedValue": "66083",
+          "residual": "-1"
+        }
+      ]
+    },
+    {
+      "id": "first-brothers-547944",
+      "company": "ファーストブラザーズ",
+      "role": "known",
+      "pdfUrl": "https://www.release.tdnet.info/inbs/140120261008547944.pdf",
+      "pdfSha256": "044283205148b835455cefdaeff8a212af98f6fbfd4f69a268e192a02cbbf375",
+      "facts": [
+        {
+          "id": "sale-gain",
+          "label": "固定資産売却益",
+          "value": "1174729",
+          "unit": "千円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 8
+        },
+        {
+          "id": "prior-sale-gain",
+          "label": "固定資産売却益",
+          "value": "151376",
+          "unit": "千円",
+          "period": "2025年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 8
+        },
+        {
+          "id": "pretax",
+          "label": "税金等調整前四半期純利益",
+          "value": "3479988",
+          "unit": "千円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 8
+        },
+        {
+          "id": "parent-net",
+          "label": "親会社株主に帰属する四半期純利益",
+          "value": "2554165",
+          "unit": "千円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 8
+        },
+        {
+          "id": "prior-management-external",
+          "label": "投資運用事業売上高",
+          "value": "35640",
+          "unit": "千円",
+          "period": "2025年11月期第3四半期累計",
+          "scope": "投資運用事業・外部顧客",
+          "state": "actual",
+          "physicalPage": 11
+        },
+        {
+          "id": "prior-management-total",
+          "label": "投資運用事業売上高",
+          "value": "113852",
+          "unit": "千円",
+          "period": "2025年11月期第3四半期累計",
+          "scope": "投資運用事業・内部売上を含む合計",
+          "state": "actual",
+          "physicalPage": 11
+        },
+        {
+          "id": "current-management-external",
+          "label": "投資運用事業売上高",
+          "value": "11250",
+          "unit": "千円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "投資運用事業・外部顧客",
+          "state": "actual",
+          "physicalPage": 12
+        },
+        {
+          "id": "current-management-total",
+          "label": "投資運用事業売上高",
+          "value": "91243",
+          "unit": "千円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "投資運用事業・内部売上を含む合計",
+          "state": "actual",
+          "physicalPage": 12
+        }
+      ],
+      "checks": [
+        {
+          "id": "source-pages",
+          "dimension": "sourceReading",
+          "expectation": "p8の売却益とp11/p12の階層付きセグメント表を参照できる。",
+          "sourceFactIds": [
+            "sale-gain",
+            "prior-sale-gain",
+            "pretax",
+            "parent-net",
+            "prior-management-external",
+            "prior-management-total",
+            "current-management-external",
+            "current-management-total"
+          ]
+        },
+        {
+          "id": "gain-present",
+          "dimension": "factualAccuracy",
+          "expectation": "固定資産売却益1,174,729千円（本文の切捨て1,174百万円）を資料にない/金額未開示としない。",
+          "sourceFactIds": ["sale-gain"]
+        },
+        {
+          "id": "same-scope-comparison",
+          "dimension": "factualAccuracy",
+          "expectation": "投資運用売上は合計91,243↔113,852千円（約-19.86%）または外部11,250↔35,640（約-68.43%）。合計と外部や千円と未換算百万円を混ぜない。",
+          "sourceFactIds": [
+            "prior-management-external",
+            "current-management-external",
+            "prior-management-total",
+            "current-management-total"
+          ]
+        },
+        {
+          "id": "tax-stage",
+          "dimension": "reasoning",
+          "expectation": "売却益/税引前利益は約33.76%、税引前単純控除2,305,259千円。税引前益を税引後純利益から引いて正常純利益としない。",
+          "sourceFactIds": ["sale-gain", "pretax", "parent-net"]
+        },
+        {
+          "id": "recurrence",
+          "dimension": "reasoning",
+          "expectation": "前年にも売却益があるため、一過性という表現だけで将来の再発不能を意味させない。",
+          "sourceFactIds": ["prior-sale-gain"]
+        },
+        {
+          "id": "no-cash-statement",
+          "dimension": "uncertainty",
+          "expectation": "Q3のCF計算書非作成を明示し、入手済み本文にある情報の選択漏れと区別する。CFO/CFI/CFFは復元しない。",
+          "sourceFactIds": []
+        },
+        {
+          "id": "decision-use",
+          "dimension": "usefulness",
+          "expectation": "本業・売却益・利益段階の違いを示して持続性の論点を整理する。特定の強弱判断に合わせて採点しない。",
+          "sourceFactIds": []
+        }
+      ],
+      "unavailable": [
+        {
+          "physicalPage": 10,
+          "text": "当第3四半期連結累計期間に係る四半期連結キャッシュ・フロー計算書は作成していない。",
+          "expected": "BS現金/借入増減から営業・投資・財務CFを捏造しない。"
+        }
+      ],
+      "calculations": [
+        {
+          "id": "pretax-excluding-gain",
+          "expression": "3479988 - 1174729",
+          "value": "2305259",
+          "unit": "千円",
+          "interpretation": "税引前段階の単純控除。税引後正常利益ではない"
+        },
+        {
+          "id": "gain-share",
+          "expression": "1174729 / 3479988 * 100",
+          "value": "33.76",
+          "unit": "%",
+          "precision": "小数第2位丸め"
+        }
+      ]
+    },
+    {
+      "id": "sala-546285",
+      "company": "サーラコーポレーション",
+      "role": "known",
+      "pdfUrl": "https://www.release.tdnet.info/inbs/140120261005546285.pdf",
+      "pdfSha256": "56aedf42833a81c078dcd4ed57c15b5a0cee3430fbbdc1e8c4ff59d6f2b53c73",
+      "facts": [
+        {
+          "id": "cfo-current",
+          "label": "営業CF",
+          "value": "1642",
+          "unit": "百万円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 11
+        },
+        {
+          "id": "cfo-prior",
+          "label": "営業CF",
+          "value": "11385",
+          "unit": "百万円",
+          "period": "2025年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 11
+        },
+        {
+          "id": "cfi-current",
+          "label": "投資CF",
+          "value": "-12797",
+          "unit": "百万円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 12
+        },
+        {
+          "id": "cff-current",
+          "label": "財務CF",
+          "value": "6049",
+          "unit": "百万円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 12
+        },
+        {
+          "id": "cash-movement",
+          "label": "現金増減額",
+          "value": "-5105",
+          "unit": "百万円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 12
+        },
+        {
+          "id": "op-current",
+          "label": "営業利益",
+          "value": "8168",
+          "unit": "百万円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "op-forecast",
+          "label": "営業利益",
+          "value": "7800",
+          "unit": "百万円",
+          "period": "2026年11月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "ordinary-current",
+          "label": "経常利益",
+          "value": "9599",
+          "unit": "百万円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "ordinary-forecast",
+          "label": "経常利益",
+          "value": "9400",
+          "unit": "百万円",
+          "period": "2026年11月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        },
+        {
+          "id": "net-current",
+          "label": "親会社株主に帰属する純利益",
+          "value": "6318",
+          "unit": "百万円",
+          "period": "2026年11月期第3四半期累計",
+          "scope": "連結",
+          "state": "actual",
+          "physicalPage": 1
+        },
+        {
+          "id": "net-forecast",
+          "label": "親会社株主に帰属する純利益",
+          "value": "5900",
+          "unit": "百万円",
+          "period": "2026年11月期通期",
+          "scope": "連結",
+          "state": "forecast",
+          "physicalPage": 1
+        }
+      ],
+      "checks": [
+        {
+          "id": "source-pages",
+          "dimension": "sourceReading",
+          "expectation": "補足構造化が失敗してもp1・p11・p12の原資料を読める。",
+          "sourceFactIds": [
+            "cfo-current",
+            "cfo-prior",
+            "cfi-current",
+            "cff-current",
+            "cash-movement",
+            "op-current",
+            "op-forecast",
+            "ordinary-current",
+            "ordinary-forecast",
+            "net-current",
+            "net-forecast"
+          ]
+        },
+        {
+          "id": "cash-values",
+          "dimension": "factualAccuracy",
+          "expectation": "営業CF11,385→1,642、投資-12,797、財務+6,049百万円を符号・期間付きで扱う。",
+          "sourceFactIds": ["cfo-current", "cfo-prior", "cfi-current", "cff-current"]
+        },
+        {
+          "id": "cash-deterioration",
+          "dimension": "reasoning",
+          "expectation": "営業CF前年差-9,743百万円。3区分合計-5,106と開示-5,105の丸め残差を区別し、増益を現金増加と読み替えない。",
+          "sourceFactIds": ["cfo-current", "cfo-prior", "cash-movement"]
+        },
+        {
+          "id": "negative-q4",
+          "dimension": "reasoning",
+          "expectation": "通期予想-累計実績のOP/経常/純利益-368/-199/-418百万円は機械的残差。会社が赤字Q4予想を開示した、上方修正済み、保守的で確実などと断定しない。",
+          "sourceFactIds": []
+        },
+        {
+          "id": "driver-uncertainty",
+          "dimension": "uncertainty",
+          "expectation": "営業CFの広い「その他」の経済的内訳を推測で確定せず、利益調整とCF調整でデリバティブ損益を二重計上しない。",
+          "sourceFactIds": []
+        },
+        {
+          "id": "decision-use",
+          "dimension": "usefulness",
+          "expectation": "利益進捗と資金の動きを並べ、季節性や残り期間に必要な確認を示す。判断の向きは固定しない。",
+          "sourceFactIds": []
+        }
+      ],
+      "calculations": [
+        {
+          "id": "cfo-delta",
+          "expression": "1642 - 11385",
+          "value": "-9743",
+          "unit": "百万円"
+        },
+        {
+          "id": "fcf",
+          "expression": "1642 - 12797",
+          "value": "-11155",
+          "unit": "百万円"
+        },
+        {
+          "id": "flow-sum",
+          "expression": "1642 - 12797 + 6049",
+          "value": "-5106",
+          "unit": "百万円",
+          "reportedValue": "-5105",
+          "residual": "-1"
+        },
+        {
+          "id": "implied-q4-op",
+          "expression": "7800 - 8168",
+          "value": "-368",
+          "unit": "百万円"
+        },
+        {
+          "id": "implied-q4-ordinary",
+          "expression": "9400 - 9599",
+          "value": "-199",
+          "unit": "百万円"
+        },
+        {
+          "id": "implied-q4-net",
+          "expression": "5900 - 6318",
+          "value": "-418",
+          "unit": "百万円"
+        }
+      ]
+    }
+  ]
+}

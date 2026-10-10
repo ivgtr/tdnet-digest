@@ -491,31 +491,17 @@ const Options: React.FC = () => {
               className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="full">全文抽出（推奨）</option>
-              <option value="smart">要点抽出</option>
+              <option value="smart">要点抽出（旧方式の設定）</option>
             </select>
             <div className="mt-2 p-3 bg-gray-50 rounded text-xs text-gray-700">
-              {extractionMode === 'smart' ? (
-                <div>
-                  <strong>スマート抽出:</strong>
-                  <ul className="mt-1 ml-4 list-disc space-y-1">
-                    <li>重要なセクションやページのみを抽出</li>
-                    <li>入力テキスト量を抑えられます</li>
-                  </ul>
-                </div>
-              ) : (
-                <div>
-                  <strong>全文抽出（推奨）:</strong>
-                  <ul className="mt-1 ml-4 list-disc space-y-1">
-                    <li>PDF全体を抽出して要約（より正確な結果）</li>
-                    <li>API料金はモデルとPDFの抽出量によって変わります</li>
-                  </ul>
-                </div>
-              )}
+              現在の原資料要約・追加分析は、この設定にかかわらずPDF全文を読みます。
+              同じ開示のXBRL/HTMLが取得・確認できれば併用します。入力が上限を超えた場合は、
+              無断で原文を省略せず、切替または停止の理由を表示します。API料金はモデルと入力量で変わります。
             </div>
           </div>
 
           <p className="text-xs text-gray-700">
-            要約はPDFの文字抽出後、事実を通常1回のAPI呼び出しで構造化して表示します。
+            要約は原資料から通常1回のAPI呼び出しで作成します。追加分析はボタンを押したときに別の1回で、全体の見立てと重要な論点を整理します。生成品質は原資料でも確認してください。
           </p>
 
           <div>
@@ -529,11 +515,10 @@ const Options: React.FC = () => {
               実験的スコアを表示（既定OFF）
             </label>
             <p className="mt-2 text-xs text-gray-500">
-              要約表示後、検証済み事実とPDF本文を照合して自動採点します。必要な過去資料の検索や採点には追加のAPI料金が発生します。追加分析は要約内のボタンから別に実行します。
+              現在の原資料要約では実験的スコアは利用できません。この設定は互換用に保持されますが、採点用APIは呼び出しません。良否や継続性の見立ては追加分析をご利用ください。
             </p>
             <p className="mt-1 text-xs text-gray-500">
-              過去資料の取得先はJPX、EIR、IR
-              Pocketに限定します。ONで保存すると各サイトへのアクセス権を確認します。
+              旧採点方式の過去資料取得先はJPX、EIR、IR Pocketに限定しています。
             </p>
           </div>
 

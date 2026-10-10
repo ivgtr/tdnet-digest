@@ -1,7 +1,9 @@
+import { analysisModelInput } from './additional-analysis';
+import { projectNativeModelInput } from './native-disclosure';
 import type { AnalysisNotice } from './additional-analysis';
 import type { AnalysisInput } from './analysis-input';
 import { projectSourceModelInput } from './source-ledger';
-import { exact, record } from './fact-contract';
+import { canonicalJSON, exact, record } from './fact-contract';
 import { normalizeTdnetPdfUrl } from './tdnet-url';
 import type { DiagnosticPersistence, Usage } from './summary-trace';
 
@@ -12,7 +14,7 @@ export const ANALYSIS_CACHE_DIAGNOSTIC_PREFIX = 'analysisDiagnosticRefV1:';
 export const ANALYSIS_DIAGNOSTICS_LIMITS = {
   records: 12,
   bytes: 1024 * 1024,
-  recordBytes: 256 * 1024,
+  recordBytes: 768 * 1024,
 } as const;
 export interface AnalysisDiagnosticError {
   code: string;
@@ -20,6 +22,7 @@ export interface AnalysisDiagnosticError {
   message: string;
 }
 export interface AnalysisDiagnosticContract {
+  generation?: { purpose: 'summary' | 'analysis'; maxOutputTokens: number; timeoutMs: number };
   version: number;
   allowedEvidenceIds: string[];
   limits: { issues: number; references: number; title: number; text: number };
@@ -45,6 +48,7 @@ export interface AnalysisGenerationDiagnostic {
   error: AnalysisDiagnosticError | null;
 }
 export interface AnalysisTrace {
+  modelInput?: ReturnType<typeof analysisModelInput> | null;
   version: 1;
   stage: 'analysis';
   runId: string;
@@ -129,6 +133,31 @@ function validNotices(value: unknown): value is AnalysisNotice[] {
     )
   );
 }
+export function isAnalysisModelInput(
+  value: unknown,
+  inputHash: unknown
+): value is ReturnType<typeof analysisModelInput> {
+  if (
+    !record(value) ||
+    value.inputHash !== inputHash ||
+    typeof value.documentType !== 'string' ||
+    !Array.isArray(value.allowedEvidenceIds) ||
+    !value.allowedEvidenceIds.every((id) => typeof id === 'string') ||
+    !Array.isArray(value.evidence) ||
+    !record(value.coverage)
+  )
+    return false;
+  try {
+    return (
+      canonicalJSON(
+        projectAnalysisModelInput(value as unknown as ReturnType<typeof analysisModelInput>)
+      ) === canonicalJSON(value)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isTrace(value: unknown): value is AnalysisTrace {
   return (
     record(value) &&
@@ -138,6 +167,9 @@ function isTrace(value: unknown): value is AnalysisTrace {
       (key) => typeof value[key] === 'string' && value[key].length > 0
     ) &&
     ['provider', 'model', 'inputHash', 'response'].every((key) => nullableString(value[key])) &&
+    (value.modelInput === undefined ||
+      value.modelInput === null ||
+      isAnalysisModelInput(value.modelInput, value.inputHash)) &&
     ['running', 'success', 'partialSuccess', 'failure'].includes(String(value.outcome)) &&
     (value.notices === undefined || validNotices(value.notices)) &&
     typeof value.intentAt === 'number' &&
@@ -223,6 +255,67 @@ function readStore(value: unknown): AnalysisDiagnosticStore {
     throw new Error('保存された追加分析診断の形式が不正です');
   return { version: 1, traces: value.traces, lastAttempts: value.lastAttempts };
 }
+export function projectAnalysisInput(input: AnalysisInput): AnalysisInput {
+  return {
+    documentType: input.documentType,
+    inputHash: input.inputHash,
+    evidence: input.evidence.map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      text: e.text,
+      context: e.context,
+      sourceIds: [...e.sourceIds],
+      pages: [...e.pages],
+    })),
+    ...(input.sourceDocument
+      ? { sourceDocument: projectSourceModelInput(input.sourceDocument) }
+      : {}),
+    ...(input.nativeDocument
+      ? { nativeDocument: projectNativeModelInput(input.nativeDocument) }
+      : {}),
+    coverage: {
+      facts: input.coverage.facts,
+      explanations: input.coverage.explanations,
+      observations: input.coverage.observations,
+      calculations: input.coverage.calculations,
+      pages: [...input.coverage.pages],
+      organizationStatus: input.coverage.organizationStatus,
+      unresolvedSources: input.coverage.unresolvedSources,
+      unverifiedFacts: input.coverage.unverifiedFacts,
+      unverifiedItems: input.coverage.unverifiedItems,
+      unverifiedSourcePages: [...input.coverage.unverifiedSourcePages],
+      limitations: [...input.coverage.limitations],
+      ...(input.coverage.sourceLedger
+        ? {
+            sourceLedger: {
+              sourceHash: input.coverage.sourceLedger.sourceHash,
+              pages: [...input.coverage.sourceLedger.pages],
+              failedPages: [...input.coverage.sourceLedger.failedPages],
+              emptyPages: [...input.coverage.sourceLedger.emptyPages],
+              omittedPages: [...input.coverage.sourceLedger.omittedPages],
+              rows: input.coverage.sourceLedger.rows,
+              spans: input.coverage.sourceLedger.spans,
+              status: input.coverage.sourceLedger.status,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+/** The actual compact model body, without redundant raw evidence text. */
+export function projectAnalysisModelInput(input: ReturnType<typeof analysisModelInput>) {
+  const projected = projectAnalysisInput({
+    documentType: input.documentType,
+    inputHash: input.inputHash,
+    evidence: input.evidence.map((e) => ({ ...e, sourceIds: [] })),
+    coverage: input.coverage,
+    ...(input.sourceDocument ? { sourceDocument: input.sourceDocument } : {}),
+    ...(input.nativeDocument ? { nativeDocument: input.nativeDocument } : {}),
+  });
+  return { ...analysisModelInput(projected), allowedEvidenceIds: [...input.allowedEvidenceIds] };
+}
+
 /** Allow-listed projection, never config, endpoint, headers or credentials. */
 function snapshot(trace: AnalysisTrace): AnalysisTrace {
   const notices = trace.notices?.map((notice) => ({
@@ -248,53 +341,22 @@ function snapshot(trace: AnalysisTrace): AnalysisTrace {
     buildDigest: trace.buildDigest,
     fingerprint: trace.fingerprint,
     inputHash: trace.inputHash,
-    input: input
-      ? {
-          documentType: input.documentType,
-          inputHash: input.inputHash,
-          evidence: input.evidence.map((e) => ({
-            id: e.id,
-            kind: e.kind,
-            text: e.text,
-            context: e.context,
-            sourceIds: [...e.sourceIds],
-            pages: [...e.pages],
-          })),
-          ...(input.sourceDocument
-            ? { sourceDocument: projectSourceModelInput(input.sourceDocument) }
-            : {}),
-          coverage: {
-            facts: input.coverage.facts,
-            explanations: input.coverage.explanations,
-            observations: input.coverage.observations,
-            calculations: input.coverage.calculations,
-            pages: [...input.coverage.pages],
-            organizationStatus: input.coverage.organizationStatus,
-            unresolvedSources: input.coverage.unresolvedSources,
-            unverifiedFacts: input.coverage.unverifiedFacts,
-            unverifiedItems: input.coverage.unverifiedItems,
-            unverifiedSourcePages: [...input.coverage.unverifiedSourcePages],
-            limitations: [...input.coverage.limitations],
-            ...(input.coverage.sourceLedger
-              ? {
-                  sourceLedger: {
-                    sourceHash: input.coverage.sourceLedger.sourceHash,
-                    pages: [...input.coverage.sourceLedger.pages],
-                    failedPages: [...input.coverage.sourceLedger.failedPages],
-                    emptyPages: [...input.coverage.sourceLedger.emptyPages],
-                    omittedPages: [...input.coverage.sourceLedger.omittedPages],
-                    rows: input.coverage.sourceLedger.rows,
-                    spans: input.coverage.sourceLedger.spans,
-                    status: input.coverage.sourceLedger.status,
-                  },
-                }
-              : {}),
-          },
-        }
-      : null,
+    input: input ? projectAnalysisInput(input) : null,
+    ...(trace.modelInput !== undefined
+      ? { modelInput: trace.modelInput ? projectAnalysisModelInput(trace.modelInput) : null }
+      : {}),
     contract: trace.contract
       ? {
           version: trace.contract.version,
+          ...(trace.contract.generation
+            ? {
+                generation: {
+                  purpose: trace.contract.generation.purpose,
+                  maxOutputTokens: trace.contract.generation.maxOutputTokens,
+                  timeoutMs: trace.contract.generation.timeoutMs,
+                },
+              }
+            : {}),
           ...(trace.contract.inputBudget
             ? {
                 inputBudget: {
@@ -359,6 +421,15 @@ function boundedTrace(trace: AnalysisTrace): AnalysisTrace {
     const clip = (text: string) => (text.length <= limit ? text : text.slice(0, limit) + '…[省略]');
     const compact: AnalysisTrace = {
       ...original,
+      ...(original.modelInput !== undefined ? { modelInput: null } : {}),
+      ...(original.contract
+        ? {
+            contract: {
+              ...original.contract,
+              allowedEvidenceIds: original.contract.allowedEvidenceIds.slice(0, 128).map(clip),
+            },
+          }
+        : {}),
       response: original.response === null ? null : clip(original.response),
       ...(original.notices
         ? {
@@ -371,7 +442,7 @@ function boundedTrace(trace: AnalysisTrace): AnalysisTrace {
       input: original.input
         ? {
             ...original.input,
-            ...(limit < 8192 ? { sourceDocument: undefined } : {}),
+            ...(limit < 8192 ? { sourceDocument: undefined, nativeDocument: undefined } : {}),
             evidence: original.input.evidence.slice(0, 24).map((e) => ({
               ...e,
               text: clip(e.text),
@@ -455,7 +526,16 @@ export function saveAnalysisTrace(trace: AnalysisTrace): Promise<void> {
             intentAt: copy.intentAt,
             persistence: 'saved',
             outcome: copy.outcome,
-            error: copy.error,
+            error: copy.error
+              ? {
+                  code: copy.error.code.slice(0, 128),
+                  path: copy.error.path.slice(0, 256),
+                  message:
+                    copy.error.message.length > 2048
+                      ? copy.error.message.slice(0, 2048) + '…[診断の全文を参照]'
+                      : copy.error.message,
+                }
+              : null,
           });
           store.lastAttempts.sort((a, b) => a.intentAt - b.intentAt);
         }

@@ -7,7 +7,7 @@ describe('実拡張スモークの固定応答契約（ブラウザー・実API�
     '%s の現行応答を実製品経路で事前検査する',
     async (outcome) => {
       const result = await preflightExtensionSmoke(outcome);
-      expect(result.requests).toBe(outcome === 'failure' ? 2 : 3);
+      expect(result.requests).toBe(1);
     }
   );
 });

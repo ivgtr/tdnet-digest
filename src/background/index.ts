@@ -1,3 +1,10 @@
+import {
+  NATIVE_LIMITS,
+  validateNativeCompanionRef,
+  type NativeCompanionRef,
+  type NativeDisclosure,
+} from '@/lib/native-disclosure-contract';
+import { validateNativeDisclosure } from '@/lib/native-disclosure';
 import { summaryStorageWarning } from '@/lib/summary-storage';
 import {
   saveSummaryTrace,
@@ -19,18 +26,22 @@ import {
   type AnalysisGenerationDiagnostic,
 } from '@/lib/analysis-trace';
 import { buildAnalysisInput } from '@/lib/analysis-input';
-import { serializeCandidateSource } from '@/lib/fact-candidates';
+import { generateSourceSummary } from '@/lib/source-summary';
+import { validateSavedFacts } from '@/lib/fact-cache';
 import type { LLMConfig } from '@/lib/llm-client';
 import { configuredApiUrl } from '@/lib/llm-endpoint';
 import { detectDocumentType, type DocumentType } from '@/lib/document-type';
 import {
   FACT_SCHEMA_VERSION,
-  generateVerifiedFactSummary,
   parseFactSummary,
   renderFacts,
   type FactSummary,
 } from '@/lib/fact-summary';
-import { analyzeFacts, type AdditionalAnalysis } from '@/lib/additional-analysis';
+import {
+  analyzeFacts,
+  analysisModelInput,
+  type AdditionalAnalysis,
+} from '@/lib/additional-analysis';
 import { serializePagesForAnalysis } from '@/lib/page-text';
 import { summaryResultId as resultId } from '@/lib/summary-result-id';
 import {
@@ -55,6 +66,7 @@ import type {
 } from '@/types/summaryMetadata';
 
 interface BaseRequest {
+  nativeCompanion?: NativeCompanionRef;
   pdfUrl: string;
   title: string;
   code: string;
@@ -233,6 +245,71 @@ async function hashPdf(data: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', data);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+async function acquireNativeSource(
+  ref: NativeCompanionRef | undefined,
+  pdfUrl: string,
+  pdfText: string
+): Promise<{ native?: NativeDisclosure; warnings: string[] }> {
+  if (!ref) return { warnings: [] };
+  try {
+    const source = validateNativeCompanionRef(ref, pdfUrl);
+    const response = await fetch(source.zipUrl, {
+      signal: AbortSignal.timeout(15_000),
+      redirect: 'error',
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (Number(response.headers.get('content-length')) > NATIVE_LIMITS.archiveBytes)
+      throw new Error('ZIPのサイズが取得上限を超えています');
+    if (!response.body) throw new Error('ZIPの応答本文がありません');
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        size += next.value.byteLength;
+        if (size > NATIVE_LIMITS.archiveBytes)
+          throw new Error('ZIPのサイズが取得上限を超えています');
+        chunks.push(next.value);
+      }
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const parsed = await chrome.runtime.sendMessage({
+      action: 'parseNativeDisclosure',
+      archiveData: Array.from(bytes),
+      ref: source,
+      pdfText,
+    });
+    if (!parsed?.success) throw new Error(parsed?.error ?? 'XBRL/HTMLの読取りに失敗しました');
+    const native = validateNativeDisclosure(parsed.native);
+    return {
+      native,
+      warnings:
+        native.status === 'eligible'
+          ? native.warnings
+          : [
+              '同じ開示のXBRL/HTMLを利用できないためPDF全文へ切り替えました。' +
+                native.reasons.join(' / '),
+            ],
+    };
+  } catch (error) {
+    return {
+      warnings: [
+        `XBRL/HTMLを利用できないためPDF全文へ切り替えました（${error instanceof Error ? error.message : String(error)}）`,
+      ],
+    };
+  }
+}
+
 async function handleSummarize(request: SummarizeRequest, runId: string) {
   const started = performance.now();
   const trace: SummaryTrace = {
@@ -280,52 +357,69 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
     Object.assign(trace, {
       provider: settings.provider,
       model: settings.model,
-      extractionMode: mode,
+      extractionMode: 'full',
+      requestedExtractionMode: mode,
     });
     const data = await fetchPDF(request.pdfUrl);
     await setupOffscreenDocument();
-    const extraction = await extractTextFromPDF(data, documentType, mode);
+    // Source-first generation always reads all pages. The selected setting still
+    // participates in cache identity; it never silently removes source evidence.
+    const extraction = await extractTextFromPDF(data, documentType, 'full');
     const config = configOf(settings);
     const fingerprint = await buildAnalysisFingerprint({
       ...config,
       extractionMode: mode,
     });
     const documentHash = await hashPdf(data);
-    const inputBytes = new TextEncoder().encode(
-      serializeCandidateSource(extraction.pages, undefined, documentType)
-    );
-
     Object.assign(trace, {
       fingerprint,
       documentHash,
-      inputHash: await hashPdf(inputBytes.buffer),
       selectedPages: extraction.pages
         .filter((p) => p.selection === 'selected')
         .map((p) => p.pageNumber),
     });
     await saveTrace();
-    let facts: FactSummary;
-    let id: string;
-    const generated = await generateVerifiedFactSummary(
-      { ...config, signal: AbortSignal.timeout(300_000), onUsage: (u) => trace.usage.push(u) },
-      documentType,
-      extraction.text,
-      extraction.pages,
-      async (a) => {
-        trace.attempts.push(a);
-        await saveTrace();
-      }
+    const nativeSource = await acquireNativeSource(
+      request.nativeCompanion,
+      request.pdfUrl,
+      extraction.text
     );
-    facts = generated.facts;
-    id = await resultId(request.pdfUrl, fingerprint, facts, documentHash, generated.presentation);
+    const generated = await generateSourceSummary(
+      { ...config, signal: AbortSignal.timeout(60_000), onUsage: (u) => trace.usage.push(u) },
+      documentType,
+      extraction.pages,
+      async (snapshot) => {
+        trace.inputHash = snapshot.input.inputHash;
+        trace.sourceFirst = {
+          version: 1,
+          modelInput: analysisModelInput(snapshot.input),
+          contract: snapshot.contract,
+          notices: snapshot.notices ?? [],
+        };
+        if (snapshot.response !== null)
+          trace.attempts = [
+            {
+              phase: 'summary',
+              response: snapshot.response,
+              error: snapshot.error?.message ?? null,
+            },
+          ];
+        await saveTrace();
+      },
+      nativeSource
+    );
+    const facts = generated.facts;
+    const id = await resultId(
+      request.pdfUrl,
+      fingerprint,
+      facts,
+      documentHash,
+      generated.presentation
+    );
     trace.resultId = id;
-    trace.outcome =
-      facts.unverified.length ||
-      ['partial', 'unavailable'].includes(generated.presentation.organization.status)
-        ? 'partialSuccess'
-        : generated.repairAttempted
-          ? 'repairSuccess'
-          : 'firstSuccess';
+    trace.outcome = generated.presentation.sourceFirst!.summary!.notices.length
+      ? 'partialSuccess'
+      : 'firstSuccess';
 
     await saveTrace();
     const metadata: SummaryMetadata = {
@@ -334,7 +428,8 @@ async function handleSummarize(request: SummarizeRequest, runId: string) {
       analysisSchemaVersion: FACT_SCHEMA_VERSION,
       provider: settings.provider,
       model: settings.model,
-      summaryMode: 'sourced-summary',
+      summaryMode: 'source-first',
+      extractionMode: 'full',
       generationCalls: trace.attempts.length,
       analysisFingerprint: fingerprint,
       ...(diagnosticWarning
@@ -421,7 +516,8 @@ async function handleAnalyze(request: FollowupRequest, runId: string) {
         trace.model = identity.model;
       }
       if (snapshot) {
-        trace.input = snapshot.input;
+        trace.input = request.presentation.sourceFirst ? null : snapshot.input;
+        if (request.presentation.sourceFirst) trace.modelInput = analysisModelInput(snapshot.input);
         trace.contract = snapshot.contract;
         trace.inputHash = snapshot.input.inputHash;
         trace.response = snapshot.response;
@@ -470,18 +566,34 @@ async function handleFollowup(
   if (!fingerprints.includes(request.fingerprint))
     throw new Error('設定が変更されています。要約をやり直してください');
   const documentType = detectDocumentType(request.title);
+  if (request.action === 'score' && request.presentation.sourceFirst)
+    throw new Error(
+      '原資料要約では実験的スコアを利用できません。追加分析をご利用ください（採点用APIは呼び出していません）'
+    );
   const data = await fetchPDF(request.pdfUrl);
   await setupOffscreenDocument();
   const extraction = await extractTextFromPDF(data, documentType, 'full');
   // 必須判定は初回の選択範囲で実施済み。全文再取得では元事実の意味を再照合する。
   // 再照合で事実が変われば、PDFハッシュを含むresultIdの一致検査で拒否する。
-  const facts = parseFactSummary(
-    JSON.stringify(request.facts),
-    documentType,
-    extraction.pages,
-    false
-  );
+  validateSavedFacts(request.facts);
+  const facts = request.presentation.sourceFirst
+    ? request.facts
+    : parseFactSummary(JSON.stringify(request.facts), documentType, extraction.pages, false);
+  if (facts.documentType !== documentType) throw new Error('原資料の文書種別が一致しません');
   const presentation = revalidatePresentation(request.presentation, facts, extraction.pages);
+  if (presentation.sourceFirst?.nativeMode === 'included') {
+    const prior = presentation.sourceFirst.native!;
+    const current = await acquireNativeSource(prior.source, request.pdfUrl, extraction.text);
+    if (
+      !current.native ||
+      current.native.status !== 'eligible' ||
+      current.native.hash !== prior.hash ||
+      current.native.checksum !== prior.checksum
+    )
+      throw new Error(
+        'XBRL/HTMLの原資料が取得時から変更されたか再確認できません。PDF全文で要約をやり直してください'
+      );
+  }
   if (
     (await resultId(
       request.pdfUrl,

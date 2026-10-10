@@ -770,7 +770,11 @@ describe('実Reactの要約行アクション配置', () => {
   it('診断ポータルの手動コピーと状態を後続処理で保ち、別実行と閉じる前の遅い完了を表示しない', async () => {
     const response = await responseFor();
     const trace = await traceFor(response.diagnosticRunId, response.resultId);
-    stored[SUMMARY_TRACE_KEY] = trace;
+    stored[SUMMARY_TRACE_KEY] = {
+      ...trace,
+      apiKey: 'private-fixture-key',
+      headers: { Authorization: 'private-fixture-authorization' },
+    };
     const score = deferred<unknown>();
     const analysis = deferred<unknown>();
     sendMessage.mockImplementation(({ action }) =>
@@ -795,9 +799,15 @@ describe('実Reactの要約行アクション配置', () => {
     expect(diagnostics.open).toBe(true);
     copy.focus();
     await click(copy);
-    expect(writeText).toHaveBeenCalledWith(JSON.stringify(trace, null, 2));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const copied = writeText.mock.calls[0][0] as string;
+    // Export is an explicit allowlist projection. Key insertion order may
+    // change, but all diagnostic fields and readable formatting must survive.
+    expect(JSON.parse(copied)).toEqual(trace);
+    expect(copied).toBe(JSON.stringify(JSON.parse(copied), null, 2));
+    expect(copied).not.toContain('private-fixture');
     const textarea = host.querySelector('textarea')!;
-    expect(textarea.value).toBe(JSON.stringify(trace, null, 2));
+    expect(textarea.value).toBe(copied);
     expect(textarea.readOnly).toBe(true);
     expect(textarea.style.width).toBe('100%');
     expect(textarea.style.maxWidth).toBe('100%');
@@ -1281,7 +1291,10 @@ describe('実Reactの要約行アクション配置', () => {
     expect(diagnostics.open).toBe(false);
     await click(diagnostics.querySelector('summary')!);
     await click(diagnostics.querySelector<HTMLButtonElement>('[data-diagnostic-root] button')!);
-    expect(writeText).toHaveBeenCalledWith(JSON.stringify(trace, null, 2));
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const copied = writeText.mock.calls[0][0] as string;
+    expect(JSON.parse(copied)).toEqual(trace);
+    expect(copied).toBe(JSON.stringify(JSON.parse(copied), null, 2));
     expect(diagnostics.querySelector('[role="status"]')?.textContent).toBe('コピーしました');
     fullRetry.focus();
     await click(fullRetry);

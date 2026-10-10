@@ -360,9 +360,63 @@ function renderObservationGroups(
   return lines;
 }
 
+function renderSourceSummary(presentation: SummaryPresentation): string {
+  const source = presentation.sourceFirst!;
+  const summary = source.summary;
+  const lines = ['## 開示の要点', ''];
+  if (!summary) return lines.concat('原資料の要約はまだ生成されていません。').join('\n');
+  const refsFor = (ids: string[]) =>
+    references(summary.evidence.filter((e) => ids.includes(e.id)).flatMap((e) => e.pages));
+  if (summary.overallSummary)
+    lines.push(
+      literalMarkdown(summary.overallSummary.text),
+      refsFor(summary.overallSummary.evidenceIds),
+      ''
+    );
+  for (const issue of summary.issues) {
+    lines.push(
+      `### ${literalMarkdown(issue.title)}`,
+      literalMarkdown(issue.conclusion),
+      literalMarkdown(issue.reading)
+    );
+    if (issue.caveat) lines.push(`確認事項：${literalMarkdown(issue.caveat)}`);
+    lines.push(refsFor(issue.evidenceIds), '');
+  }
+  if (!summary.overallSummary && !summary.issues.length)
+    lines.push('表示できる要約項目がありません。原資料と診断を確認してください。');
+  lines.push(
+    `AIが${source.nativeMode === 'included' ? 'PDFと同じ開示のXBRL/HTML' : 'PDF原資料'}から作成した要約です。内容は原資料でも確認してください。`,
+    ''
+  );
+  for (const notice of summary.notices)
+    lines.push(`- 確認事項：${literalMarkdown(notice.message)}`);
+  for (const warning of source.warnings) lines.push(`- 原資料：${literalMarkdown(warning)}`);
+  lines.push('', '### 確認の詳細（原文）');
+  if (source.native)
+    lines.push(
+      `[同じ開示のXBRL/HTML原資料](${source.native.source.zipUrl})`,
+      '原資料のタグ・文脈対応と、AI文章の意味の正しさは別です。'
+    );
+  for (const evidence of summary.evidence) {
+    const label =
+      evidence.kind === 'nativeFact'
+        ? 'iXBRL原資料値'
+        : evidence.kind === 'nativeSource'
+          ? 'HTML原文（意味未点検）'
+          : evidence.kind === 'calculation'
+            ? '機械計算'
+            : 'PDF抽出原文（意味未点検）';
+    lines.push(
+      `- ${label}：${literalMarkdown(evidence.text)} ${literalMarkdown(evidence.context)} ${references(evidence.pages)}`
+    );
+  }
+  return lines.join('\n');
+}
+
 export function renderSummary(facts: FactSummary, presentation: SummaryPresentation): string {
   if (facts.version !== FACT_SCHEMA_VERSION) throw new Error('旧事実スキーマは表示できません');
   validatePresentation(presentation, facts);
+  if (presentation.sourceFirst) return renderSourceSummary(presentation);
   const byId = new Map(facts.facts.map((f) => [f.id, f]));
   const sources = new Map(presentation.excerpts.map((e) => [e.id, e]));
   const organization = presentation.organization;
