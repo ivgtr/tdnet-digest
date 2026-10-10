@@ -1,3 +1,4 @@
+import { summaryStorageWarning } from '@/lib/summary-storage';
 import {
   saveSummaryTrace,
   summaryBuildDigest,
@@ -12,6 +13,7 @@ import {
 } from '@/lib/pdf-extraction-error';
 import {
   saveAnalysisTrace,
+  loadAnalysisTrace,
   nextAnalysisIntentAt,
   type AnalysisTrace,
   type AnalysisGenerationDiagnostic,
@@ -92,28 +94,59 @@ chrome.runtime.onInstalled.addListener((details) => {
     })
     .catch((error) => console.error('旧ホスト権限の削除に失敗:', error));
 });
-chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
-  if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
-  const diagnosticRunId = request.action !== 'score' ? crypto.randomUUID() : null;
-  const task =
-    request.action === 'summarize'
-      ? handleSummarize(request, diagnosticRunId!)
-      : request.action === 'analyze'
-        ? handleAnalyze(request, diagnosticRunId!)
-        : handleFollowup(request);
-  task
-    .then((response) =>
-      sendResponse({ ...response, ...(diagnosticRunId ? { diagnosticRunId } : {}) })
-    )
-    .catch((error) =>
-      sendResponse({
-        error: error instanceof Error ? error.message : String(error),
-        ...(error instanceof SummarySourceSelectionError ? { retryExtractionMode: 'full' } : {}),
-        ...(diagnosticRunId ? { diagnosticRunId } : {}),
-      })
-    );
-  return true;
-});
+interface AnalysisDiagnosticRequest {
+  action: 'getAnalysisDiagnostic';
+  pdfUrl: string;
+  runId: string;
+  summaryResultId: string;
+  inputHash: string;
+}
+chrome.runtime.onMessage.addListener(
+  (request: Request | AnalysisDiagnosticRequest, _sender, sendResponse) => {
+    if (request.action === 'getAnalysisDiagnostic') {
+      if (
+        ![request.pdfUrl, request.runId, request.summaryResultId, request.inputHash].every(
+          (value) => typeof value === 'string' && value.length > 0
+        )
+      ) {
+        sendResponse({ error: '追加分析診断の識別情報が不正です' });
+        return;
+      }
+      void loadAnalysisTrace(
+        request.pdfUrl,
+        request.runId,
+        request.summaryResultId,
+        'failed',
+        request.inputHash
+      )
+        .then((trace) => sendResponse({ trace }))
+        .catch((error) =>
+          sendResponse({ error: error instanceof Error ? error.message : String(error) })
+        );
+      return true;
+    }
+    if (!['summarize', 'score', 'analyze'].includes(request.action)) return;
+    const diagnosticRunId = request.action !== 'score' ? crypto.randomUUID() : null;
+    const task =
+      request.action === 'summarize'
+        ? handleSummarize(request, diagnosticRunId!)
+        : request.action === 'analyze'
+          ? handleAnalyze(request, diagnosticRunId!)
+          : handleFollowup(request);
+    task
+      .then((response) =>
+        sendResponse({ ...response, ...(diagnosticRunId ? { diagnosticRunId } : {}) })
+      )
+      .catch((error) =>
+        sendResponse({
+          error: error instanceof Error ? error.message : String(error),
+          ...(error instanceof SummarySourceSelectionError ? { retryExtractionMode: 'full' } : {}),
+          ...(diagnosticRunId ? { diagnosticRunId } : {}),
+        })
+      );
+    return true;
+  }
+);
 
 // Concurrent summary/follow-up requests share only the in-flight initialization.
 // Recheck contexts after completion so a subsequently closed document is recreated.
@@ -359,22 +392,23 @@ async function handleAnalyze(request: FollowupRequest, runId: string) {
     elapsedMs: 0,
   };
   let diagnosticPersistence: DiagnosticPersistence = 'failed';
+  let diagnosticWarning: string | undefined;
   const saveTrace = async () => {
     trace.elapsedMs = Math.round(performance.now() - started);
     try {
       await saveAnalysisTrace(trace);
       diagnosticPersistence = 'saved';
-    } catch {
+      diagnosticWarning = undefined;
+    } catch (error) {
       diagnosticPersistence = 'failed';
+      diagnosticWarning = summaryStorageWarning(error, '追加分析の診断');
     }
   };
   let terminalObserved = false;
   const metadata = () => ({
     diagnosticPersistence,
     diagnosticInputHash: trace.inputHash,
-    ...(diagnosticPersistence === 'failed'
-      ? { persistenceWarning: '追加分析の診断を保存できませんでした' }
-      : {}),
+    ...(diagnosticPersistence === 'failed' ? { persistenceWarning: diagnosticWarning } : {}),
   });
   try {
     trace.pdfUrl = fullUrl(request.pdfUrl);
@@ -459,7 +493,9 @@ async function handleFollowup(
   )
     throw new Error('要約結果の識別子が一致しません');
   if (request.action === 'analyze')
-    return { analysis: await analyzeFacts(config, facts, presentation, diagnostic, extraction.pages) };
+    return {
+      analysis: await analyzeFacts(config, facts, presentation, diagnostic, extraction.pages),
+    };
   if (!settings.experimentalScoring) throw new Error('実験的スコアがOFFです');
   const score = await attachScore(
     config,

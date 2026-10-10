@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { encodeSummaryStorage } from '@/lib/summary-storage';
+import type { CachedSummary } from '@/types/summaryMetadata';
 /// <reference types="node" />
 import { webcrypto } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
@@ -1136,10 +1138,86 @@ describe('実Reactの要約行アクション配置', () => {
     await click(copy);
     expect(
       summaryRow.querySelector('[data-diagnostic-root] [role="alert"]')?.textContent
-    ).toContain('保存できません');
+    ).toContain('対応する診断がありません');
     expect(writeText).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: 'getAnalysisDiagnostic',
+        runId: 'unsaved-analysis',
+        summaryResultId: response.resultId,
+      })
+    );
   });
+
+  it.each([false, true])(
+    '未保存の最終診断をコピーし、遅い応答は新しい画面へ混ぜない（切替=%s）',
+    async (changed) => {
+      settings.experimentalScoring = false;
+      const response = await responseFor();
+      const input = buildAnalysisInput(facts, presentation);
+      const diagnostic = deferred<unknown>();
+      sendMessage
+        .mockResolvedValueOnce(response)
+        .mockResolvedValueOnce({
+          analysis: additionalAnalysis,
+          diagnosticRunId: 'volatile-final',
+          diagnosticPersistence: 'failed',
+          diagnosticInputHash: input.inputHash,
+        })
+        .mockReturnValueOnce(diagnostic.promise);
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('navigator', { clipboard: { writeText } });
+      const { row, button } = await mountButton();
+      await click(button);
+      const summaryRow = await summaryRowFor(row);
+      await click(summaryRow.querySelector<HTMLButtonElement>('#analyze-btn')!);
+      const copy = Array.from(
+        summaryRow.querySelectorAll<HTMLButtonElement>('[data-diagnostic-root] button')
+      ).find((b) => b.textContent === '表示中の追加分析の診断JSONをコピー')!;
+      await click(copy);
+      if (changed) await changeSettings({ model: 'new-model' });
+      const trace = {
+        version: 1,
+        stage: 'analysis',
+        runId: 'volatile-final',
+        summaryResultId: response.resultId,
+        startedAt: '2026-10-10T00:00:00Z',
+        intentAt: 1,
+        pdfUrl,
+        provider: 'openai',
+        model: 'fixture',
+        buildDigest: 'build',
+        fingerprint: response.metadata.analysisFingerprint,
+        inputHash: input.inputHash,
+        input,
+        contract: null,
+        response: '{}',
+        usage: null,
+        outcome: 'success',
+        error: null,
+        elapsedMs: 1,
+        volatile: true,
+        persistenceFailure: { code: 'quota', stage: 'write' },
+      };
+      await act(async () => {
+        diagnostic.resolve({ trace });
+      });
+      if (changed) {
+        expect(writeText).not.toHaveBeenCalled();
+        expect(document.querySelector('[data-diagnostic-root] textarea')).toBeNull();
+      } else {
+        const exported = JSON.parse(writeText.mock.calls[0][0]);
+        expect(exported.runId).toBe('volatile-final');
+        expect(exported.volatile).toBe(true);
+        expect(exported.persistenceWarning).toContain('未保存');
+        expect(summaryRow.querySelector('[data-diagnostic-root] textarea')?.textContent).toContain(
+          'volatile-final'
+        );
+      }
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+    }
+  );
 
   it.each(['throw', 'reject'] as const)(
     '診断読込の無効化エラー（%s）はページ再読み込みを案内し、コピー成功にしない',
@@ -1275,6 +1353,105 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
     expect(button.textContent).toBe('閉じる');
   });
 
+  it.each(['deleted', 'replaced'])(
+    '圧縮中にキャッシュが%sになったら遅い保存で上書きしない',
+    async (change) => {
+      const response = await responseFor();
+      const gate = deferred<void>();
+      let compressing = false;
+      vi.stubGlobal(
+        'CompressionStream',
+        class {
+          readable: ReadableStream;
+          writable: WritableStream;
+          constructor() {
+            const stream = new TransformStream({
+              async transform(chunk, controller) {
+                compressing = true;
+                await gate.promise;
+                controller.enqueue(chunk);
+              },
+            });
+            this.readable = stream.readable;
+            this.writable = stream.writable;
+          }
+        }
+      );
+      sendMessage.mockResolvedValue({
+        ...response,
+        metadata: { ...response.metadata, qualityWarnings: ['原文'.repeat(150000)] },
+      });
+      const hook = await mount();
+      let pending!: Promise<void>;
+      await act(async () => {
+        pending = hook().summarize();
+      });
+      await vi.waitFor(() => expect(compressing).toBe(true));
+      const key = await keyFor('full');
+      if (change === 'replaced') stored[key] = response;
+      await act(async () => {
+        for (const listener of listeners) listener({ [key]: { newValue: stored[key] } }, 'local');
+        gate.resolve();
+        await pending;
+      });
+      expect(save).not.toHaveBeenCalled();
+      expect(hook().result?.summary).toBe(response.summary);
+      expect(remove).not.toHaveBeenCalled();
+    }
+  );
+
+  it('大きい要約を圧縮保存し、再表示で原文と結果IDを通常どおり検証する', async () => {
+    const response = await responseFor();
+    const entry: CachedSummary = {
+      ...response,
+      ...options,
+      metadata: {
+        ...response.metadata,
+        totalPages: 2,
+        extractedPages: [1, 2],
+        extractionMode: 'full',
+      },
+      title: '原文'.repeat(150000),
+      cachedAt: 1,
+    };
+    const key = await keyFor('full');
+    stored[key] = await encodeSummaryStorage(entry);
+    expect(stored[key]).toHaveProperty('encoding', 'tdnet-summary-gzip-v1');
+    const hook = await mount();
+    await vi.waitFor(() => expect(hook().hasCached).toBe(true));
+    await act(async () => {
+      await hook().showCached();
+    });
+    expect(hook().result?.summary).toBe(response.summary);
+    expect(hook().result?.resultId).toBe(response.resultId);
+    expect(sendMessage).not.toHaveBeenCalled();
+    stored[key] = await encodeSummaryStorage({ ...entry, summary: '改変された要約' });
+    await act(async () => {
+      await hook().showCached();
+    });
+    expect(hook().result?.summary).toBeNull();
+    expect(hook().result?.error).toContain('不正');
+  });
+
+  it('壊れた圧縮保存を拒否し、保存容量以外の失敗を区別する', async () => {
+    const key = await keyFor('full');
+    stored[key] = { encoding: 'tdnet-summary-gzip-v1', payload: 'broken', decodedBytes: 10 };
+    const hook = await mount();
+    await act(async () => {
+      await hook().showCached();
+    });
+    expect(hook().hasCached).toBe(false);
+    expect(hook().result?.error).toContain('不正');
+    save.mockRejectedValue(new Error('Extension context invalidated'));
+    sendMessage.mockResolvedValue(await responseFor());
+    await act(async () => {
+      await hook().summarize();
+    });
+    expect(hook().result?.summary).toBeTruthy();
+    expect(hook().persistenceWarning).toContain('拡張機能が有効か');
+    expect(hook().persistenceWarning).not.toContain('容量が不足');
+  });
+
   it('保存失敗を生成失敗にせず、要約・追加分析を表示して保存警告を分ける', async () => {
     settings.experimentalScoring = false;
     const response = await responseFor();
@@ -1309,6 +1486,9 @@ describe('保存失敗と一覧ライフサイクルの回復', () => {
       '要約を保存できませんでした'
     );
     expect(summaryRow.querySelector('#score-result')!.previousElementSibling).toBe(body);
+    expect(summaryRow.querySelector('[data-persistence-warning]')?.textContent).toContain(
+      '要約キャッシュ管理'
+    );
     expect(button.textContent).toBe('閉じる');
     await click(button);
     expect(button.textContent).toBe('要約');

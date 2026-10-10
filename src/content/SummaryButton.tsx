@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useSummarize } from './hooks/useSummarize';
 import { useSummaryRow } from './hooks/useSummaryRow';
 import { loadSummaryTrace } from '@/lib/summary-trace';
-import { loadAnalysisTrace } from '@/lib/analysis-trace';
+import { requestAnalysisTrace } from '@/lib/analysis-trace';
 import { ACTION_BUTTON_STYLE, BUTTON_STYLES, FOCUS_STYLE } from './constants/styles';
 
 interface RowData {
@@ -156,7 +156,7 @@ const SummaryButton: React.FC<SummaryButtonProps> = ({ rowData, row, iframeDoc }
     try {
       const trace =
         kind !== 'summary'
-          ? await loadAnalysisTrace(
+          ? await requestAnalysisTrace(
               rowData.pdfUrl,
               kind === 'analysis' ? analysis.diagnosticRunId! : lastAnalysisRunId!,
               result!.resultId!,

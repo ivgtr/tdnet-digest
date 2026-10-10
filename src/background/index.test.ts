@@ -31,6 +31,8 @@ interface TestResponse {
   retryExtractionMode?: 'full';
   error?: string;
   diagnosticRunId: string;
+  diagnosticInputHash?: string;
+  trace?: import('../lib/analysis-trace').AnalysisDiagnosticExport;
   diagnosticPersistence?: 'saved' | 'failed';
   persistenceWarning?: string;
   summary: string;
@@ -889,6 +891,28 @@ describe('要約・採点・追加分析の分離', () => {
     expect(result.analysis).toMatchObject({ issues: [] });
     expect(result.diagnosticPersistence).toBe('failed');
     expect(result.persistenceWarning).toContain('保存できません');
+    expect(result.persistenceWarning).toContain('保存容量が不足');
+    expect(mocked.generateText).toHaveBeenCalledTimes(2);
+    const exported = await request({
+      action: 'getAnalysisDiagnostic',
+      runId: result.diagnosticRunId,
+      summaryResultId: summary.resultId,
+      inputHash: result.diagnosticInputHash,
+    });
+    expect(exported.trace).toMatchObject({
+      runId: result.diagnosticRunId,
+      outcome: 'success',
+      volatile: true,
+      persistenceWarning: expect.stringContaining('未保存'),
+      persistenceFailure: { code: 'quota', stage: 'write' },
+    });
+    const wrong = await request({
+      action: 'getAnalysisDiagnostic',
+      runId: result.diagnosticRunId,
+      summaryResultId: summary.resultId,
+      inputHash: 'other',
+    });
+    expect(wrong.error).toContain('未保存の最終診断');
     expect(mocked.generateText).toHaveBeenCalledTimes(2);
     vi.mocked(chrome.storage.local.set).mockImplementation(write);
     const next = await request(followup);

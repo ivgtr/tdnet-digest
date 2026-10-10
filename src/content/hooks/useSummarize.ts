@@ -1,3 +1,8 @@
+import {
+  decodeSummaryStorage,
+  encodeSummaryStorage,
+  summaryStorageWarning,
+} from '@/lib/summary-storage';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DiagnosticPersistence } from '@/lib/summary-trace';
 import {
@@ -229,7 +234,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         cacheKey === keyRef.current;
       try {
         const data = await chrome.storage.local.get(storageKey);
-        const entry = data[storageKey] as CachedSummary | undefined;
+        const entry = await decodeSummaryStorage(data[storageKey]);
         const valid =
           isCachedSummary(entry, cacheKey, pdfUrl) &&
           (await summaryResultId(
@@ -413,7 +418,9 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
       return false;
     }
     if (key !== keyRef.current || run !== runRef.current) return true;
-    const entry = data[SUMMARY_PREFIX + key] as CachedSummary | undefined;
+    const entry: unknown = await decodeSummaryStorage(data[SUMMARY_PREFIX + key]).catch(
+      () => data[SUMMARY_PREFIX + key]
+    );
     const valid =
       isCachedSummary(entry, key, pdfUrl) &&
       (await summaryResultId(
@@ -556,7 +563,15 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
         };
         const cacheRevision = cacheRevisionRef.current;
         try {
-          await chrome.storage.local.set({ [SUMMARY_PREFIX + key]: entry });
+          const storedEntry = await encodeSummaryStorage(entry);
+          if (
+            !mountedRef.current ||
+            run !== runRef.current ||
+            key !== keyRef.current ||
+            cacheRevision !== cacheRevisionRef.current
+          )
+            return;
+          await chrome.storage.local.set({ [SUMMARY_PREFIX + key]: storedEntry });
           if (
             run === runRef.current &&
             key === keyRef.current &&
@@ -567,12 +582,11 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
             cacheRevisionRef.current++;
             setHasCached(true);
           }
-        } catch {
+        } catch (error) {
           if (run === runRef.current) {
+            setHasCached(false);
             setPersistenceWarning(
-              [diagnosticWarning, '要約を保存できませんでした。表示結果は利用できます']
-                .filter(Boolean)
-                .join(' / ')
+              [diagnosticWarning, summaryStorageWarning(error)].filter(Boolean).join(' / ')
             );
           }
         }
@@ -688,7 +702,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
                 }
               : {}),
           });
-        } catch {
+        } catch (error) {
           if (isCurrent())
             set({
               loading: false,
@@ -697,7 +711,7 @@ export function useSummarize({ pdfUrl, title, code, companyName }: Options) {
               ...diagnosticState(),
               persistenceWarning: [
                 diagnosticWarning,
-                `${action === 'score' ? '採点' : '追加分析'}を保存できませんでした。表示結果は利用できます`,
+                summaryStorageWarning(error, action === 'score' ? '採点' : '追加分析'),
               ]
                 .filter(Boolean)
                 .join(' / '),

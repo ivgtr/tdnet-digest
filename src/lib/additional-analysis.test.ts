@@ -56,6 +56,67 @@ afterEach(() => {
 });
 
 describe('追加分析の根拠と論点の契約', () => {
+  // New boundary: independently grounded overview survives issue quarantine;
+  // invalid/duplicated overviews cannot replace it with an arbitrary first issue.
+  it('全体要約を独立した根拠で照合し、保存復元と改変拒否を保つ', () => {
+    const overview = {
+      text: '会社説明を踏まえると、計上利益の強さと持続性を分けて評価する局面です。',
+      evidenceIds: ['explanation:explanation-0'],
+    };
+    const result = parseAnalysisResponse(
+      JSON.stringify({
+        version: 4,
+        overallSummary: overview,
+        issues: [{ ...issue(), evidenceIds: ['missing'] }],
+      }),
+      input()
+    );
+    expect(result.overallSummary).toEqual(overview);
+    expect(result.issues).toEqual([]);
+    expect(result.evidence.map((e) => e.id)).toEqual(overview.evidenceIds);
+    expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+    for (const patch of [
+      { overallSummary: { ...overview, text: '改変された文章' } },
+      { overallSummaryCandidate: { ...overview, evidenceIds: ['missing'] } },
+      { evidence: [] },
+    ])
+      expect(() =>
+        parseAnalysis(JSON.stringify({ ...result, ...patch }), facts, presentation)
+      ).toThrow();
+  });
+
+  it.each(['missing', 'copy', 'null', 'legacy'])(
+    '全体要約の欠損・不正だけで個別論点を失わない: %s',
+    (kind) => {
+      const raw = {
+        version: 4,
+        issues: [issue()],
+        ...(kind === 'legacy'
+          ? {}
+          : {
+              overallSummary:
+                kind === 'null'
+                  ? null
+                  : {
+                      text: kind === 'copy' ? issue().conclusion : '全体像の文章',
+                      evidenceIds: kind === 'missing' ? ['missing'] : issue().evidenceIds,
+                    },
+            }),
+      };
+      const result = parseAnalysisResponse(JSON.stringify(raw), input());
+      expect(result.issues).toEqual([issue()]);
+      expect(result.overallSummary ?? null).toBeNull();
+      if (kind === 'missing' || kind === 'copy')
+        expect(result.notices).toContainEqual(
+          expect.objectContaining({
+            path: expect.stringContaining('$.overallSummary'),
+            severity: 'quarantined',
+          })
+        );
+      expect(parseAnalysis(JSON.stringify(result), facts, presentation)).toEqual(result);
+    }
+  );
+
   it('確認済み事実だけでなく点検済み説明・指標と原文対応を渡し、未点検を除く', () => {
     const display = structuredClone(presentation);
     const value = display.values.find((v) => v.id === facts.facts[0].id)!;
@@ -528,7 +589,7 @@ describe('生成契約と診断の正負境界', () => {
     expect(schema).toMatchObject({
       type: 'object',
       additionalProperties: false,
-      required: ['version', 'issues'],
+      required: ['version', 'overallSummary', 'issues'],
       properties: {
         version: { enum: [4] },
         issues: {
@@ -551,6 +612,9 @@ describe('生成契約と診断の正負境界', () => {
       },
     });
     const messages = analysisPrompt(source);
+    expect(messages[0].content).toContain('個別論点を横断した全体像');
+    expect(messages[0].content).toContain('最初の論点・結論のコピー');
+    expect(messages[0].content).toContain('個別論点と同じ一回の応答');
     expect(messages[0].content).toContain('titleは80文字以内');
     expect(messages[0].content).toContain('各350文字以内');
     expect(messages[0].content).toContain('evidence[].idとraw:<行ID>・rawspan:<文字列ID>');

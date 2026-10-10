@@ -1188,7 +1188,11 @@ describe('冒頭と本文の保持・復元・原文参照', () => {
     const reading = html.replace(toggles[0], '');
     expect(reading).toContain('<table');
     expect(reading).toContain('1,000百万円');
-    expect(reading).toContain('補足要約の未整理部分');
+    expect(reading).toContain('一部の補足説明・数値は要約に反映できていません');
+    expect(reading).not.toContain('補足要約の未整理部分');
+    expect(reading).not.toContain('財政状態・資金の動き：数値・表');
+    expect(toggles[0]).toContain('財政状態・資金の動き：数値・表');
+    expect(toggles[0].match(/<summary/g)).toHaveLength(1);
     expect(reading).not.toContain('価格改定も行いました。');
     expect(reading).not.toContain('50百万円');
     expect(renderFacts(facts, revalidatePresentation(display, facts, [page, table]))).toBe(summary);

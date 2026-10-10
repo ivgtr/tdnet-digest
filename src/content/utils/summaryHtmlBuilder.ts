@@ -220,21 +220,37 @@ function buildAnalysisHtml(
     </article>`;
     })
     .join('');
+  const overview = analysis.overallSummary;
+  const overviewEvidence =
+    overview?.evidenceIds.map((id) => {
+      const item = analysis.evidence.find((e) => e.id === id);
+      if (!item) throw new Error('全体要約の根拠が表示結果にありません');
+      return item;
+    }) ?? [];
+  const overallSummary = overview
+    ? `<section data-analysis-overall-summary style="margin:12px 0;padding:12px;background:#f0f7ff;border-left:3px solid #4a84b9;">
+    <h6 style="font-size:14px;margin:0 0 8px;">全体の見立て</h6>
+    <p style="margin:6px 0;">${escapeMetadataText(overview.text)}</p>
+    <details data-analysis-overall-evidence><summary style="cursor:pointer;font-size:12px;color:#6b7280;">全体の見立ての根拠</summary>
+    <ul>${overviewEvidence.map((e) => `<li><strong>${labels[e.kind]}:</strong> ${escapeMetadataText(e.text)}${e.context ? ` ${escapeMetadataText(e.context)}` : ''} ${e.pages.map(link).join('・')}</li>`).join('')}</ul></details>
+    </section>`
+    : '';
   const c = analysis.coverage;
   const quarantined = new Set(
     analysis.notices
-      .filter((notice) => notice.severity === 'quarantined')
+      .filter((notice) => notice.severity === 'quarantined' && notice.issueIndex >= 0)
       .map((notice) => notice.issueIndex)
   ).size;
   const notices = analysis.notices.length
     ? `<section data-analysis-notices role="status" style="${SUMMARY_STYLES.warningBox}">
       <strong>追加分析の確認事項</strong>
-      <p>表示できる論点${analysis.issues.length}件${quarantined ? ` / 非表示の論点${quarantined}件` : ''}。注意付きの推論文は生成されたまま表示しています。形式・根拠参照が不正な論点は本文を表示していません。</p>
-      <ul>${analysis.notices.map((notice) => `<li>${notice.issueIndex < 0 ? '応答全体' : `元の論点${notice.issueIndex + 1}`}・${notice.severity === 'quarantined' ? '非表示' : '注意'}: ${escapeMetadataText(notice.message)}（${escapeMetadataText(notice.code)} / ${escapeMetadataText(notice.path)}）</li>`).join('')}</ul>
+      <p>表示できる論点${analysis.issues.length}件${quarantined ? ` / 非表示の論点${quarantined}件` : ''}。注意付きの推論文は生成されたまま表示しています。形式・根拠参照が不正な文章は本文を表示していません。</p>
+      <ul>${analysis.notices.map((notice) => `<li>${notice.path.startsWith('$.overallSummary') ? '全体の見立て' : notice.issueIndex < 0 ? '応答全体' : `元の論点${notice.issueIndex + 1}`}・${notice.severity === 'quarantined' ? '非表示' : '注意'}: ${escapeMetadataText(notice.message)}（${escapeMetadataText(notice.code)} / ${escapeMetadataText(notice.path)}）</li>`).join('')}</ul>
     </section>`
     : '';
   return `<div><p data-analysis-boundary style="${SUMMARY_STYLES.warningBox}"><strong>AIによる分析です。</strong>本文の数値、因果関係、情報がないという主張には未検証の推論を含みます。根拠IDの一致は意味の検証ではありません。展開した根拠欄で、確認済み事実・会社説明・機械計算・抽出原文を区別しています。</p>
     ${notices}
+    ${overallSummary}
     ${issues || (quarantined ? '<p>表示できる論点はありません。形式・根拠参照の確認で全論点を非表示にしました。</p>' : '<p>提供された入力から、要約に追加できる論点を生成できませんでした。</p>')}
     ${c.organizationStatus !== 'ready' || c.unresolvedSources ? '<p style="color:#92400e;">一部の説明・指標は意味の点検が済んでいません。分析にない事項も原PDFを確認してください。</p>' : ''}
     ${c.limitations.map((text) => `<p style="color:#92400e;">${escapeMetadataText(text)}</p>`).join('')}

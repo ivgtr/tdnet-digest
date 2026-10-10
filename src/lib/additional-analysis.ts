@@ -23,6 +23,10 @@ export interface AnalysisIssue {
   caveat: string;
   nextCheck: string;
 }
+export interface AnalysisOverallSummary {
+  text: string;
+  evidenceIds: string[];
+}
 export interface AnalysisNotice {
   issueIndex: number;
   code: string;
@@ -36,6 +40,8 @@ export interface AdditionalAnalysis {
   issues: AnalysisIssue[];
   candidates: unknown[];
   rootExtras?: Record<string, unknown>;
+  overallSummary?: AnalysisOverallSummary | null;
+  overallSummaryCandidate?: unknown;
   notices: AnalysisNotice[];
   evidence: AnalysisEvidence[];
   coverage: AnalysisCoverage;
@@ -255,8 +261,73 @@ function withRootExtrasNotice(
     });
   return parsed;
 }
-const selectedEvidence = (issues: AnalysisIssue[], input: AnalysisInput) => {
-  const ids = new Set(issues.flatMap((i) => i.evidenceIds));
+/** Independently validate the overview against source-backed input. A malformed
+ * issue can never provide evidence by itself. Valid linkage does not verify prose. */
+function withOverallSummary<T extends ReturnType<typeof parseIssues>>(
+  parsed: T,
+  candidate: unknown,
+  input: AnalysisInput
+): T & { overallSummary: AnalysisOverallSummary | null; overallSummaryCandidate: unknown } {
+  let overallSummary: AnalysisOverallSummary | null = null;
+  try {
+    if (candidate !== null) {
+      if (!record(candidate) || !exact(candidate, ['text', 'evidenceIds']))
+        throw failure('overview_shape', '$.overallSummary', '全体要約の形式が不正です');
+      if (typeof candidate.text !== 'string' || !candidate.text.trim())
+        throw failure('overview_text', '$.overallSummary.text', '全体要約の文章が空または不正です');
+      if ([...candidate.text].length > ANALYSIS_RESOURCE_LIMITS.text)
+        throw failure(
+          'text_budget',
+          '$.overallSummary.text',
+          '全体要約が安全に表示できる長さを超えています'
+        );
+      const ids = candidate.evidenceIds;
+      if (
+        !Array.isArray(ids) ||
+        !ids.length ||
+        ids.length > ANALYSIS_RESOURCE_LIMITS.references ||
+        ids.some((id) => typeof id !== 'string' || !input.evidence.some((e) => e.id === id))
+      )
+        throw failure(
+          'overview_evidence',
+          '$.overallSummary.evidenceIds',
+          '全体要約の根拠IDが入力と一致しません'
+        );
+      if (
+        parsed.issues.some((issue) =>
+          [issue.title, issue.conclusion, issue.reading].some(
+            (text) => normalize(text) === normalize(candidate.text as string)
+          )
+        )
+      )
+        throw failure(
+          'overview_restatement',
+          '$.overallSummary.text',
+          '全体要約が個別論点のコピーのため表示していません'
+        );
+      overallSummary = { text: candidate.text, evidenceIds: [...new Set(ids)] as string[] };
+    }
+  } catch (error) {
+    if (!(error instanceof AnalysisValidationError)) throw error;
+    parsed.notices.push({
+      issueIndex: -1,
+      code: error.code,
+      path: error.path,
+      message: error.detail,
+      severity: 'quarantined',
+    });
+  }
+  return { ...parsed, overallSummary, overallSummaryCandidate: candidate };
+}
+const selectedEvidence = (
+  issues: AnalysisIssue[],
+  input: AnalysisInput,
+  overallSummary?: AnalysisOverallSummary | null
+) => {
+  const ids = new Set([
+    ...issues.flatMap((i) => i.evidenceIds),
+    ...(overallSummary?.evidenceIds ?? []),
+  ]);
   return input.evidence.filter((e) => ids.has(e.id));
 };
 export function parseAnalysisResponse(
@@ -271,19 +342,27 @@ export function parseAnalysisResponse(
     throw failure('response_version', '$.version', '応答の形式バージョンが一致しません');
   // Retain ignored envelope fields without interpreting them as prose or evidence.
   const extras = Object.fromEntries(
-    Object.entries(value).filter(([key]) => key !== 'version' && key !== 'issues')
+    Object.entries(value).filter(
+      ([key]) => key !== 'version' && key !== 'issues' && key !== 'overallSummary'
+    )
   );
   const rootExtras = Object.keys(extras).length ? extras : undefined;
   const parsed = withRootExtrasNotice(
     withGenerationNotice(parseIssues(value.issues, input), usage),
     rootExtras
   );
+  const projected: ReturnType<typeof parseIssues> & {
+    overallSummary?: AnalysisOverallSummary | null;
+    overallSummaryCandidate?: unknown;
+  } = Object.prototype.hasOwnProperty.call(value, 'overallSummary')
+    ? withOverallSummary(parsed, value.overallSummary, input)
+    : parsed;
   return {
     version: ANALYSIS_VERSION,
     inputHash: input.inputHash,
-    ...parsed,
+    ...projected,
     ...(rootExtras ? { rootExtras } : {}),
-    evidence: selectedEvidence(parsed.issues, input),
+    evidence: selectedEvidence(parsed.issues, input, projected.overallSummary),
     coverage: input.coverage,
     usage,
   };
@@ -310,6 +389,9 @@ export function parseAnalysis(
       'coverage',
       'usage',
       ...(Object.prototype.hasOwnProperty.call(value, 'rootExtras') ? ['rootExtras'] : []),
+      ...(Object.prototype.hasOwnProperty.call(value, 'overallSummaryCandidate')
+        ? ['overallSummaryCandidate', 'overallSummary']
+        : []),
     ]) ||
     value.version !== ANALYSIS_VERSION ||
     value.inputHash !== input.inputHash
@@ -341,10 +423,19 @@ export function parseAnalysis(
     withGenerationNotice(parseIssues(value.candidates, input), value.usage as Usage | null),
     rootExtras as Record<string, unknown> | undefined
   );
+  const projected: ReturnType<typeof parseIssues> & {
+    overallSummary?: AnalysisOverallSummary | null;
+    overallSummaryCandidate?: unknown;
+  } = Object.prototype.hasOwnProperty.call(value, 'overallSummaryCandidate')
+    ? withOverallSummary(parsed, value.overallSummaryCandidate, input)
+    : parsed;
   if (
+    ('overallSummary' in projected &&
+      canonicalJSON(value.overallSummary) !== canonicalJSON(projected.overallSummary)) ||
     canonicalJSON(value.issues) !== canonicalJSON(parsed.issues) ||
     canonicalJSON(value.notices) !== canonicalJSON(parsed.notices) ||
-    canonicalJSON(value.evidence) !== canonicalJSON(selectedEvidence(parsed.issues, input)) ||
+    canonicalJSON(value.evidence) !==
+      canonicalJSON(selectedEvidence(parsed.issues, input, projected.overallSummary)) ||
     canonicalJSON(value.coverage) !== canonicalJSON(input.coverage)
   )
     throw failure('saved_evidence', '$', '保存結果の根拠または入力範囲が一致しません');
@@ -369,9 +460,28 @@ export function analysisResponseSchema(input: AnalysisInput): Record<string, unk
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['version', 'issues'],
+    required: ['version', 'overallSummary', 'issues'],
     properties: {
       version: { type: 'integer', enum: [ANALYSIS_VERSION] },
+      overallSummary: {
+        anyOf: [
+          { type: 'null' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['text', 'evidenceIds'],
+            properties: {
+              text: { type: 'string', minLength: 1, maxLength: ANALYSIS_RESOURCE_LIMITS.text },
+              evidenceIds: {
+                type: 'array',
+                minItems: 1,
+                maxItems: ANALYSIS_RESOURCE_LIMITS.references,
+                items: { type: 'string', enum: input.evidence.map((e) => e.id) },
+              },
+            },
+          },
+        ],
+      },
       issues: {
         type: 'array',
         maxItems: ANALYSIS_RESOURCE_LIMITS.issues,
@@ -412,11 +522,11 @@ export function analysisPrompt(input: AnalysisInput) {
 factは照合済み事実、explanationとobservationは原文との独立点検を通った会社説明・指標、calculationはコードによる機械計算です。sourceおよびsourceDocumentは抽出原文であり、数値の見た目が取得できても期間・行列対応・因果関係の意味が検証済みとは限りません。原文の見出し・列・注記と照合し、読み取れない対応を補いません。会社説明は「会社は〜と説明」、独自計算は計算式・対象期間・単位、条件付き解釈は「〜なら」と分かる文章にします。入力の機械計算を優先し、自分の計算を検算済みと称しません。単なる比較計算と、原因・継続性の仮説を同じものとして扱いません。市場予想・株価反応・売買推奨・上方修正の確実性を捏造しません。
 caveatとnextCheckは、その論点の判断を実際に変える限界・観測がある場合だけ書き、なければ空文字にします。未確認・不足と書く前に引用した根拠だけでなくsourceDocumentを含む入力全体を確認し、既にある金額・進捗・説明を未確認としないでください。資料内で確認できる事項を次回開示待ちにしません。抽出や要約の不足、原文中の意味対応が未点検であること、会社が開示していないことを区別します。抽出原文があっても画像・図・抽出失敗を含むPDF全体の完全な網羅は保証されないため、見つからないだけで「資料に記載がない」と断定しません。coverageは入力範囲の情報であり論点の根拠ではありません。未知事項はそれが何の判断を変えるのかまで述べ、一般的な「次回確認する」だけで埋めません。
 本文はAIが生成する文章です。根拠IDの一致は引用先の存在を示すだけで、数値・因果・不在の主張の意味の検証になりません。根拠欄はコードが入力から表示するため、本文を確認済み事実へ昇格させません。各論点の主張を支える根拠IDを選び、比較の片側だけを引用しないでください。
-出力の契約: versionは${ANALYSIS_VERSION}、最上位はversionとissuesだけです。issuesは通常${ANALYSIS_LIMITS.issues}件以内を目安とし、各項目はtitle/conclusion/evidenceIds/reading/caveat/nextCheckをすべて持ちます。titleは${ANALYSIS_LIMITS.title}文字以内、conclusion/reading/caveat/nextCheckは各${ANALYSIS_LIMITS.text}文字以内を目安とします。title/conclusion/readingは空文字・空白だけ・「判断不能」だけを避けます。caveat/nextCheckは不要なら空文字です。evidenceIdsは入力のallowedEvidenceIds（evidence[].idとraw:<行ID>・rawspan:<文字列ID>・rawitem:<原文字ID>）から完全一致で1〜${ANALYSIS_LIMITS.references}件を目安に選び、同じ配列内で重複させません。IDを省略・作成・変更せず、PDFセル・段落IDを代用しません。論点間で同じtitleや同一の根拠ID集合を繰り返しません。`,
+出力の契約: versionは${ANALYSIS_VERSION}、最上位はversion/overallSummary/issuesだけです。overallSummaryは{text,evidenceIds}で、個別論点を横断した全体像を先に二〜三文で述べます。何が変わり、強さと弱さを総合するとどう読めるか、見方を左右する主要条件を入力根拠から統合してください。最初の論点・結論のコピーや見出しの羅列にせず、個別論点と同じ一回の応答で作成します。evidenceIdsは全体要約の主張を直接支えるallowedEvidenceIdsのみを選び、比較の両側を参照します。全体像を支える入力がない場合はnullにし、推測で埋めません。全体要約も未検証のAI推論であり、根拠参照だけで内容が検証済みとはしません。issuesは通常${ANALYSIS_LIMITS.issues}件以内を目安とし、各項目はtitle/conclusion/evidenceIds/reading/caveat/nextCheckをすべて持ちます。titleは${ANALYSIS_LIMITS.title}文字以内、conclusion/reading/caveat/nextCheckは各${ANALYSIS_LIMITS.text}文字以内を目安とします。title/conclusion/readingは空文字・空白だけ・「判断不能」だけを避けます。caveat/nextCheckは不要なら空文字です。evidenceIdsは入力のallowedEvidenceIds（evidence[].idとraw:<行ID>・rawspan:<文字列ID>・rawitem:<原文字ID>）から完全一致で1〜${ANALYSIS_LIMITS.references}件を目安に選び、同じ配列内で重複させません。IDを省略・作成・変更せず、PDFセル・段落IDを代用しません。論点間で同じtitleや同一の根拠ID集合を繰り返しません。`,
     },
     {
       role: 'user' as const,
-      content: `形式: {"version":${ANALYSIS_VERSION},"issues":[{"title":"論点名","conclusion":"何が重要かの条件付き結論","evidenceIds":["allowedEvidenceIdsから選んだID"],"reading":"根拠をつないだ条件付きの読み","caveat":"具体的な限界・反対の可能性","nextCheck":"次の資料で確認する具体的な条件"}]}\n入力: ${JSON.stringify(analysisModelInput(input))}`,
+      content: `形式: {"version":${ANALYSIS_VERSION},"overallSummary":{"text":"根拠を横断して統合した全体像と主要な条件","evidenceIds":["allowedEvidenceIdsから選んだID"]},"issues":[{"title":"論点名","conclusion":"何が重要かの条件付き結論","evidenceIds":["allowedEvidenceIdsから選んだID"],"reading":"根拠をつないだ条件付きの読み","caveat":"具体的な限界・反対の可能性","nextCheck":"次の資料で確認する具体的な条件"}]}\n入力: ${JSON.stringify(analysisModelInput(input))}`,
     },
   ];
 }
